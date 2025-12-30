@@ -1,10 +1,3 @@
-# =========================
-# GL-260 Data Analysis and Plotter V1.5.0.4
-# Summary (V1.5.0.4):
-# - Fix Plot Elements placement and live update wiring.
-# - Restore drag placement for spans and refresh axes routing after plot rebuilds.
-# =========================
-
 import os
 import sys
 
@@ -4816,7 +4809,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "GL-260 Data Analysis and Plotter V1.5.0.4"
+APP_VERSION = "GL-260 Data Analysis and Plotter V1.5.6"
 
 # Summary of changes (V1.5.0.0):
 # - Free-threading readiness helpers and Developer Tools GIL controls.
