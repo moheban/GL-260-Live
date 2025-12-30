@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gl260-data-analysis"
+version = "1.5.0"
+description = "GL-260 Data Analysis and Plotter"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = [
+  "matplotlib",
+  "numpy",
+  "openpyxl",
+  "pandas",
+  "scipy",
+  "pyflakes",
+  "pytest",
+  "mplcursors",
+]
+
+[project.optional-dependencies]
+mplcursors = ["mplcursors"]
