@@ -22137,8 +22137,19 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 pass
 
-    def _refresh_canvas_display(self, frame, canvas, *, trigger_resize=True):
-        """Force Tk and Matplotlib to agree on the canvas size."""
+    def _finalize_matplotlib_canvas_layout(
+        self,
+        *,
+        canvas,
+        fig,
+        tk_widget=None,
+        keep_export_size: bool = False,
+        trigger_resize_event: bool = True,
+        force_draw: bool = False,
+    ) -> None:
+        """Finalize layout with a canvas-attached renderer for consistent extents."""
+        if canvas is None or fig is None:
+            return
 
         def _measure(widget_obj):
             width = height = 0
@@ -22154,6 +22165,81 @@ class UnifiedApp(tk.Tk):
                 except Exception:
                     pass
             return max(width, 1), max(height, 1)
+
+        widget = tk_widget
+        if widget is None:
+            try:
+                widget = canvas.get_tk_widget()
+            except Exception:
+                widget = None
+        if widget is not None:
+            try:
+                widget.update_idletasks()
+            except Exception:
+                pass
+
+        if not keep_export_size and widget is not None:
+            widget_w, widget_h = _measure(widget)
+            try:
+                dpi = float(fig.get_dpi())
+                if not math.isfinite(dpi) or dpi <= 0.0:
+                    dpi = 100.0
+            except Exception:
+                dpi = 100.0
+            target_w = max(widget_w / dpi, 1.0)
+            target_h = max(widget_h / dpi, 1.0)
+            try:
+                cur_w, cur_h = fig.get_size_inches()
+            except Exception:
+                cur_w, cur_h = (0.0, 0.0)
+            if abs(cur_w - target_w) > 1e-2 or abs(cur_h - target_h) > 1e-2:
+                try:
+                    fig.set_size_inches(target_w, target_h, forward=False)
+                except Exception:
+                    pass
+
+        needs_draw = True
+        try:
+            renderer = canvas.get_renderer()
+            if renderer is not None:
+                needs_draw = False
+        except Exception:
+            needs_draw = True
+        if force_draw or needs_draw:
+            try:
+                canvas.draw()
+            except Exception:
+                pass
+
+        try:
+            layout_mgr = getattr(fig, "_gl260_layout_manager", None)
+            if layout_mgr is not None:
+                layout_mgr.solve()
+        except Exception:
+            pass
+
+        if trigger_resize_event:
+            try:
+                canvas.resize_event()
+            except Exception:
+                pass
+
+        if force_draw:
+            try:
+                canvas.draw()
+                return
+            except Exception:
+                pass
+        try:
+            canvas.draw_idle()
+        except Exception:
+            try:
+                canvas.draw()
+            except Exception:
+                pass
+
+    def _refresh_canvas_display(self, frame, canvas, *, trigger_resize=True):
+        """Force Tk and Matplotlib to agree on the canvas size."""
 
         try:
             self.nb.select(frame)
@@ -22174,43 +22260,27 @@ class UnifiedApp(tk.Tk):
                 widget.update_idletasks()
             except Exception:
                 pass
-
         fig = getattr(canvas, "figure", None)
-        if widget is not None and fig is not None:
-            widget_w, widget_h = _measure(widget)
-            try:
-                dpi = float(fig.get_dpi())
-                if not math.isfinite(dpi) or dpi <= 0.0:
-                    dpi = 100.0
-            except Exception:
-                dpi = 100.0
-            target_w = max(widget_w / dpi, 1.0)
-            target_h = max(widget_h / dpi, 1.0)
-            try:
-                cur_w, cur_h = fig.get_size_inches()
-            except Exception:
-                cur_w, cur_h = (0.0, 0.0)
-            if abs(cur_w - target_w) > 1e-2 or abs(cur_h - target_h) > 1e-2:
+        if fig is None:
+            if trigger_resize:
                 try:
-                    fig.set_size_inches(target_w, target_h, forward=False)
+                    canvas.resize_event()
                 except Exception:
                     pass
             try:
-                layout_mgr = getattr(fig, "_gl260_layout_manager", None)
-                if layout_mgr is not None:
-                    layout_mgr.solve()
+                canvas.draw_idle()
             except Exception:
                 pass
+            return
 
-        if trigger_resize:
-            try:
-                canvas.resize_event()
-            except Exception:
-                pass
-        try:
-            canvas.draw_idle()
-        except Exception:
-            pass
+        self._finalize_matplotlib_canvas_layout(
+            canvas=canvas,
+            fig=fig,
+            tk_widget=widget,
+            keep_export_size=False,
+            trigger_resize_event=trigger_resize,
+            force_draw=False,
+        )
 
     def _compute_target_figsize_inches(self):
         """Estimate the on-screen area to size Matplotlib figures before drawing."""
@@ -24176,6 +24246,38 @@ class UnifiedApp(tk.Tk):
                 errors = []
                 export_dpi = self._get_export_dpi()
 
+                if plot_key == "fig_combined":
+                    try:
+                        from matplotlib.backends.backend_agg import FigureCanvasAgg
+                    except Exception:
+                        FigureCanvasAgg = None
+                    export_canvas = None
+                    try:
+                        export_canvas = export_fig.canvas
+                    except Exception:
+                        export_canvas = None
+                    if FigureCanvasAgg is not None:
+                        if export_canvas is None or not isinstance(
+                            export_canvas, FigureCanvasAgg
+                        ):
+                            try:
+                                export_canvas = FigureCanvasAgg(export_fig)
+                            except Exception:
+                                export_canvas = getattr(export_fig, "canvas", None)
+                    if export_canvas is None:
+                        export_canvas = getattr(export_fig, "canvas", None)
+                    try:
+                        self._finalize_matplotlib_canvas_layout(
+                            canvas=export_canvas,
+                            fig=export_fig,
+                            tk_widget=None,
+                            keep_export_size=True,
+                            trigger_resize_event=False,
+                            force_draw=True,
+                        )
+                    except Exception:
+                        pass
+
                 for fmt in selected_formats:
 
                     out_path = f"{base}.{fmt}"
@@ -24490,10 +24592,64 @@ class UnifiedApp(tk.Tk):
         toolbar = NavigationToolbar2Tk(canvas, win)
         toolbar.update()
         toolbar.pack(side="top", fill="x")
-        canvas.get_tk_widget().pack(fill="both", expand=True)
-        canvas.draw()
+        widget = canvas.get_tk_widget()
+        widget.pack(fill="both", expand=True)
+
+        resize_state = {"after_id": None}
+
+        def _schedule_preview_finalize(_event=None):
+            after_id = resize_state.get("after_id")
+            if after_id is not None:
+                try:
+                    win.after_cancel(after_id)
+                except Exception:
+                    pass
+
+            def _apply_finalize():
+                resize_state["after_id"] = None
+                self._finalize_matplotlib_canvas_layout(
+                    canvas=canvas,
+                    fig=fig,
+                    tk_widget=widget,
+                    keep_export_size=True,
+                    trigger_resize_event=False,
+                    force_draw=True,
+                )
+
+            try:
+                resize_state["after_id"] = win.after(120, _apply_finalize)
+            except Exception:
+                _apply_finalize()
+
+        try:
+            widget.bind("<Configure>", _schedule_preview_finalize, add="+")
+        except Exception:
+            pass
+
+        try:
+            win.update_idletasks()
+        except Exception:
+            pass
+        try:
+            widget.update_idletasks()
+        except Exception:
+            pass
+        self._finalize_matplotlib_canvas_layout(
+            canvas=canvas,
+            fig=fig,
+            tk_widget=widget,
+            keep_export_size=True,
+            trigger_resize_event=True,
+            force_draw=True,
+        )
 
         def _close():
+            try:
+                after_id = resize_state.get("after_id")
+                if after_id is not None:
+                    win.after_cancel(after_id)
+            except Exception:
+                pass
             try:
                 plt.close(fig)
             except Exception:
