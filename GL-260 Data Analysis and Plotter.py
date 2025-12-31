@@ -210,29 +210,7 @@ DEFAULT_TAB_ORDER_KEYS = (
     "final_report",
 )
 
-# Change Log (V1.5.0.0)
-# - Free-threading readiness helpers and Developer Tools GIL controls.
-# - Unified TkTaskRunner for thread-safe background tasks.
-# - Dependency free-threading audit tooling and session warning.
-# - VS Code interpreter switch prompt for GIL-disabled requests.
-# - No default behavior changes.
 
-# =========================
-# V1.5.0.0 - Summary of Changes
-# =========================
-# - Free-threading readiness helpers and Developer Tools GIL controls.
-# - Unified TkTaskRunner for thread-safe background tasks.
-# - Dependency free-threading audit tooling and session warning.
-# - VS Code interpreter switch prompt for GIL-disabled requests.
-# - No default behavior changes.
-
-# Change Log (V1.4.0.8)
-# - Persist multi-sheet selected sheets to settings.json and restore on startup.
-# - "Plot Elements..." opens a dedicated annotations Toplevel instead of overlaying.
-# - Break Treeview selection refresh recursion (TreeviewSelect -> set_selected_id -> panel.refresh -> selection_set) to stop delete crashes.
-# - Fix annotations Toplevel layout so all controls stay visible (Delete not cut off).
-
-# Dependency audit helpers
 
 
 def _dependency_audit_targets() -> List[str]:
@@ -357,13 +335,7 @@ class TkTaskRunner:
         )
         return task_id
 
-# =========================
-# V1.4.0.8 - Summary of Changes
-# =========================
-# - Persist multi-sheet selected sheets to settings.json and restore on startup.
-# - "Plot Elements..." opens a Toplevel annotations editor per plot instead of overlaying.
-# - Break Treeview selection refresh recursion to stabilize selection and deletion.
-# - Fix annotations Toplevel layout so all controls stay visible (Delete not cut off).
+
 
 
 def _get_font_path(font_name: str) -> Optional[str]:
@@ -700,14 +672,7 @@ def _center_titles_to_axes_union(
         pass
 
 
-# Root-cause report (V1.3.0.7 regression):
-# - V1.3.0.7 replaced axis set_title calls with _center_titles_to_axes_union.
-# - _center_titles_to_axes_union cast rcParams title sizes to float; named sizes
-#   like "large" raised ValueError and aborted Cycle Analysis rendering.
-# - Programmatic refresh during Apply could trigger _mark_columns_dirty and clear y1.
-# Fixes:
-# - Added safe font-size resolution for numeric/named sizes + debug check.
-# - Guarded _mark_columns_dirty during Apply and added series-flow checkpoints.
+
 
 
 def _filter_installed_fonts(candidates: Sequence[str]) -> List[str]:
@@ -4813,24 +4778,12 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "GL-260 Data Analysis and Plotter V1.5.9"
+APP_VERSION = "V1.5.10"
 
-# Summary of changes (V1.5.0.0):
-# - Free-threading readiness helpers and Developer Tools GIL controls.
-# - Unified TkTaskRunner for thread-safe background tasks.
-# - Dependency free-threading audit tooling and session warning.
-# - VS Code interpreter switch prompt for GIL-disabled requests.
-# - No default behavior changes.
-# Summary of changes (V1.4.0.8):
-# - Persist multi-sheet selected sheets to settings.json and restore on startup.
-# - "Plot Elements..." opens a Toplevel annotations editor per plot instead of overlaying.
-# - Break Treeview selection refresh recursion to stabilize selection and deletion.
-# - Fix annotations Toplevel layout so all controls stay visible (Delete not cut off).
-# Debug toggles (disabled by default)
+
 DEBUG_SERIES_FLOW = False
 DEBUG_TITLE_FONT_RESOLVE = False
 DEBUG_ANNOTATIONS_INTERACTION = False
-# Changelog (latest): V1.2.0.19 separates planning pH from solubility splits and sources species % from solver results while tightening planning wiring.
 DEFAULT_EXPORT_DPI = EXPORT_DPI
 PLANNING_DEFAULT_STOP_PH = 8.25
 PLANNING_DEFAULT_STOP_CO2_ADDED_G = 2000.0
@@ -19690,7 +19643,7 @@ class UnifiedApp(tk.Tk):
 
         self.bind("<Configure>", self._remember_normal_geometry)
 
-        self.title(f"{APP_VERSION}. Written & Maintained by Mike Moheban, M.S.")
+        self.title(f"GL-260 Data Analysis & Processing Engine {APP_VERSION}. Written & Maintained by Mike Moheban, M.S.")
 
         self.minsize(
             self._scale_length(1400), self._scale_length(900)
