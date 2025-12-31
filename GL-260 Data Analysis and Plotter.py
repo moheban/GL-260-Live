@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.5.10
+# Version: V1.5.11
 # Date: 2025-12-31
 
 import os
@@ -4778,7 +4778,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.5.10"
+APP_VERSION = "V1.5.11"
 
 
 DEBUG_SERIES_FLOW = False
@@ -26207,8 +26207,14 @@ class UnifiedApp(tk.Tk):
             foreground="#555555",
         ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
+        ttk.Button(
+            legend_frame,
+            text="Combined Plot Layout Tuner...",
+            command=self._open_combined_layout_tuner,
+        ).grid(row=9, column=0, columnspan=2, sticky="w", pady=(6, 2))
+
         ttk.Label(legend_frame, text="Legend alignment").grid(
-            row=9, column=0, sticky="w", padx=(0, 6), pady=2
+            row=10, column=0, sticky="w", padx=(0, 6), pady=2
         )
         alignment_menu = ttk.OptionMenu(
             legend_frame,
@@ -26218,7 +26224,7 @@ class UnifiedApp(tk.Tk):
             "center",
             "right",
         )
-        alignment_menu.grid(row=9, column=1, sticky="w", pady=2)
+        alignment_menu.grid(row=10, column=1, sticky="w", pady=2)
 
         button_frame = ttk.Frame(container)
         button_frame.grid(row=4, column=0, sticky="e", pady=(8, 0))
@@ -26413,6 +26419,231 @@ class UnifiedApp(tk.Tk):
             _save_settings_to_disk()
         except Exception:
             pass
+
+    def _close_combined_layout_tuner(self) -> None:
+        window = getattr(self, "_combined_layout_tuner_window", None)
+        if window is not None:
+            try:
+                window.destroy()
+            except Exception:
+                pass
+        self._combined_layout_tuner_window = None
+
+    def _apply_combined_layout_values(self) -> None:
+        legend_gap_value = _sanitize_spacing_value(
+            self._safe_get_var(self.combined_legend_label_gap, float),
+            DEFAULT_COMBINED_LEGEND_GAP_PTS,
+            MIN_COMBINED_LEGEND_GAP_PTS,
+            MAX_COMBINED_LEGEND_GAP_PTS,
+        )
+        xlabel_tick_gap_value = _sanitize_spacing_value(
+            self._safe_get_var(self.combined_xlabel_tick_gap, float),
+            DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS,
+            MIN_COMBINED_XLABEL_TICK_GAP_PTS,
+            MAX_COMBINED_XLABEL_TICK_GAP_PTS,
+        )
+        legend_margin_value = _sanitize_spacing_value(
+            self._safe_get_var(self.combined_legend_bottom_margin, float),
+            DEFAULT_COMBINED_LEGEND_MARGIN_PTS,
+            MIN_COMBINED_LEGEND_MARGIN_PTS,
+            MAX_COMBINED_LEGEND_MARGIN_PTS,
+        )
+        self.combined_legend_label_gap.set(legend_gap_value)
+        self.combined_xlabel_tick_gap.set(xlabel_tick_gap_value)
+        self.combined_legend_bottom_margin.set(legend_margin_value)
+        settings["combined_legend_gap_pts"] = legend_gap_value
+        settings["combined_xlabel_tick_gap_pts"] = xlabel_tick_gap_value
+        settings["combined_legend_bottom_margin_pts"] = legend_margin_value
+        settings.pop("combined_legend_panel_height", None)
+        try:
+            self._schedule_save_settings()
+        except Exception:
+            try:
+                _save_settings_to_disk()
+            except Exception:
+                pass
+        self._schedule_combined_preview_refresh()
+
+    def _apply_combined_layout_preset(self, preset_name: str) -> None:
+        preset_key = (preset_name or "").strip().lower()
+        if preset_key == "tight":
+            scale = 0.6
+        elif preset_key == "airy":
+            scale = 1.25
+        else:
+            scale = 1.0
+        self.combined_legend_label_gap.set(DEFAULT_COMBINED_LEGEND_GAP_PTS * scale)
+        self.combined_xlabel_tick_gap.set(
+            DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS * scale
+        )
+        self.combined_legend_bottom_margin.set(
+            DEFAULT_COMBINED_LEGEND_MARGIN_PTS * scale
+        )
+        self._apply_combined_layout_values()
+
+    def _reset_combined_layout_defaults(self) -> None:
+        self.combined_legend_label_gap.set(DEFAULT_COMBINED_LEGEND_GAP_PTS)
+        self.combined_xlabel_tick_gap.set(DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS)
+        self.combined_legend_bottom_margin.set(DEFAULT_COMBINED_LEGEND_MARGIN_PTS)
+        self._apply_combined_layout_values()
+
+    def _schedule_combined_preview_refresh(self) -> None:
+        after_id = getattr(self, "_combined_preview_after_id", None)
+        if after_id is not None:
+            try:
+                self.after_cancel(after_id)
+            except Exception:
+                pass
+        try:
+            self._combined_preview_after_id = self.after(
+                200, self._refresh_combined_preview_now
+            )
+        except Exception:
+            self._combined_preview_after_id = None
+            self._refresh_combined_preview_now()
+
+    def _refresh_combined_preview_now(self) -> None:
+        if getattr(self, "_combined_preview_after_id", None) is not None:
+            self._combined_preview_after_id = None
+
+        combined_tab = None
+        combined_canvas = None
+        if hasattr(self, "_plot_tabs"):
+            for idx, tab in enumerate(list(self._plot_tabs)):
+                try:
+                    if self.nb.tab(tab, "text") == "Figure 1+2: Combined Triple-Axis":
+                        combined_tab = tab
+                        if idx < len(self._canvases):
+                            combined_canvas = self._canvases[idx]
+                        break
+                except Exception:
+                    continue
+        if combined_tab is None or combined_canvas is None:
+            return
+
+        try:
+            self._force_plot_refresh(combined_tab, combined_canvas)
+        except Exception:
+            pass
+
+    def _open_combined_layout_tuner(self) -> None:
+        existing = getattr(self, "_combined_layout_tuner_window", None)
+        if existing is not None and existing.winfo_exists():
+            try:
+                existing.deiconify()
+                existing.lift()
+                existing.focus_force()
+            except Exception:
+                pass
+            return
+
+        window = tk.Toplevel(self)
+        window.title("Combined Plot Layout Tuner")
+        window.transient(self)
+        window.resizable(False, False)
+        window.protocol("WM_DELETE_WINDOW", self._close_combined_layout_tuner)
+        self._combined_layout_tuner_window = window
+
+        container = ttk.Frame(window, padding=12)
+        container.grid(row=0, column=0, sticky="nsew")
+        container.grid_columnconfigure(1, weight=1)
+
+        ttk.Label(
+            container,
+            text="Adjust combined plot spacing with live preview updates.",
+            wraplength=440,
+        ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
+
+        preset_frame = ttk.Frame(container)
+        preset_frame.grid(row=1, column=0, columnspan=4, sticky="w", pady=(0, 8))
+        ttk.Label(preset_frame, text="Presets:").pack(side="left", padx=(0, 6))
+        ttk.Button(
+            preset_frame,
+            text="Tight",
+            command=lambda: self._apply_combined_layout_preset("tight"),
+        ).pack(side="left", padx=(0, 6))
+        ttk.Button(
+            preset_frame,
+            text="Normal",
+            command=lambda: self._apply_combined_layout_preset("normal"),
+        ).pack(side="left", padx=(0, 6))
+        ttk.Button(
+            preset_frame,
+            text="Airy",
+            command=lambda: self._apply_combined_layout_preset("airy"),
+        ).pack(side="left")
+
+        def _build_spacing_row(
+            row: int,
+            label: str,
+            var: tk.DoubleVar,
+            min_value: float,
+            max_value: float,
+            increment: float,
+        ) -> None:
+            ttk.Label(container, text=label).grid(
+                row=row, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            scale = ttk.Scale(
+                container,
+                from_=min_value,
+                to=max_value,
+                orient="horizontal",
+                variable=var,
+                command=lambda _value: self._apply_combined_layout_values(),
+            )
+            scale.grid(row=row, column=1, sticky="ew", pady=2)
+            spin = ttk.Spinbox(
+                container,
+                from_=min_value,
+                to=max_value,
+                increment=increment,
+                textvariable=var,
+                width=8,
+                command=self._apply_combined_layout_values,
+            )
+            spin.grid(row=row, column=2, sticky="w", pady=2)
+            ttk.Label(container, text="pt").grid(
+                row=row, column=3, sticky="w", padx=(4, 0)
+            )
+            spin.bind("<Return>", lambda _event: self._apply_combined_layout_values())
+            spin.bind("<FocusOut>", lambda _event: self._apply_combined_layout_values())
+
+        _build_spacing_row(
+            2,
+            "Legend to plot gap",
+            self.combined_legend_label_gap,
+            MIN_COMBINED_LEGEND_GAP_PTS,
+            MAX_COMBINED_LEGEND_GAP_PTS,
+            0.5,
+        )
+        _build_spacing_row(
+            3,
+            "X-label to tick gap",
+            self.combined_xlabel_tick_gap,
+            MIN_COMBINED_XLABEL_TICK_GAP_PTS,
+            MAX_COMBINED_XLABEL_TICK_GAP_PTS,
+            0.5,
+        )
+        _build_spacing_row(
+            4,
+            "Bottom margin below legend",
+            self.combined_legend_bottom_margin,
+            MIN_COMBINED_LEGEND_MARGIN_PTS,
+            MAX_COMBINED_LEGEND_MARGIN_PTS,
+            0.5,
+        )
+
+        button_frame = ttk.Frame(container)
+        button_frame.grid(row=5, column=0, columnspan=4, sticky="e", pady=(8, 0))
+        ttk.Button(
+            button_frame,
+            text="Reset to Defaults",
+            command=self._reset_combined_layout_defaults,
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(
+            button_frame, text="Close", command=self._close_combined_layout_tuner
+        ).pack(side="left")
 
     def _combined_axis_label_overrides(self) -> Dict[str, str]:
         return {
