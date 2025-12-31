@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (V1.5.6)
+# GL-260 Data Analysis and Plotter (V1.6.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data exported to Excel, mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter V1.5.6.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `GL-260 Data Analysis and Plotter V1.5.0.4`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.6.0`.
 
 ## Intended Audience
 - Chemists, process engineers, and researchers analyzing GL-260 pressure/temperature datasets.
@@ -11,7 +11,7 @@ The main entry point is `GL-260 Data Analysis and Plotter V1.5.6.py`. The UI tit
 - Users who need carbonate speciation, solubility, and contamination workflows tied to cycle data.
 
 ## Repository Layout
-- `GL-260 Data Analysis and Plotter V1.5.6.py`: Main application script and UI.
+- `GL-260 Data Analysis and Plotter.py`: Main application script and UI.
 - `solubility_models/`: Local package providing speciation constants, models, and the closed-system solver.
 - `naoh_co2_pitzer_ph_model.py`: Optional NaOH-CO2 Pitzer/HMW model used by the advanced speciation engine.
 - `pitzer.dat`: PHREEQC Pitzer database file used by the optional NaOH-CO2 Pitzer model.
@@ -46,7 +46,7 @@ If `great_tables` is not installed by your requirements workflow, install it sep
 ## Running the Application
 From the repository root:
 ```powershell
-python "GL-260 Data Analysis and Plotter V1.5.6.py"
+python "GL-260 Data Analysis and Plotter.py"
 ```
 The app reads and writes `settings.json` in the current working directory. Run from the repo root so the bundled `pitzer.dat` is discoverable by the NaOH-CO2 Pitzer model.
 
@@ -155,7 +155,7 @@ Sections and key fields:
 
 **Combined Triple-Axis Settings**
 - Choose the dataset for inner left, inner right, and outer right axes.
-- Combined Axis Settings (Preferences) control label text, label padding, axis spacing, legend wrap rows, legend alignment, and export padding for this figure.
+- Combined Axis Settings (Preferences) control label text, label padding, axis spacing, legend wrap rows, legend alignment, legend spacing, title/suptitle spacing, font sizes, and per-mode margins/export padding for this figure.
 
 **Ticks**
 - Auto/manual ticks for time, pressure, temperature, derivative.
@@ -179,6 +179,9 @@ Common controls:
 Per-plot annotations:
 - **Add Plot Elements...** on Figure 1/2/3.
 - **Plot Elements...** and **Clear Elements** on the combined plot.
+
+Per-plot layout:
+- **Layout Editor...** for per-plot layout tweaks (title/suptitle positions, legend anchors/loc, axis label padding); apply to preview and/or export.
 
 Export behavior:
 - Export DPI is controlled via **Preferences -> Saved Output Options...**.
@@ -475,6 +478,7 @@ Key persisted categories:
 - Scatter settings and per-series overrides.
 - Cycle analysis settings and manual marker edits.
 - Combined axis labels, offsets, and layout spacing.
+- Layout profiles (per-plot display/export margins, title/suptitle positions, legend anchors/loc, axis label padding).
 - Output profiles, export DPI, and final report settings.
 - Plot elements and annotation UI state.
 - Tab visibility and tab order.
@@ -516,8 +520,13 @@ Default output profiles include (keys shown as stored in `settings.json`):
 - The NaOH-CO2 Pitzer model is optional and requires a valid `pitzer.dat`.
 - Large datasets are loaded fully into memory.
 
-## Versioning and Change Highlights (V1.5.x)
+## Versioning and Change Highlights (V1.6.x and earlier)
 The script includes internal change summaries:
+
+- **V1.6.0**:
+  - Added a Layout Editor for per-plot layout adjustments (title/suptitle positions, legend anchors/loc, axis label padding, detached axis offsets).
+  - Added persisted layout profiles (`settings["layout_profiles"]`) for per-plot display/export layout state, including margins and legend anchors.
+  - Expanded combined plot layout controls with per-mode margins and legend anchor offsets.
 
 - **V1.5.0.4**:
   - Plot Elements placement and live update fixes.
@@ -535,7 +544,7 @@ The script includes internal change summaries:
   - Treeview selection recursion fix in annotations editor.
   - Layout fixes for the annotations Toplevel.
 
-Note: the UI title uses `APP_VERSION` set to `GL-260 Data Analysis and Plotter V1.5.0.4`.
+Note: the UI title uses `APP_VERSION` set to `V1.6.0`.
 
 ## Troubleshooting
 - **"No Data" or "Missing Columns" errors**: Load a sheet on the Data tab and set required columns on the Columns tab.
