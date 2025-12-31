@@ -1,3 +1,7 @@
+# GL-260 Data Analysis and Plotter
+# Version: V1.5.10
+# Date: 2025-12-31
+
 import os
 import sys
 
@@ -4809,7 +4813,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "GL-260 Data Analysis and Plotter V1.5.8"
+APP_VERSION = "GL-260 Data Analysis and Plotter V1.5.9"
 
 # Summary of changes (V1.5.0.0):
 # - Free-threading readiness helpers and Developer Tools GIL controls.
@@ -13638,6 +13642,9 @@ MIN_COMBINED_LEGEND_GAP_PTS = 6.0
 MAX_COMBINED_LEGEND_GAP_PTS = 120.0
 MIN_COMBINED_LEGEND_MARGIN_PTS = 2.0
 MAX_COMBINED_LEGEND_MARGIN_PTS = 72.0
+DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS = 10.0
+MIN_COMBINED_XLABEL_TICK_GAP_PTS = 0.0
+MAX_COMBINED_XLABEL_TICK_GAP_PTS = 50.0
 DEFAULT_COMBINED_EXPORT_PAD_PTS = 6.0
 MIN_COMBINED_EXPORT_PAD_PTS = 0.0
 MAX_COMBINED_EXPORT_PAD_PTS = 36.0
@@ -14354,6 +14361,7 @@ if os.path.exists(SETTINGS_FILE):
     initial_combined_legend_rows = settings.get("combined_legend_rows", 2)
     raw_legend_gap = settings.get("combined_legend_gap_pts")
     raw_legend_margin = settings.get("combined_legend_bottom_margin_pts")
+    raw_xlabel_tick_gap = settings.get("combined_xlabel_tick_gap_pts")
 
     legacy_panel_hint = settings.get("combined_legend_panel_height")
     if legacy_panel_hint is None:
@@ -14399,6 +14407,17 @@ if os.path.exists(SETTINGS_FILE):
         initial_combined_legend_margin_pts = legacy_margin
     else:
         initial_combined_legend_margin_pts = DEFAULT_COMBINED_LEGEND_MARGIN_PTS
+
+    if raw_xlabel_tick_gap is not None:
+        initial_combined_xlabel_tick_gap_pts = _sanitize_spacing_value(
+            raw_xlabel_tick_gap,
+            DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS,
+            MIN_COMBINED_XLABEL_TICK_GAP_PTS,
+            MAX_COMBINED_XLABEL_TICK_GAP_PTS,
+        )
+    else:
+        initial_combined_xlabel_tick_gap_pts = DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS
+    settings["combined_xlabel_tick_gap_pts"] = initial_combined_xlabel_tick_gap_pts
 
     initial_combined_legend_alignment = settings.get(
         "combined_legend_alignment", "center"
@@ -14540,6 +14559,8 @@ else:
     initial_combined_font_family = DEFAULT_COMBINED_FONT_FAMILY
     initial_font_family = ""
     settings["font_family"] = initial_font_family
+    initial_combined_xlabel_tick_gap_pts = DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS
+    settings["combined_xlabel_tick_gap_pts"] = initial_combined_xlabel_tick_gap_pts
     initial_combined_legend_wrap = False
     initial_combined_legend_rows = 2
     initial_combined_legend_gap_pts = DEFAULT_COMBINED_LEGEND_GAP_PTS
@@ -17034,6 +17055,7 @@ class PlotLayoutManager:
         right_pad_pct: float = 0.0,
         export_pad_pts: float = 0.0,
         legend_gap_pts: float = DEFAULT_COMBINED_LEGEND_GAP_PTS,
+        xlabel_tick_gap_pts: float = DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS,
         legend_margin_pts: float = DEFAULT_COMBINED_LEGEND_MARGIN_PTS,
         title_pad_pts: float = DEFAULT_COMBINED_TITLE_PAD_PTS,
         suptitle_pad_pts: float = DEFAULT_COMBINED_SUPTITLE_PAD_PTS,
@@ -17046,6 +17068,7 @@ class PlotLayoutManager:
         self.right_pad_pct = float(right_pad_pct or 0.0)
         self.export_pad_pts = float(export_pad_pts or 0.0)
         self.legend_gap_pts = float(legend_gap_pts or 0.0)
+        self.xlabel_tick_gap_pts = float(xlabel_tick_gap_pts or 0.0)
         self.legend_margin_pts = float(legend_margin_pts or 0.0)
         self.title_pad_pts = float(title_pad_pts or 0.0)
         self.suptitle_pad_pts = float(suptitle_pad_pts or 0.0)
@@ -17170,10 +17193,12 @@ class PlotLayoutManager:
             pad_frac_x = (self.export_pad_pts / 72.0) / fig_w_in
             pad_frac_y = (self.export_pad_pts / 72.0) / fig_h_in
 
-        legend_gap_frac = max(self.legend_gap_pts / fig_h_pts, 0.006)
+        legend_xlabel_gap_frac = max(self.legend_gap_pts / fig_h_pts, 0.0)
+        xlabel_tick_gap_frac = max(self.xlabel_tick_gap_pts / fig_h_pts, 0.0)
         legend_margin_frac = max(self.legend_margin_pts / fig_h_pts, 0.006)
         title_gap_frac = max(self.title_pad_pts / fig_h_pts, 0.01)
         suptitle_gap_frac = max(self.suptitle_pad_pts / fig_h_pts, 0.01)
+        epsilon_frac = 3.0 / fig_h_pts
 
         left = max(
             self.fig.subplotpars.left,
@@ -17267,6 +17292,7 @@ class PlotLayoutManager:
             renderer = self._get_renderer()
             legend_bbox = self._bbox_in_fig(legend, renderer) if legend else None
             xlabel_bbox = self._bbox_in_fig(xlabel, renderer) if xlabel else None
+            xlabel_anchor_x = None
             if xlabel is not None:
                 xlabel_height = xlabel_bbox.height if xlabel_bbox is not None else 0.02
                 baseline = (
@@ -17274,20 +17300,47 @@ class PlotLayoutManager:
                     if legend_bbox is not None
                     else legend_anchor_y
                 )
-                desired_y = baseline + legend_gap_frac + (xlabel_height / 2.0)
+                desired_y = baseline + legend_xlabel_gap_frac + (xlabel_height / 2.0)
                 try:
-                    anchor_x = main_center_x
-                    if anchor_x is None:
-                        anchor_x = self.fig.subplotpars.left + (
+                    xlabel_anchor_x = main_center_x
+                    if xlabel_anchor_x is None:
+                        xlabel_anchor_x = self.fig.subplotpars.left + (
                             (self.fig.subplotpars.right - self.fig.subplotpars.left)
                             / 2.0
                         )
-                    xlabel.set_position((anchor_x, desired_y))
+                    xlabel.set_position((xlabel_anchor_x, desired_y))
                 except Exception:
                     pass
 
             renderer = self._get_renderer()
+            legend_bbox = self._bbox_in_fig(legend, renderer) if legend else None
             xlabel_bbox = self._bbox_in_fig(xlabel, renderer) if xlabel else None
+            if xlabel_bbox is not None:
+                bottom = max(bottom, xlabel_bbox.y1 + xlabel_tick_gap_frac)
+            if legend_bbox is not None and xlabel_bbox is not None:
+                gap = xlabel_bbox.y0 - legend_bbox.y1
+                if gap < legend_xlabel_gap_frac:
+                    shift = (legend_xlabel_gap_frac - gap) + epsilon_frac
+                    try:
+                        if xlabel_anchor_x is None:
+                            xlabel_anchor_x = main_center_x
+                            if xlabel_anchor_x is None:
+                                xlabel_anchor_x = self.fig.subplotpars.left + (
+                                    (self.fig.subplotpars.right - self.fig.subplotpars.left)
+                                    / 2.0
+                                )
+                        xlabel.set_position(
+                            (xlabel_anchor_x, xlabel.get_position()[1] + shift)
+                        )
+                    except Exception:
+                        pass
+                    renderer = self._get_renderer()
+                    xlabel_bbox = (
+                        self._bbox_in_fig(xlabel, renderer) if xlabel else None
+                    )
+                    if xlabel_bbox is not None:
+                        bottom = max(bottom, xlabel_bbox.y1 + xlabel_tick_gap_frac)
+            renderer = self._get_renderer()
             title_bbox = self._bbox_in_fig(title, renderer) if title else None
             suptitle_bbox = self._bbox_in_fig(suptitle, renderer) if suptitle else None
 
@@ -17357,20 +17410,10 @@ class PlotLayoutManager:
                             0.98,
                         ),
                     )
-
-            bottom_band_top = None
-            if legend_bbox is not None or xlabel_bbox is not None:
-                legend_height = legend_bbox.height if legend_bbox is not None else 0.0
-                xlabel_height = xlabel_bbox.height if xlabel_bbox is not None else 0.0
-                base_y = legend_bbox.y0 if legend_bbox is not None else legend_anchor_y
-                bottom_band_top = (
-                    base_y
-                    + legend_height
-                    + legend_gap_frac
-                    + xlabel_height
-                    + legend_gap_frac
-                )
-                bottom = max(bottom, bottom_band_top)
+            if axes_tight is not None and xlabel_bbox is not None:
+                min_axes_bottom = xlabel_bbox.y1 + xlabel_tick_gap_frac
+                if axes_tight.y0 < min_axes_bottom:
+                    bottom = max(bottom, bottom + (min_axes_bottom - axes_tight.y0))
 
             if (
                 suptitle_bbox is not None
@@ -17421,6 +17464,7 @@ def build_combined_triple_axis_figure(
     legend_rows=None,
     legend_alignment="center",
     legend_label_gap_pts=DEFAULT_COMBINED_LEGEND_GAP_PTS,
+    xlabel_tick_gap_pts=DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS,
     legend_bottom_margin_pts=DEFAULT_COMBINED_LEGEND_MARGIN_PTS,
     left_pad_pct=DEFAULT_COMBINED_LEFT_PAD_PCT,
     right_pad_pct=DEFAULT_COMBINED_RIGHT_PAD_PCT,
@@ -17493,7 +17537,6 @@ def build_combined_triple_axis_figure(
     time_range = (min_time, max_time)
     ax_temp: Optional[Axes] = None
     ax_deriv: Optional[Axes] = None
-    fig_height_pts = max(fig.get_size_inches()[1] * 72.0, 1.0)
     label_overrides = (
         axis_label_overrides if isinstance(axis_label_overrides, dict) else {}
     )
@@ -18121,6 +18164,7 @@ def build_combined_triple_axis_figure(
         right_pad_pct=right_pad_value,
         export_pad_pts=export_pad_pts,
         legend_gap_pts=legend_label_gap_pts,
+        xlabel_tick_gap_pts=xlabel_tick_gap_pts,
         legend_margin_pts=legend_bottom_margin_pts,
         title_pad_pts=title_pad_value,
         suptitle_pad_pts=suptitle_pad_value,
@@ -20026,6 +20070,9 @@ class UnifiedApp(tk.Tk):
         self.combined_legend_label_gap = tk.DoubleVar(
             value=initial_combined_legend_gap_pts
         )
+        self.combined_xlabel_tick_gap = tk.DoubleVar(
+            value=initial_combined_xlabel_tick_gap_pts
+        )
         self.combined_legend_bottom_margin = tk.DoubleVar(
             value=initial_combined_legend_margin_pts
         )
@@ -20089,6 +20136,9 @@ class UnifiedApp(tk.Tk):
         )
         self._register_var_default(
             self.combined_legend_label_gap, initial_combined_legend_gap_pts
+        )
+        self._register_var_default(
+            self.combined_xlabel_tick_gap, initial_combined_xlabel_tick_gap_pts
         )
         self._register_var_default(
             self.combined_legend_bottom_margin, initial_combined_legend_margin_pts
@@ -26018,23 +26068,38 @@ class UnifiedApp(tk.Tk):
             foreground="#555555",
         ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
-        ttk.Label(legend_frame, text="Bottom margin (pt)").grid(
+        ttk.Label(legend_frame, text="X-label spacing from x-ticks (pts)").grid(
             row=5, column=0, sticky="w", padx=(0, 6), pady=2
         )
         ttk.Entry(
             legend_frame,
             width=8,
-            textvariable=self.combined_legend_bottom_margin,
+            textvariable=self.combined_xlabel_tick_gap,
         ).grid(row=5, column=1, sticky="w", pady=2)
+        ttk.Label(
+            legend_frame,
+            text="Minimum spacing between x tick labels and the x-axis label.",
+            wraplength=420,
+            foreground="#555555",
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(2, 0))
+
+        ttk.Label(legend_frame, text="Bottom margin (pt)").grid(
+            row=7, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        ttk.Entry(
+            legend_frame,
+            width=8,
+            textvariable=self.combined_legend_bottom_margin,
+        ).grid(row=7, column=1, sticky="w", pady=2)
         ttk.Label(
             legend_frame,
             text="Space between the bottom of the legend and the figure edge in saved exports.",
             wraplength=420,
             foreground="#555555",
-        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
         ttk.Label(legend_frame, text="Legend alignment").grid(
-            row=7, column=0, sticky="w", padx=(0, 6), pady=2
+            row=9, column=0, sticky="w", padx=(0, 6), pady=2
         )
         alignment_menu = ttk.OptionMenu(
             legend_frame,
@@ -26044,7 +26109,7 @@ class UnifiedApp(tk.Tk):
             "center",
             "right",
         )
-        alignment_menu.grid(row=7, column=1, sticky="w", pady=2)
+        alignment_menu.grid(row=9, column=1, sticky="w", pady=2)
 
         button_frame = ttk.Frame(container)
         button_frame.grid(row=4, column=0, sticky="e", pady=(8, 0))
@@ -26091,6 +26156,12 @@ class UnifiedApp(tk.Tk):
         )
         settings["combined_deriv_axis_offset"] = self._safe_get_var(
             self.combined_deriv_axis_offset, float
+        )
+        settings["combined_xlabel_tick_gap_pts"] = _sanitize_spacing_value(
+            self._safe_get_var(self.combined_xlabel_tick_gap, float),
+            DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS,
+            MIN_COMBINED_XLABEL_TICK_GAP_PTS,
+            MAX_COMBINED_XLABEL_TICK_GAP_PTS,
         )
         left_pad_value = _sanitize_spacing_value(
             self._safe_get_var(self.combined_left_padding_pct, float),
@@ -26204,6 +26275,14 @@ class UnifiedApp(tk.Tk):
         )
         self.combined_legend_label_gap.set(legend_gap_value)
         settings["combined_legend_gap_pts"] = legend_gap_value
+        xlabel_tick_gap_value = _sanitize_spacing_value(
+            self._safe_get_var(self.combined_xlabel_tick_gap, float),
+            DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS,
+            MIN_COMBINED_XLABEL_TICK_GAP_PTS,
+            MAX_COMBINED_XLABEL_TICK_GAP_PTS,
+        )
+        self.combined_xlabel_tick_gap.set(xlabel_tick_gap_value)
+        settings["combined_xlabel_tick_gap_pts"] = xlabel_tick_gap_value
         legend_margin_value = _sanitize_spacing_value(
             self._safe_get_var(self.combined_legend_bottom_margin, float),
             DEFAULT_COMBINED_LEGEND_MARGIN_PTS,
@@ -48490,6 +48569,12 @@ class UnifiedApp(tk.Tk):
             MIN_COMBINED_LEGEND_GAP_PTS,
             MAX_COMBINED_LEGEND_GAP_PTS,
         )
+        xlabel_tick_gap_value = _sanitize_spacing_value(
+            self._safe_get_var(self.combined_xlabel_tick_gap, float),
+            DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS,
+            MIN_COMBINED_XLABEL_TICK_GAP_PTS,
+            MAX_COMBINED_XLABEL_TICK_GAP_PTS,
+        )
         legend_margin_value = _sanitize_spacing_value(
             self._safe_get_var(self.combined_legend_bottom_margin, float),
             DEFAULT_COMBINED_LEGEND_MARGIN_PTS,
@@ -48605,6 +48690,7 @@ class UnifiedApp(tk.Tk):
             legend_rows=legend_rows_value,
             legend_alignment=legend_alignment_value,
             legend_label_gap_pts=legend_gap_value,
+            xlabel_tick_gap_pts=xlabel_tick_gap_value,
             legend_bottom_margin_pts=legend_margin_value,
             left_pad_pct=left_padding_pct,
             right_pad_pct=right_padding_pct,
