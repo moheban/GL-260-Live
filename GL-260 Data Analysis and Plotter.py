@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.5.11
+# Version: V1.6.0
 # Date: 2025-12-31
 
 import os
@@ -1045,6 +1045,530 @@ def _normalize_annotations_ui(value: Any) -> Dict[str, Dict[str, Any]]:
             },
         }
     return sanitized
+
+
+DEFAULT_EXPORT_BOTTOM_MARGIN = 0.184
+_DEFAULT_LAYOUT_MARGINS = {
+    "fig_pressure_temp": {
+        "display": {"left": 0.071, "right": 0.924, "top": 0.91, "bottom": 0.143},
+    },
+    "fig_pressure_derivative": {
+        "display": {"left": 0.071, "right": 0.924, "top": 0.91, "bottom": 0.143},
+    },
+    "fig_cycle_analysis": {
+        "display": {"left": 0.076, "right": 0.97, "top": 0.914, "bottom": 0.079},
+    },
+    "fig_combined_triple_axis": {
+        "display": {"left": 0.125, "right": 0.9, "top": 0.88, "bottom": 0.11},
+    },
+}
+_DEFAULT_LAYOUT_MARGINS_GENERIC = {
+    "display": {"left": 0.08, "right": 0.97, "top": 0.92, "bottom": 0.12},
+}
+_DEFAULT_LAYOUT_PLOT_IDS = (
+    "fig_pressure_temp",
+    "fig_pressure_derivative",
+    "fig_combined_triple_axis",
+    "fig_cycle_analysis",
+)
+
+
+def _default_layout_margins(plot_id: Optional[str], mode: str) -> Dict[str, float]:
+    defaults = _DEFAULT_LAYOUT_MARGINS.get(plot_id, _DEFAULT_LAYOUT_MARGINS_GENERIC)
+    base = defaults.get("display", _DEFAULT_LAYOUT_MARGINS_GENERIC["display"])
+    margins = dict(base)
+    if mode == "export":
+        margins["bottom"] = DEFAULT_EXPORT_BOTTOM_MARGIN
+    return margins
+
+
+def _validated_anchor_pair(anchor: Any) -> Optional[Tuple[float, float]]:
+    """Normalize persisted legend anchors into a safe (x, y) tuple."""
+    try:
+        values = [float(v) for v in anchor]
+    except Exception:
+        return None
+    if len(values) < 2:
+        return None
+    x0, y0 = values[0], values[1]
+    if -0.05 <= x0 <= 1.05 and -0.05 <= y0 <= 1.05:
+        return (x0, y0)
+    return None
+
+
+def _normalize_layout_margins(
+    value: Any, defaults: Mapping[str, float]
+) -> Dict[str, float]:
+    if not isinstance(value, dict):
+        value = {}
+    margins: Dict[str, float] = {}
+    for key in ("left", "right", "top", "bottom"):
+        raw = value.get(key, defaults.get(key))
+        try:
+            candidate = float(raw)
+        except Exception:
+            candidate = float(defaults.get(key, 0.0))
+        candidate = max(0.0, min(1.0, candidate))
+        margins[key] = candidate
+    if margins["left"] >= margins["right"] or margins["bottom"] >= margins["top"]:
+        margins = {
+            "left": float(defaults.get("left", 0.0)),
+            "right": float(defaults.get("right", 1.0)),
+            "top": float(defaults.get("top", 1.0)),
+            "bottom": float(defaults.get("bottom", 0.0)),
+        }
+    return margins
+
+
+def _normalize_layout_xy(value: Any) -> Optional[Tuple[float, float]]:
+    anchor = _validated_anchor_pair(value)
+    if anchor is None:
+        return None
+    return anchor
+
+
+def _normalize_legend_loc_value(value: Any) -> Optional[Union[str, int]]:
+    """Normalize persisted legend loc values for reuse with matplotlib."""
+    if isinstance(value, str):
+        value = value.strip()
+        return value or None
+    try:
+        loc_int = int(value)
+        return loc_int
+    except Exception:
+        return None
+
+
+def _normalize_layout_profile(value: Any, plot_id: Optional[str]) -> Dict[str, Any]:
+    defaults = {
+        "display": {
+            "margins": _default_layout_margins(plot_id, "display"),
+            "title_xy": None,
+            "suptitle_xy": None,
+            "legend_anchor": None,
+            "legend_anchor_y": None,
+            "legend_loc": None,
+            "cycle_legend_anchor": None,
+            "cycle_legend_loc": None,
+            "xlabel_pad_pts": None,
+            "axis_labelpads": {},
+            "detached_spine_offset": None,
+            "detached_labelpad": None,
+        },
+        "export": {
+            "margins": _default_layout_margins(plot_id, "export"),
+            "title_xy": None,
+            "suptitle_xy": None,
+            "legend_anchor": None,
+            "legend_anchor_y": None,
+            "legend_loc": None,
+            "cycle_legend_anchor": None,
+            "cycle_legend_loc": None,
+            "xlabel_pad_pts": None,
+            "axis_labelpads": {},
+            "detached_spine_offset": None,
+            "detached_labelpad": None,
+        },
+        "mirror_detached_labelpad": False,
+    }
+    if not isinstance(value, dict):
+        value = {}
+    normalized: Dict[str, Any] = {
+        "mirror_detached_labelpad": bool(value.get("mirror_detached_labelpad", False))
+    }
+    normalize_loc_fn = globals().get("_normalize_legend_loc_value")
+    if not callable(normalize_loc_fn):
+        def _fallback_normalize_legend_loc_value(v):
+            if isinstance(v, str):
+                v = v.strip()
+                return v or None
+            try:
+                return int(v)
+            except Exception:
+                return None
+
+        normalize_loc_fn = _fallback_normalize_legend_loc_value
+    for mode in ("display", "export"):
+        section = value.get(mode, {}) if isinstance(value.get(mode), dict) else {}
+        defaults_section = defaults[mode]
+        normalized_section = {
+            "margins": _normalize_layout_margins(
+                section.get("margins"), defaults_section["margins"]
+            ),
+            "title_xy": _normalize_layout_xy(section.get("title_xy")),
+            "suptitle_xy": _normalize_layout_xy(section.get("suptitle_xy")),
+            "legend_anchor": _validated_anchor_pair(section.get("legend_anchor")),
+            "legend_loc": normalize_loc_fn(section.get("legend_loc")),
+            "cycle_legend_anchor": _validated_anchor_pair(
+                section.get("cycle_legend_anchor")
+            ),
+            "cycle_legend_loc": normalize_loc_fn(
+                section.get("cycle_legend_loc")
+            ),
+            "axis_labelpads": {},
+            "xlabel_pad_pts": None,
+            "detached_spine_offset": None,
+            "detached_labelpad": None,
+            "legend_anchor_y": None,
+        }
+        raw_anchor_y = section.get("legend_anchor_y")
+        if raw_anchor_y is not None:
+            try:
+                anchor_y = float(raw_anchor_y)
+            except Exception:
+                anchor_y = None
+            if anchor_y is not None and math.isfinite(anchor_y):
+                normalized_section["legend_anchor_y"] = max(-0.1, min(1.1, anchor_y))
+        raw_xlabel_pad = section.get("xlabel_pad_pts")
+        if raw_xlabel_pad is not None:
+            try:
+                pad_value = float(raw_xlabel_pad)
+            except Exception:
+                pad_value = None
+            if pad_value is not None and math.isfinite(pad_value):
+                normalized_section["xlabel_pad_pts"] = pad_value
+        raw_pad_overrides = section.get("axis_labelpads")
+        if isinstance(raw_pad_overrides, dict):
+            axis_labelpads: Dict[str, float] = {}
+            for key, raw_value in raw_pad_overrides.items():
+                try:
+                    pad_value = float(raw_value)
+                except Exception:
+                    continue
+                if not math.isfinite(pad_value):
+                    continue
+                axis_labelpads[str(key)] = pad_value
+            normalized_section["axis_labelpads"] = axis_labelpads
+        raw_spine_offset = section.get("detached_spine_offset")
+        if raw_spine_offset is not None:
+            try:
+                offset_value = float(raw_spine_offset)
+            except Exception:
+                offset_value = None
+            if offset_value is not None and math.isfinite(offset_value):
+                normalized_section["detached_spine_offset"] = offset_value
+        raw_detached_pad = section.get("detached_labelpad")
+        if raw_detached_pad is not None:
+            try:
+                pad_value = float(raw_detached_pad)
+            except Exception:
+                pad_value = None
+            if pad_value is not None and math.isfinite(pad_value):
+                normalized_section["detached_labelpad"] = pad_value
+        normalized[mode] = normalized_section
+    return normalized
+
+
+def _normalize_layout_profiles(value: Any) -> Dict[str, Dict[str, Any]]:
+    profiles: Dict[str, Dict[str, Any]] = {}
+    if isinstance(value, dict):
+        for plot_id, profile in value.items():
+            if not isinstance(plot_id, str) or not plot_id.strip():
+                continue
+            profiles[plot_id] = _normalize_layout_profile(profile, plot_id)
+    for plot_id in _DEFAULT_LAYOUT_PLOT_IDS:
+        if plot_id not in profiles:
+            profiles[plot_id] = _normalize_layout_profile({}, plot_id)
+    return profiles
+
+
+def _get_layout_profile(plot_id: str) -> Dict[str, Any]:
+    profiles = settings.get("layout_profiles")
+    if not isinstance(profiles, dict):
+        profiles = _normalize_layout_profiles(profiles)
+        settings["layout_profiles"] = profiles
+    profile = profiles.get(plot_id)
+    if not isinstance(profile, dict):
+        profile = _normalize_layout_profile({}, plot_id)
+        profiles[plot_id] = profile
+    return profile
+
+
+def _layout_profile_section(profile: Mapping[str, Any], mode: str) -> Dict[str, Any]:
+    key = "export" if str(mode).lower() == "export" else "display"
+    section = profile.get(key, {})
+    return section if isinstance(section, dict) else {}
+
+
+def _apply_title_positions(
+    fig: Figure,
+    *,
+    title_xy: Optional[Tuple[float, float]] = None,
+    suptitle_xy: Optional[Tuple[float, float]] = None,
+) -> None:
+    if fig is None:
+        return
+    def _apply_text_position(text_artist, target_xy) -> None:
+        if text_artist is None or target_xy is None:
+            return
+        try:
+            ax = getattr(text_artist, "axes", None)
+            if ax is not None:
+                try:
+                    if text_artist.get_transform() == ax.transAxes:
+                        fig_ref = getattr(text_artist, "figure", None) or ax.figure
+                        if fig_ref is not None:
+                            display_xy = fig_ref.transFigure.transform(target_xy)
+                            axes_xy = ax.transAxes.inverted().transform(display_xy)
+                            text_artist.set_position(axes_xy)
+                            return
+                except Exception:
+                    pass
+            text_artist.set_position(target_xy)
+        except Exception:
+            pass
+
+    title_artist = getattr(fig, "_gl260_title_text", None)
+    _apply_text_position(title_artist, title_xy)
+    suptitle_artist = getattr(fig, "_gl260_suptitle_text", None)
+    if suptitle_artist is None:
+        suptitle_artist = getattr(fig, "_suptitle", None)
+    _apply_text_position(suptitle_artist, suptitle_xy)
+
+
+def _apply_layout_profile_to_figure(fig: Figure, plot_id: str, mode: str) -> None:
+    if fig is None or not plot_id:
+        return
+    profile = _get_layout_profile(plot_id)
+    section = _layout_profile_section(profile, mode)
+    margins = section.get("margins")
+    axes = []
+    for axis in fig.get_axes():
+        if axis is None:
+            continue
+        try:
+            if not axis.get_visible():
+                continue
+        except Exception:
+            pass
+        if getattr(axis, "_gl260_legend_only", False):
+            continue
+        axes.append(axis)
+    axis_labelpads = section.get("axis_labelpads", {})
+    mirror_detached_labelpad = bool(profile.get("mirror_detached_labelpad", False))
+    detached_labelpad = section.get("detached_labelpad")
+    detached_spine_offset = section.get("detached_spine_offset")
+    primary_axis = None
+    right_axis = None
+    third_axis = None
+    for axis in axes:
+        role = getattr(axis, "_gl260_axis_role", None)
+        if role == "primary" and primary_axis is None:
+            primary_axis = axis
+        elif role == "right" and right_axis is None:
+            right_axis = axis
+        elif role == "third" and third_axis is None:
+            third_axis = axis
+    if primary_axis is None and axes:
+        primary_axis = axes[0]
+    if isinstance(axis_labelpads, dict):
+        if primary_axis is not None and "x" in axis_labelpads:
+            try:
+                primary_axis.xaxis.set_labelpad(axis_labelpads["x"])
+            except Exception:
+                pass
+        if primary_axis is not None and "primary" in axis_labelpads:
+            try:
+                primary_axis.yaxis.set_labelpad(axis_labelpads["primary"])
+            except Exception:
+                pass
+        if right_axis is not None:
+            pad_value = axis_labelpads.get("right")
+            if pad_value is None:
+                pad_value = axis_labelpads.get("temperature")
+            if pad_value is not None:
+                try:
+                    right_axis.yaxis.set_labelpad(pad_value)
+                except Exception:
+                    pass
+    if third_axis is not None:
+        detached_pad_value = None
+        if mirror_detached_labelpad:
+            if isinstance(axis_labelpads, dict):
+                detached_pad_value = axis_labelpads.get("right")
+                if detached_pad_value is None:
+                    detached_pad_value = axis_labelpads.get("temperature")
+            if detached_pad_value is None and right_axis is not None:
+                try:
+                    detached_pad_value = float(right_axis.yaxis.labelpad)
+                except Exception:
+                    detached_pad_value = None
+        elif detached_labelpad is not None:
+            detached_pad_value = detached_labelpad
+        elif isinstance(axis_labelpads, dict):
+            detached_pad_value = axis_labelpads.get("third")
+            if detached_pad_value is None:
+                detached_pad_value = axis_labelpads.get("derivative")
+        if detached_pad_value is not None:
+            try:
+                third_axis.yaxis.set_labelpad(detached_pad_value)
+            except Exception:
+                pass
+    if detached_spine_offset is not None and third_axis is not None:
+        try:
+            offset_value = float(detached_spine_offset)
+        except Exception:
+            offset_value = None
+        if offset_value is not None and math.isfinite(offset_value):
+            try:
+                third_axis.spines["right"].set_position(("axes", offset_value))
+            except Exception:
+                pass
+
+    fig_legends = [lg for lg in getattr(fig, "legends", []) if lg is not None]
+    axis_legends = []
+    axis_legend_map = {}
+    for axis in axes:
+        try:
+            legend = axis.get_legend()
+        except Exception:
+            legend = None
+        if legend is None:
+            continue
+        axis_legends.append(legend)
+        axis_legend_map[legend] = axis
+    main_legend = fig_legends[0] if fig_legends else None
+    if main_legend is None:
+        for legend in axis_legends:
+            if getattr(legend, "_cycle_overlay_legend", False):
+                continue
+            main_legend = legend
+            break
+    legend_anchor = section.get("legend_anchor")
+    legend_loc = section.get("legend_loc")
+    legend_anchor_y = section.get("legend_anchor_y")
+    if main_legend is not None:
+        anchor_to_apply = legend_anchor
+        if anchor_to_apply is None and legend_anchor_y is not None:
+            anchor_to_apply = (0.5, legend_anchor_y)
+        if anchor_to_apply is not None:
+            _apply_legend_anchor_to_artist(
+                main_legend,
+                anchor_to_apply,
+                transform=fig.transFigure,
+                loc_override=legend_loc,
+            )
+        elif legend_loc is not None:
+            try:
+                main_legend.set_loc(_normalize_legend_loc_value(legend_loc))
+            except Exception:
+                pass
+
+    cycle_anchor = section.get("cycle_legend_anchor")
+    cycle_loc = section.get("cycle_legend_loc")
+    if cycle_anchor is not None:
+        for legend in axis_legends:
+            if not getattr(legend, "_cycle_overlay_legend", False):
+                continue
+            axis = axis_legend_map.get(legend)
+            _apply_legend_anchor_to_artist(
+                legend,
+                cycle_anchor,
+                target_ax=axis,
+                loc_override=cycle_loc,
+            )
+
+    if plot_id == "fig_combined_triple_axis":
+        layout_mgr = getattr(fig, "_gl260_layout_manager", None)
+        if layout_mgr is not None:
+            if isinstance(margins, dict):
+                for key, attr in (
+                    ("left", "_baseline_left"),
+                    ("right", "_baseline_right"),
+                    ("top", "_baseline_top"),
+                    ("bottom", "_baseline_bottom"),
+                ):
+                    try:
+                        raw_value = float(margins.get(key))
+                    except Exception:
+                        raw_value = None
+                    if raw_value is not None and math.isfinite(raw_value):
+                        setattr(
+                            layout_mgr, attr, max(0.0, min(1.0, float(raw_value)))
+                        )
+            if legend_anchor is not None:
+                layout_mgr.legend_anchor = _validated_anchor_pair(legend_anchor)
+            if legend_anchor_y is not None:
+                try:
+                    anchor_value = float(legend_anchor_y)
+                except Exception:
+                    anchor_value = None
+                if anchor_value is not None and math.isfinite(anchor_value):
+                    layout_mgr.legend_anchor_y = max(-0.1, min(1.1, anchor_value))
+            xlabel_pad_value = section.get("xlabel_pad_pts")
+            if xlabel_pad_value is None and isinstance(axis_labelpads, dict):
+                xlabel_pad_value = axis_labelpads.get("x")
+            if xlabel_pad_value is not None:
+                try:
+                    layout_mgr.xlabel_pad_pts = float(xlabel_pad_value)
+                except Exception:
+                    pass
+            if axes:
+                layout_mgr.register_axes(*axes)
+            title_artist = getattr(fig, "_gl260_title_text", None)
+            if title_artist is not None:
+                layout_mgr.register_artist("title", title_artist)
+            suptitle_artist = getattr(fig, "_gl260_suptitle_text", None)
+            if suptitle_artist is None:
+                suptitle_artist = getattr(fig, "_suptitle", None)
+            if suptitle_artist is not None:
+                layout_mgr.register_artist("suptitle", suptitle_artist)
+            xlabel_artist = getattr(fig, "_gl260_xlabel_text", None)
+            if xlabel_artist is not None:
+                layout_mgr.register_artist("xlabel", xlabel_artist)
+            if main_legend is not None:
+                layout_mgr.register_artist("plot_legend", main_legend)
+            for legend in axis_legends:
+                if getattr(legend, "_cycle_overlay_legend", False):
+                    layout_mgr.register_artist("cycle_legend", legend)
+                    break
+            try:
+                layout_mgr.solve()
+            except Exception:
+                pass
+
+    if plot_id != "fig_combined_triple_axis":
+        title_state = getattr(fig, "_gl260_title_state", {}) or {}
+        title_pad_pts = float(title_state.get("title_pad_pts", 0.0) or 0.0)
+        suptitle_pad_pts = float(title_state.get("suptitle_pad_pts", 0.0) or 0.0)
+        suptitle_y = title_state.get("suptitle_y")
+        layout_mgr = PlotLayoutManager(
+            fig,
+            mode=mode,
+            baseline_margins=margins,
+            legend_anchor=legend_anchor,
+            legend_anchor_y=legend_anchor_y,
+            title_pad_pts=title_pad_pts,
+            suptitle_pad_pts=suptitle_pad_pts,
+            suptitle_y=suptitle_y if suptitle_y is not None else DEFAULT_COMBINED_SUPTITLE_Y,
+            top_margin_pct=0.0,
+            legend_gap_pts=0.0,
+            xlabel_tick_gap_pts=0.0,
+            legend_margin_pts=0.0,
+        )
+        if axes:
+            layout_mgr.register_axes(*axes)
+        title_artist = getattr(fig, "_gl260_title_text", None)
+        if title_artist is not None:
+            layout_mgr.register_artist("title", title_artist)
+        suptitle_artist = getattr(fig, "_gl260_suptitle_text", None)
+        if suptitle_artist is None:
+            suptitle_artist = getattr(fig, "_suptitle", None)
+        if suptitle_artist is not None:
+            layout_mgr.register_artist("suptitle", suptitle_artist)
+        if main_legend is not None:
+            layout_mgr.register_artist("plot_legend", main_legend)
+        try:
+            layout_mgr.solve()
+        except Exception:
+            pass
+        fig._gl260_layout_manager = layout_mgr  # type: ignore[attr-defined]
+
+    _apply_title_positions(
+        fig,
+        title_xy=section.get("title_xy"),
+        suptitle_xy=section.get("suptitle_xy"),
+    )
 
 
 class AnnotationHistory:
@@ -4778,7 +5302,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.5.11"
+APP_VERSION = "V1.6.0"
 
 
 DEBUG_SERIES_FLOW = False
@@ -14620,6 +15144,9 @@ else:
 
 settings["plot_elements"] = _normalize_plot_elements(settings.get("plot_elements"))
 settings["annotations_ui"] = _normalize_annotations_ui(settings.get("annotations_ui"))
+settings["layout_profiles"] = _normalize_layout_profiles(
+    settings.get("layout_profiles")
+)
 
 
 initial_cached_markers = _normalize_cached_cycle_markers(
@@ -16294,6 +16821,10 @@ def main_plotting_function(
             **_legend_shadowbox_kwargs(),
         )
         try:
+            legend._cycle_overlay_legend = True  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        try:
             legend.set_draggable(True)
         except Exception:
             _make_legend_draggable(legend)
@@ -16754,30 +17285,43 @@ def _measure_axis_label_extension(axis: Optional[Axes], renderer) -> float:
         return 0.0
 
 
-def _validated_anchor_pair(anchor: Any) -> Optional[Tuple[float, float]]:
-    """Normalize persisted legend anchors into a safe (x, y) tuple."""
+def _apply_legend_anchor_to_artist(
+    legend_obj,
+    anchor_values,
+    *,
+    target_ax: Optional[Axes] = None,
+    transform=None,
+    loc_override=None,
+) -> bool:
+    if legend_obj is None:
+        return False
+    anchor_pair = _validated_anchor_pair(anchor_values)
+    if anchor_pair is None:
+        return False
+    if transform is None and target_ax is not None:
+        transform = target_ax.transAxes
+    if transform is None:
+        try:
+            transform = legend_obj.figure.transFigure
+        except Exception:
+            transform = None
     try:
-        values = [float(v) for v in anchor]
+        if transform is None:
+            legend_obj.set_bbox_to_anchor(anchor_pair)
+        else:
+            legend_obj.set_bbox_to_anchor(anchor_pair, transform=transform)
     except Exception:
-        return None
-    if len(values) < 2:
-        return None
-    x0, y0 = values[0], values[1]
-    if -0.05 <= x0 <= 1.05 and -0.05 <= y0 <= 1.05:
-        return (x0, y0)
-    return None
-
-
-def _normalize_legend_loc_value(value: Any) -> Optional[Union[str, int]]:
-    """Normalize persisted legend loc values for reuse with matplotlib."""
-    if isinstance(value, str):
-        value = value.strip()
-        return value or None
-    try:
-        loc_int = int(value)
-        return loc_int
-    except Exception:
-        return None
+        return False
+    resolved_loc = _normalize_legend_loc_value(loc_override)
+    if resolved_loc is not None:
+        try:
+            legend_obj.set_loc(resolved_loc)
+        except Exception:
+            try:
+                legend_obj._loc = resolved_loc  # type: ignore[attr-defined]
+            except Exception:
+                pass
+    return True
 
 
 def _position_combined_legend(
@@ -17004,6 +17548,7 @@ class PlotLayoutManager:
         fig: Figure,
         *,
         mode: str = "display",
+        baseline_margins: Optional[Mapping[str, float]] = None,
         left_pad_pct: float = 0.0,
         right_pad_pct: float = 0.0,
         export_pad_pts: float = 0.0,
@@ -17014,9 +17559,30 @@ class PlotLayoutManager:
         suptitle_pad_pts: float = DEFAULT_COMBINED_SUPTITLE_PAD_PTS,
         suptitle_y: float = DEFAULT_COMBINED_SUPTITLE_Y,
         top_margin_pct: float = DEFAULT_COMBINED_TOP_MARGIN_PCT,
+        legend_anchor: Optional[Tuple[float, float]] = None,
+        legend_anchor_y: Optional[float] = None,
+        xlabel_pad_pts: float = 0.0,
     ) -> None:
         self.fig = fig
         self.mode = "export" if str(mode).lower() == "export" else "display"
+        if baseline_margins is None:
+            baseline_margins = {}
+        self._baseline_left = None
+        self._baseline_right = None
+        self._baseline_top = None
+        self._baseline_bottom = None
+        for key, attr in (
+            ("left", "_baseline_left"),
+            ("right", "_baseline_right"),
+            ("top", "_baseline_top"),
+            ("bottom", "_baseline_bottom"),
+        ):
+            try:
+                raw = float(baseline_margins.get(key))
+            except Exception:
+                raw = None
+            if raw is not None and math.isfinite(raw):
+                setattr(self, attr, max(0.0, min(1.0, raw)))
         self.left_pad_pct = float(left_pad_pct or 0.0)
         self.right_pad_pct = float(right_pad_pct or 0.0)
         self.export_pad_pts = float(export_pad_pts or 0.0)
@@ -17027,6 +17593,16 @@ class PlotLayoutManager:
         self.suptitle_pad_pts = float(suptitle_pad_pts or 0.0)
         self.suptitle_y = float(suptitle_y or DEFAULT_COMBINED_SUPTITLE_Y)
         self.top_margin_pct = float(top_margin_pct or DEFAULT_COMBINED_TOP_MARGIN_PCT)
+        self.legend_anchor = _validated_anchor_pair(legend_anchor)
+        self.legend_anchor_y = None
+        if legend_anchor_y is not None:
+            try:
+                anchor_value = float(legend_anchor_y)
+            except Exception:
+                anchor_value = None
+            if anchor_value is not None and math.isfinite(anchor_value):
+                self.legend_anchor_y = max(-0.1, min(1.1, anchor_value))
+        self.xlabel_pad_pts = float(xlabel_pad_pts or 0.0)
         self.legend_alignment = "center"
         self._axes: List[Axes] = []
         self._artists: Dict[str, Any] = {}
@@ -17152,20 +17728,41 @@ class PlotLayoutManager:
         title_gap_frac = max(self.title_pad_pts / fig_h_pts, 0.01)
         suptitle_gap_frac = max(self.suptitle_pad_pts / fig_h_pts, 0.01)
         epsilon_frac = 3.0 / fig_h_pts
+        xlabel_pad_frac = self.xlabel_pad_pts / fig_h_pts
 
+        base_left = (
+            self._baseline_left
+            if self._baseline_left is not None
+            else self.fig.subplotpars.left
+        )
+        base_right = (
+            self._baseline_right
+            if self._baseline_right is not None
+            else self.fig.subplotpars.right
+        )
+        base_bottom = (
+            self._baseline_bottom
+            if self._baseline_bottom is not None
+            else self.fig.subplotpars.bottom
+        )
+        base_top = (
+            self._baseline_top
+            if self._baseline_top is not None
+            else self.fig.subplotpars.top
+        )
         left = max(
-            self.fig.subplotpars.left,
+            base_left,
             self.left_pad_pct / 100.0 + pad_frac_x,
             0.08,
         )
         right = min(
-            self.fig.subplotpars.right,
+            base_right,
             1.0 - self.right_pad_pct / 100.0 - pad_frac_x,
             0.98,
         )
-        bottom = max(self.fig.subplotpars.bottom, pad_frac_y, 0.1)
+        bottom = max(base_bottom, pad_frac_y, 0.1)
         top = min(
-            self.fig.subplotpars.top,
+            base_top,
             max(0.6, 1.0 - (self.top_margin_pct / 100.0) - pad_frac_y),
         )
         last_state = None
@@ -17212,13 +17809,24 @@ class PlotLayoutManager:
                     except Exception:
                         pass
 
+            anchor_x = None
+            anchor_y = None
+            if self.legend_anchor is not None:
+                anchor_x, anchor_y = self.legend_anchor
             legend_anchor_y = max(legend_margin_frac, pad_frac_y)
+            if anchor_y is not None:
+                legend_anchor_y = max(legend_anchor_y, anchor_y)
+            if self.legend_anchor_y is not None:
+                legend_anchor_y = max(legend_anchor_y, self.legend_anchor_y)
             if legend is not None:
-                loc, anchor_x = self._legend_anchor(
-                    max(0.0, pad_frac_x), main_center_x
-                )
+                loc = None
+                if anchor_x is None:
+                    loc, anchor_x = self._legend_anchor(
+                        max(0.0, pad_frac_x), main_center_x
+                    )
                 try:
-                    legend.set_loc(loc)
+                    if loc is not None:
+                        legend.set_loc(loc)
                     legend.set_bbox_to_anchor(
                         (anchor_x, legend_anchor_y),
                         transform=self.fig.transFigure,
@@ -17231,9 +17839,10 @@ class PlotLayoutManager:
             if legend is not None and legend_bbox is not None:
                 if legend_bbox.y0 < legend_anchor_y:
                     shift = legend_anchor_y - legend_bbox.y0
-                    loc, anchor_x = self._legend_anchor(
-                        max(0.0, pad_frac_x), main_center_x
-                    )
+                    if anchor_x is None:
+                        loc, anchor_x = self._legend_anchor(
+                            max(0.0, pad_frac_x), main_center_x
+                        )
                     try:
                         legend.set_bbox_to_anchor(
                             (anchor_x, legend_bbox.y0 + shift),
@@ -17254,6 +17863,7 @@ class PlotLayoutManager:
                     else legend_anchor_y
                 )
                 desired_y = baseline + legend_xlabel_gap_frac + (xlabel_height / 2.0)
+                desired_y += xlabel_pad_frac
                 try:
                     xlabel_anchor_x = main_center_x
                     if xlabel_anchor_x is None:
@@ -17432,6 +18042,9 @@ def build_combined_triple_axis_figure(
     suptitle_pad_pts=DEFAULT_COMBINED_SUPTITLE_PAD_PTS,
     suptitle_y=DEFAULT_COMBINED_SUPTITLE_Y,
     top_margin_pct=DEFAULT_COMBINED_TOP_MARGIN_PCT,
+    baseline_margins=None,
+    legend_anchor_y=None,
+    xlabel_pad_pts=None,
     axis_label_overrides=None,
     labelpad_overrides=None,
     left_dataset_key="y1",
@@ -17532,26 +18145,6 @@ def build_combined_triple_axis_figure(
     def _text_safe(value: Any) -> str:
         return svg_safe(value)
 
-    def _apply_legend_anchor(
-        legend_obj, anchor_values, target_ax: Axes, loc_override=None
-    ) -> bool:
-        anchor_pair = _validated_anchor_pair(anchor_values)
-        if anchor_pair is None:
-            return False
-        try:
-            legend_obj.set_bbox_to_anchor(anchor_pair, transform=target_ax.transAxes)
-        except Exception:
-            return False
-        resolved_loc = _normalize_legend_loc_value(loc_override) or "lower left"
-        try:
-            legend_obj.set_loc(resolved_loc)
-        except Exception:
-            try:
-                legend_obj._loc = resolved_loc  # type: ignore[attr-defined]
-            except Exception:
-                pass
-        return True
-
     def _label_or_default(key: str, default: str) -> str:
         raw = label_overrides.get(key)
         if raw is None:
@@ -17609,6 +18202,12 @@ def build_combined_triple_axis_figure(
         MIN_COMBINED_TOP_MARGIN_PCT,
         MAX_COMBINED_TOP_MARGIN_PCT,
     )
+    try:
+        xlabel_pad_value = float(xlabel_pad_pts) if xlabel_pad_pts is not None else 0.0
+    except Exception:
+        xlabel_pad_value = 0.0
+    if not math.isfinite(xlabel_pad_value):
+        xlabel_pad_value = 0.0
 
     def _apply_axis_ticks(axis, auto_flag, major_tick, minor_tick):
         if auto_flag:
@@ -18070,6 +18669,10 @@ def build_combined_triple_axis_figure(
         fontfamily=family_value if family_value else None,
         x=main_center_x,
     )
+    try:
+        fig._gl260_xlabel_text = supxlabel  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
     legend_size = len(handles)
     main_legend = None
@@ -18102,17 +18705,42 @@ def build_combined_triple_axis_figure(
             main_legend._combined_main_legend = True  # type: ignore[attr-defined]
         except Exception:
             pass
+        if legend_anchor is not None:
+            _apply_legend_anchor_to_artist(
+                main_legend,
+                legend_anchor,
+                transform=fig.transFigure,
+                loc_override=legend_loc,
+            )
+        elif legend_loc is not None:
+            try:
+                main_legend.set_loc(_normalize_legend_loc_value(legend_loc))
+            except Exception:
+                pass
 
     cycle_legend = _add_cycle_legend(
         ax,
         combined_peak_artist,
         combined_trough_artist,
     )
+    if cycle_legend is not None and cycle_legend_anchor is not None:
+        _apply_legend_anchor_to_artist(
+            cycle_legend,
+            cycle_legend_anchor,
+            target_ax=ax,
+            loc_override=cycle_legend_loc,
+        )
+    elif cycle_legend is not None and cycle_legend_loc is not None:
+        try:
+            cycle_legend.set_loc(_normalize_legend_loc_value(cycle_legend_loc))
+        except Exception:
+            pass
 
     # Layout solve: measure bboxes + adjust margins in a deterministic pass.
     layout_manager = PlotLayoutManager(
         fig,
         mode=mode_value,
+        baseline_margins=baseline_margins,
         left_pad_pct=left_pad_value,
         right_pad_pct=right_pad_value,
         export_pad_pts=export_pad_pts,
@@ -18123,6 +18751,9 @@ def build_combined_triple_axis_figure(
         suptitle_pad_pts=suptitle_pad_value,
         suptitle_y=suptitle_y_value,
         top_margin_pct=top_margin_value,
+        legend_anchor=legend_anchor,
+        legend_anchor_y=legend_anchor_y,
+        xlabel_pad_pts=xlabel_pad_value,
     )
     layout_manager.register_axes(ax, ax_temp, ax_deriv)
     layout_manager.register_artist("title", title_artist)
@@ -19442,6 +20073,8 @@ class UnifiedApp(tk.Tk):
         self._plot_annotation_panels: Dict[str, AnnotationsPanel] = {}
         self._plot_element_windows: Dict[str, tk.Toplevel] = {}
         self._plot_element_editors: Dict[str, Dict[str, Any]] = {}
+        self._layout_editor_windows: Dict[str, tk.Toplevel] = {}
+        self._layout_editor_states: Dict[str, Dict[str, Any]] = {}
         raw_series_settings = settings.get("scatter_series", {})
         self._stored_scatter_series = self._sanitize_series_settings_dict(
             raw_series_settings
@@ -22331,6 +22964,11 @@ class UnifiedApp(tk.Tk):
                 if not plot_id:
                     plot_id = getattr(frame, "_plot_id", None)
                 if plot_id:
+                    try:
+                        self._teardown_layout_editor(plot_id, apply_changes=False)
+                    except Exception:
+                        pass
+                if plot_id:
                     self._apply_plot_elements(new_fig, plot_id)
             except Exception:
                 pass
@@ -23974,6 +24612,1098 @@ class UnifiedApp(tk.Tk):
         _render_all()
         _refresh_listbox()
 
+    def _apply_layout_editor_changes(
+        self,
+        plot_id: str,
+        fig: Figure,
+        canvas: Optional[FigureCanvasTkAgg],
+        pending: Dict[str, Any],
+        target_mode: str,
+    ) -> None:
+        if fig is None or not plot_id:
+            return
+        mode_value = (target_mode or "display").strip().lower()
+        if mode_value not in {"display", "export", "both"}:
+            mode_value = "display"
+        modes = ["display", "export"] if mode_value == "both" else [mode_value]
+        profile = _get_layout_profile(plot_id)
+        for mode in modes:
+            section = profile.get(mode)
+            if not isinstance(section, dict):
+                section = {}
+                profile[mode] = section
+            axis_labelpads = section.get("axis_labelpads")
+            if not isinstance(axis_labelpads, dict):
+                axis_labelpads = {}
+                section["axis_labelpads"] = axis_labelpads
+            pending_pads = pending.get("axis_labelpads", {})
+            if isinstance(pending_pads, dict):
+                for key, value in pending_pads.items():
+                    try:
+                        pad_value = float(value)
+                    except Exception:
+                        continue
+                    if math.isfinite(pad_value):
+                        axis_labelpads[str(key)] = pad_value
+            if pending.get("xlabel_pad_pts") is not None:
+                try:
+                    pad_value = float(pending["xlabel_pad_pts"])
+                except Exception:
+                    pad_value = None
+                if pad_value is not None and math.isfinite(pad_value):
+                    section["xlabel_pad_pts"] = pad_value
+            if pending.get("detached_spine_offset") is not None:
+                try:
+                    offset_value = float(pending["detached_spine_offset"])
+                except Exception:
+                    offset_value = None
+                if offset_value is not None and math.isfinite(offset_value):
+                    section["detached_spine_offset"] = offset_value
+            if pending.get("detached_labelpad") is not None:
+                try:
+                    pad_value = float(pending["detached_labelpad"])
+                except Exception:
+                    pad_value = None
+                if pad_value is not None and math.isfinite(pad_value):
+                    section["detached_labelpad"] = pad_value
+            if pending.get("title_xy") is not None:
+                section["title_xy"] = tuple(pending["title_xy"])
+            if pending.get("suptitle_xy") is not None:
+                section["suptitle_xy"] = tuple(pending["suptitle_xy"])
+            if pending.get("legend_anchor") is not None:
+                section["legend_anchor"] = tuple(pending["legend_anchor"])
+            if pending.get("legend_loc") is not None:
+                section["legend_loc"] = pending["legend_loc"]
+            if pending.get("cycle_legend_anchor") is not None:
+                section["cycle_legend_anchor"] = tuple(pending["cycle_legend_anchor"])
+            if pending.get("cycle_legend_loc") is not None:
+                section["cycle_legend_loc"] = pending["cycle_legend_loc"]
+        try:
+            _save_settings_to_disk()
+        except Exception:
+            pass
+        if mode_value in {"display", "both"}:
+            try:
+                _apply_layout_profile_to_figure(fig, plot_id, "display")
+            except Exception:
+                pass
+            try:
+                if canvas is not None:
+                    canvas.draw_idle()
+            except Exception:
+                pass
+
+    def _teardown_layout_editor(
+        self,
+        plot_id: str,
+        *,
+        apply_changes: bool = False,
+        target_override: Optional[str] = None,
+    ) -> None:
+        state = self._layout_editor_states.get(plot_id)
+        if state is None:
+            window = self._layout_editor_windows.pop(plot_id, None)
+            if window is not None:
+                try:
+                    window.destroy()
+                except Exception:
+                    pass
+            return
+        fig = state.get("fig")
+        canvas = state.get("canvas")
+        pending = state.get("pending") or {}
+        if apply_changes and fig is not None:
+            target_mode = target_override or "display"
+            target_var = state.get("apply_target_var")
+            if target_override is None and target_var is not None:
+                try:
+                    target_mode = target_var.get()
+                except Exception:
+                    target_mode = "display"
+            try:
+                self._apply_layout_editor_changes(
+                    plot_id,
+                    fig,
+                    canvas,
+                    pending,
+                    str(target_mode),
+                )
+            except Exception:
+                pass
+        for cid in state.get("cids", []) or []:
+            try:
+                if canvas is not None:
+                    canvas.mpl_disconnect(cid)
+            except Exception:
+                pass
+        for artist in state.get("overlay_artists", []) or []:
+            if artist is None:
+                continue
+            try:
+                artist.remove()
+            except Exception:
+                pass
+        try:
+            if canvas is not None:
+                canvas.draw_idle()
+        except Exception:
+            pass
+        self._layout_editor_states.pop(plot_id, None)
+        window = self._layout_editor_windows.pop(plot_id, None)
+        if window is not None:
+            try:
+                window.destroy()
+            except Exception:
+                pass
+
+    def _open_layout_editor(
+        self, canvas: FigureCanvasTkAgg, plot_id: Optional[str]
+    ) -> None:
+        if not plot_id or canvas is None:
+            return
+        existing = self._layout_editor_windows.get(plot_id)
+        if existing is not None and existing.winfo_exists():
+            try:
+                existing.deiconify()
+                existing.lift()
+                existing.focus_force()
+            except Exception:
+                pass
+            return
+        fig = getattr(canvas, "figure", None)
+        if fig is None:
+            return
+
+        from matplotlib import patches as mpatches
+        from matplotlib.lines import Line2D
+        from matplotlib.transforms import Bbox
+
+        profile = _get_layout_profile(plot_id)
+        section = _layout_profile_section(profile, "display")
+        mirror_detached_labelpad = bool(profile.get("mirror_detached_labelpad", False))
+
+        editor = tk.Toplevel(self)
+        editor.title("Layout Editor")
+        editor.transient(self)
+        editor.resizable(False, False)
+        editor.minsize(420, 220)
+        self._layout_editor_windows[plot_id] = editor
+
+        root = ttk.Frame(editor, padding=10)
+        root.pack(fill="both", expand=True)
+        instruction = ttk.Label(
+            root,
+            text=(
+                "Drag the handles on the plot to stage layout changes. "
+                "Changes apply only on Apply or Close."
+            ),
+            wraplength=380,
+            justify="left",
+        )
+        instruction.pack(anchor="w", pady=(0, 8))
+
+        target_row = ttk.Frame(root)
+        target_row.pack(anchor="w", pady=(0, 8))
+        ttk.Label(target_row, text="Apply target:").pack(side="left")
+        apply_target_var = tk.StringVar(value="display")
+        ttk.Radiobutton(
+            target_row,
+            text="Preview",
+            value="display",
+            variable=apply_target_var,
+        ).pack(side="left", padx=(8, 0))
+        ttk.Radiobutton(
+            target_row,
+            text="Export",
+            value="export",
+            variable=apply_target_var,
+        ).pack(side="left", padx=(8, 0))
+        ttk.Radiobutton(
+            target_row,
+            text="Both",
+            value="both",
+            variable=apply_target_var,
+        ).pack(side="left", padx=(8, 0))
+
+        elements_label_var = tk.StringVar(value="")
+        elements_label = ttk.Label(
+            root, textvariable=elements_label_var, wraplength=380, justify="left"
+        )
+        elements_label.pack(anchor="w", pady=(0, 8))
+
+        actions = ttk.Frame(root)
+        actions.pack(anchor="e")
+
+        def _apply_now() -> None:
+            state = self._layout_editor_states.get(plot_id)
+            if state is None:
+                return
+            pending = state.get("pending") or {}
+            self._apply_layout_editor_changes(
+                plot_id,
+                fig,
+                canvas,
+                pending,
+                apply_target_var.get(),
+            )
+
+        ttk.Button(actions, text="Apply", command=_apply_now).pack(
+            side="right", padx=(6, 0)
+        )
+        ttk.Button(
+            actions,
+            text="Close",
+            command=lambda: self._teardown_layout_editor(
+                plot_id, apply_changes=True
+            ),
+        ).pack(side="right")
+
+        overlay_artists: List[Any] = []
+        elements: List[Dict[str, Any]] = []
+        pending: Dict[str, Any] = {
+            "axis_labelpads": {},
+            "xlabel_pad_pts": None,
+            "detached_spine_offset": None,
+            "detached_labelpad": None,
+            "title_xy": None,
+            "suptitle_xy": None,
+            "legend_anchor": None,
+            "legend_loc": None,
+            "cycle_legend_anchor": None,
+            "cycle_legend_loc": None,
+        }
+
+        def _register_artist(artist) -> None:
+            if artist is None:
+                return
+            overlay_artists.append(artist)
+            try:
+                fig.add_artist(artist)
+            except Exception:
+                pass
+            try:
+                artist._gl260_layout_editor_only = True
+            except Exception:
+                pass
+
+        def _figure_metrics() -> Tuple[float, float, float]:
+            fig_w_in, fig_h_in = fig.get_size_inches()
+            fig_w_px = max(fig_w_in * fig.dpi, 1.0)
+            fig_h_px = max(fig_h_in * fig.dpi, 1.0)
+            return fig_w_px, fig_h_px, float(fig.dpi)
+
+        def _to_fig_from_display(xy: Tuple[float, float]) -> Tuple[float, float]:
+            try:
+                return tuple(fig.transFigure.inverted().transform(xy))
+            except Exception:
+                return (0.5, 0.5)
+
+        def _text_pos_fig(text_artist) -> Tuple[float, float]:
+            if text_artist is None:
+                return (0.5, 0.5)
+            try:
+                pos = text_artist.get_position()
+            except Exception:
+                return (0.5, 0.5)
+            try:
+                ax = getattr(text_artist, "axes", None)
+                if ax is not None and text_artist.get_transform() == ax.transAxes:
+                    display_xy = ax.transAxes.transform(pos)
+                    return _to_fig_from_display(display_xy)
+            except Exception:
+                pass
+            try:
+                if text_artist.get_transform() == fig.transFigure:
+                    return tuple(pos)
+            except Exception:
+                pass
+            try:
+                display_xy = text_artist.get_transform().transform(pos)
+                return _to_fig_from_display(display_xy)
+            except Exception:
+                return (0.5, 0.5)
+
+        def _legend_loc_value(legend) -> str:
+            loc_map = {
+                0: "best",
+                1: "upper right",
+                2: "upper left",
+                3: "lower left",
+                4: "lower right",
+                5: "right",
+                6: "center left",
+                7: "center right",
+                8: "lower center",
+                9: "upper center",
+                10: "center",
+            }
+            try:
+                loc_value = legend.get_loc()
+            except Exception:
+                loc_value = getattr(legend, "_loc", "upper right")
+            if isinstance(loc_value, str):
+                loc_text = loc_value.strip().lower()
+            elif isinstance(loc_value, int):
+                loc_text = loc_map.get(loc_value, "upper right")
+            else:
+                loc_text = "upper right"
+            if loc_text == "best":
+                loc_text = "upper right"
+            return loc_text
+
+        def _anchor_from_bbox(bbox: Bbox, loc_text: str) -> Tuple[float, float]:
+            if bbox is None:
+                return (0.5, 0.5)
+            x0, y0, x1, y1 = bbox.x0, bbox.y0, bbox.x1, bbox.y1
+            cx = x0 + ((x1 - x0) / 2.0)
+            cy = y0 + ((y1 - y0) / 2.0)
+            loc_text = (loc_text or "upper right").lower()
+            if loc_text in {"upper left", "ul"}:
+                return (x0, y1)
+            if loc_text in {"upper center", "uc"}:
+                return (cx, y1)
+            if loc_text in {"upper right", "ur"}:
+                return (x1, y1)
+            if loc_text in {"lower left", "ll"}:
+                return (x0, y0)
+            if loc_text in {"lower center", "lc"}:
+                return (cx, y0)
+            if loc_text in {"lower right", "lr"}:
+                return (x1, y0)
+            if loc_text in {"center left", "cl", "left"}:
+                return (x0, cy)
+            if loc_text in {"center right", "cr", "right"}:
+                return (x1, cy)
+            return (cx, cy)
+
+        def _clamp_anchor(value: float) -> float:
+            return max(-0.1, min(1.1, float(value)))
+
+        def _make_handle(
+            fig_xy: Tuple[float, float],
+            *,
+            size_px: float = 10.0,
+            facecolor: str = "#ffd966",
+            edgecolor: str = "#997300",
+        ):
+            fig_w_px, fig_h_px, _dpi = _figure_metrics()
+            size_fx = size_px / fig_w_px
+            size_fy = size_px / fig_h_px
+            x0 = fig_xy[0] - (size_fx / 2.0)
+            y0 = fig_xy[1] - (size_fy / 2.0)
+            rect = mpatches.Rectangle(
+                (x0, y0),
+                size_fx,
+                size_fy,
+                transform=fig.transFigure,
+                facecolor=facecolor,
+                edgecolor=edgecolor,
+                linewidth=1.2,
+                zorder=30,
+            )
+            _register_artist(rect)
+            return rect, size_px
+
+        def _handle_hitbox(
+            display_xy: Tuple[float, float], size_px: float
+        ) -> Tuple[float, float, float, float]:
+            half = size_px / 2.0
+            return (
+                display_xy[0] - half,
+                display_xy[1] - half,
+                display_xy[0] + half,
+                display_xy[1] + half,
+            )
+
+        def _label_center_display(text_artist) -> Optional[Tuple[float, float]]:
+            if text_artist is None:
+                return None
+            try:
+                renderer = fig.canvas.get_renderer()
+            except Exception:
+                renderer = None
+            if renderer is None:
+                try:
+                    fig.canvas.draw()
+                    renderer = fig.canvas.get_renderer()
+                except Exception:
+                    renderer = None
+            if renderer is None:
+                return None
+            try:
+                bbox = text_artist.get_window_extent(renderer=renderer)
+            except Exception:
+                return None
+            return (bbox.x0 + bbox.width / 2.0, bbox.y0 + bbox.height / 2.0)
+
+        axes = []
+        for ax in fig.get_axes():
+            if ax is None:
+                continue
+            try:
+                if not ax.get_visible():
+                    continue
+            except Exception:
+                pass
+            if getattr(ax, "_gl260_legend_only", False):
+                continue
+            axes.append(ax)
+
+        axis_roles: List[Tuple[Axes, str]] = []
+        right_count = 0
+        for ax in axes:
+            role = getattr(ax, "_gl260_axis_role", None)
+            role_key = None
+            if isinstance(role, str):
+                role_key = role.strip().lower()
+            if role_key not in {"primary", "right", "third"}:
+                try:
+                    label_pos = ax.yaxis.get_label_position()
+                except Exception:
+                    label_pos = "left"
+                if label_pos == "right":
+                    role_key = "right" if right_count == 0 else "third"
+                    right_count += 1
+                else:
+                    role_key = "primary"
+            axis_roles.append((ax, role_key))
+
+        primary_axis = None
+        detached_axis = None
+        detached_offset = None
+        for ax, role in axis_roles:
+            if primary_axis is None and role == "primary":
+                primary_axis = ax
+            if role == "third" and detached_axis is None:
+                detached_axis = ax
+        if primary_axis is None and axes:
+            primary_axis = axes[0]
+        if detached_axis is not None:
+            try:
+                spine_pos = detached_axis.spines["right"].get_position()
+            except Exception:
+                spine_pos = None
+            if isinstance(spine_pos, tuple) and len(spine_pos) >= 2:
+                if spine_pos[0] == "axes":
+                    try:
+                        detached_offset = float(spine_pos[1])
+                    except Exception:
+                        detached_offset = None
+
+        title_artist = getattr(fig, "_gl260_title_text", None)
+        if title_artist is not None:
+            try:
+                if not str(title_artist.get_text() or "").strip():
+                    title_artist = None
+            except Exception:
+                pass
+        if title_artist is not None:
+            fig_xy = _text_pos_fig(title_artist)
+            handle, handle_px = _make_handle(fig_xy, facecolor="#d9ead3")
+            display_xy = fig.transFigure.transform(fig_xy)
+            elements.append(
+                {
+                    "kind": "title",
+                    "label": "Title",
+                    "handle": handle,
+                    "handle_px": handle_px,
+                    "base_handle_display": display_xy,
+                    "current_handle_display": display_xy,
+                    "base_pos_fig": fig_xy,
+                    "current_pos_fig": fig_xy,
+                    "hit_box": _handle_hitbox(display_xy, handle_px),
+                }
+            )
+
+        suptitle_artist = getattr(fig, "_gl260_suptitle_text", None)
+        if suptitle_artist is None:
+            suptitle_artist = getattr(fig, "_suptitle", None)
+        if suptitle_artist is not None:
+            try:
+                if not str(suptitle_artist.get_text() or "").strip():
+                    suptitle_artist = None
+            except Exception:
+                pass
+        if suptitle_artist is not None:
+            fig_xy = _text_pos_fig(suptitle_artist)
+            handle, handle_px = _make_handle(fig_xy, facecolor="#cfe2f3")
+            display_xy = fig.transFigure.transform(fig_xy)
+            elements.append(
+                {
+                    "kind": "suptitle",
+                    "label": "Suptitle",
+                    "handle": handle,
+                    "handle_px": handle_px,
+                    "base_handle_display": display_xy,
+                    "current_handle_display": display_xy,
+                    "base_pos_fig": fig_xy,
+                    "current_pos_fig": fig_xy,
+                    "hit_box": _handle_hitbox(display_xy, handle_px),
+                }
+            )
+
+        supxlabel_artist = getattr(fig, "_gl260_xlabel_text", None)
+        if supxlabel_artist is not None:
+            try:
+                if not str(supxlabel_artist.get_text() or "").strip():
+                    supxlabel_artist = None
+            except Exception:
+                pass
+
+        if supxlabel_artist is not None:
+            display_xy = _label_center_display(supxlabel_artist)
+            if display_xy is not None:
+                fig_xy = _to_fig_from_display(display_xy)
+                handle, handle_px = _make_handle(fig_xy, facecolor="#fff2cc")
+                base_pad = section.get("xlabel_pad_pts")
+                if base_pad is None and isinstance(section.get("axis_labelpads"), dict):
+                    base_pad = section["axis_labelpads"].get("x")
+                try:
+                    base_pad = float(base_pad)
+                except Exception:
+                    base_pad = 0.0
+                elements.append(
+                    {
+                        "kind": "supxlabel",
+                        "label": "X label",
+                        "handle": handle,
+                        "handle_px": handle_px,
+                        "base_handle_display": display_xy,
+                        "current_handle_display": display_xy,
+                        "base_labelpad": base_pad,
+                        "current_labelpad": base_pad,
+                        "hit_box": _handle_hitbox(display_xy, handle_px),
+                    }
+                )
+        elif primary_axis is not None:
+            xlabel_artist = primary_axis.xaxis.get_label()
+            try:
+                xlabel_text = str(xlabel_artist.get_text() or "").strip()
+            except Exception:
+                xlabel_text = ""
+            if xlabel_text:
+                display_xy = _label_center_display(xlabel_artist)
+                if display_xy is not None:
+                    fig_xy = _to_fig_from_display(display_xy)
+                    handle, handle_px = _make_handle(fig_xy, facecolor="#fff2cc")
+                    try:
+                        base_pad = float(primary_axis.xaxis.labelpad)
+                    except Exception:
+                        base_pad = 0.0
+                    elements.append(
+                        {
+                            "kind": "xlabel",
+                            "label": "X label",
+                            "handle": handle,
+                            "handle_px": handle_px,
+                            "base_handle_display": display_xy,
+                            "current_handle_display": display_xy,
+                            "base_labelpad": base_pad,
+                            "current_labelpad": base_pad,
+                            "axis_role": "x",
+                            "hit_box": _handle_hitbox(display_xy, handle_px),
+                        }
+                    )
+
+        for ax, role in axis_roles:
+            label_artist = ax.yaxis.get_label()
+            try:
+                label_text = str(label_artist.get_text() or "").strip()
+            except Exception:
+                label_text = ""
+            if not label_text:
+                continue
+            display_xy = _label_center_display(label_artist)
+            if display_xy is None:
+                continue
+            fig_xy = _to_fig_from_display(display_xy)
+            locked = False
+            pad_key = role
+            if ax is detached_axis:
+                pad_key = "detached_labelpad"
+                locked = mirror_detached_labelpad
+            handle, handle_px = _make_handle(
+                fig_xy,
+                facecolor="#e2efda" if not locked else "#dddddd",
+                edgecolor="#6aa84f" if not locked else "#888888",
+            )
+            try:
+                base_pad = float(ax.yaxis.labelpad)
+            except Exception:
+                base_pad = 0.0
+            try:
+                label_side = ax.yaxis.get_label_position()
+            except Exception:
+                label_side = "right" if role in {"right", "third"} else "left"
+            elements.append(
+                {
+                    "kind": "ylabel",
+                    "label": label_text,
+                    "handle": handle,
+                    "handle_px": handle_px,
+                    "base_handle_display": display_xy,
+                    "current_handle_display": display_xy,
+                    "base_labelpad": base_pad,
+                    "current_labelpad": base_pad,
+                    "axis_role": pad_key,
+                    "label_side": label_side,
+                    "locked": locked,
+                    "hit_box": _handle_hitbox(display_xy, handle_px),
+                }
+            )
+
+        try:
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+        except Exception:
+            renderer = None
+
+        fig_legends = [lg for lg in getattr(fig, "legends", []) if lg is not None]
+        axis_legends: List[Any] = []
+        axis_legend_axes: Dict[Any, Axes] = {}
+        for ax in axes:
+            try:
+                legend = ax.get_legend()
+            except Exception:
+                legend = None
+            if legend is None:
+                continue
+            axis_legends.append(legend)
+            axis_legend_axes[legend] = ax
+
+        main_legend = fig_legends[0] if fig_legends else None
+        if main_legend is None:
+            for legend in axis_legends:
+                if getattr(legend, "_cycle_overlay_legend", False):
+                    continue
+                main_legend = legend
+                break
+
+        cycle_legend = None
+        for legend in axis_legends:
+            if getattr(legend, "_cycle_overlay_legend", False):
+                cycle_legend = legend
+                break
+
+        def _add_legend_element(
+            legend_obj,
+            *,
+            label: str,
+            anchor_space: str,
+            anchor_axis: Optional[Axes] = None,
+            pending_key: str = "legend_anchor",
+            loc_key: str = "legend_loc",
+        ) -> None:
+            if legend_obj is None or renderer is None:
+                return
+            try:
+                bbox_disp = legend_obj.get_window_extent(renderer=renderer)
+            except Exception:
+                return
+            bbox_fig = bbox_disp.transformed(fig.transFigure.inverted())
+            loc_text = _legend_loc_value(legend_obj)
+            if anchor_space == "axes" and anchor_axis is not None:
+                try:
+                    x0, y0 = anchor_axis.transAxes.inverted().transform(
+                        (bbox_disp.x0, bbox_disp.y0)
+                    )
+                    x1, y1 = anchor_axis.transAxes.inverted().transform(
+                        (bbox_disp.x1, bbox_disp.y1)
+                    )
+                    bbox_axes = Bbox.from_extents(
+                        min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)
+                    )
+                except Exception:
+                    bbox_axes = None
+                anchor_value = _anchor_from_bbox(bbox_axes, loc_text) if bbox_axes else (
+                    0.5,
+                    0.5,
+                )
+            else:
+                anchor_value = _anchor_from_bbox(bbox_fig, loc_text)
+
+            fig_w_px, fig_h_px, _dpi = _figure_metrics()
+            shadow_dx = 2.0 / fig_w_px
+            shadow_dy = -2.0 / fig_h_px
+            shadow = mpatches.Rectangle(
+                (bbox_fig.x0 + shadow_dx, bbox_fig.y0 + shadow_dy),
+                bbox_fig.width,
+                bbox_fig.height,
+                transform=fig.transFigure,
+                facecolor="#000000",
+                alpha=0.18,
+                linewidth=0.0,
+                zorder=28,
+            )
+            rect = mpatches.Rectangle(
+                (bbox_fig.x0, bbox_fig.y0),
+                bbox_fig.width,
+                bbox_fig.height,
+                transform=fig.transFigure,
+                fill=False,
+                edgecolor="#3d85c6",
+                linewidth=1.4,
+                zorder=29,
+            )
+            _register_artist(shadow)
+            _register_artist(rect)
+            disp0 = fig.transFigure.transform((bbox_fig.x0, bbox_fig.y0))
+            disp1 = fig.transFigure.transform((bbox_fig.x1, bbox_fig.y1))
+            hit_box = (disp0[0], disp0[1], disp1[0], disp1[1])
+            elements.append(
+                {
+                    "kind": "legend",
+                    "label": label,
+                    "handle": rect,
+                    "shadow": shadow,
+                    "base_bbox_fig": bbox_fig,
+                    "current_bbox_fig": bbox_fig,
+                    "anchor_space": anchor_space,
+                    "anchor_axis": anchor_axis,
+                    "base_anchor": anchor_value,
+                    "current_anchor": anchor_value,
+                    "loc_value": loc_text,
+                    "pending_key": pending_key,
+                    "loc_key": loc_key,
+                    "hit_box": hit_box,
+                }
+            )
+
+        _add_legend_element(
+            main_legend,
+            label="Legend",
+            anchor_space="figure",
+            anchor_axis=None,
+            pending_key="legend_anchor",
+            loc_key="legend_loc",
+        )
+        if cycle_legend is not None:
+            _add_legend_element(
+                cycle_legend,
+                label="Cycle Legend",
+                anchor_space="axes",
+                anchor_axis=axis_legend_axes.get(cycle_legend),
+                pending_key="cycle_legend_anchor",
+                loc_key="cycle_legend_loc",
+            )
+
+        if detached_axis is not None:
+            try:
+                axis_pos = detached_axis.get_position()
+            except Exception:
+                axis_pos = None
+            if axis_pos is not None:
+                if detached_offset is None:
+                    detached_offset = 1.12
+                x_fig = axis_pos.x0 + (axis_pos.width * float(detached_offset))
+                spine_line = Line2D(
+                    [x_fig, x_fig],
+                    [axis_pos.y0, axis_pos.y1],
+                    transform=fig.transFigure,
+                    color="#cc0000",
+                    linewidth=1.4,
+                    zorder=27,
+                )
+                _register_artist(spine_line)
+                line_x_disp = fig.transFigure.transform((x_fig, axis_pos.y0))[0]
+                hit_box = (
+                    line_x_disp - 6.0,
+                    fig.transFigure.transform((0.0, axis_pos.y0))[1],
+                    line_x_disp + 6.0,
+                    fig.transFigure.transform((0.0, axis_pos.y1))[1],
+                )
+                elements.append(
+                    {
+                        "kind": "detached_spine",
+                        "label": "Detached spine",
+                        "handle": spine_line,
+                        "axis": detached_axis,
+                        "axis_pos": axis_pos,
+                        "base_offset": detached_offset,
+                        "current_offset": detached_offset,
+                        "hit_box": hit_box,
+                    }
+                )
+
+        element_names = ", ".join(
+            [element["label"] for element in elements if element.get("label")]
+        )
+        if element_names:
+            elements_label_var.set(f"Handles: {element_names}")
+        else:
+            elements_label_var.set("No draggable elements found on this plot.")
+
+        def _hit_test(event) -> Optional[Dict[str, Any]]:
+            if event is None or event.x is None or event.y is None:
+                return None
+            for element in reversed(elements):
+                if element.get("locked"):
+                    continue
+                hit_box = element.get("hit_box")
+                if hit_box is None:
+                    continue
+                x0, y0, x1, y1 = hit_box
+                if x0 <= event.x <= x1 and y0 <= event.y <= y1:
+                    return element
+            return None
+
+        def _move_handle(element: Dict[str, Any], display_xy: Tuple[float, float]) -> None:
+            fig_xy = _to_fig_from_display(display_xy)
+            handle = element.get("handle")
+            handle_px = element.get("handle_px", 10.0)
+            fig_w_px, fig_h_px, _dpi = _figure_metrics()
+            size_fx = handle_px / fig_w_px
+            size_fy = handle_px / fig_h_px
+            try:
+                handle.set_xy((fig_xy[0] - size_fx / 2.0, fig_xy[1] - size_fy / 2.0))
+            except Exception:
+                pass
+            element["current_handle_display"] = display_xy
+            element["hit_box"] = _handle_hitbox(display_xy, handle_px)
+
+        def _move_legend_rect(element: Dict[str, Any], bbox_fig: Bbox) -> None:
+            rect = element.get("handle")
+            shadow = element.get("shadow")
+            if rect is None:
+                return
+            try:
+                rect.set_x(bbox_fig.x0)
+                rect.set_y(bbox_fig.y0)
+                rect.set_width(bbox_fig.width)
+                rect.set_height(bbox_fig.height)
+            except Exception:
+                pass
+            if shadow is not None:
+                fig_w_px, fig_h_px, _dpi = _figure_metrics()
+                shadow_dx = 2.0 / fig_w_px
+                shadow_dy = -2.0 / fig_h_px
+                try:
+                    shadow.set_x(bbox_fig.x0 + shadow_dx)
+                    shadow.set_y(bbox_fig.y0 + shadow_dy)
+                    shadow.set_width(bbox_fig.width)
+                    shadow.set_height(bbox_fig.height)
+                except Exception:
+                    pass
+            element["current_bbox_fig"] = bbox_fig
+            disp0 = fig.transFigure.transform((bbox_fig.x0, bbox_fig.y0))
+            disp1 = fig.transFigure.transform((bbox_fig.x1, bbox_fig.y1))
+            element["hit_box"] = (disp0[0], disp0[1], disp1[0], disp1[1])
+
+        drag_state: Dict[str, Any] = {"active": None, "start": None}
+
+        def _on_press(event):
+            try:
+                if event.button not in (1, None):
+                    return
+            except Exception:
+                pass
+            target = _hit_test(event)
+            if target is None:
+                return
+            drag_state["active"] = target
+            drag_state["start"] = (event.x, event.y)
+            if target["kind"] in {"xlabel", "ylabel", "supxlabel"}:
+                target["drag_base_labelpad"] = target.get("current_labelpad", 0.0)
+                target["drag_base_display"] = target.get(
+                    "current_handle_display", (event.x, event.y)
+                )
+            elif target["kind"] in {"title", "suptitle"}:
+                target["drag_base_display"] = target.get(
+                    "current_handle_display", (event.x, event.y)
+                )
+            elif target["kind"] == "legend":
+                target["drag_base_bbox_fig"] = target.get("current_bbox_fig")
+                target["drag_base_anchor"] = target.get("current_anchor")
+                anchor_space = target.get("anchor_space")
+                anchor_axis = target.get("anchor_axis")
+                if anchor_space == "axes" and anchor_axis is not None:
+                    target["drag_base_anchor_display"] = anchor_axis.transAxes.transform(
+                        target.get("current_anchor")
+                    )
+                else:
+                    target["drag_base_anchor_display"] = fig.transFigure.transform(
+                        target.get("current_anchor")
+                    )
+            elif target["kind"] == "detached_spine":
+                target["drag_base_offset"] = target.get("current_offset")
+                target["drag_base_axis_pos"] = target.get("axis_pos")
+
+        def _on_motion(event):
+            target = drag_state.get("active")
+            start = drag_state.get("start")
+            if target is None or start is None:
+                return
+            if event.x is None or event.y is None:
+                return
+            dx = event.x - start[0]
+            dy = event.y - start[1]
+            fig_w_px, fig_h_px, dpi = _figure_metrics()
+            if target["kind"] in {"xlabel", "supxlabel"}:
+                base_pad = target.get("drag_base_labelpad", 0.0)
+                base_display = target.get("drag_base_display")
+                if base_display is None:
+                    base_display = (event.x, event.y)
+                delta_points = (-dy) * 72.0 / dpi
+                new_pad = base_pad + delta_points
+                target["current_labelpad"] = new_pad
+                new_display = (base_display[0], base_display[1] + dy)
+                _move_handle(target, new_display)
+                if target["kind"] == "supxlabel":
+                    pending["xlabel_pad_pts"] = new_pad
+                else:
+                    pending["axis_labelpads"]["x"] = new_pad
+            elif target["kind"] == "ylabel":
+                base_pad = target.get("drag_base_labelpad", 0.0)
+                base_display = target.get("drag_base_display")
+                if base_display is None:
+                    base_display = (event.x, event.y)
+                side = target.get("label_side", "left")
+                sign = 1.0 if side == "right" else -1.0
+                delta_points = (dx * sign) * 72.0 / dpi
+                new_pad = base_pad + delta_points
+                target["current_labelpad"] = new_pad
+                new_display = (base_display[0] + dx, base_display[1])
+                _move_handle(target, new_display)
+                pad_key = target.get("axis_role")
+                if pad_key == "detached_labelpad":
+                    pending["detached_labelpad"] = new_pad
+                else:
+                    pending["axis_labelpads"][pad_key] = new_pad
+            elif target["kind"] in {"title", "suptitle"}:
+                base_display = target.get("drag_base_display")
+                if base_display is None:
+                    base_display = (event.x, event.y)
+                new_display = (base_display[0] + dx, base_display[1] + dy)
+                _move_handle(target, new_display)
+                fig_xy = _to_fig_from_display(new_display)
+                fig_xy = (_clamp_anchor(fig_xy[0]), _clamp_anchor(fig_xy[1]))
+                target["current_pos_fig"] = fig_xy
+                if target["kind"] == "title":
+                    pending["title_xy"] = fig_xy
+                else:
+                    pending["suptitle_xy"] = fig_xy
+            elif target["kind"] == "legend":
+                base_bbox = target.get("drag_base_bbox_fig")
+                if base_bbox is None:
+                    return
+                dx_fig = dx / fig_w_px
+                dy_fig = dy / fig_h_px
+                new_bbox = Bbox.from_extents(
+                    base_bbox.x0 + dx_fig,
+                    base_bbox.y0 + dy_fig,
+                    base_bbox.x1 + dx_fig,
+                    base_bbox.y1 + dy_fig,
+                )
+                _move_legend_rect(target, new_bbox)
+                anchor_space = target.get("anchor_space")
+                base_anchor_disp = target.get("drag_base_anchor_display")
+                if base_anchor_disp is None:
+                    base_anchor_disp = (event.x, event.y)
+                new_anchor_disp = (base_anchor_disp[0] + dx, base_anchor_disp[1] + dy)
+                if anchor_space == "axes":
+                    anchor_axis = target.get("anchor_axis")
+                    if anchor_axis is None:
+                        return
+                    new_anchor = anchor_axis.transAxes.inverted().transform(
+                        new_anchor_disp
+                    )
+                else:
+                    new_anchor = _to_fig_from_display(new_anchor_disp)
+                new_anchor = (_clamp_anchor(new_anchor[0]), _clamp_anchor(new_anchor[1]))
+                target["current_anchor"] = new_anchor
+                pending[target.get("pending_key", "legend_anchor")] = new_anchor
+                pending[target.get("loc_key", "legend_loc")] = target.get("loc_value")
+            elif target["kind"] == "detached_spine":
+                axis_pos = target.get("drag_base_axis_pos")
+                if axis_pos is None:
+                    return
+                base_offset = target.get("drag_base_offset", 1.12)
+                base_x = axis_pos.x0 + (axis_pos.width * float(base_offset))
+                base_x_disp = fig.transFigure.transform((base_x, axis_pos.y0))[0]
+                new_x_disp = base_x_disp + dx
+                new_x_fig = _to_fig_from_display((new_x_disp, 0.0))[0]
+                try:
+                    new_offset = (new_x_fig - axis_pos.x0) / axis_pos.width
+                except Exception:
+                    new_offset = base_offset
+                new_offset = max(1.0, min(2.0, float(new_offset)))
+                target["current_offset"] = new_offset
+                x_fig = axis_pos.x0 + (axis_pos.width * new_offset)
+                line = target.get("handle")
+                if line is not None:
+                    try:
+                        line.set_xdata([x_fig, x_fig])
+                    except Exception:
+                        pass
+                line_x_disp = fig.transFigure.transform((x_fig, axis_pos.y0))[0]
+                target["hit_box"] = (
+                    line_x_disp - 6.0,
+                    fig.transFigure.transform((0.0, axis_pos.y0))[1],
+                    line_x_disp + 6.0,
+                    fig.transFigure.transform((0.0, axis_pos.y1))[1],
+                )
+                pending["detached_spine_offset"] = new_offset
+            try:
+                canvas.draw_idle()
+            except Exception:
+                pass
+
+        def _commit_target(target: Dict[str, Any]) -> None:
+            kind = target.get("kind")
+            if kind in {"xlabel", "ylabel", "supxlabel"}:
+                target["base_labelpad"] = target.get("current_labelpad", 0.0)
+                target["base_handle_display"] = target.get("current_handle_display")
+            elif kind in {"title", "suptitle"}:
+                target["base_pos_fig"] = target.get("current_pos_fig")
+                target["base_handle_display"] = target.get("current_handle_display")
+            elif kind == "legend":
+                target["base_bbox_fig"] = target.get("current_bbox_fig")
+                target["base_anchor"] = target.get("current_anchor")
+                anchor_space = target.get("anchor_space")
+                anchor_axis = target.get("anchor_axis")
+                if anchor_space == "axes" and anchor_axis is not None:
+                    target["base_anchor_display"] = anchor_axis.transAxes.transform(
+                        target.get("current_anchor")
+                    )
+                else:
+                    target["base_anchor_display"] = fig.transFigure.transform(
+                        target.get("current_anchor")
+                    )
+            elif kind == "detached_spine":
+                target["base_offset"] = target.get("current_offset")
+
+        def _on_release(_event):
+            target = drag_state.get("active")
+            if target is not None:
+                _commit_target(target)
+            drag_state["active"] = None
+            drag_state["start"] = None
+
+        cids = [
+            canvas.mpl_connect("button_press_event", _on_press),
+            canvas.mpl_connect("motion_notify_event", _on_motion),
+            canvas.mpl_connect("button_release_event", _on_release),
+        ]
+
+        self._layout_editor_states[plot_id] = {
+            "fig": fig,
+            "canvas": canvas,
+            "pending": pending,
+            "overlay_artists": overlay_artists,
+            "elements": elements,
+            "apply_target_var": apply_target_var,
+            "cids": cids,
+        }
+        try:
+            canvas.draw_idle()
+        except Exception:
+            pass
+
+        def _close_editor() -> None:
+            self._teardown_layout_editor(plot_id, apply_changes=True)
+
+        editor.protocol("WM_DELETE_WINDOW", _close_editor)
+
     def _clear_plot_tabs(self):
 
         # remove any previously added plot tabs
@@ -23990,6 +25720,10 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 pass
         self._plot_element_windows = {}
+        for plot_id in list(self._layout_editor_windows.keys()):
+            self._teardown_layout_editor(plot_id, apply_changes=False)
+        self._layout_editor_windows = {}
+        self._layout_editor_states = {}
 
         for tab in getattr(self, "_plot_tabs", []):
 
@@ -24049,6 +25783,11 @@ class UnifiedApp(tk.Tk):
 
         plot_id = self._plot_key_to_plot_id(plot_key, title)
         frame._plot_id = plot_id
+        if plot_id:
+            try:
+                _apply_layout_profile_to_figure(fig, plot_id, "display")
+            except Exception:
+                pass
         if plot_id:
             try:
                 self._apply_plot_elements(fig, plot_id)
@@ -24189,6 +25928,11 @@ class UnifiedApp(tk.Tk):
                 else:
                     fig.set_size_inches(target_w, target_h, forward=False)
                     resized_current_fig = True
+                    if plot_id:
+                        try:
+                            _apply_layout_profile_to_figure(export_fig, plot_id, "export")
+                        except Exception:
+                            pass
 
                 if plot_id and plot_key != "fig_combined":
                     try:
@@ -24278,6 +26022,11 @@ class UnifiedApp(tk.Tk):
                     except Exception:
 
                         pass
+                    if plot_id and plot_key != "fig_combined":
+                        try:
+                            _apply_layout_profile_to_figure(fig, plot_id, "display")
+                        except Exception:
+                            pass
 
                 if close_export_fig and export_fig is not fig:
 
@@ -24371,6 +26120,12 @@ class UnifiedApp(tk.Tk):
                     ),
                 )
                 btn_elements.pack(side="right", padx=6, pady=4)
+                btn_layout = ttk.Button(
+                    topbar,
+                    text="Layout Editor...",
+                    command=lambda: self._open_layout_editor(canvas, plot_id),
+                )
+                btn_layout.pack(side="right", padx=6, pady=4)
             else:
                 btn_elements = ttk.Button(
                     topbar,
@@ -24380,6 +26135,12 @@ class UnifiedApp(tk.Tk):
                     ),
                 )
                 btn_elements.pack(side="right", padx=6, pady=4)
+                btn_layout = ttk.Button(
+                    topbar,
+                    text="Layout Editor...",
+                    command=lambda: self._open_layout_editor(canvas, plot_id),
+                )
+                btn_layout.pack(side="right", padx=6, pady=4)
 
         save_controls = ttk.Frame(topbar)
 
@@ -24705,6 +26466,7 @@ class UnifiedApp(tk.Tk):
                                 window.destroy()
                             except Exception:
                                 pass
+                        self._teardown_layout_editor(plot_id, apply_changes=False)
 
                     self.nb.forget(tab)
 
@@ -25973,23 +27735,196 @@ class UnifiedApp(tk.Tk):
         window = tk.Toplevel(self)
         window.title("Combined Axis Settings")
         window.transient(self)
-        window.resizable(False, False)
-        window.protocol("WM_DELETE_WINDOW", self._close_combined_axis_preferences)
+        window.resizable(True, True)
         self._combined_axis_pref_window = window
 
-        container = ttk.Frame(window, padding=12)
-        container.grid(row=0, column=0, sticky="nsew")
+        window.grid_rowconfigure(0, weight=1)
+        window.grid_columnconfigure(0, weight=1)
+
+        outer = ttk.Frame(window)
+        outer.grid(row=0, column=0, sticky="nsew")
+        outer.grid_rowconfigure(0, weight=1)
+        outer.grid_columnconfigure(0, weight=1)
+
+        canvas = tk.Canvas(outer, borderwidth=0, highlightthickness=0)
+        vscroll = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vscroll.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        vscroll.grid(row=0, column=1, sticky="ns")
+
+        container = ttk.Frame(canvas, padding=12)
+        container_id = canvas.create_window((0, 0), window=container, anchor="nw")
         container.grid_columnconfigure(0, weight=1)
+
+        def _refresh_scroll_region(_event=None):
+            try:
+                canvas.configure(scrollregion=canvas.bbox("all"))
+            except Exception:
+                pass
+
+        def _expand_width(event):
+            try:
+                canvas.itemconfigure(container_id, width=event.width)
+            except Exception:
+                pass
+
+        container.bind("<Configure>", _refresh_scroll_region)
+        canvas.bind("<Configure>", _expand_width)
+
+        def _bind_mousewheel(widget):
+            def _on_mousewheel(event):
+                delta = event.delta
+                if delta == 0:
+                    return
+                step = -1 if delta > 0 else 1
+                if abs(delta) >= 120:
+                    step = int(-delta / 120)
+                canvas.yview_scroll(step, "units")
+                return "break"
+
+            widget.bind("<MouseWheel>", _on_mousewheel, add="+")
+            widget.bind(
+                "<Button-4>", lambda _event: canvas.yview_scroll(-1, "units"), add="+"
+            )
+            widget.bind(
+                "<Button-5>", lambda _event: canvas.yview_scroll(1, "units"), add="+"
+            )
+            for child in widget.winfo_children():
+                _bind_mousewheel(child)
+
+        self.after_idle(lambda: _bind_mousewheel(container))
+
+        layout_profile = _get_layout_profile("fig_combined_triple_axis")
+        display_section = _layout_profile_section(layout_profile, "display")
+        export_section = _layout_profile_section(layout_profile, "export")
+        display_margins = display_section.get(
+            "margins", _default_layout_margins("fig_combined_triple_axis", "display")
+        )
+        export_margins = export_section.get(
+            "margins", _default_layout_margins("fig_combined_triple_axis", "export")
+        )
+        legend_anchor_display = display_section.get("legend_anchor_y")
+        legend_anchor_export = export_section.get("legend_anchor_y")
+
+        stage_vars = {
+            "combined_x_axis_label": tk.StringVar(value=self.combined_x_axis_label.get()),
+            "combined_primary_axis_label": tk.StringVar(
+                value=self.combined_primary_axis_label.get()
+            ),
+            "combined_deriv_axis_label": tk.StringVar(
+                value=self.combined_deriv_axis_label.get()
+            ),
+            "combined_temp_axis_label": tk.StringVar(
+                value=self.combined_temp_axis_label.get()
+            ),
+            "combined_deriv_axis_offset": tk.DoubleVar(
+                value=self.combined_deriv_axis_offset.get()
+            ),
+            "combined_primary_labelpad": tk.DoubleVar(
+                value=self.combined_primary_labelpad.get()
+            ),
+            "combined_deriv_labelpad": tk.DoubleVar(
+                value=self.combined_deriv_labelpad.get()
+            ),
+            "combined_temp_labelpad": tk.DoubleVar(
+                value=self.combined_temp_labelpad.get()
+            ),
+            "combined_left_padding_pct": tk.DoubleVar(
+                value=self.combined_left_padding_pct.get()
+            ),
+            "combined_right_padding_pct": tk.DoubleVar(
+                value=self.combined_right_padding_pct.get()
+            ),
+            "combined_export_pad_pts": tk.DoubleVar(
+                value=self.combined_export_pad_pts.get()
+            ),
+            "combined_title_pad_pts": tk.DoubleVar(
+                value=self.combined_title_pad_pts.get()
+            ),
+            "combined_suptitle_pad_pts": tk.DoubleVar(
+                value=self.combined_suptitle_pad_pts.get()
+            ),
+            "combined_suptitle_y": tk.DoubleVar(value=self.combined_suptitle_y.get()),
+            "combined_top_margin_pct": tk.DoubleVar(
+                value=self.combined_top_margin_pct.get()
+            ),
+            "combined_font_family": tk.StringVar(value=self.combined_font_family.get()),
+            "combined_suptitle_fontsize": tk.DoubleVar(
+                value=self.combined_suptitle_fontsize.get()
+            ),
+            "combined_title_fontsize": tk.DoubleVar(
+                value=self.combined_title_fontsize.get()
+            ),
+            "combined_label_fontsize": tk.DoubleVar(
+                value=self.combined_label_fontsize.get()
+            ),
+            "combined_tick_fontsize": tk.DoubleVar(
+                value=self.combined_tick_fontsize.get()
+            ),
+            "combined_legend_fontsize": tk.DoubleVar(
+                value=self.combined_legend_fontsize.get()
+            ),
+            "combined_legend_wrap": tk.BooleanVar(
+                value=bool(self.combined_legend_wrap.get())
+            ),
+            "combined_legend_rows": tk.IntVar(value=self.combined_legend_rows.get()),
+            "combined_legend_label_gap": tk.DoubleVar(
+                value=self.combined_legend_label_gap.get()
+            ),
+            "combined_xlabel_tick_gap": tk.DoubleVar(
+                value=self.combined_xlabel_tick_gap.get()
+            ),
+            "combined_legend_bottom_margin": tk.DoubleVar(
+                value=self.combined_legend_bottom_margin.get()
+            ),
+            "combined_legend_alignment": tk.StringVar(
+                value=self.combined_legend_alignment.get()
+            ),
+        }
+
+        stage_layout_display_left = tk.DoubleVar(
+            value=display_margins.get("left", 0.125)
+        )
+        stage_layout_display_right = tk.DoubleVar(
+            value=display_margins.get("right", 0.9)
+        )
+        stage_layout_display_top = tk.DoubleVar(
+            value=display_margins.get("top", 0.88)
+        )
+        stage_layout_display_bottom = tk.DoubleVar(
+            value=display_margins.get("bottom", 0.11)
+        )
+        stage_layout_export_left = tk.DoubleVar(value=export_margins.get("left", 0.125))
+        stage_layout_export_right = tk.DoubleVar(
+            value=export_margins.get("right", 0.9)
+        )
+        stage_layout_export_top = tk.DoubleVar(value=export_margins.get("top", 0.88))
+        stage_layout_export_bottom = tk.DoubleVar(
+            value=export_margins.get("bottom", DEFAULT_EXPORT_BOTTOM_MARGIN)
+        )
+        stage_legend_anchor_y_display = tk.StringVar(
+            value=""
+            if legend_anchor_display is None
+            else f"{float(legend_anchor_display):.4f}"
+        )
+        stage_legend_anchor_y_export = tk.StringVar(
+            value=""
+            if legend_anchor_export is None
+            else f"{float(legend_anchor_export):.4f}"
+        )
+        stage_mirror_detached_labelpad = tk.BooleanVar(
+            value=bool(layout_profile.get("mirror_detached_labelpad", False))
+        )
 
         label_frame = ttk.Labelframe(container, text="Axis labels")
         label_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         label_frame.grid_columnconfigure(1, weight=1)
 
         label_entries = [
-            ("X-axis label", self.combined_x_axis_label),
-            ("Primary Y-axis label", self.combined_primary_axis_label),
-            ("Derivative Y-axis label", self.combined_deriv_axis_label),
-            ("Temperature axis label", self.combined_temp_axis_label),
+            ("X-axis label", stage_vars["combined_x_axis_label"]),
+            ("Primary Y-axis label", stage_vars["combined_primary_axis_label"]),
+            ("Derivative Y-axis label", stage_vars["combined_deriv_axis_label"]),
+            ("Temperature axis label", stage_vars["combined_temp_axis_label"]),
         ]
         for row_index, (label_text, var) in enumerate(label_entries):
             ttk.Label(label_frame, text=label_text).grid(
@@ -26006,47 +27941,53 @@ class UnifiedApp(tk.Tk):
             row=0, column=0, sticky="w", padx=(0, 6), pady=2
         )
         ttk.Entry(
-            spacing_frame, textvariable=self.combined_deriv_axis_offset, width=8
+            spacing_frame, textvariable=stage_vars["combined_deriv_axis_offset"], width=8
         ).grid(row=0, column=1, sticky="w", pady=2)
 
         ttk.Label(spacing_frame, text="Primary Y label padding").grid(
             row=1, column=0, sticky="w", padx=(0, 6), pady=2
         )
         ttk.Entry(
-            spacing_frame, textvariable=self.combined_primary_labelpad, width=8
+            spacing_frame, textvariable=stage_vars["combined_primary_labelpad"], width=8
         ).grid(row=1, column=1, sticky="w", pady=2)
 
         ttk.Label(spacing_frame, text="Derivative label padding").grid(
             row=2, column=0, sticky="w", padx=(0, 6), pady=2
         )
-        ttk.Entry(
-            spacing_frame, textvariable=self.combined_deriv_labelpad, width=8
-        ).grid(row=2, column=1, sticky="w", pady=2)
+        deriv_label_entry = ttk.Entry(
+            spacing_frame, textvariable=stage_vars["combined_deriv_labelpad"], width=8
+        )
+        deriv_label_entry.grid(row=2, column=1, sticky="w", pady=2)
 
         ttk.Label(spacing_frame, text="Temperature label padding").grid(
             row=3, column=0, sticky="w", padx=(0, 6), pady=2
         )
         ttk.Entry(
-            spacing_frame, textvariable=self.combined_temp_labelpad, width=8
+            spacing_frame, textvariable=stage_vars["combined_temp_labelpad"], width=8
         ).grid(row=3, column=1, sticky="w", pady=2)
+        ttk.Checkbutton(
+            spacing_frame,
+            text="Mirror attached right Y-axis label spacing to detached axis",
+            variable=stage_mirror_detached_labelpad,
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 2))
         ttk.Label(spacing_frame, text="Left padding (%)").grid(
-            row=4, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            spacing_frame, textvariable=self.combined_left_padding_pct, width=8
-        ).grid(row=4, column=1, sticky="w", pady=2)
-        ttk.Label(spacing_frame, text="Right padding (%)").grid(
             row=5, column=0, sticky="w", padx=(0, 6), pady=2
         )
         ttk.Entry(
-            spacing_frame, textvariable=self.combined_right_padding_pct, width=8
+            spacing_frame, textvariable=stage_vars["combined_left_padding_pct"], width=8
         ).grid(row=5, column=1, sticky="w", pady=2)
-        ttk.Label(spacing_frame, text="Export padding (pt)").grid(
+        ttk.Label(spacing_frame, text="Right padding (%)").grid(
             row=6, column=0, sticky="w", padx=(0, 6), pady=2
         )
         ttk.Entry(
-            spacing_frame, textvariable=self.combined_export_pad_pts, width=8
+            spacing_frame, textvariable=stage_vars["combined_right_padding_pct"], width=8
         ).grid(row=6, column=1, sticky="w", pady=2)
+        ttk.Label(spacing_frame, text="Export padding (pt)").grid(
+            row=7, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        ttk.Entry(
+            spacing_frame, textvariable=stage_vars["combined_export_pad_pts"], width=8
+        ).grid(row=7, column=1, sticky="w", pady=2)
         ttk.Label(
             spacing_frame,
             text=(
@@ -26055,31 +27996,31 @@ class UnifiedApp(tk.Tk):
             ),
             wraplength=420,
             foreground="#555555",
-        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(2, 0))
         ttk.Label(spacing_frame, text="Title padding (pt)").grid(
-            row=8, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            spacing_frame, textvariable=self.combined_title_pad_pts, width=8
-        ).grid(row=8, column=1, sticky="w", pady=2)
-        ttk.Label(spacing_frame, text="Suptitle padding (pt)").grid(
             row=9, column=0, sticky="w", padx=(0, 6), pady=2
         )
         ttk.Entry(
-            spacing_frame, textvariable=self.combined_suptitle_pad_pts, width=8
+            spacing_frame, textvariable=stage_vars["combined_title_pad_pts"], width=8
         ).grid(row=9, column=1, sticky="w", pady=2)
-        ttk.Label(spacing_frame, text="Suptitle Y (0-1)").grid(
+        ttk.Label(spacing_frame, text="Suptitle padding (pt)").grid(
             row=10, column=0, sticky="w", padx=(0, 6), pady=2
         )
-        ttk.Entry(spacing_frame, textvariable=self.combined_suptitle_y, width=8).grid(
-            row=10, column=1, sticky="w", pady=2
-        )
-        ttk.Label(spacing_frame, text="Top margin above plot (%)").grid(
+        ttk.Entry(
+            spacing_frame, textvariable=stage_vars["combined_suptitle_pad_pts"], width=8
+        ).grid(row=10, column=1, sticky="w", pady=2)
+        ttk.Label(spacing_frame, text="Suptitle Y (0-1)").grid(
             row=11, column=0, sticky="w", padx=(0, 6), pady=2
         )
         ttk.Entry(
-            spacing_frame, textvariable=self.combined_top_margin_pct, width=8
+            spacing_frame, textvariable=stage_vars["combined_suptitle_y"], width=8
         ).grid(row=11, column=1, sticky="w", pady=2)
+        ttk.Label(spacing_frame, text="Top margin above plot (%)").grid(
+            row=12, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        ttk.Entry(
+            spacing_frame, textvariable=stage_vars["combined_top_margin_pct"], width=8
+        ).grid(row=12, column=1, sticky="w", pady=2)
         ttk.Label(
             spacing_frame,
             text=(
@@ -26088,46 +28029,122 @@ class UnifiedApp(tk.Tk):
             ),
             wraplength=420,
             foreground="#555555",
-        ).grid(row=12, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        ).grid(row=13, column=0, columnspan=2, sticky="w", pady=(2, 0))
+
+        def _sync_detached_labelpad(*_):
+            if stage_mirror_detached_labelpad.get():
+                stage_vars["combined_deriv_labelpad"].set(
+                    stage_vars["combined_temp_labelpad"].get()
+                )
+                try:
+                    deriv_label_entry.configure(state="disabled")
+                except Exception:
+                    pass
+            else:
+                try:
+                    deriv_label_entry.configure(state="normal")
+                except Exception:
+                    pass
+
+        stage_mirror_detached_labelpad.trace_add("write", _sync_detached_labelpad)
+        stage_vars["combined_temp_labelpad"].trace_add("write", _sync_detached_labelpad)
+        _sync_detached_labelpad()
+
+        margins_frame = ttk.Labelframe(container, text="Layout margins")
+        margins_frame.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        margins_frame.grid_columnconfigure(1, weight=1)
+
+        def _build_margin_row(row, title, left_var, right_var, top_var, bottom_var):
+            ttk.Label(margins_frame, text=title).grid(
+                row=row, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            row_frame = ttk.Frame(margins_frame)
+            row_frame.grid(row=row, column=1, sticky="w")
+            for label, var in (
+                ("L", left_var),
+                ("R", right_var),
+                ("T", top_var),
+                ("B", bottom_var),
+            ):
+                ttk.Label(row_frame, text=label).pack(side="left", padx=(0, 2))
+                ttk.Entry(row_frame, textvariable=var, width=7).pack(
+                    side="left", padx=(0, 6)
+                )
+
+        _build_margin_row(
+            0,
+            "Display",
+            stage_layout_display_left,
+            stage_layout_display_right,
+            stage_layout_display_top,
+            stage_layout_display_bottom,
+        )
+        _build_margin_row(
+            1,
+            "Export",
+            stage_layout_export_left,
+            stage_layout_export_right,
+            stage_layout_export_top,
+            stage_layout_export_bottom,
+        )
+        ttk.Label(
+            margins_frame,
+            text=(
+                "Margins are normalized figure fractions (0-1). "
+                f"Default export bottom is {DEFAULT_EXPORT_BOTTOM_MARGIN}."
+            ),
+            wraplength=420,
+            foreground="#555555",
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
         font_frame = ttk.Labelframe(container, text="Fonts")
-        font_frame.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        font_frame.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         font_frame.grid_columnconfigure(1, weight=1)
 
         ttk.Label(font_frame, text="Font family").grid(
             row=0, column=0, sticky="w", padx=(0, 6), pady=2
         )
-        ttk.Entry(font_frame, textvariable=self.combined_font_family, width=18).grid(
+        ttk.Entry(
+            font_frame, textvariable=stage_vars["combined_font_family"], width=18
+        ).grid(
             row=0, column=1, sticky="w", pady=2
         )
         ttk.Label(font_frame, text="Suptitle size").grid(
             row=1, column=0, sticky="w", padx=(0, 6), pady=2
         )
         ttk.Entry(
-            font_frame, textvariable=self.combined_suptitle_fontsize, width=8
+            font_frame, textvariable=stage_vars["combined_suptitle_fontsize"], width=8
         ).grid(row=1, column=1, sticky="w", pady=2)
         ttk.Label(font_frame, text="Title size").grid(
             row=2, column=0, sticky="w", padx=(0, 6), pady=2
         )
-        ttk.Entry(font_frame, textvariable=self.combined_title_fontsize, width=8).grid(
+        ttk.Entry(
+            font_frame, textvariable=stage_vars["combined_title_fontsize"], width=8
+        ).grid(
             row=2, column=1, sticky="w", pady=2
         )
         ttk.Label(font_frame, text="Axis label size").grid(
             row=3, column=0, sticky="w", padx=(0, 6), pady=2
         )
-        ttk.Entry(font_frame, textvariable=self.combined_label_fontsize, width=8).grid(
+        ttk.Entry(
+            font_frame, textvariable=stage_vars["combined_label_fontsize"], width=8
+        ).grid(
             row=3, column=1, sticky="w", pady=2
         )
         ttk.Label(font_frame, text="Tick label size").grid(
             row=4, column=0, sticky="w", padx=(0, 6), pady=2
         )
-        ttk.Entry(font_frame, textvariable=self.combined_tick_fontsize, width=8).grid(
+        ttk.Entry(
+            font_frame, textvariable=stage_vars["combined_tick_fontsize"], width=8
+        ).grid(
             row=4, column=1, sticky="w", pady=2
         )
         ttk.Label(font_frame, text="Legend size").grid(
             row=5, column=0, sticky="w", padx=(0, 6), pady=2
         )
-        ttk.Entry(font_frame, textvariable=self.combined_legend_fontsize, width=8).grid(
+        ttk.Entry(
+            font_frame, textvariable=stage_vars["combined_legend_fontsize"], width=8
+        ).grid(
             row=5, column=1, sticky="w", pady=2
         )
         ttk.Label(
@@ -26138,13 +28155,13 @@ class UnifiedApp(tk.Tk):
         ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
         legend_frame = ttk.Labelframe(container, text="Legend layout")
-        legend_frame.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        legend_frame.grid(row=4, column=0, sticky="ew", pady=(8, 0))
         legend_frame.grid_columnconfigure(1, weight=0)
 
         ttk.Checkbutton(
             legend_frame,
             text="Wrap legend into rows",
-            variable=self.combined_legend_wrap,
+            variable=stage_vars["combined_legend_wrap"],
         ).grid(row=0, column=0, columnspan=2, sticky="w", pady=2)
 
         ttk.Label(legend_frame, text="Legend rows").grid(
@@ -26153,7 +28170,7 @@ class UnifiedApp(tk.Tk):
         ttk.Entry(
             legend_frame,
             width=8,
-            textvariable=self.combined_legend_rows,
+            textvariable=stage_vars["combined_legend_rows"],
         ).grid(row=1, column=1, sticky="w", pady=2)
         ttk.Label(
             legend_frame,
@@ -26168,7 +28185,7 @@ class UnifiedApp(tk.Tk):
         ttk.Entry(
             legend_frame,
             width=8,
-            textvariable=self.combined_legend_label_gap,
+            textvariable=stage_vars["combined_legend_label_gap"],
         ).grid(row=3, column=1, sticky="w", pady=2)
         ttk.Label(
             legend_frame,
@@ -26183,7 +28200,7 @@ class UnifiedApp(tk.Tk):
         ttk.Entry(
             legend_frame,
             width=8,
-            textvariable=self.combined_xlabel_tick_gap,
+            textvariable=stage_vars["combined_xlabel_tick_gap"],
         ).grid(row=5, column=1, sticky="w", pady=2)
         ttk.Label(
             legend_frame,
@@ -26198,7 +28215,7 @@ class UnifiedApp(tk.Tk):
         ttk.Entry(
             legend_frame,
             width=8,
-            textvariable=self.combined_legend_bottom_margin,
+            textvariable=stage_vars["combined_legend_bottom_margin"],
         ).grid(row=7, column=1, sticky="w", pady=2)
         ttk.Label(
             legend_frame,
@@ -26218,23 +28235,136 @@ class UnifiedApp(tk.Tk):
         )
         alignment_menu = ttk.OptionMenu(
             legend_frame,
-            self.combined_legend_alignment,
-            self.combined_legend_alignment.get(),
+            stage_vars["combined_legend_alignment"],
+            stage_vars["combined_legend_alignment"].get(),
             "left",
             "center",
             "right",
         )
         alignment_menu.grid(row=10, column=1, sticky="w", pady=2)
 
+        def _parse_anchor_value(var: tk.StringVar) -> Optional[float]:
+            raw = (var.get() or "").strip()
+            if not raw:
+                return None
+            try:
+                return float(raw)
+            except Exception:
+                return None
+
+        def _nudge_anchor(var: tk.StringVar, direction: int) -> None:
+            value = _parse_anchor_value(var)
+            if value is None:
+                value = 0.02
+            value = max(-0.1, min(1.1, value + (0.01 * direction)))
+            var.set(f"{value:.4f}")
+
+        ttk.Label(legend_frame, text="Legend anchor Y (display)").grid(
+            row=11, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        display_anchor_frame = ttk.Frame(legend_frame)
+        display_anchor_frame.grid(row=11, column=1, sticky="w", pady=2)
+        ttk.Entry(
+            display_anchor_frame,
+            textvariable=stage_legend_anchor_y_display,
+            width=8,
+        ).pack(side="left")
+        ttk.Button(
+            display_anchor_frame,
+            text="Up",
+            width=4,
+            command=lambda: _nudge_anchor(stage_legend_anchor_y_display, 1),
+        ).pack(side="left", padx=(4, 2))
+        ttk.Button(
+            display_anchor_frame,
+            text="Down",
+            width=5,
+            command=lambda: _nudge_anchor(stage_legend_anchor_y_display, -1),
+        ).pack(side="left")
+
+        ttk.Label(legend_frame, text="Legend anchor Y (export)").grid(
+            row=12, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        export_anchor_frame = ttk.Frame(legend_frame)
+        export_anchor_frame.grid(row=12, column=1, sticky="w", pady=2)
+        ttk.Entry(
+            export_anchor_frame,
+            textvariable=stage_legend_anchor_y_export,
+            width=8,
+        ).pack(side="left")
+        ttk.Button(
+            export_anchor_frame,
+            text="Up",
+            width=4,
+            command=lambda: _nudge_anchor(stage_legend_anchor_y_export, 1),
+        ).pack(side="left", padx=(4, 2))
+        ttk.Button(
+            export_anchor_frame,
+            text="Down",
+            width=5,
+            command=lambda: _nudge_anchor(stage_legend_anchor_y_export, -1),
+        ).pack(side="left")
+
+        ttk.Label(
+            legend_frame,
+            text="Up moves the legend toward the x-label; down moves it away.",
+            wraplength=420,
+            foreground="#555555",
+        ).grid(row=13, column=0, columnspan=2, sticky="w", pady=(2, 0))
+
         button_frame = ttk.Frame(container)
-        button_frame.grid(row=4, column=0, sticky="e", pady=(8, 0))
+        button_frame.grid(row=5, column=0, sticky="e", pady=(8, 0))
+
+        def _apply_stage_values(close_after: bool = False) -> None:
+            for key, var in stage_vars.items():
+                target_var = getattr(self, key, None)
+                if target_var is None:
+                    continue
+                try:
+                    target_var.set(var.get())
+                except Exception:
+                    try:
+                        target_var.set(var.get())
+                    except Exception:
+                        pass
+            self._apply_combined_axis_preferences(skip_save=True)
+            display_margins = {
+                "left": stage_layout_display_left.get(),
+                "right": stage_layout_display_right.get(),
+                "top": stage_layout_display_top.get(),
+                "bottom": stage_layout_display_bottom.get(),
+            }
+            export_margins = {
+                "left": stage_layout_export_left.get(),
+                "right": stage_layout_export_right.get(),
+                "top": stage_layout_export_top.get(),
+                "bottom": stage_layout_export_bottom.get(),
+            }
+            self._sync_combined_layout_profile(
+                display_margins=display_margins,
+                export_margins=export_margins,
+                legend_anchor_y_display=_parse_anchor_value(
+                    stage_legend_anchor_y_display
+                ),
+                legend_anchor_y_export=_parse_anchor_value(stage_legend_anchor_y_export),
+                mirror_detached_labelpad=stage_mirror_detached_labelpad.get(),
+            )
+            try:
+                _save_settings_to_disk()
+            except Exception:
+                pass
+            self._schedule_combined_preview_refresh()
+            if close_after:
+                self._close_combined_axis_preferences()
 
         ttk.Button(
-            button_frame, text="Apply", command=self._apply_combined_axis_preferences
+            button_frame, text="Apply", command=lambda: _apply_stage_values(False)
         ).grid(row=0, column=0, padx=(0, 6))
         ttk.Button(
-            button_frame, text="Close", command=self._close_combined_axis_preferences
+            button_frame, text="Close", command=lambda: _apply_stage_values(True)
         ).grid(row=0, column=1)
+
+        window.protocol("WM_DELETE_WINDOW", lambda: _apply_stage_values(True))
 
     def _close_combined_axis_preferences(self) -> None:
         window = getattr(self, "_combined_axis_pref_window", None)
@@ -26245,7 +28375,58 @@ class UnifiedApp(tk.Tk):
                 pass
         self._combined_axis_pref_window = None
 
-    def _apply_combined_axis_preferences(self) -> None:
+    def _sync_combined_layout_profile(
+        self,
+        *,
+        display_margins: Optional[Mapping[str, float]] = None,
+        export_margins: Optional[Mapping[str, float]] = None,
+        legend_anchor_y_display: Optional[float] = None,
+        legend_anchor_y_export: Optional[float] = None,
+        mirror_detached_labelpad: Optional[bool] = None,
+    ) -> None:
+        profile = _get_layout_profile("fig_combined_triple_axis")
+        for mode, margins, anchor_y in (
+            ("display", display_margins, legend_anchor_y_display),
+            ("export", export_margins, legend_anchor_y_export),
+        ):
+            section = profile.setdefault(mode, {})
+            if margins is not None:
+                section["margins"] = _normalize_layout_margins(
+                    margins, _default_layout_margins("fig_combined_triple_axis", mode)
+                )
+            axis_labelpads = section.get("axis_labelpads")
+            if not isinstance(axis_labelpads, dict):
+                axis_labelpads = {}
+            axis_labelpads["primary"] = self._safe_get_var(
+                self.combined_primary_labelpad, float
+            )
+            axis_labelpads["right"] = self._safe_get_var(
+                self.combined_temp_labelpad, float
+            )
+            axis_labelpads["third"] = self._safe_get_var(
+                self.combined_deriv_labelpad, float
+            )
+            section["axis_labelpads"] = axis_labelpads
+            section["detached_spine_offset"] = self._safe_get_var(
+                self.combined_deriv_axis_offset, float
+            )
+            section["detached_labelpad"] = self._safe_get_var(
+                self.combined_deriv_labelpad, float
+            )
+            if anchor_y is not None:
+                try:
+                    anchor_value = float(anchor_y)
+                except Exception:
+                    anchor_value = None
+                if anchor_value is not None and math.isfinite(anchor_value):
+                    section["legend_anchor_y"] = max(-0.1, min(1.1, anchor_value))
+        if mirror_detached_labelpad is not None:
+            profile["mirror_detached_labelpad"] = bool(mirror_detached_labelpad)
+        settings["layout_profiles"] = _normalize_layout_profiles(
+            settings.get("layout_profiles")
+        )
+
+    def _apply_combined_axis_preferences(self, *, skip_save: bool = False) -> None:
         def _label_value(var: tk.StringVar) -> str:
             return (var.get() or "").strip()
 
@@ -26415,10 +28596,11 @@ class UnifiedApp(tk.Tk):
         self.combined_legend_alignment.set(legend_alignment_value)
         settings["combined_legend_alignment"] = legend_alignment_value
 
-        try:
-            _save_settings_to_disk()
-        except Exception:
-            pass
+        if not skip_save:
+            try:
+                _save_settings_to_disk()
+            except Exception:
+                pass
 
     def _close_combined_layout_tuner(self) -> None:
         window = getattr(self, "_combined_layout_tuner_window", None)
@@ -26541,36 +28723,67 @@ class UnifiedApp(tk.Tk):
         window.title("Combined Plot Layout Tuner")
         window.transient(self)
         window.resizable(False, False)
-        window.protocol("WM_DELETE_WINDOW", self._close_combined_layout_tuner)
         self._combined_layout_tuner_window = window
 
         container = ttk.Frame(window, padding=12)
         container.grid(row=0, column=0, sticky="nsew")
         container.grid_columnconfigure(1, weight=1)
 
+        stage_legend_gap = tk.DoubleVar(value=self.combined_legend_label_gap.get())
+        stage_xlabel_gap = tk.DoubleVar(value=self.combined_xlabel_tick_gap.get())
+        stage_legend_margin = tk.DoubleVar(
+            value=self.combined_legend_bottom_margin.get()
+        )
+
         ttk.Label(
             container,
-            text="Adjust combined plot spacing with live preview updates.",
+            text="Adjust combined plot spacing. Changes apply on Apply or Close.",
             wraplength=440,
         ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
 
         preset_frame = ttk.Frame(container)
         preset_frame.grid(row=1, column=0, columnspan=4, sticky="w", pady=(0, 8))
         ttk.Label(preset_frame, text="Presets:").pack(side="left", padx=(0, 6))
+
+        def _apply_stage_preset(preset_name: str) -> None:
+            preset_key = (preset_name or "").strip().lower()
+            if preset_key == "tight":
+                scale = 0.6
+            elif preset_key == "airy":
+                scale = 1.25
+            else:
+                scale = 1.0
+            stage_legend_gap.set(DEFAULT_COMBINED_LEGEND_GAP_PTS * scale)
+            stage_xlabel_gap.set(DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS * scale)
+            stage_legend_margin.set(DEFAULT_COMBINED_LEGEND_MARGIN_PTS * scale)
+
+        def _reset_stage_defaults() -> None:
+            stage_legend_gap.set(DEFAULT_COMBINED_LEGEND_GAP_PTS)
+            stage_xlabel_gap.set(DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS)
+            stage_legend_margin.set(DEFAULT_COMBINED_LEGEND_MARGIN_PTS)
+
+        def _commit_stage(close_after: bool = False) -> None:
+            self.combined_legend_label_gap.set(stage_legend_gap.get())
+            self.combined_xlabel_tick_gap.set(stage_xlabel_gap.get())
+            self.combined_legend_bottom_margin.set(stage_legend_margin.get())
+            self._apply_combined_layout_values()
+            if close_after:
+                self._close_combined_layout_tuner()
+
         ttk.Button(
             preset_frame,
             text="Tight",
-            command=lambda: self._apply_combined_layout_preset("tight"),
+            command=lambda: _apply_stage_preset("tight"),
         ).pack(side="left", padx=(0, 6))
         ttk.Button(
             preset_frame,
             text="Normal",
-            command=lambda: self._apply_combined_layout_preset("normal"),
+            command=lambda: _apply_stage_preset("normal"),
         ).pack(side="left", padx=(0, 6))
         ttk.Button(
             preset_frame,
             text="Airy",
-            command=lambda: self._apply_combined_layout_preset("airy"),
+            command=lambda: _apply_stage_preset("airy"),
         ).pack(side="left")
 
         def _build_spacing_row(
@@ -26590,7 +28803,6 @@ class UnifiedApp(tk.Tk):
                 to=max_value,
                 orient="horizontal",
                 variable=var,
-                command=lambda _value: self._apply_combined_layout_values(),
             )
             scale.grid(row=row, column=1, sticky="ew", pady=2)
             spin = ttk.Spinbox(
@@ -26600,19 +28812,16 @@ class UnifiedApp(tk.Tk):
                 increment=increment,
                 textvariable=var,
                 width=8,
-                command=self._apply_combined_layout_values,
             )
             spin.grid(row=row, column=2, sticky="w", pady=2)
             ttk.Label(container, text="pt").grid(
                 row=row, column=3, sticky="w", padx=(4, 0)
             )
-            spin.bind("<Return>", lambda _event: self._apply_combined_layout_values())
-            spin.bind("<FocusOut>", lambda _event: self._apply_combined_layout_values())
 
         _build_spacing_row(
             2,
             "Legend to plot gap",
-            self.combined_legend_label_gap,
+            stage_legend_gap,
             MIN_COMBINED_LEGEND_GAP_PTS,
             MAX_COMBINED_LEGEND_GAP_PTS,
             0.5,
@@ -26620,7 +28829,7 @@ class UnifiedApp(tk.Tk):
         _build_spacing_row(
             3,
             "X-label to tick gap",
-            self.combined_xlabel_tick_gap,
+            stage_xlabel_gap,
             MIN_COMBINED_XLABEL_TICK_GAP_PTS,
             MAX_COMBINED_XLABEL_TICK_GAP_PTS,
             0.5,
@@ -26628,7 +28837,7 @@ class UnifiedApp(tk.Tk):
         _build_spacing_row(
             4,
             "Bottom margin below legend",
-            self.combined_legend_bottom_margin,
+            stage_legend_margin,
             MIN_COMBINED_LEGEND_MARGIN_PTS,
             MAX_COMBINED_LEGEND_MARGIN_PTS,
             0.5,
@@ -26639,11 +28848,16 @@ class UnifiedApp(tk.Tk):
         ttk.Button(
             button_frame,
             text="Reset to Defaults",
-            command=self._reset_combined_layout_defaults,
+            command=_reset_stage_defaults,
         ).pack(side="left", padx=(0, 8))
         ttk.Button(
-            button_frame, text="Close", command=self._close_combined_layout_tuner
+            button_frame, text="Apply", command=lambda: _commit_stage(False)
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(
+            button_frame, text="Close", command=lambda: _commit_stage(True)
         ).pack(side="left")
+
+        window.protocol("WM_DELETE_WINDOW", lambda: _commit_stage(True))
 
     def _combined_axis_label_overrides(self) -> Dict[str, str]:
         return {
@@ -49016,12 +51230,59 @@ class UnifiedApp(tk.Tk):
         cycle_legend_anchor = getattr(self, "_combined_cycle_legend_anchor", None)
         legend_loc = getattr(self, "_combined_legend_loc", None)
         cycle_legend_loc = getattr(self, "_combined_cycle_legend_loc", None)
+        layout_profile = _get_layout_profile("fig_combined_triple_axis")
+        layout_section = _layout_profile_section(layout_profile, mode)
+        profile_margins = layout_section.get("margins")
+        profile_labelpads = layout_section.get("axis_labelpads", {})
+        profile_legend_anchor = layout_section.get("legend_anchor")
+        profile_cycle_anchor = layout_section.get("cycle_legend_anchor")
+        profile_legend_anchor_y = layout_section.get("legend_anchor_y")
+        profile_xlabel_pad = layout_section.get("xlabel_pad_pts")
+        profile_detached_offset = layout_section.get("detached_spine_offset")
+        profile_detached_labelpad = layout_section.get("detached_labelpad")
+        mirror_detached_labelpad = bool(
+            layout_profile.get("mirror_detached_labelpad", False)
+        )
         if bool(self.center_combined_plot_legend.get()):
             # When centering is enabled, ignore persisted main-legend anchors so the
             # builder's default centered placement applies on refresh.
             legend_anchor = None
             legend_loc = None
             legend_alignment_value = "center"
+        if profile_legend_anchor is not None:
+            legend_anchor = profile_legend_anchor
+        if profile_cycle_anchor is not None:
+            cycle_legend_anchor = profile_cycle_anchor
+        labelpad_overrides = self._combined_axis_labelpad_overrides()
+        if isinstance(profile_labelpads, dict):
+            if "primary" in profile_labelpads:
+                labelpad_overrides["primary"] = profile_labelpads["primary"]
+            if "right" in profile_labelpads:
+                labelpad_overrides["temperature"] = profile_labelpads["right"]
+            if "temperature" in profile_labelpads:
+                labelpad_overrides["temperature"] = profile_labelpads["temperature"]
+            if "third" in profile_labelpads:
+                labelpad_overrides["derivative"] = profile_labelpads["third"]
+            if "derivative" in profile_labelpads:
+                labelpad_overrides["derivative"] = profile_labelpads["derivative"]
+        if profile_detached_labelpad is not None:
+            labelpad_overrides["derivative"] = profile_detached_labelpad
+        if mirror_detached_labelpad:
+            temp_pad = labelpad_overrides.get("temperature")
+            if temp_pad is None:
+                temp_pad = self._safe_get_var(self.combined_temp_labelpad, float)
+            if temp_pad is not None:
+                labelpad_overrides["derivative"] = temp_pad
+        xlabel_pad_value = profile_xlabel_pad
+        if xlabel_pad_value is None and isinstance(profile_labelpads, dict):
+            xlabel_pad_value = profile_labelpads.get("x")
+        if profile_detached_offset is not None:
+            try:
+                offset_value = float(profile_detached_offset)
+            except Exception:
+                offset_value = None
+            if offset_value is not None and math.isfinite(offset_value):
+                deriv_offset = offset_value
 
         fig = build_combined_triple_axis_figure(
             *base_args,
@@ -49046,7 +51307,7 @@ class UnifiedApp(tk.Tk):
             legend_fontsize_override=legend_font_value,
             font_family=font_family_value,
             axis_label_overrides=self._combined_axis_label_overrides(),
-            labelpad_overrides=self._combined_axis_labelpad_overrides(),
+            labelpad_overrides=labelpad_overrides,
             left_dataset_key=left_key,
             right_dataset_key=right_key,
             third_dataset_key=third_key,
@@ -49057,6 +51318,9 @@ class UnifiedApp(tk.Tk):
             cycle_legend_anchor=cycle_legend_anchor,
             legend_loc=legend_loc,
             cycle_legend_loc=cycle_legend_loc,
+            baseline_margins=profile_margins,
+            legend_anchor_y=profile_legend_anchor_y,
+            xlabel_pad_pts=xlabel_pad_value,
             mode=mode,
             fig_size=fig_size,
         )
@@ -49115,6 +51379,11 @@ class UnifiedApp(tk.Tk):
                 )
             except Exception:
                 pass
+            _apply_title_positions(
+                fig,
+                title_xy=layout_section.get("title_xy"),
+                suptitle_xy=layout_section.get("suptitle_xy"),
+            )
         return fig
 
     def open_cycle_analysis_tab(self):
