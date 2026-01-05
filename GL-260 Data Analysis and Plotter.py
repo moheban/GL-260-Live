@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.6.1
+# Version: V1.6.2
 # Date: 2026-01-05
 
 import os
@@ -5396,7 +5396,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.6.1"
+APP_VERSION = "V1.6.2"
 
 
 DEBUG_SERIES_FLOW = False
@@ -17983,16 +17983,32 @@ class PlotLayoutManager:
                         pass
 
             renderer = self._get_renderer()
+            data_axes_tight = self._axes_tight_union(renderer)
             legend_bbox = self._bbox_in_fig(legend, renderer) if legend else None
             xlabel_bbox = self._bbox_in_fig(xlabel, renderer) if xlabel else None
             xlabel_anchor_x = None
             if xlabel is not None:
                 xlabel_height = xlabel_bbox.height if xlabel_bbox is not None else 0.02
-                baseline = (
-                    legend_bbox.y1 if legend_bbox is not None else legend_anchor_y
-                )
-                desired_y = baseline + legend_xlabel_gap_frac + (xlabel_height / 2.0)
-                desired_y += xlabel_pad_frac
+                axes_ref = data_axes_tight if data_axes_tight is not None else axes_bbox
+                if axes_ref is None:
+                    baseline = (
+                        legend_bbox.y1 if legend_bbox is not None else legend_anchor_y
+                    )
+                    desired_y = baseline + legend_xlabel_gap_frac + (xlabel_height / 2.0)
+                    desired_y += xlabel_pad_frac
+                else:
+                    desired_y = (
+                        axes_ref.y0 - xlabel_tick_gap_frac - (xlabel_height / 2.0)
+                    )
+                    desired_y += xlabel_pad_frac
+                if legend_bbox is not None:
+                    min_center = (
+                        legend_bbox.y1
+                        + legend_xlabel_gap_frac
+                        + (xlabel_height / 2.0)
+                    )
+                    if desired_y < min_center:
+                        desired_y = min_center
                 try:
                     xlabel_anchor_x = main_center_x
                     if xlabel_anchor_x is None:
@@ -18074,33 +18090,36 @@ class PlotLayoutManager:
                         pass
 
             renderer = self._get_renderer()
-            axes_tight = self._axes_tight_union(renderer)
+            data_axes_tight = self._axes_tight_union(renderer)
             if cycle_legend is not None:
                 cycle_bbox = self._bbox_in_fig(cycle_legend, renderer)
-                if cycle_bbox is not None:
-                    if axes_tight is None:
-                        axes_tight = cycle_bbox
-                    else:
-                        axes_tight = Bbox.union([axes_tight, cycle_bbox])
+            else:
+                cycle_bbox = None
+            if data_axes_tight is not None and cycle_bbox is not None:
+                union_lr = Bbox.union([data_axes_tight, cycle_bbox])
+            else:
+                union_lr = data_axes_tight if data_axes_tight is not None else cycle_bbox
 
-            if axes_tight is not None:
-                if axes_tight.x0 < max(0.0, pad_frac_x):
+            if union_lr is not None:
+                if union_lr.x0 < max(0.0, pad_frac_x):
                     left = min(
                         right - 0.1,
-                        max(left + (max(0.0, pad_frac_x) - axes_tight.x0), 0.05),
+                        max(left + (max(0.0, pad_frac_x) - union_lr.x0), 0.05),
                     )
-                if axes_tight.x1 > 1.0 - max(0.0, pad_frac_x):
+                if union_lr.x1 > 1.0 - max(0.0, pad_frac_x):
                     right = max(
                         left + 0.1,
                         min(
-                            right - (axes_tight.x1 - (1.0 - max(0.0, pad_frac_x))),
+                            right - (union_lr.x1 - (1.0 - max(0.0, pad_frac_x))),
                             0.98,
                         ),
                     )
-            if axes_tight is not None and xlabel_bbox is not None:
+            if data_axes_tight is not None and xlabel_bbox is not None:
                 min_axes_bottom = xlabel_bbox.y1 + xlabel_tick_gap_frac
-                if axes_tight.y0 < min_axes_bottom:
-                    bottom = max(bottom, bottom + (min_axes_bottom - axes_tight.y0))
+                if data_axes_tight.y0 < min_axes_bottom:
+                    bottom = max(
+                        bottom, bottom + (min_axes_bottom - data_axes_tight.y0)
+                    )
 
             if (
                 suptitle_bbox is not None
@@ -34993,7 +35012,96 @@ class UnifiedApp(tk.Tk):
             fig_legend_ids = set()
 
         def _legend_anchor_axes_fraction(lg) -> Optional[tuple]:
-            """Return legend lower-left in axes/figure fraction coordinates."""
+            """Return legend anchor in axes/figure fraction coordinates."""
+            is_fig_legend = id(lg) in fig_legend_ids
+
+            def _legend_loc_text(legend_obj) -> str:
+                loc_map = {
+                    0: "best",
+                    1: "upper right",
+                    2: "upper left",
+                    3: "lower left",
+                    4: "lower right",
+                    5: "right",
+                    6: "center left",
+                    7: "center right",
+                    8: "lower center",
+                    9: "upper center",
+                    10: "center",
+                }
+                try:
+                    loc_value = legend_obj.get_loc()
+                except Exception:
+                    loc_value = getattr(legend_obj, "_loc", "upper right")
+                if isinstance(loc_value, str):
+                    loc_text = loc_value.strip().lower()
+                elif isinstance(loc_value, int):
+                    loc_text = loc_map.get(loc_value, "upper right")
+                else:
+                    loc_text = "upper right"
+                if loc_text == "best":
+                    loc_text = "upper right"
+                return loc_text
+
+            def _anchor_from_bbox(bbox: Bbox, loc_text: str) -> Tuple[float, float]:
+                x0, y0, x1, y1 = bbox.x0, bbox.y0, bbox.x1, bbox.y1
+                cx = x0 + ((x1 - x0) / 2.0)
+                cy = y0 + ((y1 - y0) / 2.0)
+                loc_text = (loc_text or "upper right").lower()
+                if loc_text in {"upper left", "ul"}:
+                    return (x0, y1)
+                if loc_text in {"upper center", "uc"}:
+                    return (cx, y1)
+                if loc_text in {"upper right", "ur"}:
+                    return (x1, y1)
+                if loc_text in {"lower left", "ll"}:
+                    return (x0, y0)
+                if loc_text in {"lower center", "lc"}:
+                    return (cx, y0)
+                if loc_text in {"lower right", "lr"}:
+                    return (x1, y0)
+                if loc_text in {"center left", "cl", "left"}:
+                    return (x0, cy)
+                if loc_text in {"center right", "cr", "right"}:
+                    return (x1, cy)
+                return (cx, cy)
+
+            renderer = None
+            try:
+                canvas = fig.canvas
+                if canvas is not None:
+                    try:
+                        canvas.draw_idle()
+                    except Exception:
+                        pass
+                    try:
+                        canvas.draw()
+                    except Exception:
+                        pass
+                    try:
+                        renderer = canvas.get_renderer()
+                    except Exception:
+                        renderer = None
+            except Exception:
+                renderer = None
+
+            if is_fig_legend:
+                try:
+                    bbox_disp = lg.get_window_extent(renderer=renderer)
+                except Exception:
+                    bbox_disp = None
+                if bbox_disp is not None:
+                    try:
+                        bbox_fig = bbox_disp.transformed(fig.transFigure.inverted())
+                    except Exception:
+                        bbox_fig = None
+                    if bbox_fig is not None:
+                        anchor_pair = _validated_anchor_pair(
+                            _anchor_from_bbox(bbox_fig, _legend_loc_text(lg))
+                        )
+                        if anchor_pair is not None:
+                            return anchor_pair
+
             bbox = None
             try:
                 bbox = lg.get_bbox_to_anchor()
@@ -35001,7 +35109,7 @@ class UnifiedApp(tk.Tk):
                 bbox = None
             if bbox is not None:
                 transform = None
-                if id(lg) in fig_legend_ids:
+                if is_fig_legend:
                     try:
                         transform = fig.transFigure
                     except Exception:
@@ -35020,20 +35128,21 @@ class UnifiedApp(tk.Tk):
                             return anchor_pair
                     except Exception:
                         pass
+
             ax = getattr(lg, "axes", None)
-            if ax is None:
+            if ax is None and fig is None:
                 return None
-            renderer = None
-            try:
-                canvas = lg.figure.canvas
-                if canvas is not None:
-                    try:
-                        canvas.draw_idle()
-                    except Exception:
-                        pass
-                    renderer = canvas.get_renderer()
-            except Exception:
-                renderer = None
+            if renderer is None:
+                try:
+                    canvas = lg.figure.canvas
+                    if canvas is not None:
+                        try:
+                            canvas.draw_idle()
+                        except Exception:
+                            pass
+                        renderer = canvas.get_renderer()
+                except Exception:
+                    renderer = None
             try:
                 bbox = lg.get_window_extent(renderer=renderer)
             except Exception:
@@ -35041,8 +35150,15 @@ class UnifiedApp(tk.Tk):
             if bbox is None:
                 return None
             try:
-                x0, y0 = ax.transAxes.inverted().transform((bbox.x0, bbox.y0))
-                return _validated_anchor_pair((x0, y0))
+                if ax is not None:
+                    x0, y0 = ax.transAxes.inverted().transform((bbox.x0, bbox.y0))
+                    return _validated_anchor_pair((x0, y0))
+                bbox_fig = bbox.transformed(fig.transFigure.inverted())
+                anchor_pair = _validated_anchor_pair(
+                    _anchor_from_bbox(bbox_fig, _legend_loc_text(lg))
+                )
+                if anchor_pair is not None:
+                    return anchor_pair
             except Exception:
                 return None
 
