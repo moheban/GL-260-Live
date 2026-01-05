@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.6.0
-# Date: 2025-12-31
+# Version: V1.6.1
+# Date: 2026-01-05
 
 import os
 import sys
@@ -36,6 +36,7 @@ def _note_gil_reenable(module_name, before_status):
 
 
 import matplotlib.pyplot as plt
+
 _GIL_IMPORT_STATUS = _note_gil_reenable("matplotlib", _GIL_IMPORT_STATUS)
 
 from matplotlib.axes import Axes
@@ -51,12 +52,15 @@ from matplotlib import font_manager, mathtext
 from matplotlib.ft2font import FT2Font
 
 import great_tables as gt
+
 _GIL_IMPORT_STATUS = _note_gil_reenable("great_tables", _GIL_IMPORT_STATUS)
 
 import pandas as pd
+
 _GIL_IMPORT_STATUS = _note_gil_reenable("pandas", _GIL_IMPORT_STATUS)
 
 import numpy as np
+
 _GIL_IMPORT_STATUS = _note_gil_reenable("numpy", _GIL_IMPORT_STATUS)
 
 import tkinter as tk
@@ -133,6 +137,7 @@ import ctypes
 try:
     _gil_before_mplcursors = _current_gil_status()
     import mplcursors  # type: ignore
+
     _note_gil_reenable("mplcursors", _gil_before_mplcursors)
 except Exception:  # pragma: no cover - optional dependency
     mplcursors = None
@@ -187,6 +192,7 @@ _NAOH_PITZER_IMPORT_ERROR = None
 try:
     _gil_before_pitzer = _current_gil_status()
     import naoh_co2_pitzer_ph_model as _naoh_pitzer_module
+
     _note_gil_reenable("naoh_co2_pitzer_ph_model", _gil_before_pitzer)
 except Exception as exc:  # pragma: no cover - optional dependency
     _NAOH_PITZER_IMPORT_ERROR = exc
@@ -209,8 +215,6 @@ DEFAULT_TAB_ORDER_KEYS = (
     "solubility_new",
     "final_report",
 )
-
-
 
 
 def _dependency_audit_targets() -> List[str]:
@@ -247,9 +251,7 @@ def _audit_dependency_import(name: str) -> Dict[str, Any]:
     except Exception as exc:
         record["error"] = str(exc)
         record["gil_after"] = _current_gil_status()
-        record["gil_changed"] = bool(
-            before is False and record["gil_after"] is True
-        )
+        record["gil_changed"] = bool(before is False and record["gil_after"] is True)
         return record
     after = _current_gil_status()
     record["gil_after"] = after
@@ -330,12 +332,8 @@ class TkTaskRunner:
             if on_ok is not None:
                 on_ok(result)
 
-        future.add_done_callback(
-            lambda fut: self._root.after(0, _handle_result, fut)
-        )
+        future.add_done_callback(lambda fut: self._root.after(0, _handle_result, fut))
         return task_id
-
-
 
 
 def _get_font_path(font_name: str) -> Optional[str]:
@@ -672,9 +670,6 @@ def _center_titles_to_axes_union(
         pass
 
 
-
-
-
 def _filter_installed_fonts(candidates: Sequence[str]) -> List[str]:
     filtered: List[str] = []
     for candidate in candidates:
@@ -952,17 +947,18 @@ def _normalize_plot_elements(value: Any) -> Dict[str, List[Dict[str, Any]]]:
             if not geometry:
                 geometry = _migrate_legacy_geometry(element_type, element)
             style = _normalize_annotation_style(element.get("style"))
-            coord_space = str(
-                element.get("coord_space", element.get("coords", "data")) or "data"
-            ).strip().lower()
+            coord_space = (
+                str(element.get("coord_space", element.get("coords", "data")) or "data")
+                .strip()
+                .lower()
+            )
             if coord_space not in {"data", "axes"}:
                 coord_space = "data"
             axes_target = _normalize_axes_target(element.get("axes_target"))
             normalized: Dict[str, Any] = {
                 "id": str(element.get("id") or uuid.uuid4()),
                 "name": str(
-                    element.get("name")
-                    or _default_annotation_name(element_type, index)
+                    element.get("name") or _default_annotation_name(element_type, index)
                 ),
                 "type": element_type,
                 "axes_target": axes_target,
@@ -1127,11 +1123,15 @@ def _normalize_layout_xy(value: Any) -> Optional[Tuple[float, float]]:
     return anchor
 
 
-def _normalize_legend_loc_value(value: Any) -> Optional[Union[str, int]]:
+def _normalize_legend_loc_value(
+    value: Any,
+) -> Optional[Union[str, int, Tuple[float, float]]]:
     """Normalize persisted legend loc values for reuse with matplotlib."""
     if isinstance(value, str):
         value = value.strip()
         return value or None
+    if isinstance(value, (list, tuple)):
+        return _validated_anchor_pair(value)
     try:
         loc_int = int(value)
         return loc_int
@@ -1178,6 +1178,7 @@ def _normalize_layout_profile(value: Any, plot_id: Optional[str]) -> Dict[str, A
     }
     normalize_loc_fn = globals().get("_normalize_legend_loc_value")
     if not callable(normalize_loc_fn):
+
         def _fallback_normalize_legend_loc_value(v):
             if isinstance(v, str):
                 v = v.strip()
@@ -1202,9 +1203,7 @@ def _normalize_layout_profile(value: Any, plot_id: Optional[str]) -> Dict[str, A
             "cycle_legend_anchor": _validated_anchor_pair(
                 section.get("cycle_legend_anchor")
             ),
-            "cycle_legend_loc": normalize_loc_fn(
-                section.get("cycle_legend_loc")
-            ),
+            "cycle_legend_loc": normalize_loc_fn(section.get("cycle_legend_loc")),
             "axis_labelpads": {},
             "xlabel_pad_pts": None,
             "detached_spine_offset": None,
@@ -1298,6 +1297,7 @@ def _apply_title_positions(
 ) -> None:
     if fig is None:
         return
+
     def _apply_text_position(text_artist, target_xy) -> None:
         if text_artist is None or target_xy is None:
             return
@@ -1434,6 +1434,16 @@ def _apply_layout_profile_to_figure(fig: Figure, plot_id: str, mode: str) -> Non
                 continue
             main_legend = legend
             break
+    cycle_legend = None
+    for legend in fig_legends:
+        if getattr(legend, "_cycle_overlay_legend", False):
+            cycle_legend = legend
+            break
+    if cycle_legend is None:
+        for legend in axis_legends:
+            if getattr(legend, "_cycle_overlay_legend", False):
+                cycle_legend = legend
+                break
     legend_anchor = section.get("legend_anchor")
     legend_loc = section.get("legend_loc")
     legend_anchor_y = section.get("legend_anchor_y")
@@ -1456,15 +1466,25 @@ def _apply_layout_profile_to_figure(fig: Figure, plot_id: str, mode: str) -> Non
 
     cycle_anchor = section.get("cycle_legend_anchor")
     cycle_loc = section.get("cycle_legend_loc")
-    if cycle_anchor is not None:
-        for legend in axis_legends:
-            if not getattr(legend, "_cycle_overlay_legend", False):
-                continue
-            axis = axis_legend_map.get(legend)
+    combined_cycle_anchor = None
+    if plot_id == "fig_combined_triple_axis":
+        combined_cycle_anchor = _validated_anchor_pair(
+            settings.get("combined_cycle_legend_anchor")
+        )
+    if cycle_anchor is not None and combined_cycle_anchor is None and cycle_legend is not None:
+        axis = axis_legend_map.get(cycle_legend)
+        if axis is not None:
             _apply_legend_anchor_to_artist(
-                legend,
+                cycle_legend,
                 cycle_anchor,
                 target_ax=axis,
+                loc_override=cycle_loc,
+            )
+        else:
+            _apply_legend_anchor_to_artist(
+                cycle_legend,
+                cycle_anchor,
+                transform=fig.transFigure,
                 loc_override=cycle_loc,
             )
 
@@ -1483,9 +1503,7 @@ def _apply_layout_profile_to_figure(fig: Figure, plot_id: str, mode: str) -> Non
                     except Exception:
                         raw_value = None
                     if raw_value is not None and math.isfinite(raw_value):
-                        setattr(
-                            layout_mgr, attr, max(0.0, min(1.0, float(raw_value)))
-                        )
+                        setattr(layout_mgr, attr, max(0.0, min(1.0, float(raw_value))))
             if legend_anchor is not None:
                 layout_mgr.legend_anchor = _validated_anchor_pair(legend_anchor)
             if legend_anchor_y is not None:
@@ -1518,10 +1536,8 @@ def _apply_layout_profile_to_figure(fig: Figure, plot_id: str, mode: str) -> Non
                 layout_mgr.register_artist("xlabel", xlabel_artist)
             if main_legend is not None:
                 layout_mgr.register_artist("plot_legend", main_legend)
-            for legend in axis_legends:
-                if getattr(legend, "_cycle_overlay_legend", False):
-                    layout_mgr.register_artist("cycle_legend", legend)
-                    break
+            if cycle_legend is not None:
+                layout_mgr.register_artist("cycle_legend", cycle_legend)
             try:
                 layout_mgr.solve()
             except Exception:
@@ -1540,7 +1556,9 @@ def _apply_layout_profile_to_figure(fig: Figure, plot_id: str, mode: str) -> Non
             legend_anchor_y=legend_anchor_y,
             title_pad_pts=title_pad_pts,
             suptitle_pad_pts=suptitle_pad_pts,
-            suptitle_y=suptitle_y if suptitle_y is not None else DEFAULT_COMBINED_SUPTITLE_Y,
+            suptitle_y=(
+                suptitle_y if suptitle_y is not None else DEFAULT_COMBINED_SUPTITLE_Y
+            ),
             top_margin_pct=0.0,
             legend_gap_pts=0.0,
             xlabel_tick_gap_pts=0.0,
@@ -2191,7 +2209,11 @@ class AnnotationRenderer:
             return artists
 
         if element_type == "ink":
-            points = geometry.get("points") if isinstance(geometry.get("points"), list) else []
+            points = (
+                geometry.get("points")
+                if isinstance(geometry.get("points"), list)
+                else []
+            )
             if not points:
                 return None
             if element.get("_legacy_pixel_based"):
@@ -2472,7 +2494,11 @@ class AnnotationHitTest:
             except Exception:
                 return None
             tol = self._pixel_tolerance
-            if min(x0_disp, x1_disp) - tol <= event_xy[0] <= max(x0_disp, x1_disp) + tol:
+            if (
+                min(x0_disp, x1_disp) - tol
+                <= event_xy[0]
+                <= max(x0_disp, x1_disp) + tol
+            ):
                 return "move"
             return None
 
@@ -2497,11 +2523,14 @@ class AnnotationHitTest:
             except Exception:
                 return None
             tol = self._pixel_tolerance
-            if min(p0_disp[0], p1_disp[0]) - tol <= event_xy[0] <= max(
-                p0_disp[0], p1_disp[0]
-            ) + tol and min(p0_disp[1], p1_disp[1]) - tol <= event_xy[1] <= max(
-                p0_disp[1], p1_disp[1]
-            ) + tol:
+            if (
+                min(p0_disp[0], p1_disp[0]) - tol
+                <= event_xy[0]
+                <= max(p0_disp[0], p1_disp[0]) + tol
+                and min(p0_disp[1], p1_disp[1]) - tol
+                <= event_xy[1]
+                <= max(p0_disp[1], p1_disp[1]) + tol
+            ):
                 return "move"
             return None
 
@@ -2511,21 +2540,33 @@ class AnnotationHitTest:
             if value is None or event.inaxes != ax:
                 return None
             if orientation == "horizontal":
-                x_ref = event.xdata if event.xdata is not None else sum(ax.get_xlim()) / 2.0
+                x_ref = (
+                    event.xdata if event.xdata is not None else sum(ax.get_xlim()) / 2.0
+                )
                 try:
                     y_disp = transform.transform((x_ref, value))[1]
                 except Exception:
                     return None
-                return "move" if abs(y_disp - event_xy[1]) <= self._pixel_tolerance else None
+                return (
+                    "move"
+                    if abs(y_disp - event_xy[1]) <= self._pixel_tolerance
+                    else None
+                )
             y_ref = event.ydata if event.ydata is not None else sum(ax.get_ylim()) / 2.0
             try:
                 x_disp = transform.transform((value, y_ref))[0]
             except Exception:
                 return None
-            return "move" if abs(x_disp - event_xy[0]) <= self._pixel_tolerance else None
+            return (
+                "move" if abs(x_disp - event_xy[0]) <= self._pixel_tolerance else None
+            )
 
         if element_type == "ink":
-            points = geometry.get("points") if isinstance(geometry.get("points"), list) else []
+            points = (
+                geometry.get("points")
+                if isinstance(geometry.get("points"), list)
+                else []
+            )
             if not points or event.inaxes != ax:
                 return None
             for i in range(len(points) - 1):
@@ -2945,7 +2986,11 @@ class PlotAnnotationsController:
         element_type = str(element.get("type") or "").strip().lower()
         if element_type in {"xspan", "xspan_label"} and coord_space == "data":
             ymid = sum(ax.get_ylim()) / 2.0
-            geometry = element.get("geometry", {}) if isinstance(element.get("geometry"), dict) else {}
+            geometry = (
+                element.get("geometry", {})
+                if isinstance(element.get("geometry"), dict)
+                else {}
+            )
             x0 = _coerce_float(geometry.get("x0"))
             x1 = _coerce_float(geometry.get("x1"))
             new_handles: List[Tuple[str, Tuple[float, float]]] = []
@@ -2971,9 +3016,11 @@ class PlotAnnotationsController:
                 handles = new_handles
         if element_type == "ref_line":
             value = _coerce_float(element.get("geometry", {}).get("value"))
-            orientation = str(
-                element.get("geometry", {}).get("orientation") or "vertical"
-            ).strip().lower()
+            orientation = (
+                str(element.get("geometry", {}).get("orientation") or "vertical")
+                .strip()
+                .lower()
+            )
             if value is not None:
                 if orientation == "horizontal":
                     xmid = sum(ax.get_xlim()) / 2.0
@@ -3065,9 +3112,9 @@ class PlotAnnotationsController:
                                 label_y = max(0.0, min(1.0, label_y_axes))
                             else:
                                 y_min, y_max = ax.get_ylim()
-                                label_y = y_min + max(
-                                    0.0, min(1.0, label_y_axes)
-                                ) * (y_max - y_min)
+                                label_y = y_min + max(0.0, min(1.0, label_y_axes)) * (
+                                    y_max - y_min
+                                )
                     if label_y is not None:
                         handles.append(("label", (label_x, label_y)))
         elif element_type == "rect":
@@ -3087,7 +3134,9 @@ class PlotAnnotationsController:
         elif element_type == "ref_line":
             value = _coerce_float(geometry.get("value"))
             if value is not None:
-                orientation = str(geometry.get("orientation") or "vertical").strip().lower()
+                orientation = (
+                    str(geometry.get("orientation") or "vertical").strip().lower()
+                )
                 if orientation == "horizontal":
                     handles.append(("move", (0.5, value)))
                 else:
@@ -3183,7 +3232,9 @@ class PlotAnnotationsController:
 
     def _on_motion(self, event: Any) -> None:
         if DEBUG_ANNOTATIONS_INTERACTION:
-            inaxes = bool(getattr(event, "inaxes", None)) if event is not None else False
+            inaxes = (
+                bool(getattr(event, "inaxes", None)) if event is not None else False
+            )
             print(
                 "[ANNOTATIONS] motion armed="
                 f"{self._placing_type} mode={self._mode} "
@@ -3212,7 +3263,9 @@ class PlotAnnotationsController:
 
     def _on_release(self, event: Any) -> None:
         if DEBUG_ANNOTATIONS_INTERACTION:
-            inaxes = bool(getattr(event, "inaxes", None)) if event is not None else False
+            inaxes = (
+                bool(getattr(event, "inaxes", None)) if event is not None else False
+            )
             print(
                 "[ANNOTATIONS] release armed="
                 f"{self._placing_type} mode={self._mode} "
@@ -3747,7 +3800,11 @@ class PlotAnnotationsController:
         elif element_type == "point":
             new_x = start_geom.get("x", x) + dx
             new_y = start_geom.get("y", y) + dy
-            style = element.get("style", {}) if isinstance(element.get("style"), dict) else {}
+            style = (
+                element.get("style", {})
+                if isinstance(element.get("style"), dict)
+                else {}
+            )
             if style.get("snap_to_data"):
                 new_x, new_y = self._snap_to_nearest_data(ax, new_x, new_y, style)
             geometry["x"] = new_x
@@ -3796,7 +3853,10 @@ class PlotAnnotationsController:
                 geometry["y0"] = start_geom.get("y0", y) + dy
                 geometry["y1"] = start_geom.get("y1", y) + dy
         elif element_type == "ref_line":
-            if str(geometry.get("orientation") or "vertical").strip().lower() == "horizontal":
+            if (
+                str(geometry.get("orientation") or "vertical").strip().lower()
+                == "horizontal"
+            ):
                 geometry["value"] = y
             else:
                 geometry["value"] = x
@@ -4021,7 +4081,9 @@ class PlotAnnotationsController:
             self.render()
             return
 
-    def restore_element_snapshot(self, element_id: str, snapshot: Dict[str, Any]) -> None:
+    def restore_element_snapshot(
+        self, element_id: str, snapshot: Dict[str, Any]
+    ) -> None:
         if not snapshot:
             return
         elements = self._elements()
@@ -4112,7 +4174,9 @@ class AnnotationsPanel:
         merged = _default_add_defaults()
         merged.update(add_defaults)
         add_type = _canonicalize_annotation_type(merged.get("add_type", "")) or "xspan"
-        fill_color = merged.get("add_fillcolor") or _default_add_defaults()["add_fillcolor"]
+        fill_color = (
+            merged.get("add_fillcolor") or _default_add_defaults()["add_fillcolor"]
+        )
         if not isinstance(fill_color, str) or not fill_color.strip():
             fill_color = _default_add_defaults()["add_fillcolor"]
         alpha_value = _coerce_float(merged.get("add_alpha"))
@@ -4392,7 +4456,9 @@ class AnnotationsPanel:
             wraplength=600,
             justify="left",
         )
-        status_label.grid(row=6, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 6))
+        status_label.grid(
+            row=6, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 6)
+        )
 
         def _update_add_label_state() -> None:
             if self._add_label_entry is None:
@@ -4524,9 +4590,9 @@ class AnnotationsPanel:
         ttk.Button(
             list_controls, text="Duplicate", command=self._duplicate_selected
         ).pack(side="left", padx=4, pady=4)
-        ttk.Button(
-            list_controls, text="Delete", command=self._delete_selected
-        ).pack(side="left", padx=4, pady=4)
+        ttk.Button(list_controls, text="Delete", command=self._delete_selected).pack(
+            side="left", padx=4, pady=4
+        )
 
         props_frame = ttk.LabelFrame(self._content, text="Properties")
         props_frame.grid(row=1, column=1, sticky="nsew", padx=4, pady=(2, 2))
@@ -4568,7 +4634,9 @@ class AnnotationsPanel:
         self._frame.after_idle(self._bind_props_mousewheel)
 
         apply_frame = ttk.Frame(self._content)
-        apply_frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=4, pady=(0, 4))
+        apply_frame.grid(
+            row=2, column=0, columnspan=2, sticky="ew", padx=4, pady=(0, 4)
+        )
         self._apply_button = ttk.Button(
             apply_frame, text="Apply", command=self._apply_properties
         )
@@ -4621,10 +4689,14 @@ class AnnotationsPanel:
 
                 widget.bind("<MouseWheel>", _on_mousewheel, add="+")
                 widget.bind(
-                    "<Button-4>", lambda _event: canvas.yview_scroll(-1, "units"), add="+"
+                    "<Button-4>",
+                    lambda _event: canvas.yview_scroll(-1, "units"),
+                    add="+",
                 )
                 widget.bind(
-                    "<Button-5>", lambda _event: canvas.yview_scroll(1, "units"), add="+"
+                    "<Button-5>",
+                    lambda _event: canvas.yview_scroll(1, "units"),
+                    add="+",
                 )
             for child in widget.winfo_children():
                 _bind(child)
@@ -4643,7 +4715,6 @@ class AnnotationsPanel:
             pass
         # Mousewheel bindings are refreshed to cover rebuilt property widgets.
         self._frame.after_idle(self._bind_props_mousewheel)
-
 
     def toggle_collapsed(self) -> None:
         self.set_collapsed(not self._collapsed)
@@ -4716,7 +4787,10 @@ class AnnotationsPanel:
         if self._add_keep_placing_var.get():
             style_overrides["_keep_placing"] = True
         geometry_seed: Dict[str, Any] = {}
-        if canonical in {"text", "callout", "xspan_label", "rect", "ref_line"} and label_text:
+        if (
+            canonical in {"text", "callout", "xspan_label", "rect", "ref_line"}
+            and label_text
+        ):
             geometry_seed["text"] = label_text
         if canonical == "xspan_label":
             geometry_seed.setdefault("text", label_text or "Label")
@@ -4757,7 +4831,10 @@ class AnnotationsPanel:
                 )
                 name = element.get("name", "")
                 self._tree.insert(
-                    "", "end", iid=element_id, values=(visible, locked, type_label, name)
+                    "",
+                    "end",
+                    iid=element_id,
+                    values=(visible, locked, type_label, name),
                 )
                 if element_id == selected_id:
                     self._tree.selection_set(element_id)
@@ -4866,7 +4943,8 @@ class AnnotationsPanel:
         axis_map = {label: role for label, role in axis_choices}
         current_role = element.get("axes_target", "primary")
         current_label = next(
-            (label for label, role in axis_choices if role == current_role), current_role
+            (label for label, role in axis_choices if role == current_role),
+            current_role,
         )
         axis_label_var.set(current_label)
         self._current_axis_map = axis_map
@@ -4962,7 +5040,9 @@ class AnnotationsPanel:
             self._live_update_after_id = None
 
     def _on_toggle_live_update(self) -> None:
-        self._store.set_ui_state(self._plot_id, live_update=bool(self._live_update_var.get()))
+        self._store.set_ui_state(
+            self._plot_id, live_update=bool(self._live_update_var.get())
+        )
         try:
             _save_settings_to_disk()
         except Exception:
@@ -4978,7 +5058,9 @@ class AnnotationsPanel:
         zorder_var = self._current_zorder_var
         if axis_var is None or zorder_var is None:
             return
-        axis_role = self._current_axis_map.get(axis_var.get(), element.get("axes_target"))
+        axis_role = self._current_axis_map.get(
+            axis_var.get(), element.get("axes_target")
+        )
         zorder_value = _coerce_float(zorder_var.get()) or element.get("zorder")
         geometry_updates: Dict[str, Any] = {}
         string_geom_keys = {"text", "orientation", "label_anchor"}
@@ -5060,7 +5142,6 @@ class AnnotationsPanel:
         self._controller.restore_element_snapshot(element_id, snapshot)
         self.refresh()
 
-
     def _build_geometry_fields(
         self, parent: ttk.Frame, element: Dict[str, Any]
     ) -> Dict[str, tk.Variable]:
@@ -5104,10 +5185,16 @@ class AnnotationsPanel:
                 ("text", "text"),
             ]
         elif element_type == "ref_line":
-            fields = [("orientation", "orientation"), ("value", "value"), ("text", "text")]
+            fields = [
+                ("orientation", "orientation"),
+                ("value", "value"),
+                ("text", "text"),
+            ]
         elif element_type == "ink":
             points = (
-                geometry.get("points") if isinstance(geometry.get("points"), list) else []
+                geometry.get("points")
+                if isinstance(geometry.get("points"), list)
+                else []
             )
             ttk.Label(parent, text=f"Points: {len(points)}").pack(
                 anchor="w", padx=6, pady=4
@@ -5141,7 +5228,14 @@ class AnnotationsPanel:
             ("linewidth", "linewidth"),
             ("linestyle", "linestyle"),
         ]
-        if element_type in {"text", "callout", "arrow", "xspan_label", "rect", "ref_line"}:
+        if element_type in {
+            "text",
+            "callout",
+            "arrow",
+            "xspan_label",
+            "rect",
+            "ref_line",
+        }:
             fields.extend(
                 [
                     ("fontsize", "fontsize"),
@@ -5208,9 +5302,9 @@ class AnnotationsPanel:
                 if apply_callback is not None:
                     apply_callback()
 
-            ttk.Button(fill_frame, text="Fill Color...", command=_choose_fill_color).grid(
-                row=0, column=1, padx=(0, 4)
-            )
+            ttk.Button(
+                fill_frame, text="Fill Color...", command=_choose_fill_color
+            ).grid(row=0, column=1, padx=(0, 4))
             fill_entry = ttk.Entry(fill_frame, textvariable=fill_var, width=12)
             fill_entry.grid(row=0, column=2, sticky="ew")
             fill_entry.bind("<Return>", _commit_fill_color)
@@ -5302,7 +5396,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.6.0"
+APP_VERSION = "V1.6.1"
 
 
 DEBUG_SERIES_FLOW = False
@@ -6233,6 +6327,7 @@ try:
     _gil_before_scipy = _current_gil_status()
     from scipy.optimize import fsolve  # type: ignore
     from scipy.signal import find_peaks  # type: ignore
+
     _note_gil_reenable("scipy", _gil_before_scipy)
 
 except Exception as _scipy_exc:  # pragma: no cover - optional dependency
@@ -14899,6 +14994,28 @@ if os.path.exists(SETTINGS_FILE):
     initial_combined_legend_alignment = settings.get(
         "combined_legend_alignment", "center"
     )
+    cycle_loc_choices = {
+        "upper right",
+        "upper left",
+        "lower right",
+        "lower left",
+        "center right",
+        "center left",
+        "upper center",
+        "lower center",
+        "center",
+    }
+    raw_cycle_loc_choice = settings.get(
+        "combined_cycle_legend_loc_choice", "upper right"
+    )
+    if isinstance(raw_cycle_loc_choice, str):
+        cycle_loc_choice_value = raw_cycle_loc_choice.strip().lower()
+    else:
+        cycle_loc_choice_value = str(raw_cycle_loc_choice).strip().lower()
+    if cycle_loc_choice_value not in cycle_loc_choices:
+        cycle_loc_choice_value = "upper right"
+    initial_combined_cycle_legend_loc_choice = cycle_loc_choice_value
+    settings["combined_cycle_legend_loc_choice"] = cycle_loc_choice_value
     initial_combined_center_plot_legend = bool(
         settings.get("combined_center_plot_legend", False)
     )
@@ -15043,6 +15160,10 @@ else:
     initial_combined_legend_gap_pts = DEFAULT_COMBINED_LEGEND_GAP_PTS
     initial_combined_legend_margin_pts = DEFAULT_COMBINED_LEGEND_MARGIN_PTS
     initial_combined_legend_alignment = "center"
+    initial_combined_cycle_legend_loc_choice = "upper right"
+    settings["combined_cycle_legend_loc_choice"] = (
+        initial_combined_cycle_legend_loc_choice
+    )
     initial_combined_center_plot_legend = False
 
     # Titles
@@ -16147,6 +16268,7 @@ def _read_excel_sheet_names(path):
     try:
         _gil_before_openpyxl = _current_gil_status()
         import openpyxl  # type: ignore
+
         _note_gil_reenable("openpyxl", _gil_before_openpyxl)
 
     except Exception:
@@ -17295,6 +17417,16 @@ def _apply_legend_anchor_to_artist(
 ) -> bool:
     if legend_obj is None:
         return False
+    resolved_loc = _normalize_legend_loc_value(loc_override)
+    if isinstance(resolved_loc, tuple):
+        try:
+            legend_obj.set_loc(resolved_loc)
+        except Exception:
+            try:
+                legend_obj._loc = resolved_loc  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        return True
     anchor_pair = _validated_anchor_pair(anchor_values)
     if anchor_pair is None:
         return False
@@ -17312,7 +17444,6 @@ def _apply_legend_anchor_to_artist(
             legend_obj.set_bbox_to_anchor(anchor_pair, transform=transform)
     except Exception:
         return False
-    resolved_loc = _normalize_legend_loc_value(loc_override)
     if resolved_loc is not None:
         try:
             legend_obj.set_loc(resolved_loc)
@@ -17858,9 +17989,7 @@ class PlotLayoutManager:
             if xlabel is not None:
                 xlabel_height = xlabel_bbox.height if xlabel_bbox is not None else 0.02
                 baseline = (
-                    legend_bbox.y1
-                    if legend_bbox is not None
-                    else legend_anchor_y
+                    legend_bbox.y1 if legend_bbox is not None else legend_anchor_y
                 )
                 desired_y = baseline + legend_xlabel_gap_frac + (xlabel_height / 2.0)
                 desired_y += xlabel_pad_frac
@@ -17889,7 +18018,10 @@ class PlotLayoutManager:
                             xlabel_anchor_x = main_center_x
                             if xlabel_anchor_x is None:
                                 xlabel_anchor_x = self.fig.subplotpars.left + (
-                                    (self.fig.subplotpars.right - self.fig.subplotpars.left)
+                                    (
+                                        self.fig.subplotpars.right
+                                        - self.fig.subplotpars.left
+                                    )
                                     / 2.0
                                 )
                         xlabel.set_position(
@@ -17925,29 +18057,21 @@ class PlotLayoutManager:
                 and primary_axis is not None
                 and axes_bbox is not None
             ):
-                try:
-                    cycle_legend.set_bbox_to_anchor(
-                        (0.98, 0.98), transform=primary_axis.transAxes
+                cycle_anchor_setting = _validated_anchor_pair(
+                    settings.get("combined_cycle_legend_anchor")
+                )
+                if cycle_anchor_setting is None:
+                    cycle_loc_choice = settings.get(
+                        "combined_cycle_legend_loc_choice", "upper right"
                     )
-                    cycle_legend.set_loc("upper right")
-                except Exception:
-                    pass
-                renderer = self._get_renderer()
-                cycle_bbox = self._bbox_in_fig(cycle_legend, renderer)
-                if (
-                    cycle_bbox is not None
-                    and title_bbox is not None
-                    and cycle_bbox.y1 > title_bbox.y0 - suptitle_gap_frac
-                ):
-                    shift = cycle_bbox.y1 - (title_bbox.y0 - suptitle_gap_frac)
-                    if axes_bbox.height > 0:
-                        new_y = max(0.5, 0.98 - (shift / axes_bbox.height))
-                        try:
-                            cycle_legend.set_bbox_to_anchor(
-                                (0.98, new_y), transform=primary_axis.transAxes
-                            )
-                        except Exception:
-                            pass
+                    normalized_cycle_loc = _normalize_legend_loc_value(cycle_loc_choice)
+                    if normalized_cycle_loc is None:
+                        normalized_cycle_loc = "upper right"
+                    try:
+                        if normalized_cycle_loc is not None:
+                            cycle_legend.set_loc(normalized_cycle_loc)
+                    except Exception:
+                        pass
 
             renderer = self._get_renderer()
             axes_tight = self._axes_tight_union(renderer)
@@ -18484,19 +18608,50 @@ def build_combined_triple_axis_figure(
             for line in cycle_overlay.get("moles_lines") or []:
                 handles_cycle.append(mpatches.Patch(color="none"))
                 labels_cycle.append(_text_safe(line))
-        legend = ax_target.legend(
-            handles_cycle,
-            labels_cycle,
-            loc="upper right",
-            bbox_to_anchor=(0.98, 0.98),
-            fontsize=legend_fontsize_value,
-            prop={"family": family_value, "size": legend_fontsize_value},
+        legend_kwargs = {
+            "fontsize": legend_fontsize_value,
+            "prop": {"family": family_value, "size": legend_fontsize_value},
             **_legend_shadowbox_kwargs(),
-        )
+        }
+        loc_value = None
+        if loc_override is not None:
+            loc_value = _normalize_legend_loc_value(loc_override)
+        if loc_value is None:
+            loc_value = "upper right"
+        if loc_value is not None:
+            legend_kwargs["loc"] = loc_value
+        anchor_value = _validated_anchor_pair(anchor)
+        if anchor_value is None and isinstance(loc_value, str):
+            loc_key = loc_value.strip().lower()
+            anchor_map = {
+                "upper right": (0.98, 0.98),
+                "upper left": (0.02, 0.98),
+                "lower right": (0.98, 0.02),
+                "lower left": (0.02, 0.02),
+                "center right": (0.98, 0.5),
+                "center left": (0.02, 0.5),
+                "upper center": (0.5, 0.98),
+                "lower center": (0.5, 0.02),
+                "center": (0.5, 0.5),
+            }
+            anchor_value = anchor_map.get(loc_key, (0.98, 0.98))
+        if anchor_value is not None:
+            legend_kwargs["bbox_to_anchor"] = anchor_value
+        legend = fig.legend(handles_cycle, labels_cycle, **legend_kwargs)
+        if anchor_value is not None:
+            try:
+                legend.set_bbox_to_anchor(anchor_value, transform=fig.transFigure)
+            except Exception:
+                pass
         try:
             legend._cycle_overlay_legend = True  # type: ignore[attr-defined]
+            legend._combined_cycle_legend = True  # type: ignore[attr-defined]
         except Exception:
             pass
+        try:
+            legend.set_draggable(True)
+        except Exception:
+            _make_legend_draggable(legend)
         return legend
 
     primary_settings = _axis_settings(dataset_meta["y1"])
@@ -18718,23 +18873,44 @@ def build_combined_triple_axis_figure(
             except Exception:
                 pass
 
+    cycle_loc_choices = {
+        "upper right",
+        "upper left",
+        "lower right",
+        "lower left",
+        "center right",
+        "center left",
+        "upper center",
+        "lower center",
+        "center",
+    }
+    raw_cycle_loc_choice = settings.get(
+        "combined_cycle_legend_loc_choice", "upper right"
+    )
+    if isinstance(raw_cycle_loc_choice, str):
+        cycle_loc_choice = raw_cycle_loc_choice.strip().lower()
+    else:
+        cycle_loc_choice = str(raw_cycle_loc_choice).strip().lower()
+    if cycle_loc_choice not in cycle_loc_choices:
+        cycle_loc_choice = "upper right"
+
+    has_cycle_anchor = cycle_legend_anchor is not None
+    cycle_anchor = cycle_legend_anchor if has_cycle_anchor else None
+    cycle_loc_override = cycle_legend_loc if has_cycle_anchor else cycle_loc_choice
     cycle_legend = _add_cycle_legend(
         ax,
         combined_peak_artist,
         combined_trough_artist,
+        anchor=cycle_anchor,
+        loc_override=cycle_loc_override,
     )
-    if cycle_legend is not None and cycle_legend_anchor is not None:
+    if cycle_legend is not None and has_cycle_anchor:
         _apply_legend_anchor_to_artist(
             cycle_legend,
             cycle_legend_anchor,
-            target_ax=ax,
-            loc_override=cycle_legend_loc,
+            transform=fig.transFigure,
+            loc_override=cycle_loc_override,
         )
-    elif cycle_legend is not None and cycle_legend_loc is not None:
-        try:
-            cycle_legend.set_loc(_normalize_legend_loc_value(cycle_legend_loc))
-        except Exception:
-            pass
 
     # Layout solve: measure bboxes + adjust margins in a deterministic pass.
     layout_manager = PlotLayoutManager(
@@ -20276,7 +20452,9 @@ class UnifiedApp(tk.Tk):
 
         self.bind("<Configure>", self._remember_normal_geometry)
 
-        self.title(f"GL-260 Data Analysis & Processing Engine {APP_VERSION}. Written & Maintained by Mike Moheban, M.S.")
+        self.title(
+            f"GL-260 Data Analysis & Processing Engine {APP_VERSION}. Written & Maintained by Mike Moheban, M.S."
+        )
 
         self.minsize(
             self._scale_length(1400), self._scale_length(900)
@@ -20665,6 +20843,9 @@ class UnifiedApp(tk.Tk):
         self.combined_legend_alignment = tk.StringVar(
             value=initial_combined_legend_alignment
         )
+        self.combined_cycle_legend_loc_choice = tk.StringVar(
+            value=initial_combined_cycle_legend_loc_choice
+        )
         self.center_combined_plot_legend = tk.BooleanVar(
             value=initial_combined_center_plot_legend
         )
@@ -20731,6 +20912,10 @@ class UnifiedApp(tk.Tk):
         )
         self._register_var_default(
             self.combined_legend_alignment, initial_combined_legend_alignment
+        )
+        self._register_var_default(
+            self.combined_cycle_legend_loc_choice,
+            initial_combined_cycle_legend_loc_choice,
         )
 
         self.title_text = tk.StringVar(value=settings.get("title_text", initial_title))
@@ -22212,9 +22397,7 @@ class UnifiedApp(tk.Tk):
 
         row_frame = ttk.Frame(dialog)
         row_frame.grid(row=1, column=0, sticky="w", padx=10, pady=(0, 6))
-        ttk.Label(row_frame, text="Worker threads:").grid(
-            row=0, column=0, sticky="w"
-        )
+        ttk.Label(row_frame, text="Worker threads:").grid(row=0, column=0, sticky="w")
         spin = ttk.Spinbox(
             row_frame,
             from_=1,
@@ -23806,7 +23989,6 @@ class UnifiedApp(tk.Tk):
         def _sync_coords_from_display(_event=None) -> None:
             coords_var.set(_coords_value_for(coords_display_var.get()))
 
-
         ttk.Label(props_frame, text="Color").grid(
             row=2, column=0, sticky="w", pady=2, padx=6
         )
@@ -23904,7 +24086,9 @@ class UnifiedApp(tk.Tk):
         anchor_frame = ttk.Frame(props_frame)
         anchor_frame.grid(row=9, column=0, columnspan=2, sticky="ew", padx=6)
 
-        def _apply_anchor_to_element(element: Dict[str, Any], x: float, y: float) -> None:
+        def _apply_anchor_to_element(
+            element: Dict[str, Any], x: float, y: float
+        ) -> None:
             element["coords"] = "axes"
             data = element.get("data") if isinstance(element.get("data"), dict) else {}
             element_type = str(element.get("type") or "").strip().lower()
@@ -24341,7 +24525,14 @@ class UnifiedApp(tk.Tk):
         def _create_draft_element(
             tool: str, x: float, y: float, axes_target: str, coords_kind: str
         ) -> Optional[Dict[str, Any]]:
-            if tool not in {"text", "point", "arrow", "xspan", "xspan_text", "freehand"}:
+            if tool not in {
+                "text",
+                "point",
+                "arrow",
+                "xspan",
+                "xspan_text",
+                "freehand",
+            }:
                 return None
             element = _new_element_base(tool)
             element["axes_target"] = axes_target
@@ -24853,9 +25044,7 @@ class UnifiedApp(tk.Tk):
         ttk.Button(
             actions,
             text="Close",
-            command=lambda: self._teardown_layout_editor(
-                plot_id, apply_changes=True
-            ),
+            command=lambda: self._teardown_layout_editor(plot_id, apply_changes=True),
         ).pack(side="right")
 
         overlay_artists: List[Any] = []
@@ -25280,10 +25469,15 @@ class UnifiedApp(tk.Tk):
                 break
 
         cycle_legend = None
-        for legend in axis_legends:
+        for legend in fig_legends:
             if getattr(legend, "_cycle_overlay_legend", False):
                 cycle_legend = legend
                 break
+        if cycle_legend is None:
+            for legend in axis_legends:
+                if getattr(legend, "_cycle_overlay_legend", False):
+                    cycle_legend = legend
+                    break
 
         def _add_legend_element(
             legend_obj,
@@ -25315,9 +25509,13 @@ class UnifiedApp(tk.Tk):
                     )
                 except Exception:
                     bbox_axes = None
-                anchor_value = _anchor_from_bbox(bbox_axes, loc_text) if bbox_axes else (
-                    0.5,
-                    0.5,
+                anchor_value = (
+                    _anchor_from_bbox(bbox_axes, loc_text)
+                    if bbox_axes
+                    else (
+                        0.5,
+                        0.5,
+                    )
                 )
             else:
                 anchor_value = _anchor_from_bbox(bbox_fig, loc_text)
@@ -25333,7 +25531,7 @@ class UnifiedApp(tk.Tk):
                 facecolor="#000000",
                 alpha=0.18,
                 linewidth=0.0,
-                zorder=28,
+                zorder=2,
             )
             rect = mpatches.Rectangle(
                 (bbox_fig.x0, bbox_fig.y0),
@@ -25343,7 +25541,7 @@ class UnifiedApp(tk.Tk):
                 fill=False,
                 edgecolor="#3d85c6",
                 linewidth=1.4,
-                zorder=29,
+                zorder=3,
             )
             _register_artist(shadow)
             _register_artist(rect)
@@ -25378,11 +25576,22 @@ class UnifiedApp(tk.Tk):
             loc_key="legend_loc",
         )
         if cycle_legend is not None:
+            # ALWAYS make combined cycle legend draggable
+            try:
+                cycle_legend.set_draggable(True)
+            except Exception:
+                _make_legend_draggable(cycle_legend)
+
+            cycle_anchor_space = "axes"
+            cycle_anchor_axis = axis_legend_axes.get(cycle_legend)
+            if cycle_legend in fig_legends:
+                cycle_anchor_space = "figure"
+                cycle_anchor_axis = None
             _add_legend_element(
                 cycle_legend,
                 label="Cycle Legend",
-                anchor_space="axes",
-                anchor_axis=axis_legend_axes.get(cycle_legend),
+                anchor_space=cycle_anchor_space,
+                anchor_axis=cycle_anchor_axis,
                 pending_key="cycle_legend_anchor",
                 loc_key="cycle_legend_loc",
             )
@@ -25447,7 +25656,9 @@ class UnifiedApp(tk.Tk):
                     return element
             return None
 
-        def _move_handle(element: Dict[str, Any], display_xy: Tuple[float, float]) -> None:
+        def _move_handle(
+            element: Dict[str, Any], display_xy: Tuple[float, float]
+        ) -> None:
             fig_xy = _to_fig_from_display(display_xy)
             handle = element.get("handle")
             handle_px = element.get("handle_px", 10.0)
@@ -25517,8 +25728,8 @@ class UnifiedApp(tk.Tk):
                 anchor_space = target.get("anchor_space")
                 anchor_axis = target.get("anchor_axis")
                 if anchor_space == "axes" and anchor_axis is not None:
-                    target["drag_base_anchor_display"] = anchor_axis.transAxes.transform(
-                        target.get("current_anchor")
+                    target["drag_base_anchor_display"] = (
+                        anchor_axis.transAxes.transform(target.get("current_anchor"))
                     )
                 else:
                     target["drag_base_anchor_display"] = fig.transFigure.transform(
@@ -25609,7 +25820,10 @@ class UnifiedApp(tk.Tk):
                     )
                 else:
                     new_anchor = _to_fig_from_display(new_anchor_disp)
-                new_anchor = (_clamp_anchor(new_anchor[0]), _clamp_anchor(new_anchor[1]))
+                new_anchor = (
+                    _clamp_anchor(new_anchor[0]),
+                    _clamp_anchor(new_anchor[1]),
+                )
                 target["current_anchor"] = new_anchor
                 pending[target.get("pending_key", "legend_anchor")] = new_anchor
                 pending[target.get("loc_key", "legend_loc")] = target.get("loc_value")
@@ -25907,8 +26121,10 @@ class UnifiedApp(tk.Tk):
                     export_fig_candidate = None
                     combined_build_error = None
                     try:
-                        export_fig_candidate = self._build_combined_triple_axis_from_state(
-                            fig_size=(11.0, 8.5), mode="export"
+                        export_fig_candidate = (
+                            self._build_combined_triple_axis_from_state(
+                                fig_size=(11.0, 8.5), mode="export"
+                            )
                         )
                     except Exception as exc:
                         combined_build_error = exc
@@ -25930,7 +26146,9 @@ class UnifiedApp(tk.Tk):
                     resized_current_fig = True
                     if plot_id:
                         try:
-                            _apply_layout_profile_to_figure(export_fig, plot_id, "export")
+                            _apply_layout_profile_to_figure(
+                                export_fig, plot_id, "export"
+                            )
                         except Exception:
                             pass
 
@@ -27735,6 +27953,7 @@ class UnifiedApp(tk.Tk):
         window = tk.Toplevel(self)
         window.title("Combined Axis Settings")
         window.transient(self)
+        window.geometry("576x990")
         window.resizable(True, True)
         self._combined_axis_pref_window = window
 
@@ -27807,7 +28026,9 @@ class UnifiedApp(tk.Tk):
         legend_anchor_export = export_section.get("legend_anchor_y")
 
         stage_vars = {
-            "combined_x_axis_label": tk.StringVar(value=self.combined_x_axis_label.get()),
+            "combined_x_axis_label": tk.StringVar(
+                value=self.combined_x_axis_label.get()
+            ),
             "combined_primary_axis_label": tk.StringVar(
                 value=self.combined_primary_axis_label.get()
             ),
@@ -27880,6 +28101,9 @@ class UnifiedApp(tk.Tk):
             "combined_legend_alignment": tk.StringVar(
                 value=self.combined_legend_alignment.get()
             ),
+            "combined_cycle_legend_loc_choice": tk.StringVar(
+                value=self.combined_cycle_legend_loc_choice.get()
+            ),
         }
 
         stage_layout_display_left = tk.DoubleVar(
@@ -27888,29 +28112,29 @@ class UnifiedApp(tk.Tk):
         stage_layout_display_right = tk.DoubleVar(
             value=display_margins.get("right", 0.9)
         )
-        stage_layout_display_top = tk.DoubleVar(
-            value=display_margins.get("top", 0.88)
-        )
+        stage_layout_display_top = tk.DoubleVar(value=display_margins.get("top", 0.88))
         stage_layout_display_bottom = tk.DoubleVar(
             value=display_margins.get("bottom", 0.11)
         )
         stage_layout_export_left = tk.DoubleVar(value=export_margins.get("left", 0.125))
-        stage_layout_export_right = tk.DoubleVar(
-            value=export_margins.get("right", 0.9)
-        )
+        stage_layout_export_right = tk.DoubleVar(value=export_margins.get("right", 0.9))
         stage_layout_export_top = tk.DoubleVar(value=export_margins.get("top", 0.88))
         stage_layout_export_bottom = tk.DoubleVar(
             value=export_margins.get("bottom", DEFAULT_EXPORT_BOTTOM_MARGIN)
         )
         stage_legend_anchor_y_display = tk.StringVar(
-            value=""
-            if legend_anchor_display is None
-            else f"{float(legend_anchor_display):.4f}"
+            value=(
+                ""
+                if legend_anchor_display is None
+                else f"{float(legend_anchor_display):.4f}"
+            )
         )
         stage_legend_anchor_y_export = tk.StringVar(
-            value=""
-            if legend_anchor_export is None
-            else f"{float(legend_anchor_export):.4f}"
+            value=(
+                ""
+                if legend_anchor_export is None
+                else f"{float(legend_anchor_export):.4f}"
+            )
         )
         stage_mirror_detached_labelpad = tk.BooleanVar(
             value=bool(layout_profile.get("mirror_detached_labelpad", False))
@@ -27941,7 +28165,9 @@ class UnifiedApp(tk.Tk):
             row=0, column=0, sticky="w", padx=(0, 6), pady=2
         )
         ttk.Entry(
-            spacing_frame, textvariable=stage_vars["combined_deriv_axis_offset"], width=8
+            spacing_frame,
+            textvariable=stage_vars["combined_deriv_axis_offset"],
+            width=8,
         ).grid(row=0, column=1, sticky="w", pady=2)
 
         ttk.Label(spacing_frame, text="Primary Y label padding").grid(
@@ -27980,7 +28206,9 @@ class UnifiedApp(tk.Tk):
             row=6, column=0, sticky="w", padx=(0, 6), pady=2
         )
         ttk.Entry(
-            spacing_frame, textvariable=stage_vars["combined_right_padding_pct"], width=8
+            spacing_frame,
+            textvariable=stage_vars["combined_right_padding_pct"],
+            width=8,
         ).grid(row=6, column=1, sticky="w", pady=2)
         ttk.Label(spacing_frame, text="Export padding (pt)").grid(
             row=7, column=0, sticky="w", padx=(0, 6), pady=2
@@ -28106,9 +28334,7 @@ class UnifiedApp(tk.Tk):
         )
         ttk.Entry(
             font_frame, textvariable=stage_vars["combined_font_family"], width=18
-        ).grid(
-            row=0, column=1, sticky="w", pady=2
-        )
+        ).grid(row=0, column=1, sticky="w", pady=2)
         ttk.Label(font_frame, text="Suptitle size").grid(
             row=1, column=0, sticky="w", padx=(0, 6), pady=2
         )
@@ -28120,33 +28346,25 @@ class UnifiedApp(tk.Tk):
         )
         ttk.Entry(
             font_frame, textvariable=stage_vars["combined_title_fontsize"], width=8
-        ).grid(
-            row=2, column=1, sticky="w", pady=2
-        )
+        ).grid(row=2, column=1, sticky="w", pady=2)
         ttk.Label(font_frame, text="Axis label size").grid(
             row=3, column=0, sticky="w", padx=(0, 6), pady=2
         )
         ttk.Entry(
             font_frame, textvariable=stage_vars["combined_label_fontsize"], width=8
-        ).grid(
-            row=3, column=1, sticky="w", pady=2
-        )
+        ).grid(row=3, column=1, sticky="w", pady=2)
         ttk.Label(font_frame, text="Tick label size").grid(
             row=4, column=0, sticky="w", padx=(0, 6), pady=2
         )
         ttk.Entry(
             font_frame, textvariable=stage_vars["combined_tick_fontsize"], width=8
-        ).grid(
-            row=4, column=1, sticky="w", pady=2
-        )
+        ).grid(row=4, column=1, sticky="w", pady=2)
         ttk.Label(font_frame, text="Legend size").grid(
             row=5, column=0, sticky="w", padx=(0, 6), pady=2
         )
         ttk.Entry(
             font_frame, textvariable=stage_vars["combined_legend_fontsize"], width=8
-        ).grid(
-            row=5, column=1, sticky="w", pady=2
-        )
+        ).grid(row=5, column=1, sticky="w", pady=2)
         ttk.Label(
             font_frame,
             text="Leave font family blank to use the default plot font.",
@@ -28243,6 +28461,32 @@ class UnifiedApp(tk.Tk):
         )
         alignment_menu.grid(row=10, column=1, sticky="w", pady=2)
 
+        cycle_loc_choices = [
+            "upper right",
+            "upper left",
+            "lower right",
+            "lower left",
+            "center right",
+            "center left",
+            "upper center",
+            "lower center",
+            "center",
+        ]
+        cycle_loc_var = stage_vars["combined_cycle_legend_loc_choice"]
+        if (cycle_loc_var.get() or "").strip().lower() not in cycle_loc_choices:
+            cycle_loc_var.set("upper right")
+
+        ttk.Label(legend_frame, text="Cycle Legend Location").grid(
+            row=11, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        cycle_loc_menu = ttk.OptionMenu(
+            legend_frame,
+            cycle_loc_var,
+            cycle_loc_var.get(),
+            *cycle_loc_choices,
+        )
+        cycle_loc_menu.grid(row=11, column=1, sticky="w", pady=2)
+
         def _parse_anchor_value(var: tk.StringVar) -> Optional[float]:
             raw = (var.get() or "").strip()
             if not raw:
@@ -28260,10 +28504,10 @@ class UnifiedApp(tk.Tk):
             var.set(f"{value:.4f}")
 
         ttk.Label(legend_frame, text="Legend anchor Y (display)").grid(
-            row=11, column=0, sticky="w", padx=(0, 6), pady=2
+            row=12, column=0, sticky="w", padx=(0, 6), pady=2
         )
         display_anchor_frame = ttk.Frame(legend_frame)
-        display_anchor_frame.grid(row=11, column=1, sticky="w", pady=2)
+        display_anchor_frame.grid(row=12, column=1, sticky="w", pady=2)
         ttk.Entry(
             display_anchor_frame,
             textvariable=stage_legend_anchor_y_display,
@@ -28283,10 +28527,10 @@ class UnifiedApp(tk.Tk):
         ).pack(side="left")
 
         ttk.Label(legend_frame, text="Legend anchor Y (export)").grid(
-            row=12, column=0, sticky="w", padx=(0, 6), pady=2
+            row=13, column=0, sticky="w", padx=(0, 6), pady=2
         )
         export_anchor_frame = ttk.Frame(legend_frame)
-        export_anchor_frame.grid(row=12, column=1, sticky="w", pady=2)
+        export_anchor_frame.grid(row=13, column=1, sticky="w", pady=2)
         ttk.Entry(
             export_anchor_frame,
             textvariable=stage_legend_anchor_y_export,
@@ -28310,7 +28554,7 @@ class UnifiedApp(tk.Tk):
             text="Up moves the legend toward the x-label; down moves it away.",
             wraplength=420,
             foreground="#555555",
-        ).grid(row=13, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        ).grid(row=14, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
         button_frame = ttk.Frame(container)
         button_frame.grid(row=5, column=0, sticky="e", pady=(8, 0))
@@ -28346,7 +28590,9 @@ class UnifiedApp(tk.Tk):
                 legend_anchor_y_display=_parse_anchor_value(
                     stage_legend_anchor_y_display
                 ),
-                legend_anchor_y_export=_parse_anchor_value(stage_legend_anchor_y_export),
+                legend_anchor_y_export=_parse_anchor_value(
+                    stage_legend_anchor_y_export
+                ),
                 mirror_detached_labelpad=stage_mirror_detached_labelpad.get(),
             )
             try:
@@ -28595,6 +28841,24 @@ class UnifiedApp(tk.Tk):
             legend_alignment_value = "center"
         self.combined_legend_alignment.set(legend_alignment_value)
         settings["combined_legend_alignment"] = legend_alignment_value
+        cycle_loc_choices = {
+            "upper right",
+            "upper left",
+            "lower right",
+            "lower left",
+            "center right",
+            "center left",
+            "upper center",
+            "lower center",
+            "center",
+        }
+        cycle_loc_choice_value = (
+            (self.combined_cycle_legend_loc_choice.get() or "").strip().lower()
+        )
+        if cycle_loc_choice_value not in cycle_loc_choices:
+            cycle_loc_choice_value = "upper right"
+        self.combined_cycle_legend_loc_choice.set(cycle_loc_choice_value)
+        settings["combined_cycle_legend_loc_choice"] = cycle_loc_choice_value
 
         if not skip_save:
             try:
@@ -28655,9 +28919,7 @@ class UnifiedApp(tk.Tk):
         else:
             scale = 1.0
         self.combined_legend_label_gap.set(DEFAULT_COMBINED_LEGEND_GAP_PTS * scale)
-        self.combined_xlabel_tick_gap.set(
-            DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS * scale
-        )
+        self.combined_xlabel_tick_gap.set(DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS * scale)
         self.combined_legend_bottom_margin.set(
             DEFAULT_COMBINED_LEGEND_MARGIN_PTS * scale
         )
@@ -29424,10 +29686,7 @@ class UnifiedApp(tk.Tk):
             )
             return False
         tol = 0.02
-        if (
-            abs(size[0] - expected[0]) > tol
-            or abs(size[1] - expected[1]) > tol
-        ):
+        if abs(size[0] - expected[0]) > tol or abs(size[1] - expected[1]) > tol:
             messagebox.showerror(
                 "Export Error",
                 "Combined plot export size mismatch. Expected 11x8.5 inches.",
@@ -34665,25 +34924,102 @@ class UnifiedApp(tk.Tk):
         """Expose the latest Cycle Analysis overlay in module globals for plot builders."""
         globals()["core_cycle_overlay"] = self._core_cycle_overlay_state()
 
+    def _collect_combined_legends(self, fig: Optional[Figure]) -> List[Any]:
+        """Gather every Legend artist associated with the provided figure."""
+        if fig is None:
+            return []
+        legends: List[Any] = []
+        seen = set()
+        try:
+            from matplotlib.legend import Legend
+        except Exception:
+            Legend = None
+
+        def _is_legend(obj: Any) -> bool:
+            if obj is None:
+                return False
+            if Legend is not None:
+                return isinstance(obj, Legend)
+            return obj.__class__.__name__ == "Legend"
+
+        def _add_legend(obj: Any) -> None:
+            if not _is_legend(obj):
+                return
+            obj_id = id(obj)
+            if obj_id in seen:
+                return
+            seen.add(obj_id)
+            legends.append(obj)
+
+        try:
+            for lg in getattr(fig, "legends", []) or []:
+                _add_legend(lg)
+        except Exception:
+            pass
+        try:
+            for ax in getattr(fig, "axes", []) or []:
+                try:
+                    _add_legend(ax.get_legend())
+                except Exception:
+                    pass
+                try:
+                    for child in ax.get_children():
+                        _add_legend(child)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            for child in fig.get_children():
+                _add_legend(child)
+        except Exception:
+            pass
+        return legends
+
     def _capture_combined_legend_anchor_from_fig(self, fig: Optional[Figure]) -> None:
         """Store the current combined legend anchor so refreshes/saves use the dragged position."""
         if fig is None:
             return
-        legends = []
-        try:
-            legends.extend([lg for lg in getattr(fig, "legends", []) if lg is not None])
-            for ax in getattr(fig, "axes", []):
-                lg = ax.get_legend()
-                if lg is not None:
-                    legends.append(lg)
-        except Exception:
-            legends = []
+        legends = self._collect_combined_legends(fig)
         if not legends:
             return
         updated = False
+        fig_legend_ids = set()
+        try:
+            fig_legend_ids = {
+                id(lg) for lg in getattr(fig, "legends", []) if lg is not None
+            }
+        except Exception:
+            fig_legend_ids = set()
 
         def _legend_anchor_axes_fraction(lg) -> Optional[tuple]:
-            """Return legend lower-left in axes fraction coordinates."""
+            """Return legend lower-left in axes/figure fraction coordinates."""
+            bbox = None
+            try:
+                bbox = lg.get_bbox_to_anchor()
+            except Exception:
+                bbox = None
+            if bbox is not None:
+                transform = None
+                if id(lg) in fig_legend_ids:
+                    try:
+                        transform = fig.transFigure
+                    except Exception:
+                        transform = None
+                if transform is None:
+                    ax = getattr(lg, "axes", None)
+                    if ax is not None:
+                        transform = ax.transAxes
+                if transform is not None:
+                    try:
+                        anchor_bbox = bbox.transformed(transform.inverted())
+                        anchor_pair = _validated_anchor_pair(
+                            (anchor_bbox.x0, anchor_bbox.y0)
+                        )
+                        if anchor_pair is not None:
+                            return anchor_pair
+                    except Exception:
+                        pass
             ax = getattr(lg, "axes", None)
             if ax is None:
                 return None
@@ -34764,17 +35100,19 @@ class UnifiedApp(tk.Tk):
         """Enable dragging on the combined legend and persist the dragged position for reuse."""
         if fig is None:
             return
-        legends = []
-        try:
-            legends.extend([lg for lg in getattr(fig, "legends", []) if lg is not None])
-            for ax in getattr(fig, "axes", []):
-                lg = ax.get_legend()
-                if lg is not None:
-                    legends.append(lg)
-        except Exception:
-            legends = []
+        legends = self._collect_combined_legends(fig)
         if not legends:
             return
+        expect_cycle_legend = bool(
+            settings.get("show_cycle_legend_on_core_plots", False)
+        )
+        has_cycle_legend = any(
+            getattr(lg, "_cycle_overlay_legend", False) for lg in legends
+        )
+        if expect_cycle_legend and not has_cycle_legend:
+            print(
+                "WARN: Combined cycle legend not discovered for draggability; check legend creation/markers."
+            )
         for lg in legends:
             _make_legend_draggable(lg)
         self._capture_combined_legend_anchor_from_fig(fig)
@@ -39777,7 +40115,9 @@ class UnifiedApp(tk.Tk):
                 except Exception:
                     pass
 
-        self._task_runner.submit("cycle_solubility", _compute_cycle_result, _on_ok, _on_err)
+        self._task_runner.submit(
+            "cycle_solubility", _compute_cycle_result, _on_ok, _on_err
+        )
 
     def _update_cycle_solubility_widgets(
         self, result: Optional[Dict[str, Any]], *, workflow_key: Optional[str] = None
@@ -42873,7 +43213,9 @@ class UnifiedApp(tk.Tk):
         }
         allowed_keys.update(shared_keys)
         if workflow_key == "Planning":
-            allowed_keys.update({"planning_headspace_volume_l", "planning_speciation_ph"})
+            allowed_keys.update(
+                {"planning_headspace_volume_l", "planning_speciation_ph"}
+            )
         missing_specs: List[str] = []
         for spec in guide:
             if spec.get("optional"):
@@ -42939,7 +43281,9 @@ class UnifiedApp(tk.Tk):
                     continue
                 if key in optional_keys:
                     continue
-                if workflow_key == "Planning" and not self._planning_field_is_visible(key):
+                if workflow_key == "Planning" and not self._planning_field_is_visible(
+                    key
+                ):
                     continue
                 required_keys.append(key)
             print(
@@ -43118,9 +43462,7 @@ class UnifiedApp(tk.Tk):
                 and headspace_kh is not None
                 and headspace_kh > 0
             )
-            forced_ready = (
-                forced_ph_value is not None and 0.0 < forced_ph_value < 14.0
-            )
+            forced_ready = forced_ph_value is not None and 0.0 < forced_ph_value < 14.0
             if workflow_mode_key == "nahco3_dissolution" and not (
                 forced_ready or headspace_ready
             ):
@@ -43153,9 +43495,7 @@ class UnifiedApp(tk.Tk):
                 and headspace_kh is not None
                 and headspace_kh > 0
             )
-            forced_ready = (
-                forced_ph_value is not None and 0.0 < forced_ph_value < 14.0
-            )
+            forced_ready = forced_ph_value is not None and 0.0 < forced_ph_value < 14.0
             if workflow_mode_key == "naoh_reaction":
                 _ensure_positive(
                     reaction_naoh_mass, _field_label("reaction_naoh_mass_g")
@@ -43165,8 +43505,7 @@ class UnifiedApp(tk.Tk):
                     _field_label("reaction_solution_volume_l"),
                 )
                 target_ready = (
-                    reaction_target_ph is not None
-                    and 0.0 < reaction_target_ph < 14.0
+                    reaction_target_ph is not None and 0.0 < reaction_target_ph < 14.0
                 )
                 co2_ready = reaction_co2_g is not None and reaction_co2_g >= 0.0
                 if not any([forced_ready, target_ready, co2_ready, headspace_ready]):
@@ -43214,7 +43553,9 @@ class UnifiedApp(tk.Tk):
                     and "diag_slurry_degas_pct" in allowed_keys
                 ):
                     if not (0.0 <= diag_slurry_degas_pct < 100.0):
-                        raise ValueError("CO2 vented fraction must be between 0 and 100%.")
+                        raise ValueError(
+                            "CO2 vented fraction must be between 0 and 100%."
+                        )
                     degassed_fraction = diag_slurry_degas_pct / 100.0
                 target_diag_ph = (
                     diag_target_ph_entry if diag_target_ph_entry is not None else 8.0
@@ -46941,7 +47282,10 @@ class UnifiedApp(tk.Tk):
                                     )
                                     primary_axis = None
                                     for axis in axes:
-                                        if getattr(axis, "_gl260_axis_role", None) == "primary":
+                                        if (
+                                            getattr(axis, "_gl260_axis_role", None)
+                                            == "primary"
+                                        ):
                                             primary_axis = axis
                                             break
                                     if primary_axis is None:
@@ -46960,7 +47304,9 @@ class UnifiedApp(tk.Tk):
                                             DEFAULT_COMBINED_TITLE_PAD_PTS,
                                         ),
                                     )
-                                    layout_mgr = getattr(fig, "_gl260_layout_manager", None)
+                                    layout_mgr = getattr(
+                                        fig, "_gl260_layout_manager", None
+                                    )
                                     if layout_mgr is not None:
                                         layout_mgr.solve()
                                         if fig.canvas is not None:
@@ -48457,7 +48803,11 @@ class UnifiedApp(tk.Tk):
 
     def _get_schema_preview_columns(self) -> List[str]:
         """Load header-only columns for multi-sheet selection before stitching."""
-        if not self.multi_sheet_enabled or not self.file_path or not self.selected_sheets:
+        if (
+            not self.multi_sheet_enabled
+            or not self.file_path
+            or not self.selected_sheets
+        ):
             self._columns_schema_preview = []
             self._columns_schema_preview_sheet = None
             self._columns_schema_preview_path = None
@@ -48470,9 +48820,7 @@ class UnifiedApp(tk.Tk):
         ):
             return list(self._columns_schema_preview)
         try:
-            preview_df = pd.read_excel(
-                self.file_path, sheet_name=first_sheet, nrows=0
-            )
+            preview_df = pd.read_excel(self.file_path, sheet_name=first_sheet, nrows=0)
             cols = [str(col) for col in preview_df.columns]
         except Exception:
             cols = []
@@ -48704,8 +49052,10 @@ class UnifiedApp(tk.Tk):
             command=self._open_per_sheet_column_mapping_window,
         )
         mapping_button.pack(side="left", padx=(8, 0))
-        if (not self.multi_sheet_enabled) or (not self.selected_sheets) or (
-            not self.file_path
+        if (
+            (not self.multi_sheet_enabled)
+            or (not self.selected_sheets)
+            or (not self.file_path)
         ):
             mapping_button.state(["disabled"])
 
@@ -48791,7 +49141,9 @@ class UnifiedApp(tk.Tk):
         self._per_sheet_column_map_cache = normalized
         return normalized
 
-    def _set_per_sheet_column_map(self, sheet_name: str, mapping: Dict[str, str]) -> None:
+    def _set_per_sheet_column_map(
+        self, sheet_name: str, mapping: Dict[str, str]
+    ) -> None:
         if not sheet_name:
             return
         if not isinstance(settings.get("per_sheet_column_map"), dict):
@@ -48862,7 +49214,9 @@ class UnifiedApp(tk.Tk):
         )
         selected_sheets = [name for name in selected_sheets if name]
         if not selected_sheets:
-            messagebox.showerror("Missing Data", "Select at least one sheet to include.")
+            messagebox.showerror(
+                "Missing Data", "Select at least one sheet to include."
+            )
             return
 
         sheet_columns: Dict[str, List[str]] = {}
@@ -48932,9 +49286,7 @@ class UnifiedApp(tk.Tk):
         listbox.configure(yscrollcommand=list_scroll.set)
 
         detail_frame = ttk.Frame(container)
-        detail_frame.grid(
-            row=1, column=1, sticky="nsew", padx=(6, 10), pady=(0, 10)
-        )
+        detail_frame.grid(row=1, column=1, sticky="nsew", padx=(6, 10), pady=(0, 10))
         detail_frame.grid_columnconfigure(1, weight=1)
 
         combo_vars: Dict[str, tk.StringVar] = {}
@@ -49666,9 +50018,9 @@ class UnifiedApp(tk.Tk):
         per_sheet_effective_map = {}
         if self.multi_sheet_enabled and self.selected_sheets:
             for sheet_name in list(self.selected_sheets):
-                per_sheet_effective_map[
-                    sheet_name
-                ] = self._get_effective_sheet_column_map(sheet_name)
+                per_sheet_effective_map[sheet_name] = (
+                    self._get_effective_sheet_column_map(sheet_name)
+                )
 
         with self._data_lock:
             # Snapshot shared data for thread safety/no-GIL readiness.
@@ -49737,11 +50089,7 @@ class UnifiedApp(tk.Tk):
                         sheet_name, effective_columns_snapshot
                     )
                     colname = mapping.get(var_key)
-                    if (
-                        not colname
-                        or colname == "None"
-                        or colname not in df.columns
-                    ):
+                    if not colname or colname == "None" or colname not in df.columns:
                         part = pd.Series([np.nan] * len(df), dtype=float)
                     else:
                         try:
@@ -49817,7 +50165,9 @@ class UnifiedApp(tk.Tk):
                 y1_none = y1_series is None
                 y1_len = int(len(y1_series)) if y1_series is not None else 0
                 self._debug_series_flow("payload", f"y1_none={y1_none} len={y1_len}")
-            self._on_apply_columns_complete(payload, ranges, auto_refresh_axes, axis_auto_flags)
+            self._on_apply_columns_complete(
+                payload, ranges, auto_refresh_axes, axis_auto_flags
+            )
 
         def _on_err(exc):
             self._on_apply_columns_failed(exc)
@@ -51251,7 +51601,7 @@ class UnifiedApp(tk.Tk):
             legend_alignment_value = "center"
         if profile_legend_anchor is not None:
             legend_anchor = profile_legend_anchor
-        if profile_cycle_anchor is not None:
+        if profile_cycle_anchor is not None and cycle_legend_anchor is None:
             cycle_legend_anchor = profile_cycle_anchor
         labelpad_overrides = self._combined_axis_labelpad_overrides()
         if isinstance(profile_labelpads, dict):
@@ -51346,7 +51696,9 @@ class UnifiedApp(tk.Tk):
                             family=font_family_value, size=legend_font_value
                         )
                     else:
-                        legend_prop = font_manager.FontProperties(size=legend_font_value)
+                        legend_prop = font_manager.FontProperties(
+                            size=legend_font_value
+                        )
                 except Exception:
                     legend_prop = None
                 main_legend = None
