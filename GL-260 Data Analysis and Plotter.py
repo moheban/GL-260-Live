@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.6.2
+# Version: V1.6.3
 # Date: 2026-01-05
 
 import os
@@ -5396,7 +5396,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.6.2"
+APP_VERSION = "V1.6.3"
 
 
 DEBUG_SERIES_FLOW = False
@@ -18200,6 +18200,7 @@ def build_combined_triple_axis_figure(
     cycle_legend_anchor=None,
     legend_loc=None,
     cycle_legend_loc=None,
+    cycle_legend_anchor_space=None,
     mode: str = "display",
     fig_size=None,
 ):
@@ -18593,7 +18594,12 @@ def build_combined_triple_axis_figure(
         return peak_artist, trough_artist
 
     def _add_cycle_legend(
-        ax_target, peak_artist, trough_artist, anchor=None, loc_override=None
+        ax_target,
+        peak_artist,
+        trough_artist,
+        anchor=None,
+        loc_override=None,
+        anchor_space=None,
     ):
         if not (show_cycle_legend_on_core_plots and cycle_overlay):
             return None
@@ -18659,12 +18665,21 @@ def build_combined_triple_axis_figure(
         legend = fig.legend(handles_cycle, labels_cycle, **legend_kwargs)
         if anchor_value is not None:
             try:
-                legend.set_bbox_to_anchor(anchor_value, transform=fig.transFigure)
+                transform = None
+                if anchor_space == "axes" and ax_target is not None:
+                    transform = ax_target.transAxes
+                elif anchor_space in {"figure", None}:
+                    transform = fig.transFigure
+                if transform is None:
+                    legend.set_bbox_to_anchor(anchor_value)
+                else:
+                    legend.set_bbox_to_anchor(anchor_value, transform=transform)
             except Exception:
                 pass
         try:
             legend._cycle_overlay_legend = True  # type: ignore[attr-defined]
             legend._combined_cycle_legend = True  # type: ignore[attr-defined]
+            legend._gl260_legend_role = "combined_cycle"  # type: ignore[attr-defined]
         except Exception:
             pass
         try:
@@ -18922,12 +18937,16 @@ def build_combined_triple_axis_figure(
         combined_trough_artist,
         anchor=cycle_anchor,
         loc_override=cycle_loc_override,
+        anchor_space=cycle_legend_anchor_space,
     )
     if cycle_legend is not None and has_cycle_anchor:
+        legend_transform = fig.transFigure
+        if cycle_legend_anchor_space == "axes" and ax is not None:
+            legend_transform = ax.transAxes
         _apply_legend_anchor_to_artist(
             cycle_legend,
             cycle_legend_anchor,
-            transform=fig.transFigure,
+            transform=legend_transform,
             loc_override=cycle_loc_override,
         )
 
@@ -20178,6 +20197,7 @@ class UnifiedApp(tk.Tk):
         self._final_report_preview_zoom_combo_var: Optional[tk.StringVar] = None
         self._final_report_preview_save_button: Optional[ttk.Button] = None
         self._final_report_preview_after_id: Optional[str] = None
+        self._combined_plot_preview_fig: Optional[Figure] = None
         stored_combined_anchor = settings.get("combined_legend_anchor")
         if (
             isinstance(stored_combined_anchor, (list, tuple))
@@ -20222,6 +20242,13 @@ class UnifiedApp(tk.Tk):
             if self._combined_cycle_legend_anchor is not None
             else None
         )
+        stored_cycle_anchor_space = settings.get("combined_cycle_legend_anchor_space")
+        if stored_cycle_anchor_space in {"figure", "axes"}:
+            self._combined_cycle_legend_anchor_space = stored_cycle_anchor_space
+        elif self._combined_cycle_legend_anchor is not None:
+            self._combined_cycle_legend_anchor_space = "figure"
+        else:
+            self._combined_cycle_legend_anchor_space = None
         self._combined_legend_cid = None
         self._visible_tabs_var = tk.BooleanVar(value=self._contamination_tab_visible)
         self._solubility_visible_var = tk.BooleanVar(value=self._solubility_tab_visible)
@@ -23123,6 +23150,15 @@ class UnifiedApp(tk.Tk):
         args = getattr(self, "_last_plot_args", None)
         try:
             self._prepare_series_globals()
+            try:
+                ignore_min_drop = bool(
+                    getattr(self, "_cycle_last_ignore_min_drop", True)
+                )
+                self._refresh_final_report_cycle_snapshot(
+                    ignore_min_drop=ignore_min_drop
+                )
+            except Exception:
+                pass
             self._prime_core_cycle_overlay_globals()
             args = self._collect_plot_args()
         except Exception:
@@ -26140,6 +26176,17 @@ class UnifiedApp(tk.Tk):
                     export_fig_candidate = None
                     combined_build_error = None
                     try:
+                        preview_fig = getattr(self, "_combined_plot_preview_fig", None)
+                        target_fig = preview_fig if preview_fig is not None else fig
+                        if target_fig is not None and target_fig.canvas is not None:
+                            try:
+                                target_fig.canvas.draw()
+                            except Exception:
+                                pass
+                        self._capture_combined_legend_anchor_from_fig(target_fig)
+                    except Exception:
+                        pass
+                    try:
                         export_fig_candidate = (
                             self._build_combined_triple_axis_from_state(
                                 fig_size=(11.0, 8.5), mode="export"
@@ -26505,6 +26552,10 @@ class UnifiedApp(tk.Tk):
         args = getattr(self, "_last_plot_args", None)
         try:
             self._prepare_series_globals()
+            ignore_min_drop = bool(getattr(self, "_cycle_last_ignore_min_drop", True))
+            self._refresh_final_report_cycle_snapshot(
+                ignore_min_drop=ignore_min_drop
+            )
             self._prime_core_cycle_overlay_globals()
             args = self._collect_plot_args()
         except Exception:
@@ -26536,6 +26587,7 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 pass
             return
+        self._combined_plot_preview_fig = fig
         win = tk.Toplevel(self)
         win.title("Plot Preview (Export 11x8.5)")
         win.transient(self)
@@ -26603,6 +26655,11 @@ class UnifiedApp(tk.Tk):
                 pass
             try:
                 plt.close(fig)
+            except Exception:
+                pass
+            try:
+                if getattr(self, "_combined_plot_preview_fig", None) is fig:
+                    self._combined_plot_preview_fig = None
             except Exception:
                 pass
             try:
@@ -33601,6 +33658,7 @@ class UnifiedApp(tk.Tk):
 
         auto_detect_used = bool(result.get("auto_detection_used"))
         self._cycle_last_auto_detect = auto_detect_used
+        self._cycle_last_ignore_min_drop = bool(ignore_min_drop)
 
         summary = result.get("summary", "")
 
@@ -33723,15 +33781,6 @@ class UnifiedApp(tk.Tk):
         cycles = result.get("cycles", [])
 
         total_drop = float(result.get("total_drop", 0.0))
-        self._final_report_cycle_snapshot = {
-            "x": np.asarray(self._ca_x, dtype=float),
-            "y": np.asarray(self._ca_y, dtype=float),
-            "mask": mask_arr.copy(),
-            "cycles": cycles,
-            "total_drop": total_drop,
-            "peaks": np.asarray(plot_peaks, dtype=int),
-            "troughs": np.asarray(plot_troughs, dtype=int),
-        }
 
         handles, labels = self._cycle_ax.get_legend_handles_labels()
 
@@ -33798,6 +33847,11 @@ class UnifiedApp(tk.Tk):
             effective_troughs = set()
 
         self._cache_cycle_markers(effective_peaks, effective_troughs, mask)
+
+        try:
+            self._refresh_final_report_cycle_snapshot(ignore_min_drop=ignore_min_drop)
+        except Exception:
+            pass
 
         pending = getattr(self, "_pending_fig3_update", None)
 
@@ -34763,6 +34817,147 @@ class UnifiedApp(tk.Tk):
 
         return sorted(peak_idx), sorted(trough_idx)
 
+    def _refresh_final_report_cycle_snapshot(self, *, ignore_min_drop: bool = True) -> None:
+        """Rebuild the core/export cycle snapshot from live Cycle Analysis state."""
+        if not self._cycle_ready():
+            self._final_report_cycle_snapshot = None
+            return
+
+        try:
+            with self._data_lock:
+                x, y1, _ = self._get_xy()
+                mask = np.asarray(self._current_mask(), dtype=bool)
+        except Exception:
+            self._final_report_cycle_snapshot = None
+            return
+
+        if x is None or y1 is None:
+            self._final_report_cycle_snapshot = None
+            return
+
+        try:
+            xv = np.asarray(x, dtype=float)
+            yv = np.asarray(y1, dtype=float)
+        except Exception:
+            self._final_report_cycle_snapshot = None
+            return
+
+        data_len = int(yv.shape[0])
+        mask_arr = np.asarray(mask, dtype=bool)
+        mask_len = min(mask_arr.size, data_len)
+        if mask_arr.size != mask_len:
+            mask_arr = mask_arr[:mask_len]
+
+        if mask_len == 0 or mask_arr.sum() < 3:
+            self._final_report_cycle_snapshot = None
+            return
+
+        def _sanitize_indices(values):
+            safe = set()
+            for idx in values or []:
+                try:
+                    i = int(idx)
+                except Exception:
+                    continue
+                if 0 <= i < mask_len:
+                    safe.add(i)
+            return safe
+
+        auto_peaks = _sanitize_indices(getattr(self, "_auto_peaks", set()))
+        auto_troughs = _sanitize_indices(getattr(self, "_auto_troughs", set()))
+        add_peaks = _sanitize_indices(getattr(self, "_add_peaks", set()))
+        add_troughs = _sanitize_indices(getattr(self, "_add_troughs", set()))
+        rm_peaks = _sanitize_indices(getattr(self, "_rm_peaks", set()))
+        rm_troughs = _sanitize_indices(getattr(self, "_rm_troughs", set()))
+
+        effective_peaks = (auto_peaks | add_peaks) - rm_peaks
+        effective_troughs = (auto_troughs | add_troughs) - rm_troughs
+
+        peaks = sorted(
+            [i for i in effective_peaks if 0 <= i < mask_len and mask_arr[i]]
+        )
+        troughs = sorted(
+            [i for i in effective_troughs if 0 <= i < mask_len and mask_arr[i]]
+        )
+
+        try:
+            min_cycle_drop = float(self.min_cycle_drop.get())
+        except Exception:
+            min_cycle_drop = 0.0
+
+        threshold = -float("inf") if ignore_min_drop else float(min_cycle_drop)
+
+        cycles, total_drop = self._form_cycles(yv, peaks, troughs, threshold)
+
+        cycle_peaks = {int(c.get("peak_idx", -1)) for c in cycles}
+        cycle_troughs = {int(c.get("trough_idx", -1)) for c in cycles}
+
+        cycle_peaks = {i for i in cycle_peaks if 0 <= i < mask_len and mask_arr[int(i)]}
+        cycle_troughs = {
+            i for i in cycle_troughs if 0 <= i < mask_len and mask_arr[int(i)]
+        }
+
+        display_peaks = set()
+        for idx in effective_peaks:
+            try:
+                i = int(idx)
+            except Exception:
+                continue
+            if 0 <= i < mask_len and mask_arr[i]:
+                display_peaks.add(i)
+
+        display_troughs = set()
+        for idx in effective_troughs:
+            try:
+                i = int(idx)
+            except Exception:
+                continue
+            if 0 <= i < mask_len and mask_arr[i]:
+                display_troughs.add(i)
+
+        plot_peaks = np.array(sorted(cycle_peaks | display_peaks), dtype=int)
+        plot_troughs = np.array(sorted(cycle_troughs | display_troughs), dtype=int)
+
+        if plot_peaks.size:
+            plot_peaks = plot_peaks[(plot_peaks >= 0) & (plot_peaks < mask_len)]
+
+        if plot_troughs.size:
+            plot_troughs = plot_troughs[(plot_troughs >= 0) & (plot_troughs < mask_len)]
+
+        mask_indices = np.where(mask_arr)[0]
+        mask_bounds = (
+            (int(mask_indices[0]), int(mask_indices[-1]))
+            if mask_indices.size
+            else None
+        )
+
+        snapshot = {
+            "x": np.asarray(xv, dtype=float),
+            "y": np.asarray(yv, dtype=float),
+            "mask": mask_arr.copy(),
+            "mask_indices": np.asarray(mask_indices, dtype=int),
+            "mask_bounds": mask_bounds,
+            "cycles": cycles,
+            "total_drop": float(total_drop) if math.isfinite(total_drop) else 0.0,
+            "peaks": np.asarray(plot_peaks, dtype=int),
+            "troughs": np.asarray(plot_troughs, dtype=int),
+            "plot_peaks": np.asarray(plot_peaks, dtype=int),
+            "plot_troughs": np.asarray(plot_troughs, dtype=int),
+            "auto_peaks": sorted(auto_peaks),
+            "auto_troughs": sorted(auto_troughs),
+            "add_peaks": sorted(add_peaks),
+            "add_troughs": sorted(add_troughs),
+            "rm_peaks": sorted(rm_peaks),
+            "rm_troughs": sorted(rm_troughs),
+            "effective_peaks": sorted(effective_peaks),
+            "effective_troughs": sorted(effective_troughs),
+            "ignore_min_drop": bool(ignore_min_drop),
+            "min_cycle_drop": float(min_cycle_drop),
+            "auto_detection_used": bool(getattr(self, "_cycle_last_auto_detect", False)),
+        }
+
+        self._final_report_cycle_snapshot = snapshot
+
     def _core_cycle_overlay_state(self) -> Optional[Dict[str, Any]]:
         """Return peak/trough data from the Cycle Analysis manager for core plots."""
         snapshot = getattr(self, "_final_report_cycle_snapshot", None)
@@ -34826,6 +35021,18 @@ class UnifiedApp(tk.Tk):
 
         peaks_idx, peak_points = _valid_points(snapshot.get("peaks"))
         troughs_idx, trough_points = _valid_points(snapshot.get("troughs"))
+
+        if (peaks_idx or troughs_idx) and not cycles:
+            if not getattr(self, "_cycle_snapshot_warned", False):
+                self._cycle_snapshot_warned = True
+                ignore_flag = snapshot.get("ignore_min_drop")
+                min_drop = snapshot.get("min_cycle_drop")
+                print(
+                    "WARN: Cycle snapshot has markers but no cycles "
+                    f"(peaks={len(peaks_idx)}, troughs={len(troughs_idx)}, "
+                    f"ignore_min_drop={ignore_flag}, min_cycle_drop={min_drop}).",
+                    file=sys.stderr,
+                )
 
         payload = getattr(self, "_cycle_last_transfer_payload", None)
 
@@ -34995,6 +35202,55 @@ class UnifiedApp(tk.Tk):
             pass
         return legends
 
+    def _combined_cycle_reference_axis(self, fig: Optional[Figure]) -> Optional[Axes]:
+        """Select the primary axes for combined cycle legend anchoring."""
+        if fig is None:
+            return None
+        axes = list(getattr(fig, "axes", []) or [])
+        for axis in axes:
+            if getattr(axis, "_gl260_axis_role", None) == "primary":
+                return axis
+        for axis in axes:
+            if getattr(axis, "_gl260_legend_only", False):
+                continue
+            return axis
+        return axes[0] if axes else None
+
+    def _legend_texts(self, legend: Any) -> List[str]:
+        try:
+            texts = legend.get_texts()
+        except Exception:
+            return []
+        values: List[str] = []
+        for text in texts or []:
+            try:
+                label = text.get_text()
+            except Exception:
+                continue
+            if label:
+                values.append(str(label))
+        return values
+
+    def _is_combined_cycle_legend(self, legend: Any) -> bool:
+        role = getattr(legend, "_gl260_legend_role", None)
+        if isinstance(role, str) and role.strip().lower() == "combined_cycle":
+            return True
+        if getattr(legend, "_combined_cycle_legend", False):
+            return True
+        if getattr(legend, "_cycle_overlay_legend", False):
+            return True
+        labels = [text.strip().lower() for text in self._legend_texts(legend) if text]
+        if not labels:
+            return False
+        has_cycles = any("cycles:" in label for label in labels)
+        if not has_cycles:
+            return False
+        has_peak_trough = any(
+            label.startswith("peak") or label.startswith("trough") for label in labels
+        )
+        has_total = any("total" in label and "psi" in label for label in labels)
+        return has_peak_trough or has_total
+
     def _capture_combined_legend_anchor_from_fig(self, fig: Optional[Figure]) -> None:
         """Store the current combined legend anchor so refreshes/saves use the dragged position."""
         if fig is None:
@@ -35010,10 +35266,24 @@ class UnifiedApp(tk.Tk):
             }
         except Exception:
             fig_legend_ids = set()
+        cycle_ref_axis = self._combined_cycle_reference_axis(fig)
 
-        def _legend_anchor_axes_fraction(lg) -> Optional[tuple]:
+        def _clamp_axes_anchor(anchor: Any) -> Optional[Tuple[float, float]]:
+            try:
+                x_val = float(anchor[0])
+                y_val = float(anchor[1])
+            except Exception:
+                return None
+            if not (math.isfinite(x_val) and math.isfinite(y_val)):
+                return None
+            x_val = max(-0.1, min(1.1, x_val))
+            y_val = max(-0.1, min(1.1, y_val))
+            return (x_val, y_val)
+
+        def _legend_anchor_axes_fraction(lg) -> Tuple[Optional[tuple], Optional[str]]:
             """Return legend anchor in axes/figure fraction coordinates."""
             is_fig_legend = id(lg) in fig_legend_ids
+            is_combined_cycle = self._is_combined_cycle_legend(lg)
 
             def _legend_loc_text(legend_obj) -> str:
                 loc_map = {
@@ -35085,6 +35355,25 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 renderer = None
 
+            if is_combined_cycle and cycle_ref_axis is not None:
+                try:
+                    bbox_disp = lg.get_window_extent(renderer=renderer)
+                except Exception:
+                    bbox_disp = None
+                if bbox_disp is not None:
+                    try:
+                        bbox_axes = bbox_disp.transformed(
+                            cycle_ref_axis.transAxes.inverted()
+                        )
+                    except Exception:
+                        bbox_axes = None
+                    if bbox_axes is not None:
+                        anchor_pair = _clamp_axes_anchor(
+                            _anchor_from_bbox(bbox_axes, _legend_loc_text(lg))
+                        )
+                        if anchor_pair is not None:
+                            return anchor_pair, "axes"
+
             if is_fig_legend:
                 try:
                     bbox_disp = lg.get_window_extent(renderer=renderer)
@@ -35100,7 +35389,7 @@ class UnifiedApp(tk.Tk):
                             _anchor_from_bbox(bbox_fig, _legend_loc_text(lg))
                         )
                         if anchor_pair is not None:
-                            return anchor_pair
+                            return anchor_pair, "figure"
 
             bbox = None
             try:
@@ -35109,29 +35398,32 @@ class UnifiedApp(tk.Tk):
                 bbox = None
             if bbox is not None:
                 transform = None
+                anchor_space = None
                 if is_fig_legend:
                     try:
                         transform = fig.transFigure
+                        anchor_space = "figure"
                     except Exception:
                         transform = None
                 if transform is None:
                     ax = getattr(lg, "axes", None)
                     if ax is not None:
                         transform = ax.transAxes
+                        anchor_space = "axes"
                 if transform is not None:
                     try:
                         anchor_bbox = bbox.transformed(transform.inverted())
                         anchor_pair = _validated_anchor_pair(
-                            (anchor_bbox.x0, anchor_bbox.y0)
+                            _anchor_from_bbox(anchor_bbox, _legend_loc_text(lg))
                         )
                         if anchor_pair is not None:
-                            return anchor_pair
+                            return anchor_pair, anchor_space
                     except Exception:
                         pass
 
             ax = getattr(lg, "axes", None)
             if ax is None and fig is None:
-                return None
+                return None, None
             if renderer is None:
                 try:
                     canvas = lg.figure.canvas
@@ -35148,25 +35440,36 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 bbox = None
             if bbox is None:
-                return None
+                return None, None
             try:
                 if ax is not None:
-                    x0, y0 = ax.transAxes.inverted().transform((bbox.x0, bbox.y0))
-                    return _validated_anchor_pair((x0, y0))
+                    bbox_axes = bbox.transformed(ax.transAxes.inverted())
+                    anchor_pair = _validated_anchor_pair(
+                        _anchor_from_bbox(bbox_axes, _legend_loc_text(lg))
+                    )
+                    if anchor_pair is not None:
+                        return anchor_pair, "axes"
                 bbox_fig = bbox.transformed(fig.transFigure.inverted())
                 anchor_pair = _validated_anchor_pair(
                     _anchor_from_bbox(bbox_fig, _legend_loc_text(lg))
                 )
                 if anchor_pair is not None:
-                    return anchor_pair
+                    return anchor_pair, "figure"
             except Exception:
-                return None
+                return None, None
+            return None, None
 
         for lg in legends:
             try:
-                anchor_loc = _legend_anchor_axes_fraction(lg)
+                is_cycle_legend = self._is_combined_cycle_legend(lg)
+                anchor_loc, anchor_space = _legend_anchor_axes_fraction(lg)
                 if anchor_loc is None:
                     anchor_loc = _validated_anchor_pair(getattr(lg, "_loc", ()))
+                    if anchor_loc is not None and anchor_space is None:
+                        if id(lg) in fig_legend_ids:
+                            anchor_space = "figure"
+                        elif getattr(lg, "axes", None) is not None:
+                            anchor_space = "axes"
                 loc_value = None
                 try:
                     loc_value = lg.get_loc()
@@ -35189,15 +35492,21 @@ class UnifiedApp(tk.Tk):
                     else:
                         settings.pop("combined_legend_loc", None)
                     updated = True
-                if (
-                    getattr(lg, "_cycle_overlay_legend", False)
-                    and anchor_loc is not None
-                ):
+                if is_cycle_legend and anchor_loc is not None:
                     self._combined_cycle_legend_anchor = anchor_loc
                     settings["combined_cycle_legend_anchor"] = [
                         anchor_loc[0],
                         anchor_loc[1],
                     ]
+                    if anchor_space in {"figure", "axes"}:
+                        self._combined_cycle_legend_anchor_space = anchor_space
+                        settings["combined_cycle_legend_anchor_space"] = anchor_space
+                    elif cycle_ref_axis is not None:
+                        self._combined_cycle_legend_anchor_space = "axes"
+                        settings["combined_cycle_legend_anchor_space"] = "axes"
+                    else:
+                        self._combined_cycle_legend_anchor_space = None
+                        settings.pop("combined_cycle_legend_anchor_space", None)
                     self._combined_cycle_legend_loc = normalized_loc
                     if normalized_loc is not None:
                         settings["combined_cycle_legend_loc"] = normalized_loc
@@ -35216,14 +35525,20 @@ class UnifiedApp(tk.Tk):
         """Enable dragging on the combined legend and persist the dragged position for reuse."""
         if fig is None:
             return
+        try:
+            if fig.canvas is not None:
+                fig.canvas.draw()
+        except Exception:
+            pass
         legends = self._collect_combined_legends(fig)
         if not legends:
             return
+        cycle_overlay = globals().get("core_cycle_overlay")
         expect_cycle_legend = bool(
             settings.get("show_cycle_legend_on_core_plots", False)
-        )
+        ) and bool(cycle_overlay)
         has_cycle_legend = any(
-            getattr(lg, "_cycle_overlay_legend", False) for lg in legends
+            self._is_combined_cycle_legend(lg) for lg in legends
         )
         if expect_cycle_legend and not has_cycle_legend:
             print(
@@ -46404,6 +46719,11 @@ class UnifiedApp(tk.Tk):
     def _final_report_build_cycle_plot_figure(
         self, page_size: Tuple[float, float]
     ) -> Optional[Figure]:
+        try:
+            ignore_min_drop = bool(getattr(self, "_cycle_last_ignore_min_drop", True))
+            self._refresh_final_report_cycle_snapshot(ignore_min_drop=ignore_min_drop)
+        except Exception:
+            pass
         snapshot = getattr(self, "_final_report_cycle_snapshot", None)
         if not snapshot:
             return None
@@ -51506,6 +51826,13 @@ class UnifiedApp(tk.Tk):
             return
 
         self._prepare_series_globals()
+        try:
+            ignore_min_drop = bool(getattr(self, "_cycle_last_ignore_min_drop", True))
+            self._refresh_final_report_cycle_snapshot(
+                ignore_min_drop=ignore_min_drop
+            )
+        except Exception:
+            pass
         self._prime_core_cycle_overlay_globals()
 
         args = self._collect_plot_args()
@@ -51532,6 +51859,10 @@ class UnifiedApp(tk.Tk):
             return None
 
         try:
+            ignore_min_drop = bool(getattr(self, "_cycle_last_ignore_min_drop", True))
+            self._refresh_final_report_cycle_snapshot(
+                ignore_min_drop=ignore_min_drop
+            )
             self._prime_core_cycle_overlay_globals()
         except Exception:
             pass
@@ -51551,6 +51882,17 @@ class UnifiedApp(tk.Tk):
         if not args or len(args) < 24:
 
             return None
+
+        try:
+            ignore_min_drop = bool(getattr(self, "_cycle_last_ignore_min_drop", True))
+            self._refresh_final_report_cycle_snapshot(ignore_min_drop=ignore_min_drop)
+        except Exception:
+            pass
+
+        try:
+            self._prime_core_cycle_overlay_globals()
+        except Exception:
+            pass
 
         required_series = {
             "y1": globals().get("y1"),
@@ -51696,6 +52038,14 @@ class UnifiedApp(tk.Tk):
         cycle_legend_anchor = getattr(self, "_combined_cycle_legend_anchor", None)
         legend_loc = getattr(self, "_combined_legend_loc", None)
         cycle_legend_loc = getattr(self, "_combined_cycle_legend_loc", None)
+        cycle_legend_anchor_space = getattr(
+            self, "_combined_cycle_legend_anchor_space", None
+        )
+        if cycle_legend_anchor is not None and cycle_legend_anchor_space not in {
+            "figure",
+            "axes",
+        }:
+            cycle_legend_anchor_space = "figure"
         layout_profile = _get_layout_profile("fig_combined_triple_axis")
         layout_section = _layout_profile_section(layout_profile, mode)
         profile_margins = layout_section.get("margins")
@@ -51784,6 +52134,7 @@ class UnifiedApp(tk.Tk):
             cycle_legend_anchor=cycle_legend_anchor,
             legend_loc=legend_loc,
             cycle_legend_loc=cycle_legend_loc,
+            cycle_legend_anchor_space=cycle_legend_anchor_space,
             baseline_margins=profile_margins,
             legend_anchor_y=profile_legend_anchor_y,
             xlabel_pad_pts=xlabel_pad_value,
@@ -52238,6 +52589,15 @@ class UnifiedApp(tk.Tk):
             settings["combined_cycle_legend_loc"] = cycle_loc_value
         else:
             settings.pop("combined_cycle_legend_loc", None)
+        cycle_anchor_space = getattr(self, "_combined_cycle_legend_anchor_space", None)
+        if (
+            cycle_anchor_space in {"figure", "axes"}
+            and cycle_anchor
+            and len(cycle_anchor) >= 2
+        ):
+            settings["combined_cycle_legend_anchor_space"] = cycle_anchor_space
+        else:
+            settings.pop("combined_cycle_legend_anchor_space", None)
 
         _save_settings_to_disk()
 
