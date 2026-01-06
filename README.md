@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (V1.6.4)
+# GL-260 Data Analysis and Plotter (V1.6.5)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data exported to Excel, mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.6.4`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.6.5`.
 
 ## Intended Audience
 - Chemists, process engineers, and researchers analyzing GL-260 pressure/temperature datasets.
@@ -370,6 +370,12 @@ Export:
 - Legends are created per figure and are draggable.
 - Cycle legends can be added to core plots when enabled.
 
+### Combined cycle legend placement
+- The combined triple-axis cycle legend supports axis-relative placement with fixed pixel offsets.
+- A reference axis (main/right/deriv) and reference corner define where the offsets are measured from.
+- Placement is preserved across the main window, export preview, and final exports.
+- Legacy combined cycle legend anchors are automatically migrated to the axis-offset model on first render.
+
 ## Plot Elements / Annotations System
 Plot annotations are stored per plot in `settings.json` and rendered on top of figures.
 
@@ -552,7 +558,7 @@ The script includes internal change summaries:
   - Treeview selection recursion fix in annotations editor.
   - Layout fixes for the annotations Toplevel.
 
-Note: the UI title uses `APP_VERSION` set to `V1.6.3`.
+Note: the UI title uses `APP_VERSION` set to `V1.6.5`.
 
 ## Troubleshooting
 - **"No Data" or "Missing Columns" errors**: Load a sheet on the Data tab and set required columns on the Columns tab.

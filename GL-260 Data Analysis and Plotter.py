@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.6.4
+# Version: V1.6.5
 # Date: 2026-01-06
 
 import os
@@ -1139,6 +1139,31 @@ def _normalize_legend_loc_value(
         return None
 
 
+def _normalize_combined_cycle_ref_axis(value):
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip().lower()
+    if candidate in ("", "none", "auto", "default"):
+        return None
+    if candidate in ("main", "primary", "host", "base"):
+        return "main"
+    if candidate in ("right", "y2", "y_right", "right_y"):
+        return "right"
+    if candidate in ("deriv", "derivative", "third"):
+        return "deriv"
+    return None
+
+
+def _normalize_combined_cycle_ref_corner(value: Any) -> str:
+    if isinstance(value, str):
+        candidate = value.strip().lower()
+        if candidate in COMBINED_CYCLE_REF_CORNER_CHOICES:
+            return candidate
+    return "upper right"
+
+
 def _normalize_layout_profile(value: Any, plot_id: Optional[str]) -> Dict[str, Any]:
     defaults = {
         "display": {
@@ -1467,11 +1492,18 @@ def _apply_layout_profile_to_figure(fig: Figure, plot_id: str, mode: str) -> Non
     cycle_anchor = section.get("cycle_legend_anchor")
     cycle_loc = section.get("cycle_legend_loc")
     combined_cycle_anchor = None
+    combined_axis_offset = None
     if plot_id == "fig_combined_triple_axis":
+        combined_axis_offset = _combined_cycle_axis_offset_values()
         combined_cycle_anchor = _validated_anchor_pair(
             settings.get("combined_cycle_legend_anchor")
         )
-    if cycle_anchor is not None and combined_cycle_anchor is None and cycle_legend is not None:
+    if (
+        cycle_anchor is not None
+        and combined_cycle_anchor is None
+        and combined_axis_offset is None
+        and cycle_legend is not None
+    ):
         axis = axis_legend_map.get(cycle_legend)
         if axis is not None:
             _apply_legend_anchor_to_artist(
@@ -1542,6 +1574,24 @@ def _apply_layout_profile_to_figure(fig: Figure, plot_id: str, mode: str) -> Non
                 layout_mgr.solve()
             except Exception:
                 pass
+        if combined_axis_offset is not None and cycle_legend is not None:
+            ref_axis = _resolve_combined_cycle_ref_axis(
+                fig,
+                ax_main=primary_axis,
+                ax_right=right_axis,
+                ax_deriv=third_axis,
+                ref_axis_key=settings.get("combined_cycle_legend_ref_axis"),
+            )
+            loc_value = _resolve_combined_cycle_legend_loc()
+            _apply_cycle_legend_axis_offset(
+                fig,
+                cycle_legend,
+                ref_axis,
+                settings.get("combined_cycle_legend_ref_corner"),
+                combined_axis_offset[0],
+                combined_axis_offset[1],
+                loc_value,
+            )
 
     if plot_id != "fig_combined_triple_axis":
         title_state = getattr(fig, "_gl260_title_state", {}) or {}
@@ -5396,7 +5446,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.6.4"
+APP_VERSION = "V1.6.5"
 
 
 DEBUG_SERIES_FLOW = False
@@ -14244,6 +14294,14 @@ DEFAULT_COMBINED_LEGEND_FONTSIZE = 12.0
 MIN_COMBINED_FONT_SIZE = 6.0
 MAX_COMBINED_FONT_SIZE = 48.0
 DEFAULT_COMBINED_FONT_FAMILY = _PREFERRED_PLOT_FONT
+COMBINED_CYCLE_REF_AXIS_CHOICES = ("main", "right", "deriv")
+COMBINED_CYCLE_REF_CORNER_CHOICES = (
+    "upper right",
+    "upper left",
+    "lower right",
+    "lower left",
+    "center",
+)
 
 
 DEFAULT_AXIS_AUTO_RANGE = {
@@ -15016,6 +15074,28 @@ if os.path.exists(SETTINGS_FILE):
         cycle_loc_choice_value = "upper right"
     initial_combined_cycle_legend_loc_choice = cycle_loc_choice_value
     settings["combined_cycle_legend_loc_choice"] = cycle_loc_choice_value
+    initial_combined_cycle_legend_ref_axis = _normalize_combined_cycle_ref_axis(
+        settings.get("combined_cycle_legend_ref_axis")
+    )
+    settings["combined_cycle_legend_ref_axis"] = initial_combined_cycle_legend_ref_axis
+    initial_combined_cycle_legend_ref_corner = _normalize_combined_cycle_ref_corner(
+        settings.get("combined_cycle_legend_ref_corner")
+    )
+    settings[
+        "combined_cycle_legend_ref_corner"
+    ] = initial_combined_cycle_legend_ref_corner
+    combined_cycle_ref_dx = _coerce_float(settings.get("combined_cycle_legend_ref_dx_px"))
+    combined_cycle_ref_dy = _coerce_float(settings.get("combined_cycle_legend_ref_dy_px"))
+    if combined_cycle_ref_dx is not None:
+        settings["combined_cycle_legend_ref_dx_px"] = combined_cycle_ref_dx
+    if combined_cycle_ref_dy is not None:
+        settings["combined_cycle_legend_ref_dy_px"] = combined_cycle_ref_dy
+    anchor_mode_value = settings.get("combined_cycle_legend_anchor_mode")
+    if combined_cycle_ref_dx is not None and combined_cycle_ref_dy is not None:
+        anchor_mode_value = "axis_offset"
+    else:
+        anchor_mode_value = "legacy_anchor"
+    settings["combined_cycle_legend_anchor_mode"] = anchor_mode_value
     initial_combined_center_plot_legend = bool(
         settings.get("combined_center_plot_legend", False)
     )
@@ -15164,6 +15244,13 @@ else:
     settings["combined_cycle_legend_loc_choice"] = (
         initial_combined_cycle_legend_loc_choice
     )
+    initial_combined_cycle_legend_ref_axis = "main"
+    settings["combined_cycle_legend_ref_axis"] = initial_combined_cycle_legend_ref_axis
+    initial_combined_cycle_legend_ref_corner = "upper right"
+    settings[
+        "combined_cycle_legend_ref_corner"
+    ] = initial_combined_cycle_legend_ref_corner
+    settings["combined_cycle_legend_anchor_mode"] = "legacy_anchor"
     initial_combined_center_plot_legend = False
 
     # Titles
@@ -17455,6 +17542,204 @@ def _apply_legend_anchor_to_artist(
     return True
 
 
+def _resolve_combined_cycle_ref_axis(
+    fig: Optional[Figure],
+    ax_main: Optional[Axes] = None,
+    ax_right: Optional[Axes] = None,
+    ax_deriv: Optional[Axes] = None,
+    ref_axis_key: Optional[str] = None,
+) -> Optional[Axes]:
+    ref_axis = _normalize_combined_cycle_ref_axis(ref_axis_key)
+    if ref_axis == "main" and ax_main is not None:
+        return ax_main
+    if ref_axis == "right" and ax_right is not None:
+        return ax_right
+    if ref_axis == "deriv" and ax_deriv is not None:
+        return ax_deriv
+    if fig is None:
+        return ax_main or ax_right or ax_deriv
+    axes = []
+    for axis in getattr(fig, "axes", []) or []:
+        if axis is None:
+            continue
+        if getattr(axis, "_gl260_legend_only", False):
+            continue
+        axes.append(axis)
+    role_map = {"main": "primary", "right": "right", "deriv": "third"}
+    desired_role = role_map.get(ref_axis)
+    if desired_role:
+        for axis in axes:
+            if getattr(axis, "_gl260_axis_role", None) == desired_role:
+                return axis
+    if ax_main is not None:
+        return ax_main
+    return axes[0] if axes else None
+
+
+def _legend_loc_text(loc_value: Any) -> Optional[str]:
+    loc_map = {
+        0: "best",
+        1: "upper right",
+        2: "upper left",
+        3: "lower left",
+        4: "lower right",
+        5: "right",
+        6: "center left",
+        7: "center right",
+        8: "lower center",
+        9: "upper center",
+        10: "center",
+    }
+    normalized = _normalize_legend_loc_value(loc_value)
+    if isinstance(normalized, tuple):
+        return None
+    if isinstance(normalized, int):
+        loc_text = loc_map.get(normalized, "upper right")
+    elif isinstance(normalized, str):
+        loc_text = normalized.strip().lower() or "upper right"
+    else:
+        loc_text = "upper right"
+    if loc_text == "best":
+        loc_text = "upper right"
+    return loc_text
+
+
+def _axis_anchor_point_display(
+    axis: Optional[Axes], corner: Optional[str], renderer
+) -> Optional[Tuple[float, float]]:
+    if axis is None:
+        return None
+    try:
+        bbox = axis.get_window_extent(renderer=renderer)
+    except Exception:
+        return None
+    if bbox is None:
+        return None
+    corner_key = _normalize_combined_cycle_ref_corner(corner)
+    if corner_key == "upper right":
+        return (bbox.x1, bbox.y1)
+    if corner_key == "upper left":
+        return (bbox.x0, bbox.y1)
+    if corner_key == "lower right":
+        return (bbox.x1, bbox.y0)
+    if corner_key == "lower left":
+        return (bbox.x0, bbox.y0)
+    return ((bbox.x0 + bbox.x1) / 2.0, (bbox.y0 + bbox.y1) / 2.0)
+
+
+def _legend_anchor_point_display(legend: Any, loc_value: Any, renderer) -> Optional[
+    Tuple[float, float]
+]:
+    if legend is None:
+        return None
+    loc_text = _legend_loc_text(loc_value)
+    if loc_text is None:
+        return None
+    try:
+        bbox = legend.get_window_extent(renderer=renderer)
+    except Exception:
+        return None
+    if bbox is None:
+        return None
+    x0, y0, x1, y1 = bbox.x0, bbox.y0, bbox.x1, bbox.y1
+    cx = x0 + ((x1 - x0) / 2.0)
+    cy = y0 + ((y1 - y0) / 2.0)
+    if loc_text in {"upper left", "ul"}:
+        return (x0, y1)
+    if loc_text in {"upper center", "uc"}:
+        return (cx, y1)
+    if loc_text in {"upper right", "ur"}:
+        return (x1, y1)
+    if loc_text in {"lower left", "ll"}:
+        return (x0, y0)
+    if loc_text in {"lower center", "lc"}:
+        return (cx, y0)
+    if loc_text in {"lower right", "lr"}:
+        return (x1, y0)
+    if loc_text in {"center left", "cl", "left"}:
+        return (x0, cy)
+    if loc_text in {"center right", "cr", "right"}:
+        return (x1, cy)
+    return (cx, cy)
+
+
+def _combined_cycle_axis_offset_values() -> Optional[Tuple[float, float]]:
+    dx = _coerce_float(settings.get("combined_cycle_legend_ref_dx_px"))
+    dy = _coerce_float(settings.get("combined_cycle_legend_ref_dy_px"))
+    if dx is None or dy is None:
+        return None
+    return (dx, dy)
+
+
+def _resolve_combined_cycle_legend_loc() -> Optional[Union[str, int, Tuple[float, float]]]:
+    loc_value = _normalize_legend_loc_value(settings.get("combined_cycle_legend_loc"))
+    if loc_value is not None:
+        return loc_value
+    loc_choice = settings.get("combined_cycle_legend_loc_choice", "upper right")
+    loc_choice_value = _normalize_legend_loc_value(loc_choice)
+    return loc_choice_value or "upper right"
+
+
+def _compute_cycle_legend_offsets_px(
+    legend: Any,
+    ref_axis: Optional[Axes],
+    ref_corner: Optional[str],
+    loc_value: Any,
+    renderer,
+) -> Optional[Tuple[float, float]]:
+    ref_point = _axis_anchor_point_display(ref_axis, ref_corner, renderer)
+    legend_point = _legend_anchor_point_display(legend, loc_value, renderer)
+    if ref_point is None or legend_point is None:
+        return None
+    dx = legend_point[0] - ref_point[0]
+    dy = legend_point[1] - ref_point[1]
+    if not (math.isfinite(dx) and math.isfinite(dy)):
+        return None
+    return (dx, dy)
+
+
+def _apply_cycle_legend_axis_offset(
+    fig: Figure,
+    legend: Any,
+    ref_axis: Optional[Axes],
+    ref_corner: Optional[str],
+    dx: float,
+    dy: float,
+    loc_value: Any,
+) -> bool:
+    if fig is None or legend is None or ref_axis is None:
+        return False
+    if fig.canvas is None:
+        FigureCanvasAgg(fig)
+    try:
+        fig.canvas.draw()
+    except Exception:
+        pass
+    try:
+        renderer = fig.canvas.get_renderer()
+    except Exception:
+        renderer = None
+    if renderer is None:
+        return False
+    ref_point = _axis_anchor_point_display(ref_axis, ref_corner, renderer)
+    if ref_point is None:
+        return False
+    target_display = (ref_point[0] + dx, ref_point[1] + dy)
+    try:
+        target_axes = ref_axis.transAxes.inverted().transform(target_display)
+    except Exception:
+        return False
+    loc_text = _legend_loc_text(loc_value)
+    if loc_text is None:
+        return False
+    return _apply_legend_anchor_to_artist(
+        legend,
+        target_axes,
+        transform=ref_axis.transAxes,
+        loc_override=loc_text,
+    )
+
+
 def _position_combined_legend(
     fig: Figure,
     ax: Axes,
@@ -18928,9 +19213,10 @@ def build_combined_triple_axis_figure(
     if cycle_loc_choice not in cycle_loc_choices:
         cycle_loc_choice = "upper right"
 
-    has_cycle_anchor = cycle_legend_anchor is not None
+    axis_offset_values = _combined_cycle_axis_offset_values()
+    has_cycle_anchor = cycle_legend_anchor is not None and axis_offset_values is None
     cycle_anchor = cycle_legend_anchor if has_cycle_anchor else None
-    cycle_loc_override = cycle_legend_loc if has_cycle_anchor else cycle_loc_choice
+    cycle_loc_override = cycle_legend_loc if cycle_legend_loc is not None else cycle_loc_choice
     cycle_legend = _add_cycle_legend(
         ax,
         combined_peak_artist,
@@ -18994,6 +19280,60 @@ def build_combined_triple_axis_figure(
         fig.canvas.draw()
     except Exception:
         pass
+
+    if cycle_legend is not None:
+        ref_axis = _resolve_combined_cycle_ref_axis(
+            fig,
+            ax_main=ax,
+            ax_right=ax_temp,
+            ax_deriv=ax_deriv,
+            ref_axis_key=settings.get("combined_cycle_legend_ref_axis"),
+        )
+        loc_value = _resolve_combined_cycle_legend_loc()
+        if axis_offset_values is not None:
+            _apply_cycle_legend_axis_offset(
+                fig,
+                cycle_legend,
+                ref_axis,
+                settings.get("combined_cycle_legend_ref_corner"),
+                axis_offset_values[0],
+                axis_offset_values[1],
+                loc_value,
+            )
+        else:
+            legacy_anchor = _validated_anchor_pair(
+                settings.get("combined_cycle_legend_anchor")
+            )
+            if legacy_anchor is not None:
+                try:
+                    renderer = fig.canvas.get_renderer()
+                except Exception:
+                    renderer = None
+                offsets = _compute_cycle_legend_offsets_px(
+                    cycle_legend,
+                    ref_axis,
+                    settings.get("combined_cycle_legend_ref_corner"),
+                    loc_value,
+                    renderer,
+                )
+                if offsets is not None:
+                    settings["combined_cycle_legend_ref_dx_px"] = offsets[0]
+                    settings["combined_cycle_legend_ref_dy_px"] = offsets[1]
+                    settings["combined_cycle_legend_anchor_mode"] = "axis_offset"
+                    axis_offset_values = offsets
+                    _apply_cycle_legend_axis_offset(
+                        fig,
+                        cycle_legend,
+                        ref_axis,
+                        settings.get("combined_cycle_legend_ref_corner"),
+                        offsets[0],
+                        offsets[1],
+                        loc_value,
+                    )
+                    try:
+                        _save_settings_to_disk()
+                    except Exception:
+                        pass
 
     for axis in (ax, ax_temp, ax_deriv):
         if axis is None:
@@ -20892,6 +21232,12 @@ class UnifiedApp(tk.Tk):
         self.combined_cycle_legend_loc_choice = tk.StringVar(
             value=initial_combined_cycle_legend_loc_choice
         )
+        self.combined_cycle_legend_ref_axis = tk.StringVar(
+            value=initial_combined_cycle_legend_ref_axis
+        )
+        self.combined_cycle_legend_ref_corner = tk.StringVar(
+            value=initial_combined_cycle_legend_ref_corner
+        )
         self.center_combined_plot_legend = tk.BooleanVar(
             value=initial_combined_center_plot_legend
         )
@@ -20962,6 +21308,14 @@ class UnifiedApp(tk.Tk):
         self._register_var_default(
             self.combined_cycle_legend_loc_choice,
             initial_combined_cycle_legend_loc_choice,
+        )
+        self._register_var_default(
+            self.combined_cycle_legend_ref_axis,
+            initial_combined_cycle_legend_ref_axis,
+        )
+        self._register_var_default(
+            self.combined_cycle_legend_ref_corner,
+            initial_combined_cycle_legend_ref_corner,
         )
 
         self.title_text = tk.StringVar(value=settings.get("title_text", initial_title))
@@ -28180,6 +28534,12 @@ class UnifiedApp(tk.Tk):
             "combined_cycle_legend_loc_choice": tk.StringVar(
                 value=self.combined_cycle_legend_loc_choice.get()
             ),
+            "combined_cycle_legend_ref_axis": tk.StringVar(
+                value=self.combined_cycle_legend_ref_axis.get()
+            ),
+            "combined_cycle_legend_ref_corner": tk.StringVar(
+                value=self.combined_cycle_legend_ref_corner.get()
+            ),
         }
 
         stage_layout_display_left = tk.DoubleVar(
@@ -28563,6 +28923,37 @@ class UnifiedApp(tk.Tk):
         )
         cycle_loc_menu.grid(row=11, column=1, sticky="w", pady=2)
 
+        ref_axis_var = stage_vars["combined_cycle_legend_ref_axis"]
+        if (ref_axis_var.get() or "").strip().lower() not in COMBINED_CYCLE_REF_AXIS_CHOICES:
+            ref_axis_var.set("main")
+        ttk.Label(legend_frame, text="Cycle Legend Reference Axis").grid(
+            row=12, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        ref_axis_menu = ttk.OptionMenu(
+            legend_frame,
+            ref_axis_var,
+            ref_axis_var.get(),
+            *COMBINED_CYCLE_REF_AXIS_CHOICES,
+        )
+        ref_axis_menu.grid(row=12, column=1, sticky="w", pady=2)
+
+        ref_corner_var = stage_vars["combined_cycle_legend_ref_corner"]
+        if (
+            (ref_corner_var.get() or "").strip().lower()
+            not in COMBINED_CYCLE_REF_CORNER_CHOICES
+        ):
+            ref_corner_var.set("upper right")
+        ttk.Label(legend_frame, text="Cycle Legend Reference Corner").grid(
+            row=13, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        ref_corner_menu = ttk.OptionMenu(
+            legend_frame,
+            ref_corner_var,
+            ref_corner_var.get(),
+            *COMBINED_CYCLE_REF_CORNER_CHOICES,
+        )
+        ref_corner_menu.grid(row=13, column=1, sticky="w", pady=2)
+
         def _parse_anchor_value(var: tk.StringVar) -> Optional[float]:
             raw = (var.get() or "").strip()
             if not raw:
@@ -28580,10 +28971,10 @@ class UnifiedApp(tk.Tk):
             var.set(f"{value:.4f}")
 
         ttk.Label(legend_frame, text="Legend anchor Y (display)").grid(
-            row=12, column=0, sticky="w", padx=(0, 6), pady=2
+            row=14, column=0, sticky="w", padx=(0, 6), pady=2
         )
         display_anchor_frame = ttk.Frame(legend_frame)
-        display_anchor_frame.grid(row=12, column=1, sticky="w", pady=2)
+        display_anchor_frame.grid(row=14, column=1, sticky="w", pady=2)
         ttk.Entry(
             display_anchor_frame,
             textvariable=stage_legend_anchor_y_display,
@@ -28603,10 +28994,10 @@ class UnifiedApp(tk.Tk):
         ).pack(side="left")
 
         ttk.Label(legend_frame, text="Legend anchor Y (export)").grid(
-            row=13, column=0, sticky="w", padx=(0, 6), pady=2
+            row=15, column=0, sticky="w", padx=(0, 6), pady=2
         )
         export_anchor_frame = ttk.Frame(legend_frame)
-        export_anchor_frame.grid(row=13, column=1, sticky="w", pady=2)
+        export_anchor_frame.grid(row=15, column=1, sticky="w", pady=2)
         ttk.Entry(
             export_anchor_frame,
             textvariable=stage_legend_anchor_y_export,
@@ -28630,7 +29021,7 @@ class UnifiedApp(tk.Tk):
             text="Up moves the legend toward the x-label; down moves it away.",
             wraplength=420,
             foreground="#555555",
-        ).grid(row=14, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        ).grid(row=16, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
         button_frame = ttk.Frame(container)
         button_frame.grid(row=5, column=0, sticky="e", pady=(8, 0))
@@ -28935,6 +29326,16 @@ class UnifiedApp(tk.Tk):
             cycle_loc_choice_value = "upper right"
         self.combined_cycle_legend_loc_choice.set(cycle_loc_choice_value)
         settings["combined_cycle_legend_loc_choice"] = cycle_loc_choice_value
+        ref_axis_value = _normalize_combined_cycle_ref_axis(
+            self.combined_cycle_legend_ref_axis.get()
+        )
+        self.combined_cycle_legend_ref_axis.set(ref_axis_value)
+        settings["combined_cycle_legend_ref_axis"] = ref_axis_value
+        ref_corner_value = _normalize_combined_cycle_ref_corner(
+            self.combined_cycle_legend_ref_corner.get()
+        )
+        self.combined_cycle_legend_ref_corner.set(ref_corner_value)
+        settings["combined_cycle_legend_ref_corner"] = ref_corner_value
 
         if not skip_save:
             try:
@@ -35203,18 +35604,13 @@ class UnifiedApp(tk.Tk):
         return legends
 
     def _combined_cycle_reference_axis(self, fig: Optional[Figure]) -> Optional[Axes]:
-        """Select the primary axes for combined cycle legend anchoring."""
+        """Select the reference axes for combined cycle legend anchoring."""
         if fig is None:
             return None
-        axes = list(getattr(fig, "axes", []) or [])
-        for axis in axes:
-            if getattr(axis, "_gl260_axis_role", None) == "primary":
-                return axis
-        for axis in axes:
-            if getattr(axis, "_gl260_legend_only", False):
-                continue
-            return axis
-        return axes[0] if axes else None
+        ref_axis_key = _normalize_combined_cycle_ref_axis(
+            settings.get("combined_cycle_legend_ref_axis")
+        )
+        return _resolve_combined_cycle_ref_axis(fig, ref_axis_key=ref_axis_key)
 
     def _legend_texts(self, legend: Any) -> List[str]:
         try:
@@ -35266,7 +35662,33 @@ class UnifiedApp(tk.Tk):
             }
         except Exception:
             fig_legend_ids = set()
+        ref_axis_key = _normalize_combined_cycle_ref_axis(
+            settings.get("combined_cycle_legend_ref_axis")
+        )
+        ref_corner_key = _normalize_combined_cycle_ref_corner(
+            settings.get("combined_cycle_legend_ref_corner")
+        )
+        settings["combined_cycle_legend_ref_axis"] = ref_axis_key
+        settings["combined_cycle_legend_ref_corner"] = ref_corner_key
         cycle_ref_axis = self._combined_cycle_reference_axis(fig)
+        renderer = None
+        try:
+            canvas = fig.canvas
+            if canvas is not None:
+                try:
+                    canvas.draw_idle()
+                except Exception:
+                    pass
+                try:
+                    canvas.draw()
+                except Exception:
+                    pass
+                try:
+                    renderer = canvas.get_renderer()
+                except Exception:
+                    renderer = None
+        except Exception:
+            renderer = None
 
         def _clamp_axes_anchor(anchor: Any) -> Optional[Tuple[float, float]]:
             try:
@@ -35512,6 +35934,13 @@ class UnifiedApp(tk.Tk):
                         settings["combined_cycle_legend_loc"] = normalized_loc
                     else:
                         settings.pop("combined_cycle_legend_loc", None)
+                    offsets = _compute_cycle_legend_offsets_px(
+                        lg, cycle_ref_axis, ref_corner_key, loc_value, renderer
+                    )
+                    if offsets is not None:
+                        settings["combined_cycle_legend_ref_dx_px"] = offsets[0]
+                        settings["combined_cycle_legend_ref_dy_px"] = offsets[1]
+                        settings["combined_cycle_legend_anchor_mode"] = "axis_offset"
                     updated = True
             except Exception:
                 continue
@@ -52066,6 +52495,7 @@ class UnifiedApp(tk.Tk):
         mirror_detached_labelpad = bool(
             layout_profile.get("mirror_detached_labelpad", False)
         )
+        axis_offset_values = _combined_cycle_axis_offset_values()
         if bool(self.center_combined_plot_legend.get()):
             # When centering is enabled, ignore persisted main-legend anchors so the
             # builder's default centered placement applies on refresh.
@@ -52074,7 +52504,11 @@ class UnifiedApp(tk.Tk):
             legend_alignment_value = "center"
         if profile_legend_anchor is not None:
             legend_anchor = profile_legend_anchor
-        if profile_cycle_anchor is not None and cycle_legend_anchor is None:
+        if (
+            profile_cycle_anchor is not None
+            and cycle_legend_anchor is None
+            and axis_offset_values is None
+        ):
             cycle_legend_anchor = profile_cycle_anchor
         labelpad_overrides = self._combined_axis_labelpad_overrides()
         if isinstance(profile_labelpads, dict):
@@ -52208,6 +52642,21 @@ class UnifiedApp(tk.Tk):
                 self._enforce_legend_text_style(
                     cycle_legend, legend_prop, legend_font_value
                 )
+                if axis_offset_values is not None and cycle_legend is not None:
+                    ref_axis = _resolve_combined_cycle_ref_axis(
+                        fig,
+                        ref_axis_key=settings.get("combined_cycle_legend_ref_axis"),
+                    )
+                    loc_value = _resolve_combined_cycle_legend_loc()
+                    _apply_cycle_legend_axis_offset(
+                        fig,
+                        cycle_legend,
+                        ref_axis,
+                        settings.get("combined_cycle_legend_ref_corner"),
+                        axis_offset_values[0],
+                        axis_offset_values[1],
+                        loc_value,
+                    )
             except Exception:
                 pass
             _apply_title_positions(
@@ -52610,6 +53059,20 @@ class UnifiedApp(tk.Tk):
             settings["combined_cycle_legend_anchor_space"] = cycle_anchor_space
         else:
             settings.pop("combined_cycle_legend_anchor_space", None)
+        settings["combined_cycle_legend_ref_axis"] = _normalize_combined_cycle_ref_axis(
+            self.combined_cycle_legend_ref_axis.get()
+        )
+        settings[
+            "combined_cycle_legend_ref_corner"
+        ] = _normalize_combined_cycle_ref_corner(
+            self.combined_cycle_legend_ref_corner.get()
+        )
+        anchor_mode_value = (
+            "axis_offset"
+            if _combined_cycle_axis_offset_values() is not None
+            else "legacy_anchor"
+        )
+        settings["combined_cycle_legend_anchor_mode"] = anchor_mode_value
 
         _save_settings_to_disk()
 
