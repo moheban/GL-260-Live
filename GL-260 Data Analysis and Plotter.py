@@ -53130,10 +53130,3 @@ if __name__ == "__main__":
         pass
 
     sys.exit(0)
-
-# Change Summary (V1.4.0.6):
-# - Scoped solubility workflow input parsing/validation to the active workflow.
-# - Added workflow-scoped debug diagnostics and manual scoping tests.
-# Change Summary (V1.4.0.1):
-# - Added Data & Columns preferences to control multi-sheet elapsed time units and axis labeling.
-# - Added plot element annotations with per-plot persistence and export support.
