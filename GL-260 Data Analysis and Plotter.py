@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.6.3
-# Date: 2026-01-05
+# Version: V1.6.4
+# Date: 2026-01-06
 
 import os
 import sys
@@ -5396,7 +5396,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.6.3"
+APP_VERSION = "V1.6.4"
 
 
 DEBUG_SERIES_FLOW = False
@@ -35534,12 +35534,13 @@ class UnifiedApp(tk.Tk):
         if not legends:
             return
         cycle_overlay = globals().get("core_cycle_overlay")
-        expect_cycle_legend = bool(
-            settings.get("show_cycle_legend_on_core_plots", False)
-        ) and bool(cycle_overlay)
-        has_cycle_legend = any(
-            self._is_combined_cycle_legend(lg) for lg in legends
-        )
+        fig_expect_cycle = getattr(fig, "_gl260_expect_cycle_legend", None)
+        if fig_expect_cycle is None:
+            fig_expect_cycle = bool(
+                settings.get("show_cycle_legend_on_core_plots", False)
+            )
+        expect_cycle_legend = bool(fig_expect_cycle) and bool(cycle_overlay)
+        has_cycle_legend = any(self._is_combined_cycle_legend(lg) for lg in legends)
         if expect_cycle_legend and not has_cycle_legend:
             print(
                 "WARN: Combined cycle legend not discovered for draggability; check legend creation/markers."
@@ -51607,6 +51608,9 @@ class UnifiedApp(tk.Tk):
         pk_prominence = self._safe_get_var(self.pk_prominence, float)
         pk_distance = self._safe_get_var(self.pk_distance, int)
         pk_width = self._safe_get_var(self.pk_width, int)
+        show_cycle_markers_on_core = bool(self.show_cycle_markers_on_core.get())
+        show_cycle_legend_on_core = bool(self.show_cycle_legend_on_core.get())
+        include_moles_core_legend = bool(self.include_moles_core_legend.get())
 
         self._last_plot_args = (
             min_time,
@@ -51637,9 +51641,9 @@ class UnifiedApp(tk.Tk):
             pk_prominence,
             pk_distance,
             pk_width,
-            self.show_cycle_markers_on_core.get(),
-            self.show_cycle_legend_on_core.get(),
-            self.include_moles_core_legend.get(),
+            show_cycle_markers_on_core,
+            show_cycle_legend_on_core,
+            include_moles_core_legend,
         )
 
         return (
@@ -51671,9 +51675,9 @@ class UnifiedApp(tk.Tk):
             pk_prominence,
             pk_distance,
             pk_width,
-            self.show_cycle_markers_on_core.get(),
-            self.show_cycle_legend_on_core.get(),
-            self.include_moles_core_legend.get(),
+            show_cycle_markers_on_core,
+            show_cycle_legend_on_core,
+            include_moles_core_legend,
         )
 
     def update_plots(self, *, include_cycle: bool = True):
@@ -52026,7 +52030,7 @@ class UnifiedApp(tk.Tk):
         self.combined_y_left_key.set(left_key)
         self.combined_y_right_key.set(right_key)
         self.combined_y_third_key.set(third_key)
-        if len(args) >= 31:
+        if args is not None:
             show_cycle_markers = bool(args[-3])
             show_cycle_legend = bool(args[-2])
             include_moles_core = bool(args[-1])
@@ -52034,6 +52038,9 @@ class UnifiedApp(tk.Tk):
             show_cycle_markers = bool(self.show_cycle_markers_on_core.get())
             show_cycle_legend = bool(self.show_cycle_legend_on_core.get())
             include_moles_core = bool(self.include_moles_core_legend.get())
+        settings["show_cycle_markers_on_core_plots"] = bool(show_cycle_markers)
+        settings["show_cycle_legend_on_core_plots"] = bool(show_cycle_legend)
+        settings["include_moles_in_core_plot_legend"] = bool(include_moles_core)
         legend_anchor = getattr(self, "_combined_legend_anchor", None)
         cycle_legend_anchor = getattr(self, "_combined_cycle_legend_anchor", None)
         legend_loc = getattr(self, "_combined_legend_loc", None)
@@ -52142,6 +52149,11 @@ class UnifiedApp(tk.Tk):
             fig_size=fig_size,
         )
         if fig is not None:
+            try:
+                fig._gl260_expect_cycle_legend = bool(show_cycle_legend)
+                fig._gl260_expect_cycle_markers = bool(show_cycle_markers)
+            except Exception:
+                pass
             try:
                 self._apply_plot_elements(fig, "fig_combined_triple_axis")
             except Exception:
