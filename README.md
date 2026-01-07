@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (V1.6.5)
+# GL-260 Data Analysis and Plotter (V1.6.6)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data exported to Excel, mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.6.5`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.6.6`.
 
 ## Intended Audience
 - Chemists, process engineers, and researchers analyzing GL-260 pressure/temperature datasets.
@@ -406,6 +406,13 @@ Persistence:
 - `settings["plot_elements"]` stores element lists per plot ID.
 - `settings["annotations_ui"]` stores per-plot UI state (collapsed state, last mode, add defaults, live update).
 
+### Plot Elements Updates (V1.6.6)
+- Span fills render behind data traces while labels stay above for readability.
+- Span + Label text can be dragged directly by clicking the label body.
+- Span + Label now supports resizable text wrapping with persistent width.
+- The Plot Elements editor is resizable with a persistent layout and a wider default size.
+- Add/edit workflows are consistent across all plot element types (type, axis, coordinate mode, then place).
+
 ## Cycle Analysis and Moles Calculations
 Cycle analysis is based on pressure cycles (peak to trough) with a minimum delta-P threshold.
 
@@ -558,7 +565,7 @@ The script includes internal change summaries:
   - Treeview selection recursion fix in annotations editor.
   - Layout fixes for the annotations Toplevel.
 
-Note: the UI title uses `APP_VERSION` set to `V1.6.5`.
+Note: the UI title uses `APP_VERSION` set to `V1.6.6`.
 
 ## Troubleshooting
 - **"No Data" or "Missing Columns" errors**: Load a sheet on the Data tab and set required columns on the Columns tab.

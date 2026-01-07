@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.6.5
-# Date: 2026-01-06
+# Version: V1.6.6
+# Date: 2026-01-07
 
 import os
 import sys
@@ -702,6 +702,27 @@ def _normalize_elapsed_time_unit(value: Any) -> str:
     return DEFAULT_ELAPSED_TIME_UNIT
 
 
+def _normalize_mpl_color(value: Any) -> str:
+    try:
+        from matplotlib import colors as mcolors
+    except Exception:
+        return "#000000"
+    try:
+        if value is None:
+            return "#000000"
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return "#000000"
+            lowered = stripped.lower()
+            if lowered in {"none", "transparent"}:
+                return "#000000"
+            value = stripped
+        return mcolors.to_hex(mcolors.to_rgba(value), keep_alpha=False)
+    except Exception:
+        return "#000000"
+
+
 ANNOTATION_MODES = (
     "select",
     "text",
@@ -720,15 +741,49 @@ ANNOTATION_TYPE_LABELS = {
     "text": "Text",
     "callout": "Callout",
     "arrow": "Arrow",
-    "point": "Point",
+    "point": "Point / Marker",
     "xspan": "X-Span",
     "xspan_label": "Span + Label",
     "rect": "Box Region",
     "ref_line": "Reference Line",
-    "ink": "Ink",
+    "ink": "Freehand",
 }
 
 ANNOTATION_DEFAULT_ZORDER = 10
+ANNOTATION_SPAN_BACKGROUND_ZORDER = 0.9
+ANNOTATION_STYLE_PRESETS = {
+    "highlight": {
+        "facecolor": "#ffd166",
+        "edgecolor": "#f4a261",
+        "color": "#f4a261",
+        "alpha": 0.35,
+        "linewidth": 1.6,
+        "text_color": "#1f1f1f",
+        "bbox_facecolor": "#fff3c4",
+        "bbox_edgecolor": "#f4a261",
+        "bbox_alpha": 0.85,
+    },
+    "outline": {
+        "facecolor": "none",
+        "edgecolor": "#1f77b4",
+        "color": "#1f77b4",
+        "alpha": 1.0,
+        "linewidth": 2.0,
+        "text_color": "#1f77b4",
+        "bbox_facecolor": "none",
+        "bbox_edgecolor": "#1f77b4",
+        "bbox_alpha": 1.0,
+    },
+    "callout": {
+        "color": "#1f77b4",
+        "text_color": "#1f77b4",
+        "linewidth": 1.6,
+        "bbox_facecolor": "#f5f5f5",
+        "bbox_edgecolor": "#1f77b4",
+        "bbox_alpha": 0.9,
+        "arrowstyle": "->",
+    },
+}
 
 
 def _canonicalize_annotation_type(value: str) -> Optional[str]:
@@ -972,6 +1027,13 @@ def _normalize_plot_elements(value: Any) -> Dict[str, List[Dict[str, Any]]]:
             }
             if element_type == "xspan_label":
                 geometry.setdefault("label_anchor", "center")
+                if "wrap_width_x" not in geometry:
+                    x0 = _coerce_float(geometry.get("x0"))
+                    x1 = _coerce_float(geometry.get("x1"))
+                    if x0 is not None and x1 is not None:
+                        geometry["wrap_width_x"] = abs(x1 - x0)
+            if element_type in {"xspan", "xspan_label"}:
+                style.setdefault("span_layer", "behind_data")
             if element_type == "ink" and coord_space != "data":
                 normalized["_legacy_pixel_based"] = True
             for flag_key in ("_draft", "_editor_only"):
@@ -990,6 +1052,7 @@ def _default_add_defaults() -> Dict[str, Any]:
         "add_alpha": float(base_style.get("alpha", 0.9)),
         "add_label_text": "Label",
         "add_axis_target": "primary",
+        "add_coord_space": "data",
     }
 
 
@@ -1026,18 +1089,32 @@ def _normalize_annotations_ui(value: Any) -> Dict[str, Dict[str, Any]]:
         if not isinstance(label_text, str):
             label_text = _default_add_defaults()["add_label_text"]
         axis_target = _normalize_axes_target(add_defaults.get("add_axis_target"))
+        coord_space = str(add_defaults.get("add_coord_space") or "data").strip().lower()
+        if coord_space not in {"data", "axes"}:
+            coord_space = "data"
+        editor_geometry = state.get("editor_geometry")
+        if not isinstance(editor_geometry, str) or not editor_geometry.strip():
+            editor_geometry = None
+        editor_sash = state.get("editor_sash")
+        if isinstance(editor_sash, bool):
+            editor_sash = None
+        if not isinstance(editor_sash, (int, float)):
+            editor_sash = None
         live_update = bool(state.get("live_update", False))
         sanitized[plot_id] = {
             "collapsed": collapsed,
             "last_mode": last_mode,
             "last_selected_id": selected_id,
             "live_update": live_update,
+            "editor_geometry": editor_geometry,
+            "editor_sash": editor_sash,
             "add_defaults": {
                 "add_type": add_type,
                 "add_fillcolor": fill_color,
                 "add_alpha": alpha_value,
                 "add_label_text": label_text,
                 "add_axis_target": axis_target,
+                "add_coord_space": coord_space,
             },
         }
     return sanitized
@@ -1702,6 +1779,8 @@ class AnnotationStore:
                 "last_mode": "select",
                 "last_selected_id": None,
                 "live_update": False,
+                "editor_geometry": None,
+                "editor_sash": None,
                 "add_defaults": _default_add_defaults(),
             }
             self._settings["annotations_ui"][plot_id] = state
@@ -1738,6 +1817,7 @@ class AnnotationRenderer:
                 except Exception:
                     pass
         fig._gl260_annotation_artists = []
+        fig._gl260_annotation_artist_map = {}
 
     def render(
         self,
@@ -1751,6 +1831,7 @@ class AnnotationRenderer:
         if not elements:
             return
         artists: List[Any] = []
+        artist_map: Dict[str, List[Any]] = {}
         ordered = sorted(
             [el for el in elements if isinstance(el, dict)],
             key=lambda item: float(item.get("zorder", ANNOTATION_DEFAULT_ZORDER)),
@@ -1764,6 +1845,7 @@ class AnnotationRenderer:
             ax = axes_map.get(axes_target) or axes_map.get("primary")
             if ax is None:
                 continue
+            element_id = str(element.get("id") or "")
             rendered = self._render_element(ax, element)
             if rendered is None:
                 continue
@@ -1772,9 +1854,16 @@ class AnnotationRenderer:
                     if artist is None:
                         continue
                     artists.append(artist)
+                    if element_id:
+                        artist._gl260_annotation_id = element_id
+                        artist_map.setdefault(element_id, []).append(artist)
             else:
                 artists.append(rendered)
+                if element_id:
+                    rendered._gl260_annotation_id = element_id
+                    artist_map.setdefault(element_id, []).append(rendered)
         fig._gl260_annotation_artists = artists
+        fig._gl260_annotation_artist_map = artist_map
 
     def _style_float(
         self, style: Mapping[str, Any], key: str, default: float, minimum: float
@@ -1833,6 +1922,32 @@ class AnnotationRenderer:
         fontsize: float,
     ) -> str:
         return _wrap_text_for_display(ax, text_value, x, y, wrap_width_x, fontsize)
+
+    def _wrap_text_for_coord_space(
+        self,
+        ax: Axes,
+        text_value: str,
+        x: Optional[float],
+        y: Optional[float],
+        wrap_width_x: Optional[float],
+        fontsize: float,
+        coord_space: str,
+    ) -> str:
+        if coord_space != "axes":
+            return self._wrap_text(ax, text_value, x, y, wrap_width_x, fontsize)
+        if not wrap_width_x or x is None or y is None:
+            return text_value
+        try:
+            disp0 = ax.transAxes.transform((x, y))
+            data0 = ax.transData.inverted().transform(disp0)
+            disp1 = ax.transAxes.transform((x + wrap_width_x, y))
+            data1 = ax.transData.inverted().transform(disp1)
+            wrap_width_data = data1[0] - data0[0]
+        except Exception:
+            return text_value
+        return self._wrap_text(
+            ax, text_value, data0[0], data0[1], wrap_width_data, fontsize
+        )
 
     def _resolve_label_y_data(self, ax: Axes, geometry: Mapping[str, Any]) -> float:
         label_axes = geometry.get("label_y_axes")
@@ -1972,7 +2087,9 @@ class AnnotationRenderer:
             fontsize = self._style_float(style, "fontsize", 10.0, 4.0)
             text_value = geometry.get("text", "Text")
             wrap_width = _coerce_float(geometry.get("wrap_width_x"))
-            wrapped = self._wrap_text(ax, str(text_value), x, y, wrap_width, fontsize)
+            wrapped = self._wrap_text_for_coord_space(
+                ax, str(text_value), x, y, wrap_width, fontsize, coord_space
+            )
             artist = ax.text(
                 x,
                 y,
@@ -2087,7 +2204,7 @@ class AnnotationRenderer:
 
         if element_type in {"xspan", "xspan_label"}:
             from matplotlib import patches as mpatches
-
+  
             x0 = _coerce_float(geometry.get("x0"))
             x1 = _coerce_float(geometry.get("x1"))
             if x0 is None or x1 is None:
@@ -2100,6 +2217,10 @@ class AnnotationRenderer:
                 span_transform = ax.get_xaxis_transform()
             face = self._resolve_color(style, "facecolor", "fill_color", "color")
             edge = self._resolve_color(style, "edgecolor", "color")
+            span_layer = str(style.get("span_layer") or "behind_data").strip().lower()
+            span_zorder = (
+                zorder if span_layer == "above_data" else ANNOTATION_SPAN_BACKGROUND_ZORDER
+            )
             rect = mpatches.Rectangle(
                 (left, 0.0),
                 width,
@@ -2109,7 +2230,7 @@ class AnnotationRenderer:
                 edgecolor=edge,
                 linewidth=linewidth,
                 alpha=alpha,
-                zorder=zorder,
+                zorder=span_zorder,
             )
             ax.add_patch(rect)
             artists: List[Any] = [rect]
@@ -2127,17 +2248,31 @@ class AnnotationRenderer:
                             ax.transData, ax.transAxes
                         )
                     label_y = label_y_axes
+                    label_y_data = self._resolve_label_y_data(ax, geometry)
                 else:
                     label_y = self._resolve_label_y_data(ax, geometry)
-                    label_transform = (
-                        transform if coord_space == "axes" else ax.transData
-                    )
+                    label_transform = transform if coord_space == "axes" else ax.transData
+                    label_y_data = label_y
                 text_value = str(geometry.get("text", "Label"))
                 fontsize = self._style_float(style, "fontsize", 10.0, 4.0)
+                wrap_width = _coerce_float(geometry.get("wrap_width_x"))
+                if coord_space == "axes":
+                    wrap_target_y = label_y
+                else:
+                    wrap_target_y = label_y_data
+                wrapped = self._wrap_text_for_coord_space(
+                    ax,
+                    text_value,
+                    label_x,
+                    wrap_target_y,
+                    wrap_width,
+                    fontsize,
+                    coord_space,
+                )
                 text_artist = ax.text(
                     label_x,
                     label_y,
-                    text_value,
+                    wrapped,
                     transform=label_transform,
                     fontsize=fontsize,
                     fontfamily=style.get("fontfamily", None),
@@ -2149,6 +2284,12 @@ class AnnotationRenderer:
                     zorder=zorder + 1,
                     bbox=self._text_bbox(style),
                 )
+                text_artist.set_picker(True)
+                text_artist._gl260_annotation_handle = "label"
+                element_id = str(element.get("id") or "")
+                if element_id:
+                    text_artist._gl260_annotation_id = element_id
+                text_artist.set_wrap(True)
                 self._apply_text_shadow(text_artist, style)
                 artists.append(text_artist)
             return artists
@@ -2286,6 +2427,307 @@ class AnnotationRenderer:
 
         return None
 
+    def update_artists(
+        self, ax: Axes, element: Mapping[str, Any], artists: Sequence[Any]
+    ) -> bool:
+        if ax is None or not artists:
+            return False
+        element_type = str(element.get("type") or "").strip().lower()
+        style = (
+            element.get("style") if isinstance(element.get("style"), Mapping) else {}
+        )
+        geometry = (
+            element.get("geometry")
+            if isinstance(element.get("geometry"), Mapping)
+            else {}
+        )
+        coord_space = str(element.get("coord_space") or "data").strip().lower()
+        transform = ax.transAxes if coord_space == "axes" else ax.transData
+        alpha = self._style_alpha(style, 0.9)
+        linewidth = self._style_float(style, "linewidth", 1.5, 0.2)
+        zorder = _coerce_float(element.get("zorder")) or ANNOTATION_DEFAULT_ZORDER
+        color = self._resolve_color(style, "color", "edgecolor", "linecolor")
+
+        try:
+            if element_type == "text":
+                artist = artists[0]
+                x = _coerce_float(geometry.get("x"))
+                y = _coerce_float(geometry.get("y"))
+                if x is None or y is None:
+                    return False
+                fontsize = self._style_float(style, "fontsize", 10.0, 4.0)
+                text_value = geometry.get("text", "Text")
+                wrap_width = _coerce_float(geometry.get("wrap_width_x"))
+                wrapped = self._wrap_text_for_coord_space(
+                    ax, str(text_value), x, y, wrap_width, fontsize, coord_space
+                )
+                artist.set_transform(transform)
+                artist.set_position((x, y))
+                artist.set_text(wrapped)
+                artist.set_fontsize(fontsize)
+                artist.set_color(self._resolve_color(style, "text_color", "color"))
+                artist.set_alpha(alpha)
+                artist.set_ha(style.get("text_align", "left"))
+                artist.set_va(style.get("text_valign", "bottom"))
+                artist.set_zorder(zorder)
+                artist.set_bbox(self._text_bbox(style))
+                artist.set_wrap(True)
+                return True
+
+            if element_type == "callout":
+                artist = artists[0]
+                x0 = _coerce_float(geometry.get("x0"))
+                y0 = _coerce_float(geometry.get("y0"))
+                x1 = _coerce_float(geometry.get("x1"))
+                y1 = _coerce_float(geometry.get("y1"))
+                if None in (x0, y0, x1, y1):
+                    return False
+                artist.xy = (x0, y0)
+                artist.set_position((x1, y1))
+                artist.set_text(str(geometry.get("text", "Callout")))
+                artist.set_color(self._resolve_color(style, "text_color", "color"))
+                artist.set_alpha(alpha)
+                artist.set_fontsize(self._style_float(style, "fontsize", 10.0, 4.0))
+                artist.set_bbox(self._text_bbox(style))
+                arrow_patch = getattr(artist, "arrow_patch", None)
+                if arrow_patch is not None:
+                    arrow_patch.set_linewidth(linewidth)
+                    arrow_patch.set_alpha(alpha)
+                    arrow_patch.set_edgecolor(color)
+                    arrow_patch.set_facecolor(color)
+                artist.set_zorder(zorder)
+                return True
+
+            if element_type == "arrow":
+                artist = artists[0]
+                x0 = _coerce_float(geometry.get("x0"))
+                y0 = _coerce_float(geometry.get("y0"))
+                x1 = _coerce_float(geometry.get("x1"))
+                y1 = _coerce_float(geometry.get("y1"))
+                if None in (x0, y0, x1, y1):
+                    return False
+                artist.xy = (x1, y1)
+                artist.set_position((x0, y0))
+                text_value = geometry.get("text")
+                if text_value is not None:
+                    artist.set_text(str(text_value))
+                    artist.set_bbox(self._text_bbox(style))
+                    artist.set_color(self._resolve_color(style, "text_color", "color"))
+                arrow_patch = getattr(artist, "arrow_patch", None)
+                if arrow_patch is not None:
+                    arrow_patch.set_linewidth(linewidth)
+                    arrow_patch.set_alpha(alpha)
+                    arrow_patch.set_edgecolor(color)
+                    arrow_patch.set_facecolor(color)
+                artist.set_zorder(zorder)
+                return True
+
+            if element_type == "point":
+                artist = artists[0]
+                x = _coerce_float(geometry.get("x"))
+                y = _coerce_float(geometry.get("y"))
+                if x is None or y is None:
+                    return False
+                marker = style.get("marker", "o")
+                marker_size = self._style_float(style, "marker_size", 8.0, 2.0)
+                face = self._resolve_color(style, "marker_facecolor", "color")
+                edge = self._resolve_color(style, "marker_edgecolor", "color")
+                artist.set_data([x], [y])
+                artist.set_marker(marker)
+                artist.set_markersize(marker_size)
+                artist.set_markerfacecolor(face)
+                artist.set_markeredgecolor(edge)
+                artist.set_alpha(alpha)
+                artist.set_zorder(zorder)
+                return True
+
+            if element_type in {"xspan", "xspan_label"}:
+                from matplotlib import patches as mpatches
+
+                patch = next(
+                    (a for a in artists if isinstance(a, mpatches.Rectangle)), None
+                )
+                if patch is None:
+                    return False
+                x0 = _coerce_float(geometry.get("x0"))
+                x1 = _coerce_float(geometry.get("x1"))
+                if x0 is None or x1 is None:
+                    return False
+                left = min(x0, x1)
+                width = abs(x1 - x0)
+                span_layer = str(style.get("span_layer") or "behind_data").strip().lower()
+                span_zorder = (
+                    zorder
+                    if span_layer == "above_data"
+                    else ANNOTATION_SPAN_BACKGROUND_ZORDER
+                )
+                patch.set_x(left)
+                patch.set_width(width)
+                patch.set_facecolor(self._resolve_color(style, "facecolor", "color"))
+                patch.set_edgecolor(self._resolve_color(style, "edgecolor", "color"))
+                patch.set_linewidth(linewidth)
+                patch.set_alpha(alpha)
+                patch.set_zorder(span_zorder)
+                if element_type == "xspan_label":
+                    text_artist = next(
+                        (a for a in artists if hasattr(a, "set_text")), None
+                    )
+                    if text_artist is None:
+                        return False
+                    label_x = _coerce_float(geometry.get("label_x"))
+                    if label_x is None:
+                        label_x = (x0 + x1) / 2.0
+                    label_y_axes = _coerce_float(geometry.get("label_y_axes"))
+                    if label_y_axes is not None:
+                        label_y_axes = max(0.0, min(1.0, float(label_y_axes)))
+                    if label_y_axes is not None:
+                        if coord_space == "axes":
+                            label_transform = ax.transAxes
+                            label_y = label_y_axes
+                        else:
+                            label_transform = blended_transform_factory(
+                                ax.transData, ax.transAxes
+                            )
+                            label_y = label_y_axes
+                        label_y_data = self._resolve_label_y_data(ax, geometry)
+                    else:
+                        label_y = self._resolve_label_y_data(ax, geometry)
+                        label_transform = (
+                            transform if coord_space == "axes" else ax.transData
+                        )
+                        label_y_data = label_y
+                    text_value = str(geometry.get("text", "Label"))
+                    fontsize = self._style_float(style, "fontsize", 10.0, 4.0)
+                    wrap_width = _coerce_float(geometry.get("wrap_width_x"))
+                    wrap_target_y = label_y if coord_space == "axes" else label_y_data
+                    wrapped = self._wrap_text_for_coord_space(
+                        ax,
+                        text_value,
+                        label_x,
+                        wrap_target_y,
+                        wrap_width,
+                        fontsize,
+                        coord_space,
+                    )
+                    text_artist.set_transform(label_transform)
+                    text_artist.set_position((label_x, label_y))
+                    text_artist.set_text(wrapped)
+                    text_artist.set_fontsize(fontsize)
+                    text_artist.set_color(self._resolve_color(style, "text_color", "color"))
+                    text_artist.set_alpha(alpha)
+                    text_artist.set_ha(style.get("text_align", geometry.get("label_anchor", "center")))
+                    text_artist.set_va(style.get("text_valign", "center"))
+                    text_artist.set_zorder(zorder + 1)
+                    text_artist.set_bbox(self._text_bbox(style))
+                    text_artist.set_wrap(True)
+                return True
+
+            if element_type == "rect":
+                from matplotlib import patches as mpatches
+
+                patch = next(
+                    (a for a in artists if isinstance(a, mpatches.Rectangle)), None
+                )
+                if patch is None:
+                    return False
+                x0 = _coerce_float(geometry.get("x0"))
+                x1 = _coerce_float(geometry.get("x1"))
+                y0 = _coerce_float(geometry.get("y0"))
+                y1 = _coerce_float(geometry.get("y1"))
+                if None in (x0, x1, y0, y1):
+                    return False
+                left = min(x0, x1)
+                bottom = min(y0, y1)
+                width = abs(x1 - x0)
+                height = abs(y1 - y0)
+                patch.set_x(left)
+                patch.set_y(bottom)
+                patch.set_width(width)
+                patch.set_height(height)
+                patch.set_alpha(alpha)
+                patch.set_edgecolor(self._resolve_color(style, "edgecolor", "color"))
+                patch.set_facecolor(self._resolve_color(style, "facecolor", "color"))
+                patch.set_linewidth(linewidth)
+                patch.set_linestyle(style.get("linestyle", "solid"))
+                patch.set_zorder(zorder)
+                label = geometry.get("text")
+                text_artist = next(
+                    (a for a in artists if hasattr(a, "set_text")), None
+                )
+                if label:
+                    if text_artist is None:
+                        return False
+                    text_artist.set_position(((x0 + x1) / 2.0, (y0 + y1) / 2.0))
+                    text_artist.set_text(str(label))
+                    text_artist.set_alpha(alpha)
+                    text_artist.set_color(self._resolve_color(style, "text_color", "color"))
+                    text_artist.set_fontsize(self._style_float(style, "fontsize", 10.0, 4.0))
+                    text_artist.set_zorder(zorder + 1)
+                    text_artist.set_bbox(self._text_bbox(style))
+                return True
+
+            if element_type == "ref_line":
+                line = next((a for a in artists if hasattr(a, "set_data")), None)
+                if line is None:
+                    return False
+                orientation = str(geometry.get("orientation") or "vertical").strip().lower()
+                value = _coerce_float(geometry.get("value"))
+                if value is None:
+                    return False
+                if orientation == "horizontal":
+                    line.set_ydata([value, value])
+                else:
+                    line.set_xdata([value, value])
+                line.set_color(color)
+                line.set_alpha(alpha)
+                line.set_linewidth(linewidth)
+                line.set_linestyle(style.get("linestyle", "solid"))
+                line.set_zorder(zorder)
+                label = geometry.get("text")
+                text_artist = next(
+                    (a for a in artists if hasattr(a, "set_text")), None
+                )
+                if label:
+                    if text_artist is None:
+                        return False
+                    if orientation == "horizontal":
+                        label_x = _coerce_float(geometry.get("label_x"))
+                        if label_x is None:
+                            label_x = ax.get_xlim()[0]
+                        label_y = value
+                    else:
+                        label_x = value
+                        label_y = _coerce_float(geometry.get("label_y"))
+                        if label_y is None:
+                            label_y = ax.get_ylim()[1]
+                    text_artist.set_position((label_x, label_y))
+                    text_artist.set_text(str(label))
+                    text_artist.set_alpha(alpha)
+                    text_artist.set_color(self._resolve_color(style, "text_color", "color"))
+                    text_artist.set_fontsize(self._style_float(style, "fontsize", 10.0, 4.0))
+                    text_artist.set_zorder(zorder + 1)
+                    text_artist.set_bbox(self._text_bbox(style))
+                return True
+
+            if element_type == "ink":
+                line = artists[0]
+                points = (
+                    geometry.get("points")
+                    if isinstance(geometry.get("points"), list)
+                    else []
+                )
+                if points:
+                    xs, ys = zip(*points)
+                    line.set_data(xs, ys)
+                line.set_color(color)
+                line.set_alpha(alpha)
+                line.set_linewidth(linewidth)
+                line.set_zorder(zorder)
+                return True
+        except Exception:
+            return False
+        return False
+
 
 class AnnotationHitTest:
     def __init__(self, pixel_tolerance: float = 8.0) -> None:
@@ -2312,6 +2754,7 @@ class AnnotationHitTest:
                 if isinstance(element.get("style"), Mapping)
                 else {}
             )
+            coord_space = str(element.get("coord_space") or "data").strip().lower()
             x = _coerce_float(geometry.get("x"))
             y = _coerce_float(geometry.get("y"))
             if x is None or y is None:
@@ -2319,9 +2762,25 @@ class AnnotationHitTest:
             fontsize = _style_float_from_style(style, "fontsize", 10.0, 4.0)
             text_value = geometry.get("text", "Text")
             wrap_width = _coerce_float(geometry.get("wrap_width_x"))
-            wrapped = _wrap_text_for_display(
-                ax, str(text_value), x, y, wrap_width, fontsize
-            )
+            wrapped = str(text_value)
+            if coord_space == "axes":
+                try:
+                    disp0 = ax.transAxes.transform((x, y))
+                    data0 = ax.transData.inverted().transform(disp0)
+                    wrap_width_data = None
+                    if wrap_width is not None:
+                        disp1 = ax.transAxes.transform((x + wrap_width, y))
+                        data1 = ax.transData.inverted().transform(disp1)
+                        wrap_width_data = data1[0] - data0[0]
+                    wrapped = _wrap_text_for_display(
+                        ax, str(text_value), data0[0], data0[1], wrap_width_data, fontsize
+                    )
+                except Exception:
+                    wrapped = str(text_value)
+            else:
+                wrapped = _wrap_text_for_display(
+                    ax, str(text_value), x, y, wrap_width, fontsize
+                )
             fig = ax.figure
             if fig is None or fig.canvas is None:
                 return None
@@ -2332,7 +2791,7 @@ class AnnotationHitTest:
                 x,
                 y,
                 wrapped,
-                transform=ax.transData,
+                transform=ax.transAxes if coord_space == "axes" else ax.transData,
                 fontsize=fontsize,
                 fontfamily=style.get("fontfamily", None),
                 fontweight=style.get("fontweight", None),
@@ -2417,7 +2876,10 @@ class AnnotationHitTest:
                         wrap_width = None
                 if wrap_width is not None:
                     try:
-                        wrap_edge_x = ax.transData.transform((x + wrap_width, y))[0]
+                        if coord_space == "axes":
+                            wrap_edge_x = ax.transAxes.transform((x + wrap_width, y))[0]
+                        else:
+                            wrap_edge_x = ax.transData.transform((x + wrap_width, y))[0]
                     except Exception:
                         wrap_edge_x = x1
                 if abs(px - wrap_edge_x) <= tol and (y0 - tol) <= py <= (y1 + tol):
@@ -2486,7 +2948,123 @@ class AnnotationHitTest:
                         text_artist.remove()
                     except Exception:
                         pass
+
+    def _span_label_bbox_display(
+        self, ax: Axes, element: Mapping[str, Any]
+    ) -> Optional[Tuple[Tuple[float, float, float, float], Optional[float]]]:
+        text_artist = None
+        try:
+            if ax is None or element is None:
+                return None
+            geometry = (
+                element.get("geometry")
+                if isinstance(element.get("geometry"), Mapping)
+                else {}
+            )
+            style = (
+                element.get("style")
+                if isinstance(element.get("style"), Mapping)
+                else {}
+            )
+            coord_space = str(element.get("coord_space") or "data").strip().lower()
+            x0 = _coerce_float(geometry.get("x0"))
+            x1 = _coerce_float(geometry.get("x1"))
+            label_x = _coerce_float(geometry.get("label_x"))
+            if label_x is None and x0 is not None and x1 is not None:
+                label_x = (x0 + x1) / 2.0
+            if label_x is None:
+                return None
+            label_y_axes = _coerce_float(geometry.get("label_y_axes"))
+            if label_y_axes is not None:
+                label_y_axes = max(0.0, min(1.0, float(label_y_axes)))
+            if label_y_axes is not None:
+                if coord_space == "axes":
+                    label_transform = ax.transAxes
+                    label_y = label_y_axes
+                else:
+                    label_transform = blended_transform_factory(ax.transData, ax.transAxes)
+                    label_y = label_y_axes
+                label_y_data = self._resolve_label_y_from_event(ax, geometry)
+            else:
+                label_y_data = _coerce_float(geometry.get("label_y_data"))
+                if label_y_data is None:
+                    label_y_data = self._resolve_label_y_from_event(ax, geometry)
+                label_y = label_y_data
+                label_transform = ax.transAxes if coord_space == "axes" else ax.transData
+            text_value = str(geometry.get("text", "Label"))
+            fontsize = _style_float_from_style(style, "fontsize", 10.0, 4.0)
+            wrap_width_value = _coerce_float(geometry.get("wrap_width_x"))
+            data_x = label_x
+            data_y = label_y_data
+            wrap_width_data = wrap_width_value
+            if coord_space == "axes":
+                try:
+                    disp = ax.transAxes.transform((label_x, label_y))
+                    data_x, data_y = ax.transData.inverted().transform(disp)
+                except Exception:
+                    data_x, data_y = label_x, label_y_data
+                if wrap_width_value is not None:
+                    try:
+                        disp0 = ax.transAxes.transform((label_x, label_y))
+                        disp1 = ax.transAxes.transform(
+                            (label_x + wrap_width_value, label_y)
+                        )
+                        data0 = ax.transData.inverted().transform(disp0)
+                        data1 = ax.transData.inverted().transform(disp1)
+                        wrap_width_data = data1[0] - data0[0]
+                    except Exception:
+                        wrap_width_data = None
+            wrapped = _wrap_text_for_display(
+                ax, text_value, data_x, data_y, wrap_width_data, fontsize
+            )
+            fig = ax.figure
+            if fig is None or fig.canvas is None:
+                return None
+            renderer = fig.canvas.get_renderer()
+            if renderer is None:
+                return None
+            text_artist = ax.text(
+                label_x,
+                label_y,
+                wrapped,
+                transform=label_transform,
+                fontsize=fontsize,
+                fontfamily=style.get("fontfamily", None),
+                fontweight=style.get("fontweight", None),
+                color=style.get("text_color") or style.get("color") or "#000000",
+                alpha=_style_alpha_from_style(style, 0.9),
+                ha=style.get("text_align", geometry.get("label_anchor", "center")),
+                va=style.get("text_valign", "center"),
+                bbox=_annotation_text_bbox_style(style),
+            )
+            text_artist.set_wrap(True)
+            bbox = text_artist.get_window_extent(renderer=renderer)
+            wrap_edge_x = None
+            if wrap_width_value is not None:
+                try:
+                    if coord_space == "axes":
+                        wrap_edge_x = ax.transAxes.transform(
+                            (label_x + wrap_width_value, label_y)
+                        )[0]
+                    elif label_y_axes is not None:
+                        wrap_edge_x = blended_transform_factory(
+                            ax.transData, ax.transAxes
+                        ).transform((label_x + wrap_width_value, label_y_axes))[0]
+                    else:
+                        wrap_edge_x = ax.transData.transform(
+                            (label_x + wrap_width_value, label_y)
+                        )[0]
+                except Exception:
+                    wrap_edge_x = None
+            return (bbox.x0, bbox.y0, bbox.x1, bbox.y1), wrap_edge_x
+        except Exception:
             return None
+        finally:
+            if text_artist is not None:
+                try:
+                    text_artist.remove()
+                except Exception:
+                    pass
 
         if element_type == "arrow":
             x0 = _coerce_float(geometry.get("x0"))
@@ -2530,6 +3108,21 @@ class AnnotationHitTest:
             if _dist_to_point(x1, y_ref) <= self._pixel_tolerance:
                 return "x1"
             if element_type == "xspan_label":
+                label_hit = self._span_label_bbox_display(ax, element)
+                if label_hit is not None:
+                    (bx0, by0, bx1, by1), wrap_edge_x = label_hit
+                    tol = self._pixel_tolerance
+                    px, py = event_xy
+                    if (
+                        wrap_edge_x is not None
+                        and abs(px - wrap_edge_x) <= tol
+                        and (by0 - tol) <= py <= (by1 + tol)
+                    ):
+                        return "wrap"
+                    if (bx0 - tol) <= px <= (bx1 + tol) and (by0 - tol) <= py <= (
+                        by1 + tol
+                    ):
+                        return "label"
                 label_x = _coerce_float(geometry.get("label_x"))
                 if label_x is None:
                     label_x = (x0 + x1) / 2.0
@@ -2694,9 +3287,59 @@ def _default_style_for_type(element_type: str) -> Dict[str, Any]:
         )
     if element_type in {"xspan", "xspan_label", "rect"}:
         base.update({"facecolor": "#cccccc", "edgecolor": "#333333"})
+    if element_type in {"xspan", "xspan_label"}:
+        base.setdefault("span_layer", "behind_data")
     if element_type in {"callout", "arrow"}:
         base.update({"arrowstyle": "->"})
     return base
+
+
+def _annotation_style_keys_for_type(element_type: str) -> Set[str]:
+    element_type = str(element_type or "").strip().lower()
+    keys: Set[str] = {"alpha"}
+    text_like = {"text", "callout", "arrow", "xspan_label", "rect", "ref_line"}
+    if element_type in text_like:
+        keys.update(
+            {
+                "fontsize",
+                "fontfamily",
+                "fontweight",
+                "text_align",
+                "text_valign",
+                "text_color",
+                "bbox_facecolor",
+                "bbox_alpha",
+                "bbox_edgecolor",
+                "bbox_linewidth",
+                "bbox_linestyle",
+                "bbox_boxstyle",
+                "bbox_pad",
+                "bbox_shadow",
+                "bbox_shadow_offset_x",
+                "bbox_shadow_offset_y",
+                "bbox_shadow_alpha",
+            }
+        )
+    if element_type in {"xspan", "xspan_label", "rect"}:
+        keys.update({"facecolor", "edgecolor", "linewidth", "linestyle"})
+    if element_type in {"callout", "arrow", "ref_line", "ink"}:
+        keys.update({"color", "linewidth", "linestyle"})
+    if element_type in {"callout", "arrow"}:
+        keys.add("arrowstyle")
+    if element_type == "point":
+        keys.update(
+            {
+                "marker",
+                "marker_size",
+                "marker_facecolor",
+                "marker_edgecolor",
+                "snap_to_data",
+                "snap_tolerance",
+            }
+        )
+    if element_type in {"xspan", "xspan_label"}:
+        keys.add("span_layer")
+    return keys
 
 
 class PlotAnnotationsController:
@@ -2730,13 +3373,16 @@ class PlotAnnotationsController:
         self._placing_geometry_seed: Optional[Dict[str, Any]] = None
         self._placing_keep_placing = False
         self._placing_axis_target: Optional[str] = None
+        self._placing_coord_space: Optional[str] = None
         self._placing_state: Optional[Dict[str, Any]] = None
         self._draft_element: Optional[Dict[str, Any]] = None
         self._draft_artists: List[Any] = []
-        self._span_selector: Optional[SpanSelector] = None
+        self._span_selectors: List[SpanSelector] = []
+        self._span_commit_in_progress = False
         self._overlay_artists: List[Any] = []
         self._dirty = False
         self._cids: List[int] = []
+        self._style_clipboard: Optional[Dict[str, Any]] = None
         self._history.push(self._elements())
         self._connect_events()
         self.render()
@@ -2766,6 +3412,7 @@ class PlotAnnotationsController:
         style_overrides: Dict[str, Any],
         geometry_seed: Optional[Dict[str, Any]] = None,
         axis_target: Optional[str] = None,
+        coord_space: Optional[str] = None,
     ) -> None:
         # Root cause: the prior annotations panel only toggled mode without arming a
         # placement tool, so users had no explicit "place" action to create elements.
@@ -2775,6 +3422,8 @@ class PlotAnnotationsController:
         if canonical not in ANNOTATION_TYPE_LABELS:
             return
         self.cancel_place_element()
+        if canonical not in {"xspan", "xspan_label"}:
+            self._clear_span_selectors()
         self._cancel_draft()
         overrides = dict(style_overrides or {})
         self._placing_keep_placing = bool(overrides.pop("_keep_placing", False))
@@ -2782,35 +3431,14 @@ class PlotAnnotationsController:
         self._placing_style_overrides = overrides
         self._placing_geometry_seed = dict(geometry_seed or {})
         self._placing_axis_target = _normalize_axes_target(axis_target)
-        if canonical in {"xspan", "xspan_label"}:
-            axis_role = self._placing_axis_target
-            ax = None
-            if axis_role:
-                ax = self._axes_map.get(axis_role)
-            if ax is None:
-                ax = self._axes_map.get("primary")
-            if ax is None:
-                ax = next((axis for axis in self._axes_map.values() if axis), None)
-            if ax is None:
+        coord_value = str(coord_space or "data").strip().lower()
+        if coord_value not in {"data", "axes"}:
+            coord_value = "data"
+        self._placing_coord_space = coord_value
+        if canonical in {"xspan", "xspan_label"} and coord_value == "data":
+            if not self._arm_span_selectors():
                 self.cancel_place_element()
                 return
-            try:
-                self._span_selector = SpanSelector(
-                    ax,
-                    self._commit_new_xspan_from_selector,
-                    "horizontal",
-                    useblit=False,
-                    interactive=False,
-                    minspan=1e-9,
-                )
-            except TypeError:
-                self._span_selector = SpanSelector(
-                    ax,
-                    self._commit_new_xspan_from_selector,
-                    "horizontal",
-                    useblit=False,
-                    minspan=1e-9,
-                )
         self._placing_state = None
         self._draft_element = None
         self._draft_artists = []
@@ -2821,22 +3449,14 @@ class PlotAnnotationsController:
                 pass
 
     def cancel_place_element(self) -> None:
-        selector = self._span_selector
-        if selector is not None:
-            try:
-                selector.set_active(False)
-            except Exception:
-                pass
-            try:
-                selector.disconnect_events()
-            except Exception:
-                pass
-        self._span_selector = None
+        self._clear_span_selectors()
+        self._span_commit_in_progress = False
         self._placing_type = None
         self._placing_style_overrides = {}
         self._placing_geometry_seed = None
         self._placing_keep_placing = False
         self._placing_axis_target = None
+        self._placing_coord_space = None
         self._placing_state = None
         self._clear_draft()
         if self._panel is not None:
@@ -2849,6 +3469,53 @@ class PlotAnnotationsController:
                 self._canvas.draw_idle()
             except Exception:
                 pass
+
+    def _clear_span_selectors(self) -> None:
+        for selector in list(self._span_selectors):
+            try:
+                selector.set_active(False)
+            except Exception:
+                pass
+            try:
+                selector.disconnect_events()
+            except Exception:
+                pass
+        self._span_selectors = []
+
+    def _arm_span_selectors(self) -> bool:
+        self._clear_span_selectors()
+        self._span_commit_in_progress = False
+        axes: List[Axes] = []
+        for role in ("primary", "right", "third"):
+            ax = self._axes_map.get(role)
+            if ax is not None and ax not in axes:
+                axes.append(ax)
+        if not axes:
+            ax = next((axis for axis in self._axes_map.values() if axis), None)
+            if ax is not None:
+                axes.append(ax)
+        if not axes:
+            return False
+        for ax in axes:
+            try:
+                selector = SpanSelector(
+                    ax,
+                    self._commit_new_xspan_from_selector,
+                    "horizontal",
+                    useblit=False,
+                    interactive=False,
+                    minspan=1e-9,
+                )
+            except TypeError:
+                selector = SpanSelector(
+                    ax,
+                    self._commit_new_xspan_from_selector,
+                    "horizontal",
+                    useblit=False,
+                    minspan=1e-9,
+                )
+            self._span_selectors.append(selector)
+        return True
 
     def _commit_new_xspan_from_selector(self, xmin: float, xmax: float) -> None:
         if self._placing_type not in {"xspan", "xspan_label"}:
@@ -2863,6 +3530,10 @@ class PlotAnnotationsController:
             return
         if abs(x1 - x0) <= 1e-12:
             return
+        if self._span_commit_in_progress:
+            return
+        self._span_commit_in_progress = True
+        self._clear_span_selectors()
         element_type = self._placing_type
         style = _default_style_for_type(element_type)
         style.update(self._placing_style_overrides or {})
@@ -2889,12 +3560,23 @@ class PlotAnnotationsController:
                     "label_anchor": label_anchor,
                 }
             )
+            span_ax = None
+            axis_target = _normalize_axes_target(self._placing_axis_target)
+            if axis_target:
+                span_ax = self._axes_map.get(axis_target)
+            if span_ax is None:
+                span_ax = self._axes_map.get("primary")
+            if span_ax is None:
+                span_ax = next((axis for axis in self._axes_map.values() if axis), None)
+            wrap_width = self._default_span_wrap_width(span_ax, x0, x1, "data")
+            if wrap_width is not None:
+                geometry.setdefault("wrap_width_x", wrap_width)
         element_id = str(uuid.uuid4())
         element = {
             "id": element_id,
             "name": _default_annotation_name(element_type, len(self._elements())),
             "type": element_type,
-            "axes_target": "primary",
+            "axes_target": _normalize_axes_target(self._placing_axis_target),
             "coord_space": "data",
             "visible": True,
             "locked": False,
@@ -2917,6 +3599,10 @@ class PlotAnnotationsController:
                     self._panel.set_add_placement_active(False)
                 except Exception:
                     pass
+        else:
+            if not self._arm_span_selectors():
+                self.cancel_place_element()
+                self.set_mode("select")
 
     def set_selected_id(
         self, element_id: Optional[str], *, refresh_panel: bool = True
@@ -2927,6 +3613,11 @@ class PlotAnnotationsController:
                 element_id = None
         self._selected_id = element_id
         self._store.set_ui_state(self._plot_id, last_selected_id=element_id)
+        if element_id and (
+            self._placing_type not in {"xspan", "xspan_label"}
+            or (self._placing_coord_space or "data") != "data"
+        ):
+            self._clear_span_selectors()
         self.render()
         if refresh_panel and self._panel is not None:
             self._panel.refresh()
@@ -2949,51 +3640,18 @@ class PlotAnnotationsController:
         if axis_labels is not None:
             self._axis_labels = axis_labels
         self._axes_role_map = {ax: role for role, ax in axes_map.items() if ax}
-        selector = self._span_selector
-        if selector is not None:
-            try:
-                selector.set_active(False)
-            except Exception:
-                pass
-            try:
-                selector.disconnect_events()
-            except Exception:
-                pass
-        self._span_selector = None
+        self._clear_span_selectors()
+        self._span_commit_in_progress = False
         if self._drag_state is not None:
             self._drag_state = None
             self._dirty = False
         if self._placing_state is not None or self._draft_element is not None:
             self._placing_state = None
             self._clear_draft()
-        if self._placing_type in {"xspan", "xspan_label"}:
-            axis_role = self._placing_axis_target
-            ax = None
-            if axis_role:
-                ax = self._axes_map.get(axis_role)
-            if ax is None:
-                ax = self._axes_map.get("primary")
-            if ax is None:
-                ax = next((axis for axis in self._axes_map.values() if axis), None)
-            if ax is not None:
-                try:
-                    self._span_selector = SpanSelector(
-                        ax,
-                        self._commit_new_xspan_from_selector,
-                        "horizontal",
-                        useblit=False,
-                        interactive=False,
-                        minspan=1e-9,
-                    )
-                except TypeError:
-                    self._span_selector = SpanSelector(
-                        ax,
-                        self._commit_new_xspan_from_selector,
-                        "horizontal",
-                        useblit=False,
-                        minspan=1e-9,
-                    )
-            else:
+        if self._placing_type in {"xspan", "xspan_label"} and (
+            self._placing_coord_space or "data"
+        ) == "data":
+            if not self._arm_span_selectors():
                 self.cancel_place_element()
         self.render()
 
@@ -3022,6 +3680,34 @@ class PlotAnnotationsController:
             except Exception:
                 pass
         self._overlay_artists = []
+
+    def _refresh_overlays_only(self) -> None:
+        if self._fig is None:
+            return
+        self._clear_overlays()
+        self._render_handles()
+        self._render_draft()
+        try:
+            self._canvas.draw_idle()
+        except Exception:
+            pass
+
+    def _sync_dragged_element_artists(self, element: Mapping[str, Any]) -> bool:
+        if self._fig is None or element is None:
+            return False
+        element_id = str(element.get("id") or "")
+        if not element_id:
+            return False
+        artist_map = getattr(self._fig, "_gl260_annotation_artist_map", None)
+        if not isinstance(artist_map, dict):
+            return False
+        artists = artist_map.get(element_id)
+        if not artists:
+            return False
+        ax = self._axes_map.get(element.get("axes_target", "primary"))
+        if ax is None:
+            return False
+        return self._renderer.update_artists(ax, element, artists)
 
     def _render_handles(self) -> None:
         element = self.selected_element()
@@ -3062,6 +3748,18 @@ class PlotAnnotationsController:
                         )
                 if label_x is not None and label_y is not None:
                     new_handles.append(("label", (label_x, label_y)))
+                    wrap_width = _coerce_float(geometry.get("wrap_width_x"))
+                    if wrap_width is None or wrap_width <= 0:
+                        if x0 is not None and x1 is not None:
+                            wrap_width = abs(x1 - x0)
+                        if (wrap_width is None or wrap_width <= 0) and ax is not None:
+                            try:
+                                x_limits = ax.get_xlim()
+                                wrap_width = 0.25 * abs(x_limits[1] - x_limits[0])
+                            except Exception:
+                                wrap_width = None
+                    if wrap_width is not None:
+                        new_handles.append(("wrap", (label_x + wrap_width, label_y)))
             if new_handles:
                 handles = new_handles
         if element_type == "ref_line":
@@ -3167,6 +3865,20 @@ class PlotAnnotationsController:
                                 )
                     if label_y is not None:
                         handles.append(("label", (label_x, label_y)))
+                        wrap_width = _coerce_float(geometry.get("wrap_width_x"))
+                        if wrap_width is None or wrap_width <= 0:
+                            if x0 is not None and x1 is not None:
+                                wrap_width = abs(x1 - x0)
+                            if (wrap_width is None or wrap_width <= 0) and ax is not None:
+                                try:
+                                    x_limits = ax.get_xlim()
+                                    wrap_width = 0.25 * abs(x_limits[1] - x_limits[0])
+                                except Exception:
+                                    wrap_width = None
+                            if coord_space == "axes":
+                                wrap_width = max(0.02, float(wrap_width or 0.25))
+                        if wrap_width is not None:
+                            handles.append(("wrap", (label_x + wrap_width, label_y)))
         elif element_type == "rect":
             x0 = _coerce_float(geometry.get("x0"))
             x1 = _coerce_float(geometry.get("x1"))
@@ -3208,6 +3920,7 @@ class PlotAnnotationsController:
         self._cids.append(
             self._canvas.mpl_connect("button_press_event", self._on_press)
         )
+        self._cids.append(self._canvas.mpl_connect("pick_event", self._on_press))
         self._cids.append(
             self._canvas.mpl_connect("motion_notify_event", self._on_motion)
         )
@@ -3232,6 +3945,9 @@ class PlotAnnotationsController:
         key = str(getattr(event, "key", "") or "").lower()
         if key in {"delete", "backspace"}:
             self.delete_selected()
+        elif key.endswith(("left", "right", "up", "down")):
+            direction = key.split("+")[-1]
+            self._nudge_selected(direction, large=("shift" in key))
         elif key == "escape":
             if self._placing_type is not None:
                 self.cancel_place_element()
@@ -3246,39 +3962,160 @@ class PlotAnnotationsController:
         elif key in {"ctrl+y", "cmd+y"}:
             self.redo()
 
+    def _nudge_selected(self, direction: str, *, large: bool = False) -> None:
+        element = self.selected_element()
+        if element is None or element.get("locked"):
+            return
+        ax = self._axes_map.get(element.get("axes_target", "primary"))
+        if ax is None:
+            return
+        coord_space = str(element.get("coord_space") or "data").strip().lower()
+        if coord_space == "axes":
+            step = 0.05 if large else 0.01
+            step_x = step_y = step
+        else:
+            try:
+                x_limits = ax.get_xlim()
+                y_limits = ax.get_ylim()
+                x_range = abs(x_limits[1] - x_limits[0]) or 1.0
+                y_range = abs(y_limits[1] - y_limits[0]) or 1.0
+            except Exception:
+                x_range = y_range = 1.0
+            factor = 0.02 if large else 0.005
+            step_x = factor * x_range
+            step_y = factor * y_range
+        dx = step_x if direction == "right" else -step_x if direction == "left" else 0.0
+        dy = step_y if direction == "up" else -step_y if direction == "down" else 0.0
+        geometry = element.get("geometry")
+        if not isinstance(geometry, dict):
+            return
+        element_type = str(element.get("type") or "").strip().lower()
+        if element_type in {"text", "point"}:
+            if "x" in geometry:
+                geometry["x"] = (_coerce_float(geometry.get("x")) or 0.0) + dx
+            if "y" in geometry:
+                geometry["y"] = (_coerce_float(geometry.get("y")) or 0.0) + dy
+        elif element_type in {"callout", "arrow"}:
+            for key in ("x0", "x1"):
+                if key in geometry:
+                    geometry[key] = (_coerce_float(geometry.get(key)) or 0.0) + dx
+            for key in ("y0", "y1"):
+                if key in geometry:
+                    geometry[key] = (_coerce_float(geometry.get(key)) or 0.0) + dy
+        elif element_type == "xspan":
+            for key in ("x0", "x1"):
+                if key in geometry:
+                    geometry[key] = (_coerce_float(geometry.get(key)) or 0.0) + dx
+        elif element_type == "xspan_label":
+            for key in ("x0", "x1", "label_x"):
+                if key in geometry:
+                    geometry[key] = (_coerce_float(geometry.get(key)) or 0.0) + dx
+            if "label_y_axes" in geometry:
+                geometry["label_y_axes"] = (_coerce_float(geometry.get("label_y_axes")) or 0.0) + dy
+            elif "label_y_data" in geometry:
+                geometry["label_y_data"] = (_coerce_float(geometry.get("label_y_data")) or 0.0) + dy
+        elif element_type == "rect":
+            for key in ("x0", "x1"):
+                if key in geometry:
+                    geometry[key] = (_coerce_float(geometry.get(key)) or 0.0) + dx
+            for key in ("y0", "y1"):
+                if key in geometry:
+                    geometry[key] = (_coerce_float(geometry.get(key)) or 0.0) + dy
+        elif element_type == "ref_line":
+            orientation = str(geometry.get("orientation") or "vertical").strip().lower()
+            if orientation == "horizontal":
+                geometry["value"] = (_coerce_float(geometry.get("value")) or 0.0) + dy
+            else:
+                geometry["value"] = (_coerce_float(geometry.get("value")) or 0.0) + dx
+        elif element_type == "ink":
+            points = geometry.get("points")
+            if isinstance(points, list) and points:
+                geometry["points"] = [(px + dx, py + dy) for px, py in points]
+        else:
+            return
+        self._commit_history()
+        self.render()
+        try:
+            _save_settings_to_disk()
+        except Exception:
+            pass
+
     def _on_press(self, event: Any) -> None:
-        if event is None or event.inaxes is None:
+        if event is None:
+            return
+        press_event = getattr(event, "mouseevent", None) or event
+        artist = getattr(event, "artist", None)
+        if (
+            artist is not None
+            and getattr(artist, "_gl260_annotation_handle", None) == "label"
+        ):
+            if self._placing_type is not None or self._mode != "select":
+                return
+            element_id = getattr(artist, "_gl260_annotation_id", None) or getattr(
+                artist, "_gl260_element_id", None
+            )
+            if element_id:
+                element = next(
+                    (el for el in self._elements() if el.get("id") == element_id), None
+                )
+                if element is None:
+                    return
+                if self._placing_type not in {"xspan", "xspan_label"} or (
+                    self._placing_coord_space or "data"
+                ) != "data":
+                    self._clear_span_selectors()
+                self.set_selected_id(element.get("id"))
+                if element.get("locked"):
+                    return
+                ax = self._axes_map.get(element.get("axes_target", "primary"))
+                if ax is None:
+                    ax = getattr(press_event, "inaxes", None)
+                if ax is None:
+                    return
+                self._start_drag(element, "label", press_event, ax)
+            return
+        if getattr(event, "name", "") == "pick_event":
+            return
+        if press_event.inaxes is None:
             return
         if DEBUG_ANNOTATIONS_INTERACTION:
             print(
                 "[ANNOTATIONS] press armed="
                 f"{self._placing_type} mode={self._mode} "
-                f"inaxes={event.inaxes is not None} "
+                f"inaxes={press_event.inaxes is not None} "
                 f"drag={self._drag_state is not None} "
                 f"selected={self._selected_id}"
             )
         if self._placing_type is not None:
-            if self._span_selector is not None:
-                return
-            self._start_placing(event)
+            if self._span_selectors:
+                selector_axes = {
+                    getattr(selector, "ax", None) for selector in self._span_selectors
+                }
+                if press_event.inaxes in selector_axes:
+                    return
+            self._start_placing(press_event)
             return
-        ax = event.inaxes
+        ax = press_event.inaxes
         if self._mode == "erase":
-            if self._erase_ink(ax, event):
+            if self._erase_ink(ax, press_event):
                 self._commit_history()
             return
         if self._mode == "select":
-            element, handle = self._hit_test_element(ax, event)
+            element, handle = self._hit_test_element(ax, press_event)
             if element is None:
                 self.set_selected_id(None)
                 return
             if element.get("locked"):
                 self.set_selected_id(element.get("id"))
                 return
+            if self._placing_type not in {"xspan", "xspan_label"} or (
+                self._placing_coord_space or "data"
+            ) != "data":
+                self._clear_span_selectors()
             self.set_selected_id(element.get("id"))
-            self._start_drag(element, handle, event, ax)
+            self._start_drag(element, handle, press_event, ax)
             return
-        self._start_creation(ax, event)
+        self._start_creation(ax, press_event)
 
     def _on_motion(self, event: Any) -> None:
         if DEBUG_ANNOTATIONS_INTERACTION:
@@ -3309,7 +4146,10 @@ class PlotAnnotationsController:
             return
         self._dirty = True
         self._update_dragged_element(element, event)
-        self.render()
+        if self._sync_dragged_element_artists(element):
+            self._refresh_overlays_only()
+        else:
+            self.render()
 
     def _on_release(self, event: Any) -> None:
         if DEBUG_ANNOTATIONS_INTERACTION:
@@ -3443,6 +4283,36 @@ class PlotAnnotationsController:
         ax = self._axes_map.get(axis_role) or event.inaxes
         return axis_role, ax
 
+    def _default_span_wrap_width(
+        self,
+        ax: Optional[Axes],
+        x0: Optional[float],
+        x1: Optional[float],
+        coord_space: str,
+    ) -> Optional[float]:
+        if coord_space == "axes":
+            width = abs((x1 or 0.0) - (x0 or 0.0))
+            if width <= 0:
+                width = 0.25
+            return max(0.02, min(width, 1.0))
+        width = abs((x1 or 0.0) - (x0 or 0.0))
+        if width <= 0 and ax is not None:
+            try:
+                x_limits = ax.get_xlim()
+                width = 0.25 * abs(x_limits[1] - x_limits[0])
+            except Exception:
+                width = 0.0
+        if ax is None:
+            return width if width > 0 else None
+        try:
+            x_limits = ax.get_xlim()
+            x_range = abs(x_limits[1] - x_limits[0]) or 1.0
+        except Exception:
+            x_range = 1.0
+        if width <= 0:
+            width = 0.25 * x_range
+        return max(0.01 * x_range, min(width, x_range))
+
     def _clear_draft(self) -> None:
         for artist in list(self._draft_artists or []):
             try:
@@ -3498,7 +4368,7 @@ class PlotAnnotationsController:
         if self._placing_type is None or event is None or event.inaxes is None:
             return
         axis_role, ax = self._placement_axis(event)
-        coord_space = "data"
+        coord_space = self._placing_coord_space or "data"
         coords = self._event_coords_for_axis(event, coord_space, ax)
         if coords is None:
             return
@@ -3523,12 +4393,15 @@ class PlotAnnotationsController:
                 text_value = seed.get("text")
                 if not isinstance(text_value, str) or not text_value.strip():
                     text_value = "Text"
-                wrap_width = None
-                try:
-                    x_limits = ax.get_xlim()
-                    wrap_width = 0.20 * (x_limits[1] - x_limits[0])
-                except Exception:
+                if coord_space == "axes":
+                    wrap_width = 0.25
+                else:
                     wrap_width = None
+                    try:
+                        x_limits = ax.get_xlim()
+                        wrap_width = 0.20 * (x_limits[1] - x_limits[0])
+                    except Exception:
+                        wrap_width = None
                 geometry = {"x": x, "y": y, "text": text_value}
                 if wrap_width is not None:
                     geometry["wrap_width_x"] = wrap_width
@@ -3578,6 +4451,9 @@ class PlotAnnotationsController:
                     "text": label_text,
                 }
             )
+            wrap_width = self._default_span_wrap_width(ax, x, x, coord_space)
+            if wrap_width is not None:
+                geometry["wrap_width_x"] = wrap_width
         elif element_type == "rect":
             geometry.update({"x0": x, "y0": y, "x1": x, "y1": y})
             if isinstance(label_text, str) and label_text.strip():
@@ -3662,6 +4538,15 @@ class PlotAnnotationsController:
             x1 = _coerce_float(geometry.get("x1"))
             if x0 is None or x1 is None or abs(x1 - x0) <= 1e-12:
                 valid = False
+            if element_type == "xspan_label":
+                wrap_width = _coerce_float(geometry.get("wrap_width_x"))
+                if wrap_width is None or wrap_width <= 0:
+                    ax = self._placing_state.get("ax") if self._placing_state else None
+                    wrap_width = self._default_span_wrap_width(
+                        ax, x0, x1, coord_space
+                    )
+                    if wrap_width is not None:
+                        geometry["wrap_width_x"] = wrap_width
         if element_type == "rect":
             x0 = _coerce_float(geometry.get("x0"))
             x1 = _coerce_float(geometry.get("x1"))
@@ -3763,6 +4648,9 @@ class PlotAnnotationsController:
             geometry.update(
                 {"x0": x, "x1": x, "label_x": x, "label_y_data": y, "text": "Label"}
             )
+            wrap_width = self._default_span_wrap_width(ax, x, x, coord_space)
+            if wrap_width is not None:
+                geometry["wrap_width_x"] = wrap_width
         elif element_type == "rect":
             geometry.update({"x0": x, "y0": y, "x1": x, "y1": y})
         elif element_type == "ref_line":
@@ -3868,15 +4756,40 @@ class PlotAnnotationsController:
                 geometry["x0"] = start_geom.get("x0", x) + dx
                 geometry["x1"] = start_geom.get("x1", x) + dx
         elif element_type == "xspan_label":
-            if handle == "label":
+            if handle == "wrap":
+                if coord_space == "axes":
+                    axis_range = 1.0
+                else:
+                    try:
+                        x_limits = ax.get_xlim()
+                        axis_range = abs(x_limits[1] - x_limits[0]) or 1.0
+                    except Exception:
+                        axis_range = 1.0
+                base_width = _coerce_float(start_geom.get("wrap_width_x"))
+                if base_width is None or base_width <= 0:
+                    base_width = 0.25 * axis_range
+                new_width = base_width + dx
+                min_width = 0.02 * axis_range
+                max_width = 2.0 * axis_range
+                if new_width < min_width:
+                    new_width = min_width
+                elif new_width > max_width:
+                    new_width = max_width
+                geometry["wrap_width_x"] = new_width
+            elif handle == "label":
                 geometry["label_x"] = x
                 if "label_y_axes" in geometry:
-                    try:
-                        disp = ax.transData.transform((x, y))
-                        y_axes = ax.transAxes.inverted().transform(disp)[1]
-                        geometry["label_y_axes"] = max(0.0, min(1.0, float(y_axes)))
-                    except Exception:
-                        geometry["label_y_data"] = y
+                    if coord_space == "axes":
+                        geometry["label_y_axes"] = max(0.0, min(1.0, float(y)))
+                    else:
+                        try:
+                            disp = ax.transData.transform((x, y))
+                            y_axes = ax.transAxes.inverted().transform(disp)[1]
+                            geometry["label_y_axes"] = max(
+                                0.0, min(1.0, float(y_axes))
+                            )
+                        except Exception:
+                            geometry["label_y_data"] = y
                 else:
                     geometry["label_y_data"] = y
             elif handle == "x0":
@@ -4053,6 +4966,47 @@ class PlotAnnotationsController:
         self._commit_history()
         self.set_selected_id(duplicate["id"])
 
+    def copy_style(self) -> None:
+        element = self.selected_element()
+        if element is None:
+            return
+        style = element.get("style")
+        if not isinstance(style, dict):
+            return
+        self._style_clipboard = copy.deepcopy(style)
+
+    def paste_style(self) -> None:
+        element = self.selected_element()
+        if element is None or element.get("locked"):
+            return
+        if not self._style_clipboard:
+            return
+        element_type = str(element.get("type") or "").strip().lower()
+        allowed = _annotation_style_keys_for_type(element_type)
+        updates = {
+            key: value
+            for key, value in self._style_clipboard.items()
+            if key in allowed
+        }
+        if not updates:
+            return
+        self.update_element_properties(element.get("id"), style_updates=updates)
+
+    def apply_style_preset(self, preset_name: str) -> None:
+        element = self.selected_element()
+        if element is None or element.get("locked"):
+            return
+        preset_key = str(preset_name or "").strip().lower()
+        preset = ANNOTATION_STYLE_PRESETS.get(preset_key)
+        if not preset:
+            return
+        element_type = str(element.get("type") or "").strip().lower()
+        allowed = _annotation_style_keys_for_type(element_type)
+        updates = {key: value for key, value in preset.items() if key in allowed}
+        if not updates:
+            return
+        self.update_element_properties(element.get("id"), style_updates=updates)
+
     def toggle_visibility(self, element_id: str) -> None:
         for element in self._elements():
             if element.get("id") == element_id:
@@ -4172,6 +5126,8 @@ class AnnotationsPanel:
         self._add_type_label_var = tk.StringVar(value="")
         self._add_axis_var = tk.StringVar(value=add_defaults["add_axis_target"])
         self._add_axis_label_var = tk.StringVar(value="")
+        self._add_coord_var = tk.StringVar(value=add_defaults["add_coord_space"])
+        self._add_coord_label_var = tk.StringVar(value="")
         self._add_hint_var = tk.StringVar(value="")
         self._add_fill_var = tk.StringVar(value=add_defaults["add_fillcolor"])
         alpha_value = float(add_defaults["add_alpha"])
@@ -4191,6 +5147,9 @@ class AnnotationsPanel:
         self._revert_button: Optional[ttk.Button] = None
         self._undo_button: Optional[ttk.Button] = None
         self._redo_button: Optional[ttk.Button] = None
+        self._paned: Optional[ttk.Panedwindow] = None
+        self._style_preset_var = tk.StringVar(value="None (Manual)")
+        self._style_preset_key_map: Dict[str, str] = {}
         self._props_canvas: Optional[tk.Canvas] = None
         self._props_scrollbar: Optional[ttk.Scrollbar] = None
         self._props_inner: Optional[ttk.Frame] = None
@@ -4237,12 +5196,16 @@ class AnnotationsPanel:
         if not isinstance(label_text, str):
             label_text = _default_add_defaults()["add_label_text"]
         axis_target = _normalize_axes_target(merged.get("add_axis_target"))
+        coord_space = str(merged.get("add_coord_space") or "data").strip().lower()
+        if coord_space not in {"data", "axes"}:
+            coord_space = "data"
         return {
             "add_type": add_type,
             "add_fillcolor": fill_color,
             "add_alpha": alpha_value,
             "add_label_text": label_text,
             "add_axis_target": axis_target,
+            "add_coord_space": coord_space,
         }
 
     def _persist_add_defaults(self, **updates: Any) -> None:
@@ -4257,18 +5220,28 @@ class AnnotationsPanel:
         except Exception:
             pass
 
-    def _normalize_color_value(self, value: str, fallback: str = "#cccccc") -> str:
-        if not value:
+    def _normalize_color_value(self, value: Any, fallback: str = "#cccccc") -> str:
+        if value is None:
             return fallback
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return fallback
+            lowered = stripped.lower()
+            if lowered in {"none", "transparent"}:
+                return _normalize_mpl_color(stripped)
         try:
             from matplotlib import colors as mcolors
 
-            return mcolors.to_hex(mcolors.to_rgba(value), keep_alpha=False)
+            if not mcolors.is_color_like(value):
+                return fallback
         except Exception:
-            return fallback
+            pass
+        normalized = _normalize_mpl_color(value)
+        return normalized or fallback
 
     def _add_status_idle_text(self) -> str:
-        return "Status: Choose a type, then click 'Start Placing'."
+        return "Status: Choose a type, then click 'Place on Plot'."
 
     def _add_status_armed_text(self, element_type: str) -> str:
         label = ANNOTATION_TYPE_LABELS.get(element_type, "Element")
@@ -4307,11 +5280,24 @@ class AnnotationsPanel:
 
         self._content.grid(row=1, column=0, sticky="nsew")
         self._content.grid_columnconfigure(0, weight=1)
-        self._content.grid_columnconfigure(1, weight=2)
-        self._content.grid_rowconfigure(1, weight=1)
+        self._content.grid_rowconfigure(0, weight=1)
 
-        add_frame = ttk.LabelFrame(self._content, text="Add Element")
-        add_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=4, pady=(4, 2))
+        self._paned = ttk.Panedwindow(self._content, orient="horizontal")
+        self._paned.grid(row=0, column=0, sticky="nsew")
+
+        left_pane = ttk.Frame(self._paned)
+        right_pane = ttk.Frame(self._paned)
+        left_pane.grid_columnconfigure(0, weight=1)
+        left_pane.grid_rowconfigure(1, weight=1)
+        right_pane.grid_columnconfigure(0, weight=1)
+        right_pane.grid_rowconfigure(0, weight=1)
+        right_pane.grid_rowconfigure(1, weight=0)
+
+        self._paned.add(left_pane, weight=2)
+        self._paned.add(right_pane, weight=3)
+
+        add_frame = ttk.LabelFrame(left_pane, text="Add Element")
+        add_frame.grid(row=0, column=0, sticky="ew", padx=4, pady=(4, 2))
         add_frame.grid_columnconfigure(1, weight=1)
         add_frame.grid_columnconfigure(3, weight=1)
 
@@ -4319,12 +5305,12 @@ class AnnotationsPanel:
             ("Text", "text"),
             ("Callout", "callout"),
             ("Arrow", "arrow"),
-            ("Point", "point"),
+            ("Point / Marker", "point"),
             ("X-Span", "xspan"),
             ("Span + Label", "xspan_label"),
             ("Box Region", "rect"),
             ("Reference Line", "ref_line"),
-            ("Ink", "ink"),
+            ("Freehand", "ink"),
         ]
         add_label_map = {label: value for label, value in add_type_options}
         add_value_map = {value: label for label, value in add_type_options}
@@ -4364,6 +5350,21 @@ class AnnotationsPanel:
             self._add_axis_label_var.set(label)
 
         _sync_add_axis_label()
+        coord_choices = [
+            ("Data (moves with pan/zoom)", "data"),
+            ("Axes (fixed relative position)", "axes"),
+        ]
+        coord_label_map = {label: value for label, value in coord_choices}
+        coord_value_map = {value: label for label, value in coord_choices}
+
+        def _sync_add_coord_label() -> None:
+            label = coord_value_map.get(self._add_coord_var.get(), "")
+            if not label:
+                label = coord_choices[0][0]
+                self._add_coord_var.set(coord_label_map.get(label, "data"))
+            self._add_coord_label_var.set(label)
+
+        _sync_add_coord_label()
         self._add_hint_var.set(_placement_hint_for_type(self._add_type_var.get()))
 
         ttk.Label(add_frame, text="Element Type:").grid(
@@ -4390,11 +5391,23 @@ class AnnotationsPanel:
         )
         self._add_axis_combo.grid(row=0, column=3, sticky="w", padx=6, pady=2)
 
-        ttk.Label(add_frame, text="Color:").grid(
+        ttk.Label(add_frame, text="Coordinates:").grid(
             row=1, column=0, sticky="w", padx=6, pady=2
         )
+        add_coord_combo = ttk.Combobox(
+            add_frame,
+            values=[label for label, _ in coord_choices],
+            textvariable=self._add_coord_label_var,
+            state="readonly",
+            width=28,
+        )
+        add_coord_combo.grid(row=1, column=1, columnspan=3, sticky="w", padx=6, pady=2)
+
+        ttk.Label(add_frame, text="Color:").grid(
+            row=2, column=0, sticky="w", padx=6, pady=2
+        )
         add_color_frame = ttk.Frame(add_frame)
-        add_color_frame.grid(row=1, column=1, columnspan=3, sticky="w", padx=6, pady=2)
+        add_color_frame.grid(row=2, column=1, columnspan=3, sticky="w", padx=6, pady=2)
         self._add_color_swatch = tk.Label(add_color_frame, width=2, relief="groove")
         self._add_color_swatch.grid(row=0, column=0, padx=(0, 4))
 
@@ -4432,10 +5445,10 @@ class AnnotationsPanel:
         _update_add_color_swatch()
 
         ttk.Label(add_frame, text="Transparency:").grid(
-            row=2, column=0, sticky="w", padx=6, pady=2
+            row=3, column=0, sticky="w", padx=6, pady=2
         )
         add_alpha_frame = ttk.Frame(add_frame)
-        add_alpha_frame.grid(row=2, column=1, columnspan=3, sticky="ew", padx=6, pady=2)
+        add_alpha_frame.grid(row=3, column=1, columnspan=3, sticky="ew", padx=6, pady=2)
         add_alpha_entry = ttk.Entry(
             add_alpha_frame, textvariable=self._add_alpha_var, width=6
         )
@@ -4467,21 +5480,21 @@ class AnnotationsPanel:
         add_alpha_frame.grid_columnconfigure(1, weight=1)
 
         ttk.Label(add_frame, text="Label/Text:").grid(
-            row=3, column=0, sticky="w", padx=6, pady=2
+            row=4, column=0, sticky="w", padx=6, pady=2
         )
         self._add_label_entry = ttk.Entry(
             add_frame, textvariable=self._add_label_var, width=24
         )
         self._add_label_entry.grid(
-            row=3, column=1, columnspan=3, sticky="ew", padx=6, pady=2
+            row=4, column=1, columnspan=3, sticky="ew", padx=6, pady=2
         )
 
         action_frame = ttk.Frame(add_frame)
         action_frame.grid(
-            row=4, column=0, columnspan=4, sticky="ew", padx=6, pady=(4, 2)
+            row=5, column=0, columnspan=4, sticky="ew", padx=6, pady=(4, 2)
         )
         self._add_place_button = ttk.Button(
-            action_frame, text="Start Placing", command=self._on_place_add_element
+            action_frame, text="Place on Plot", command=self._on_place_add_element
         )
         self._add_place_button.pack(side="left", padx=(0, 6))
         self._add_cancel_button = ttk.Button(
@@ -4498,7 +5511,7 @@ class AnnotationsPanel:
             wraplength=600,
             justify="left",
         )
-        hint_label.grid(row=5, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 2))
+        hint_label.grid(row=6, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 2))
 
         status_label = ttk.Label(
             add_frame,
@@ -4507,7 +5520,7 @@ class AnnotationsPanel:
             justify="left",
         )
         status_label.grid(
-            row=6, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 6)
+            row=7, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 6)
         )
 
         def _update_add_label_state() -> None:
@@ -4531,6 +5544,13 @@ class AnnotationsPanel:
             new_axis = axis_label_map.get(self._add_axis_label_var.get(), "primary")
             self._add_axis_var.set(new_axis)
             self._persist_add_defaults(add_axis_target=new_axis)
+            if self._add_armed:
+                self._on_cancel_add_element()
+
+        def _on_add_coord_selected(_event: Any = None) -> None:
+            new_coord = coord_label_map.get(self._add_coord_label_var.get(), "data")
+            self._add_coord_var.set(new_coord)
+            self._persist_add_defaults(add_coord_space=new_coord)
             if self._add_armed:
                 self._on_cancel_add_element()
 
@@ -4571,6 +5591,7 @@ class AnnotationsPanel:
         add_type_combo.bind("<<ComboboxSelected>>", _on_add_type_selected)
         if self._add_axis_combo is not None:
             self._add_axis_combo.bind("<<ComboboxSelected>>", _on_add_axis_selected)
+        add_coord_combo.bind("<<ComboboxSelected>>", _on_add_coord_selected)
         self._add_fill_var.trace_add("write", _on_add_fill_change)
         self._add_label_var.trace_add("write", _on_add_label_change)
         add_alpha_entry.bind("<Return>", _commit_add_alpha_entry)
@@ -4578,7 +5599,7 @@ class AnnotationsPanel:
         _update_add_label_state()
         self.set_add_placement_active(False)
 
-        list_frame = ttk.LabelFrame(self._content, text="Elements")
+        list_frame = ttk.LabelFrame(left_pane, text="Elements")
         list_frame.grid(row=1, column=0, sticky="nsew", padx=4, pady=(2, 2))
         list_frame.grid_columnconfigure(0, weight=1)
         list_frame.grid_rowconfigure(1, weight=1)
@@ -4588,7 +5609,7 @@ class AnnotationsPanel:
         ttk.Label(mode_bar, text="Interaction:").pack(side="left")
         ttk.Radiobutton(
             mode_bar,
-            text="Select",
+            text="Select / Edit",
             value="select",
             variable=self._mode_var,
             command=self._on_mode_changed,
@@ -4632,10 +5653,10 @@ class AnnotationsPanel:
         name_entry.bind("<Return>", self._apply_name)
         name_entry.bind("<FocusOut>", self._apply_name)
         ttk.Button(
-            list_controls, text="Up", command=lambda: self._nudge_zorder(-1)
+            list_controls, text="Send Backward", command=lambda: self._nudge_zorder(-1)
         ).pack(side="left", padx=4, pady=4)
         ttk.Button(
-            list_controls, text="Down", command=lambda: self._nudge_zorder(1)
+            list_controls, text="Bring Forward", command=lambda: self._nudge_zorder(1)
         ).pack(side="left", padx=4, pady=4)
         ttk.Button(
             list_controls, text="Duplicate", command=self._duplicate_selected
@@ -4643,9 +5664,41 @@ class AnnotationsPanel:
         ttk.Button(list_controls, text="Delete", command=self._delete_selected).pack(
             side="left", padx=4, pady=4
         )
+        ttk.Button(
+            list_controls, text="Lock/Unlock", command=self._toggle_lock_selected
+        ).pack(side="left", padx=4, pady=4)
 
-        props_frame = ttk.LabelFrame(self._content, text="Properties")
-        props_frame.grid(row=1, column=1, sticky="nsew", padx=4, pady=(2, 2))
+        style_controls = ttk.Frame(list_frame)
+        style_controls.grid(row=3, column=0, sticky="ew", padx=4, pady=(0, 4))
+        ttk.Button(
+            style_controls, text="Copy Style", command=self._copy_style
+        ).pack(side="left", padx=4, pady=2)
+        ttk.Button(
+            style_controls, text="Paste Style", command=self._paste_style
+        ).pack(side="left", padx=4, pady=2)
+        ttk.Label(style_controls, text="Preset:").pack(side="left", padx=(12, 2))
+        preset_labels = ["None (Manual)"]
+        self._style_preset_key_map.clear()
+        for key in ANNOTATION_STYLE_PRESETS.keys():
+            display = key.replace("_", " ").title()
+            self._style_preset_key_map[display] = key
+            preset_labels.append(display)
+        if self._style_preset_var.get() not in preset_labels:
+            self._style_preset_var.set("None (Manual)")
+        preset_combo = ttk.Combobox(
+            style_controls,
+            values=preset_labels,
+            textvariable=self._style_preset_var,
+            state="readonly",
+            width=16,
+        )
+        preset_combo.pack(side="left", padx=2, pady=2)
+        ttk.Button(
+            style_controls, text="Apply Preset", command=self._apply_style_preset
+        ).pack(side="left", padx=4, pady=2)
+
+        props_frame = ttk.LabelFrame(right_pane, text="Properties")
+        props_frame.grid(row=0, column=0, sticky="nsew", padx=4, pady=(4, 2))
         props_frame.grid_rowconfigure(0, weight=1)
         props_frame.grid_columnconfigure(0, weight=1)
 
@@ -4682,11 +5735,10 @@ class AnnotationsPanel:
         self._props_container.grid_columnconfigure(0, weight=0)
         self._props_container.grid_columnconfigure(1, weight=1)
         self._frame.after_idle(self._bind_props_mousewheel)
+        self._frame.after_idle(self._restore_paned_sash)
 
-        apply_frame = ttk.Frame(self._content)
-        apply_frame.grid(
-            row=2, column=0, columnspan=2, sticky="ew", padx=4, pady=(0, 4)
-        )
+        apply_frame = ttk.Frame(right_pane)
+        apply_frame.grid(row=1, column=0, sticky="ew", padx=4, pady=(0, 4))
         self._apply_button = ttk.Button(
             apply_frame, text="Apply", command=self._apply_properties
         )
@@ -4754,6 +5806,25 @@ class AnnotationsPanel:
         _bind(canvas)
         _bind(inner)
 
+    def _restore_paned_sash(self) -> None:
+        if self._paned is None:
+            return
+        state = self._store.ui_state_for(self._plot_id)
+        sash_pos = state.get("editor_sash")
+        if isinstance(sash_pos, (int, float)):
+            try:
+                self._paned.sashpos(0, int(sash_pos))
+            except Exception:
+                pass
+
+    def get_sash_pos(self) -> Optional[int]:
+        if self._paned is None:
+            return None
+        try:
+            return int(self._paned.sashpos(0))
+        except Exception:
+            return None
+
     def _refresh_props_scroll(self) -> None:
         if self._props_canvas is None:
             return
@@ -4781,6 +5852,15 @@ class AnnotationsPanel:
         self._refresh_add_axis_choices()
         self._refresh_tree()
         self._refresh_properties()
+
+    def apply_selected(self) -> None:
+        self._apply_properties()
+
+    def duplicate_selected(self) -> None:
+        self._duplicate_selected()
+
+    def delete_selected(self) -> None:
+        self._delete_selected()
 
     def _refresh_add_axis_choices(self) -> None:
         combo = self._add_axis_combo
@@ -4811,19 +5891,23 @@ class AnnotationsPanel:
         canonical = _canonicalize_annotation_type(element_type)
         if not canonical:
             return
-        fill_color = self._normalize_color_value(self._add_fill_var.get(), "#000000")
+        fill_color = _normalize_mpl_color(self._add_fill_var.get())
         alpha_value = _coerce_float(self._add_alpha_var.get())
         if alpha_value is None:
             alpha_value = 0.9
         alpha_value = max(0.0, min(1.0, float(alpha_value)))
         label_text = self._add_label_var.get().strip()
         axis_target = _normalize_axes_target(self._add_axis_var.get())
+        coord_space = str(self._add_coord_var.get() or "data").strip().lower()
+        if coord_space not in {"data", "axes"}:
+            coord_space = "data"
         self._persist_add_defaults(
             add_type=canonical,
             add_fillcolor=fill_color,
             add_alpha=alpha_value,
             add_label_text=label_text,
             add_axis_target=axis_target,
+            add_coord_space=coord_space,
         )
         style_overrides = {"alpha": alpha_value}
         if canonical in {"xspan", "xspan_label", "rect"}:
@@ -4846,8 +5930,13 @@ class AnnotationsPanel:
             geometry_seed.setdefault("text", label_text or "Label")
             geometry_seed["label_y_axes"] = 0.95
             geometry_seed["label_anchor"] = "center"
+        self._controller.set_mode(canonical)
         self._controller.begin_place_element(
-            canonical, style_overrides, geometry_seed, axis_target=axis_target
+            canonical,
+            style_overrides,
+            geometry_seed,
+            axis_target=axis_target,
+            coord_space=coord_space,
         )
         self.set_add_placement_active(True)
 
@@ -4879,12 +5968,30 @@ class AnnotationsPanel:
                 type_label = ANNOTATION_TYPE_LABELS.get(
                     element_type, element_type or "Element"
                 )
-                name = element.get("name", "")
+                name = str(element.get("name", "") or "").strip()
+                preview = ""
+                geometry = (
+                    element.get("geometry")
+                    if isinstance(element.get("geometry"), dict)
+                    else {}
+                )
+                if isinstance(geometry, dict):
+                    preview = str(geometry.get("text", "") or "").strip()
+                if preview:
+                    preview = " ".join(preview.split())
+                    if len(preview) > 40:
+                        preview = f"{preview[:37].rstrip()}..."
+                if preview:
+                    display_name = (
+                        f"{name} - {preview}" if name and preview != name else preview
+                    )
+                else:
+                    display_name = name
                 self._tree.insert(
                     "",
                     "end",
                     iid=element_id,
-                    values=(visible, locked, type_label, name),
+                    values=(visible, locked, type_label, display_name),
                 )
                 if element_id == selected_id:
                     self._tree.selection_set(element_id)
@@ -4953,6 +6060,37 @@ class AnnotationsPanel:
             pass
         self.refresh()
 
+    def _toggle_lock_selected(self) -> None:
+        element = self._controller.selected_element()
+        if element is None:
+            return
+        self._controller.toggle_lock(element.get("id"))
+        self.refresh()
+
+    def _toggle_visibility_selected(self) -> None:
+        element = self._controller.selected_element()
+        if element is None:
+            return
+        self._controller.toggle_visibility(element.get("id"))
+        self.refresh()
+
+    def _copy_style(self) -> None:
+        self._controller.copy_style()
+
+    def _paste_style(self) -> None:
+        self._controller.paste_style()
+        self.refresh()
+
+    def _apply_style_preset(self) -> None:
+        preset_label = self._style_preset_var.get().strip()
+        if not preset_label or preset_label == "None (Manual)":
+            return
+        preset_key = self._style_preset_key_map.get(preset_label)
+        if preset_key is None:
+            preset_key = preset_label.strip().lower().replace(" ", "_")
+        self._controller.apply_style_preset(preset_key)
+        self.refresh()
+
     def _refresh_properties(self) -> None:
         for child in self._props_container.winfo_children():
             child.destroy()
@@ -4975,8 +6113,11 @@ class AnnotationsPanel:
         if element_id:
             self._element_snapshots[element_id] = copy.deepcopy(element)
         locked = bool(element.get("locked", False))
+        element_type = str(element.get("type") or "").strip().lower()
+        coord_space = str(element.get("coord_space") or "data").strip().lower()
         row = 0
-        ttk.Label(self._props_container, text=f"Type: {element.get('type')}").grid(
+        type_label = ANNOTATION_TYPE_LABELS.get(element_type, element_type or "Element")
+        ttk.Label(self._props_container, text=f"Type: {type_label}").grid(
             row=row, column=0, sticky="w", padx=6, pady=(6, 2), columnspan=2
         )
         row += 1
@@ -4985,6 +6126,11 @@ class AnnotationsPanel:
                 self._props_container, text="Locked element - editing disabled."
             ).grid(row=row, column=0, sticky="w", padx=6, pady=(0, 4), columnspan=2)
             row += 1
+
+        behavior_frame = ttk.LabelFrame(self._props_container, text="Behavior")
+        behavior_frame.grid(row=row, column=0, columnspan=2, sticky="ew", padx=6, pady=4)
+        behavior_frame.grid_columnconfigure(1, weight=1)
+        row += 1
 
         axis_choices = self._controller.get_axis_choices()
         if not axis_choices:
@@ -4999,38 +6145,98 @@ class AnnotationsPanel:
         axis_label_var.set(current_label)
         self._current_axis_map = axis_map
         self._current_axis_var = axis_label_var
-        ttk.Label(self._props_container, text="Axis Target:").grid(
-            row=row, column=0, sticky="w", padx=6, pady=2
+        ttk.Label(behavior_frame, text="Axis Target:").grid(
+            row=0, column=0, sticky="w", padx=6, pady=2
         )
         ttk.Combobox(
-            self._props_container,
+            behavior_frame,
             values=[label for label, _ in axis_choices],
             textvariable=axis_label_var,
             state="readonly",
             width=22,
-        ).grid(row=row, column=1, sticky="w", padx=6, pady=2)
-        row += 1
+        ).grid(row=0, column=1, sticky="w", padx=6, pady=2)
+
+        ttk.Label(behavior_frame, text="Coordinate Mode:").grid(
+            row=1, column=0, sticky="w", padx=6, pady=2
+        )
+        coord_label = "Axes" if coord_space == "axes" else "Data"
+        ttk.Label(behavior_frame, text=coord_label).grid(
+            row=1, column=1, sticky="w", padx=6, pady=2
+        )
 
         zorder_var = tk.StringVar(value=str(element.get("zorder", "")))
         self._current_zorder_var = zorder_var
-        ttk.Label(self._props_container, text="Z-Order:").grid(
-            row=row, column=0, sticky="w", padx=6, pady=2
+        ttk.Label(behavior_frame, text="Z-Order:").grid(
+            row=2, column=0, sticky="w", padx=6, pady=2
         )
-        ttk.Entry(self._props_container, textvariable=zorder_var, width=10).grid(
-            row=row, column=1, sticky="w", padx=6, pady=2
+        ttk.Entry(behavior_frame, textvariable=zorder_var, width=10).grid(
+            row=2, column=1, sticky="w", padx=6, pady=2
         )
-        row += 1
 
+        zorder_frame = ttk.Frame(behavior_frame)
+        zorder_frame.grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=2)
+        ttk.Button(
+            zorder_frame, text="Send Backward", command=lambda: self._nudge_zorder(-1)
+        ).pack(side="left", padx=(0, 6))
+        ttk.Button(
+            zorder_frame, text="Bring Forward", command=lambda: self._nudge_zorder(1)
+        ).pack(side="left", padx=4)
+
+        toggle_frame = ttk.Frame(behavior_frame)
+        toggle_frame.grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=2)
+        ttk.Button(
+            toggle_frame, text="Toggle Visibility", command=self._toggle_visibility_selected
+        ).pack(side="left", padx=(0, 6))
+        ttk.Button(
+            toggle_frame, text="Lock/Unlock", command=self._toggle_lock_selected
+        ).pack(side="left", padx=4)
+
+        style_vars: Dict[str, tk.Variable] = {}
+        if element_type in {"xspan", "xspan_label"}:
+            span_layer_map = {
+                "Behind data": "behind_data",
+                "Above data": "above_data",
+            }
+            current_layer = str(
+                element.get("style", {}).get("span_layer", "behind_data")
+            ).strip()
+            label_value = next(
+                (label for label, value in span_layer_map.items() if value == current_layer),
+                "Behind data",
+            )
+            span_layer_var = tk.StringVar(value=label_value)
+            ttk.Label(behavior_frame, text="Span Layer:").grid(
+                row=5, column=0, sticky="w", padx=6, pady=2
+            )
+            ttk.Combobox(
+                behavior_frame,
+                values=list(span_layer_map.keys()),
+                textvariable=span_layer_var,
+                state="readonly",
+                width=18,
+            ).grid(row=5, column=1, sticky="w", padx=6, pady=2)
+            style_vars["span_layer"] = span_layer_var
+
+        geom_vars = {}
         geom_frame = ttk.LabelFrame(self._props_container, text="Geometry")
         geom_frame.grid(row=row, column=0, columnspan=2, sticky="ew", padx=6, pady=4)
         row += 1
-        style_frame = ttk.LabelFrame(self._props_container, text="Style")
-        style_frame.grid(row=row, column=0, columnspan=2, sticky="ew", padx=6, pady=4)
+        geom_vars.update(self._build_geometry_fields(geom_frame, element))
 
-        geom_vars = self._build_geometry_fields(geom_frame, element)
-        style_vars = self._build_style_fields(
-            style_frame, element, apply_callback=self._schedule_live_update
+        appearance_vars = self._build_appearance_fields(
+            self._props_container, element, row, self._schedule_live_update
         )
+        row = appearance_vars.pop("_next_row", row)
+        style_vars.update(appearance_vars)
+
+        text_like = {"text", "callout", "arrow", "xspan_label", "rect", "ref_line"}
+        if element_type in text_like:
+            text_vars, text_style_vars, row = self._build_text_fields(
+                self._props_container, element, row, self._schedule_live_update
+            )
+            geom_vars.update(text_vars)
+            style_vars.update(text_style_vars)
+
         self._current_geom_vars = geom_vars
         self._current_style_vars = style_vars
 
@@ -5143,26 +6349,41 @@ class AnnotationsPanel:
             "text_valign",
             "bbox_linestyle",
             "bbox_boxstyle",
+            "arrowstyle",
+            "span_layer",
         }
+        span_layer_labels = {
+            "behind data": "behind_data",
+            "above data": "above_data",
+        }
+        bbox_enabled_var = self._current_style_vars.get("bbox_enabled")
+        bbox_enabled = bool(bbox_enabled_var.get()) if bbox_enabled_var is not None else True
         for key, var in self._current_style_vars.items():
+            if key == "bbox_enabled":
+                continue
             value = var.get()
             if key in boolean_style_keys:
                 style_updates[key] = bool(value)
             elif value == "":
                 continue
+            elif key == "span_layer":
+                label = str(value or "").strip().lower()
+                style_updates[key] = span_layer_labels.get(label, label or "behind_data")
             elif key in color_style_keys:
                 color_value = str(value).strip()
-                if color_value.lower() == "none":
+                if color_value.lower() in {"none", "transparent"}:
                     style_updates[key] = "none"
                 else:
-                    style_updates[key] = self._normalize_color_value(
-                        color_value, "#000000"
-                    )
+                    style_updates[key] = _normalize_mpl_color(color_value)
             elif key in string_style_keys:
                 style_updates[key] = value
             else:
                 float_val = _coerce_float(value)
                 style_updates[key] = float_val if float_val is not None else value
+        if not bbox_enabled:
+            style_updates["bbox_facecolor"] = "none"
+            style_updates["bbox_edgecolor"] = "none"
+            style_updates["bbox_alpha"] = 0.0
         element_updates = {
             "axes_target": axis_role,
             "zorder": zorder_value,
@@ -5196,50 +6417,33 @@ class AnnotationsPanel:
         self, parent: ttk.Frame, element: Dict[str, Any]
     ) -> Dict[str, tk.Variable]:
         geometry = element.get("geometry", {})
-        element_type = element.get("type")
+        element_type = str(element.get("type") or "").strip().lower()
+        coord_space = str(element.get("coord_space") or "data").strip().lower()
         fields = []
         if element_type == "text":
-            fields = [
-                ("x", "x"),
-                ("y", "y"),
-                ("text", "text"),
-                ("wrap_width_x", "wrap_width_x"),
-            ]
+            fields = [("x", "x"), ("y", "y")]
         elif element_type in {"callout", "arrow"}:
-            fields = [
-                ("x0", "x0"),
-                ("y0", "y0"),
-                ("x1", "x1"),
-                ("y1", "y1"),
-                ("text", "text"),
-            ]
+            fields = [("x0", "x0"), ("y0", "y0"), ("x1", "x1"), ("y1", "y1")]
         elif element_type == "point":
             fields = [("x", "x"), ("y", "y")]
         elif element_type == "xspan":
             fields = [("x0", "x0"), ("x1", "x1")]
         elif element_type == "xspan_label":
-            fields = [
-                ("x0", "x0"),
-                ("x1", "x1"),
-                ("label_x", "label_x"),
-                ("label_y_data", "label_y_data"),
-                ("label_anchor", "label_anchor"),
-                ("label text", "text"),
-            ]
+            fields = [("x0", "x0"), ("x1", "x1"), ("label_x", "label_x")]
+            label_y_axes = _coerce_float(geometry.get("label_y_axes"))
+            if coord_space == "axes" or label_y_axes is not None:
+                fields.append(("label_y_axes", "label_y_axes"))
+            else:
+                fields.append(("label_y_data", "label_y_data"))
         elif element_type == "rect":
-            fields = [
-                ("x0", "x0"),
-                ("y0", "y0"),
-                ("x1", "x1"),
-                ("y1", "y1"),
-                ("text", "text"),
-            ]
+            fields = [("x0", "x0"), ("y0", "y0"), ("x1", "x1"), ("y1", "y1")]
         elif element_type == "ref_line":
             fields = [
                 ("orientation", "orientation"),
                 ("value", "value"),
-                ("text", "text"),
             ]
+            if geometry.get("text"):
+                fields.extend([("label_x", "label_x"), ("label_y", "label_y")])
         elif element_type == "ink":
             points = (
                 geometry.get("points")
@@ -5263,190 +6467,214 @@ class AnnotationsPanel:
             vars_out[key] = var
         return vars_out
 
-    def _build_style_fields(
+    def _build_appearance_fields(
         self,
         parent: ttk.Frame,
         element: Dict[str, Any],
-        *,
+        start_row: int,
         apply_callback: Optional[Callable[[], None]] = None,
     ) -> Dict[str, tk.Variable]:
         style = element.get("style", {})
-        element_type = element.get("type")
-        fields = [
-            ("color", "color"),
-            ("alpha", "alpha"),
-            ("linewidth", "linewidth"),
-            ("linestyle", "linestyle"),
-        ]
-        if element_type in {
-            "text",
-            "callout",
-            "arrow",
-            "xspan_label",
-            "rect",
-            "ref_line",
-        }:
-            fields.extend(
-                [
-                    ("fontsize", "fontsize"),
-                    ("fontfamily", "fontfamily"),
-                    ("fontweight", "fontweight"),
-                    ("text_align", "text_align"),
-                    ("text_valign", "text_valign"),
-                    ("text_color", "text_color"),
-                    ("bbox_facecolor", "bbox_facecolor"),
-                    ("bbox_alpha", "bbox_alpha"),
-                    ("bbox_edgecolor", "bbox_edgecolor"),
-                    ("bbox_linewidth", "bbox_linewidth"),
-                    ("bbox_linestyle", "bbox_linestyle"),
-                    ("bbox_boxstyle", "bbox_boxstyle"),
-                    ("bbox_pad", "bbox_pad"),
-                    ("bbox_shadow_offset_x", "bbox_shadow_offset_x"),
-                    ("bbox_shadow_offset_y", "bbox_shadow_offset_y"),
-                    ("bbox_shadow_alpha", "bbox_shadow_alpha"),
-                ]
-            )
-        if element_type in {"xspan", "xspan_label", "rect"}:
-            fields.extend([("facecolor", "facecolor"), ("edgecolor", "edgecolor")])
-        if element_type == "point":
-            fields.extend([("marker", "marker"), ("marker_size", "marker_size")])
-        if element_type in {"callout", "arrow"}:
-            fields.append(("arrowstyle", "arrowstyle"))
+        element_type = str(element.get("type") or "").strip().lower()
+        frame = ttk.LabelFrame(parent, text="Appearance")
+        frame.grid(row=start_row, column=0, columnspan=2, sticky="ew", padx=6, pady=4)
+        frame.grid_columnconfigure(1, weight=1)
         vars_out: Dict[str, tk.Variable] = {}
-        row_offset = 0
-        if element_type in {"xspan", "xspan_label"}:
-            fill_color = style.get("facecolor") or style.get("color") or "#cccccc"
-            fill_var = tk.StringVar(value=str(fill_color))
-            vars_out["facecolor"] = fill_var
-            ttk.Label(parent, text="Fill Color:").grid(
-                row=row_offset, column=0, sticky="w", padx=6, pady=2
-            )
-            fill_frame = ttk.Frame(parent)
-            fill_frame.grid(row=row_offset, column=1, sticky="ew", padx=6, pady=2)
-            fill_swatch = tk.Label(fill_frame, width=2, relief="groove")
-            fill_swatch.grid(row=0, column=0, padx=(0, 4))
+        row = 0
 
-            def _update_fill_swatch() -> None:
-                color = self._normalize_color_value(fill_var.get(), "#cccccc")
+        def _add_entry(label: str, key: str, width: int = 18) -> None:
+            nonlocal row
+            ttk.Label(frame, text=f"{label}:").grid(
+                row=row, column=0, sticky="w", padx=6, pady=2
+            )
+            value = style.get(key, "")
+            var = tk.StringVar(value=str(value) if value is not None else "")
+            ttk.Entry(frame, textvariable=var, width=width).grid(
+                row=row, column=1, sticky="w", padx=6, pady=2
+            )
+            vars_out[key] = var
+            row += 1
+
+        def _add_color_field(label: str, key: str, default: str) -> None:
+            nonlocal row
+            value = style.get(key, default)
+            var = tk.StringVar(value=str(value) if value is not None else "")
+            ttk.Label(frame, text=f"{label}:").grid(
+                row=row, column=0, sticky="w", padx=6, pady=2
+            )
+            color_frame = ttk.Frame(frame)
+            color_frame.grid(row=row, column=1, sticky="ew", padx=6, pady=2)
+            swatch = tk.Label(color_frame, width=2, relief="groove")
+            swatch.grid(row=0, column=0, padx=(0, 4))
+
+            def _update_swatch() -> None:
+                color = self._normalize_color_value(var.get(), default)
                 try:
-                    fill_swatch.configure(background=color)
+                    swatch.configure(background=color)
                 except Exception:
                     pass
 
-            def _commit_fill_color(_event: Any = None) -> None:
-                normalized = self._normalize_color_value(fill_var.get(), "#cccccc")
-                fill_var.set(normalized)
-                _update_fill_swatch()
+            def _commit_color(_event: Any = None) -> None:
+                normalized = self._normalize_color_value(var.get(), default)
+                var.set(normalized)
+                _update_swatch()
                 if apply_callback is not None:
                     apply_callback()
 
-            def _choose_fill_color() -> None:
-                initial = self._normalize_color_value(fill_var.get(), "#cccccc")
+            def _choose_color() -> None:
+                initial = self._normalize_color_value(var.get(), default)
                 result = colorchooser.askcolor(
                     color=initial, parent=self._frame.winfo_toplevel()
                 )
                 if not result or not result[1]:
                     return
-                fill_var.set(self._normalize_color_value(result[1], "#cccccc"))
-                _update_fill_swatch()
+                var.set(self._normalize_color_value(result[1], default))
+                _update_swatch()
                 if apply_callback is not None:
                     apply_callback()
 
-            ttk.Button(
-                fill_frame, text="Fill Color...", command=_choose_fill_color
-            ).grid(row=0, column=1, padx=(0, 4))
-            fill_entry = ttk.Entry(fill_frame, textvariable=fill_var, width=12)
-            fill_entry.grid(row=0, column=2, sticky="ew")
-            fill_entry.bind("<Return>", _commit_fill_color)
-            fill_entry.bind("<FocusOut>", _commit_fill_color)
-            fill_frame.grid_columnconfigure(2, weight=1)
-            _update_fill_swatch()
-            row_offset += 1
-
-            alpha_value = _coerce_float(style.get("alpha"))
-            if alpha_value is None:
-                alpha_value = 0.9
-            alpha_value = max(0.0, min(1.0, float(alpha_value)))
-            alpha_var = tk.StringVar(value=f"{alpha_value:.2f}")
-            vars_out["alpha"] = alpha_var
-            ttk.Label(parent, text="Transparency:").grid(
-                row=row_offset, column=0, sticky="w", padx=6, pady=2
+            ttk.Button(color_frame, text="Color...", command=_choose_color).grid(
+                row=0, column=1, padx=(0, 4)
             )
-            alpha_frame = ttk.Frame(parent)
-            alpha_frame.grid(row=row_offset, column=1, sticky="ew", padx=6, pady=2)
-            alpha_entry = ttk.Entry(alpha_frame, textvariable=alpha_var, width=6)
-            alpha_entry.grid(row=0, column=0, sticky="w", padx=(0, 6))
-            alpha_scale_var = tk.DoubleVar(value=alpha_value)
+            entry = ttk.Entry(color_frame, textvariable=var, width=12)
+            entry.grid(row=0, column=2, sticky="ew")
+            entry.bind("<Return>", _commit_color)
+            entry.bind("<FocusOut>", _commit_color)
+            color_frame.grid_columnconfigure(2, weight=1)
+            _update_swatch()
+            vars_out[key] = var
+            row += 1
 
-            def _on_alpha_scale(value: Any) -> None:
-                try:
-                    updated = float(value)
-                except Exception:
-                    return
-                updated = max(0.0, min(1.0, updated))
-                alpha_var.set(f"{updated:.2f}")
+        patch_types = {"xspan", "xspan_label", "rect"}
+        line_types = {"callout", "arrow", "ref_line", "ink"}
 
-            alpha_scale = ttk.Scale(
-                alpha_frame,
-                from_=0.0,
-                to=1.0,
-                variable=alpha_scale_var,
-                command=_on_alpha_scale,
+        if element_type in patch_types:
+            _add_color_field("Fill Color", "facecolor", "#cccccc")
+            _add_color_field("Edge Color", "edgecolor", "#333333")
+            _add_entry("Alpha", "alpha", width=8)
+            _add_entry("Line Width", "linewidth", width=8)
+            _add_entry("Line Style", "linestyle")
+        elif element_type in line_types:
+            _add_color_field("Line Color", "color", "#000000")
+            _add_entry("Alpha", "alpha", width=8)
+            _add_entry("Line Width", "linewidth", width=8)
+            _add_entry("Line Style", "linestyle")
+            if element_type in {"callout", "arrow"}:
+                _add_entry("Arrow Style", "arrowstyle")
+        elif element_type == "point":
+            _add_color_field("Marker Face", "marker_facecolor", "#000000")
+            _add_color_field("Marker Edge", "marker_edgecolor", "#000000")
+            _add_entry("Marker", "marker")
+            _add_entry("Marker Size", "marker_size", width=8)
+            _add_entry("Alpha", "alpha", width=8)
+            snap_var = tk.BooleanVar(value=bool(style.get("snap_to_data", False)))
+            ttk.Checkbutton(frame, text="Snap to Data", variable=snap_var).grid(
+                row=row, column=0, columnspan=2, sticky="w", padx=6, pady=2
             )
-            alpha_scale.grid(row=0, column=1, sticky="ew")
-            alpha_frame.grid_columnconfigure(1, weight=1)
+            vars_out["snap_to_data"] = snap_var
+            row += 1
+        else:
+            _add_entry("Alpha", "alpha", width=8)
 
-            def _commit_alpha_entry(_event: Any = None) -> None:
-                try:
-                    updated = float(alpha_var.get())
-                except Exception:
-                    return
-                updated = max(0.0, min(1.0, updated))
-                alpha_var.set(f"{updated:.2f}")
-                alpha_scale_var.set(updated)
-                if apply_callback is not None:
-                    apply_callback()
+        vars_out["_next_row"] = start_row + 1
+        return vars_out
 
-            alpha_entry.bind("<Return>", _commit_alpha_entry)
-            alpha_entry.bind("<FocusOut>", _commit_alpha_entry)
-            alpha_scale.bind(
-                "<ButtonRelease-1>",
-                lambda _event: apply_callback() if apply_callback is not None else None,
+    def _build_text_fields(
+        self,
+        parent: ttk.Frame,
+        element: Dict[str, Any],
+        start_row: int,
+        apply_callback: Optional[Callable[[], None]] = None,
+    ) -> Tuple[Dict[str, tk.Variable], Dict[str, tk.Variable], int]:
+        geometry = element.get("geometry", {})
+        style = element.get("style", {})
+        element_type = str(element.get("type") or "").strip().lower()
+        frame = ttk.LabelFrame(parent, text="Text")
+        frame.grid(row=start_row, column=0, columnspan=2, sticky="ew", padx=6, pady=4)
+        frame.grid_columnconfigure(1, weight=1)
+        geom_vars: Dict[str, tk.Variable] = {}
+        style_vars: Dict[str, tk.Variable] = {}
+        row = 0
+
+        def _add_geom_entry(label: str, key: str, width: int = 22) -> None:
+            nonlocal row
+            ttk.Label(frame, text=f"{label}:").grid(
+                row=row, column=0, sticky="w", padx=6, pady=2
             )
-            row_offset += 1
+            value = geometry.get(key, "")
+            var = tk.StringVar(value=str(value) if value is not None else "")
+            ttk.Entry(frame, textvariable=var, width=width).grid(
+                row=row, column=1, sticky="w", padx=6, pady=2
+            )
+            geom_vars[key] = var
+            row += 1
 
-        if element_type in {"xspan", "xspan_label"}:
-            fields = [item for item in fields if item[1] not in {"alpha", "facecolor"}]
-
-        for idx, (label, key) in enumerate(fields):
-            ttk.Label(parent, text=f"{label}:").grid(
-                row=row_offset + idx, column=0, sticky="w", padx=6, pady=2
+        def _add_style_entry(label: str, key: str, width: int = 22) -> None:
+            nonlocal row
+            ttk.Label(frame, text=f"{label}:").grid(
+                row=row, column=0, sticky="w", padx=6, pady=2
             )
             value = style.get(key, "")
             var = tk.StringVar(value=str(value) if value is not None else "")
-            ttk.Entry(parent, textvariable=var, width=20).grid(
-                row=row_offset + idx, column=1, sticky="w", padx=6, pady=2
+            ttk.Entry(frame, textvariable=var, width=width).grid(
+                row=row, column=1, sticky="w", padx=6, pady=2
             )
-            vars_out[key] = var
-        row_offset += len(fields)
-        if element_type == "point":
-            snap_var = tk.BooleanVar(value=bool(style.get("snap_to_data", False)))
-            ttk.Checkbutton(parent, text="snap_to_data", variable=snap_var).grid(
-                row=row_offset, column=0, columnspan=2, sticky="w", padx=6, pady=2
+            style_vars[key] = var
+            row += 1
+
+        def _add_style_check(label: str, key: str) -> None:
+            nonlocal row
+            var = tk.BooleanVar(value=bool(style.get(key, False)))
+            ttk.Checkbutton(frame, text=label, variable=var).grid(
+                row=row, column=0, columnspan=2, sticky="w", padx=6, pady=2
             )
-            vars_out["snap_to_data"] = snap_var
-            row_offset += 1
-        shadow_var = tk.BooleanVar(value=bool(style.get("bbox_shadow", False)))
-        ttk.Checkbutton(parent, text="bbox_shadow", variable=shadow_var).grid(
-            row=row_offset, column=0, columnspan=2, sticky="w", padx=6, pady=2
+            style_vars[key] = var
+            row += 1
+            if apply_callback is not None:
+                var.trace_add("write", lambda *_args: apply_callback())
+
+        _add_geom_entry("Text", "text")
+        if element_type in {"text", "xspan_label"}:
+            _add_geom_entry("Wrap Width (x)", "wrap_width_x")
+        if element_type == "xspan_label":
+            _add_geom_entry("Label Anchor", "label_anchor")
+
+        _add_style_entry("Font Size", "fontsize", width=10)
+        _add_style_entry("Font Family", "fontfamily")
+        _add_style_entry("Font Weight", "fontweight", width=10)
+        _add_style_entry("Text Color", "text_color")
+        _add_style_entry("Text Align", "text_align", width=10)
+        _add_style_entry("Text Valign", "text_valign", width=10)
+        bbox_face = str(style.get("bbox_facecolor", "") or "").strip().lower()
+        bbox_edge = str(style.get("bbox_edgecolor", "") or "").strip().lower()
+        bbox_enabled = not (
+            bbox_face in {"", "none", "transparent"}
+            and bbox_edge in {"", "none", "transparent"}
         )
-        vars_out["bbox_shadow"] = shadow_var
-        return vars_out
+        bbox_enabled_var = tk.BooleanVar(value=bbox_enabled)
+        ttk.Checkbutton(frame, text="BBox Enabled", variable=bbox_enabled_var).grid(
+            row=row, column=0, columnspan=2, sticky="w", padx=6, pady=2
+        )
+        style_vars["bbox_enabled"] = bbox_enabled_var
+        row += 1
+        _add_style_entry("BBox Face", "bbox_facecolor")
+        _add_style_entry("BBox Edge", "bbox_edgecolor")
+        _add_style_entry("BBox Alpha", "bbox_alpha", width=10)
+        _add_style_entry("BBox Line Width", "bbox_linewidth", width=10)
+        _add_style_entry("BBox Line Style", "bbox_linestyle", width=10)
+        _add_style_entry("BBox Box Style", "bbox_boxstyle")
+        _add_style_entry("BBox Pad", "bbox_pad", width=10)
+        _add_style_check("BBox Shadow", "bbox_shadow")
+        _add_style_entry("Shadow Offset X", "bbox_shadow_offset_x", width=10)
+        _add_style_entry("Shadow Offset Y", "bbox_shadow_offset_y", width=10)
+        _add_style_entry("Shadow Alpha", "bbox_shadow_alpha", width=10)
+
+        return geom_vars, style_vars, start_row + 1
 
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.6.5"
+APP_VERSION = "V1.6.6"
 
 
 DEBUG_SERIES_FLOW = False
@@ -23571,6 +24799,10 @@ class UnifiedApp(tk.Tk):
                     controller = self._plot_annotation_controllers.get(plot_id)
                     if controller is not None:
                         controller.update_axis_map(new_fig, axes_map, axis_labels)
+                        try:
+                            controller.render()
+                        except Exception:
+                            pass
                 except Exception:
                     pass
             try:
@@ -24000,24 +25232,77 @@ class UnifiedApp(tk.Tk):
                 pass
             return
 
+        axes_map = self._resolve_plot_element_axes(fig)
+        axis_labels = self._plot_element_axis_labels(fig)
+        try:
+            controller.update_axis_map(fig, axes_map, axis_labels)
+        except Exception:
+            pass
+
+        ui_state = self._annotation_store.ui_state_for(plot_id)
         editor = tk.Toplevel(self)
         editor.title("Plot Elements")
         editor.transient(self)
-        editor.minsize(720, 550)
-        editor.geometry("900x700")
-        editor.resizable(True, True)
+        editor.resizable(False, False)
+        self._plot_element_windows[plot_id] = editor
 
-        root = ttk.Frame(editor, padding=10)
-        root.pack(fill="both", expand=True)
-        root.grid_rowconfigure(0, weight=1)
-        root.grid_columnconfigure(0, weight=1)
+        geometry = ui_state.get("editor_geometry")
+        if isinstance(geometry, str) and geometry.strip():
+            try:
+                editor.geometry(geometry)
+            except Exception:
+                pass
 
-        panel = AnnotationsPanel(root, controller, plot_id)
-        panel.set_collapsed(False)
+        main = ttk.Frame(editor, padding=10)
+        main.grid(row=0, column=0, sticky="nsew")
+        editor.grid_rowconfigure(0, weight=1)
+        editor.grid_columnconfigure(0, weight=1)
+        main.grid_rowconfigure(0, weight=1)
+        main.grid_columnconfigure(0, weight=1)
+
+        panel = AnnotationsPanel(main, controller, plot_id)
         panel.frame.grid(row=0, column=0, sticky="nsew")
         controller.set_panel(panel)
         self._plot_annotation_panels[plot_id] = panel
-        self._plot_element_windows[plot_id] = editor
+
+        buttons = ttk.Frame(main)
+        buttons.grid(row=1, column=0, sticky="ew", pady=(6, 0))
+
+        def _refresh_panel() -> None:
+            controller.render()
+            panel.refresh()
+
+        def _apply_selected() -> None:
+            panel.apply_selected()
+
+        def _duplicate_selected() -> None:
+            panel.duplicate_selected()
+
+        def _delete_selected() -> None:
+            panel.delete_selected()
+
+        def _clear_all() -> None:
+            if not messagebox.askyesno(
+                "Clear All", "Remove all plot elements for this plot?"
+            ):
+                return
+            try:
+                controller.cancel_place_element()
+            except Exception:
+                pass
+            self._clear_plot_elements_for_plot_id(plot_id, fig=fig)
+            panel.refresh()
+
+        def _on_destroy(_event: Any = None) -> None:
+            if _event is not None and getattr(_event, "widget", None) is not editor:
+                return
+            self._plot_element_windows.pop(plot_id, None)
+            self._plot_element_editors.pop(plot_id, None)
+            self._plot_annotation_panels.pop(plot_id, None)
+            try:
+                controller.set_panel(None)
+            except Exception:
+                pass
 
         def _close_editor() -> None:
             try:
@@ -24025,108 +25310,62 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 pass
             try:
-                controller.set_panel(None)
+                sash_pos = panel.get_sash_pos()
+                self._annotation_store.set_ui_state(
+                    plot_id,
+                    editor_geometry=editor.geometry(),
+                    editor_sash=sash_pos,
+                )
+                _save_settings_to_disk()
             except Exception:
-                controller._panel = None
-            self._plot_annotation_panels.pop(plot_id, None)
-            self._plot_element_windows.pop(plot_id, None)
+                pass
+            _on_destroy()
             try:
                 editor.destroy()
             except Exception:
                 pass
 
+        ttk.Button(buttons, text="Refresh", command=_refresh_panel).pack(
+            side="left", padx=(0, 6)
+        )
+        ttk.Button(buttons, text="Apply to Selected", command=_apply_selected).pack(
+            side="left", padx=(0, 6)
+        )
+        ttk.Button(buttons, text="Duplicate", command=_duplicate_selected).pack(
+            side="left", padx=(0, 6)
+        )
+        ttk.Button(buttons, text="Delete Selected", command=_delete_selected).pack(
+            side="left", padx=(0, 6)
+        )
+        ttk.Button(buttons, text="Clear All", command=_clear_all).pack(
+            side="left", padx=(0, 6)
+        )
+        ttk.Button(buttons, text="Close", command=_close_editor).pack(
+            side="right", padx=(6, 0)
+        )
+
         editor.protocol("WM_DELETE_WINDOW", _close_editor)
+        editor.bind("<Destroy>", _on_destroy, add="+")
+        panel.refresh()
         return
-        panel = self._plot_annotation_panels.get(plot_id)
-        if panel is not None:
-            panel.set_collapsed(False)
-            try:
-                panel.frame.lift()
-            except Exception:
-                pass
-            return
-        if fig is None or canvas is None or not plot_id:
-            return
-        existing = self._plot_element_windows.get(plot_id)
-        if existing is not None and existing.winfo_exists():
-            try:
-                existing.deiconify()
-                existing.lift()
-                existing.focus_force()
-            except Exception:
-                pass
-            return
 
-        elements_source = settings.get("plot_elements", {})
-        elements = copy.deepcopy(elements_source.get(plot_id, []))
-        if not isinstance(elements, list):
-            elements = []
-
-        axes_map = self._resolve_plot_element_axes(fig)
-        axis_labels = self._plot_element_axis_labels(fig)
-        axis_display_to_role = {
-            label: role for role, label in axis_labels.items() if label
-        }
-
-        state: Dict[str, Any] = {
-            "elements": elements,
+        elements_map = settings.get("plot_elements", {})
+        elements = elements_map.get(plot_id) if isinstance(elements_map, dict) else []
+        state = {
+            "elements": copy.deepcopy(elements) if isinstance(elements, list) else [],
             "artists": [],
             "selected_index": None,
+            "highlight_artist": None,
             "dragging": False,
             "drag_mode": None,
             "drag_start": None,
             "drag_snapshot": None,
-            "draft_index": None,
             "draft_tool": None,
-            "highlight_artist": None,
+            "draft_index": None,
+            "cid_press": None,
+            "cid_motion": None,
+            "cid_release": None,
         }
-
-        coords_display_options = [
-            ("Attach to data (moves with pan and zoom)", "data"),
-            ("Attach to plot frame (fixed relative position)", "axes"),
-        ]
-        coords_display_to_value = {
-            label: value for label, value in coords_display_options
-        }
-        coords_value_to_display = {
-            value: label for label, value in coords_display_options
-        }
-
-        def _axis_display_for(role: str) -> str:
-            return axis_labels.get(role, "") or {
-                "primary": "Axis 1",
-                "right": "Axis 2",
-                "third": "Axis 3",
-            }.get(role, "Axis 1")
-
-        def _axis_role_for(display_value: str) -> str:
-            return axis_display_to_role.get(display_value, "primary")
-
-        def _coords_display_for(value: str) -> str:
-            return coords_value_to_display.get(value, coords_display_options[0][0])
-
-        def _coords_value_for(display_value: str) -> str:
-            return coords_display_to_value.get(display_value, "data")
-
-        def _coords_from_event(event, target_ax: Axes, coords_kind: str):
-            if target_ax is None or event is None:
-                return None
-            try:
-                if coords_kind == "axes":
-                    return target_ax.transAxes.inverted().transform((event.x, event.y))
-                return target_ax.transData.inverted().transform((event.x, event.y))
-            except Exception:
-                return None
-
-        def _normalize_mpl_color(value: str) -> str:
-            if not value:
-                return "#000000"
-            try:
-                from matplotlib import colors as mcolors
-
-                return mcolors.to_hex(mcolors.to_rgba(value), keep_alpha=False)
-            except Exception:
-                return "#000000"
 
         def _clear_highlight() -> None:
             highlight = state.get("highlight_artist")
@@ -24138,34 +25377,34 @@ class UnifiedApp(tk.Tk):
                 pass
             state["highlight_artist"] = None
 
-        def _highlight_padding(ax: Axes, coords_kind: str) -> Tuple[float, float]:
-            if coords_kind == "axes":
-                return (0.02, 0.02)
-            try:
-                x0, x1 = ax.get_xlim()
-                y0, y1 = ax.get_ylim()
-            except Exception:
-                return (0.02, 0.02)
-            return (abs(x1 - x0) * 0.02, abs(y1 - y0) * 0.02)
-
         def _draw_selection_highlight() -> None:
-            if tool_var.get() != "select":
-                return
             idx = state.get("selected_index")
             if idx is None:
                 return
-            if idx < 0 or idx >= len(state["elements"]):
+            try:
+                element = state["elements"][idx]
+            except Exception:
                 return
-            element = state["elements"][idx]
+            element_type = str(element.get("type") or "").strip().lower()
+            data = element.get("data") if isinstance(element.get("data"), dict) else {}
+            coords_kind = str(element.get("coords") or "data").strip().lower()
             axes_target = str(element.get("axes_target") or "primary").strip().lower()
-            ax = axes_map.get(axes_target) or axes_map.get("primary")
+            axes_map_local = self._resolve_plot_element_axes(fig)
+            ax = axes_map_local.get(axes_target) or axes_map_local.get("primary")
             if ax is None:
                 return
-            coords_kind = str(element.get("coords") or "data").strip().lower()
-            data = element.get("data") if isinstance(element.get("data"), dict) else {}
-            element_type = str(element.get("type") or "").strip().lower()
-            pad_x, pad_y = _highlight_padding(ax, coords_kind)
-            xmin = xmax = ymin = ymax = None
+            if coords_kind == "axes":
+                pad_x = 0.02
+                pad_y = 0.02
+            else:
+                try:
+                    x0_lim, x1_lim = ax.get_xlim()
+                    y0_lim, y1_lim = ax.get_ylim()
+                    pad_x = 0.02 * abs(x1_lim - x0_lim)
+                    pad_y = 0.02 * abs(y1_lim - y0_lim)
+                except Exception:
+                    pad_x = 0.02
+                    pad_y = 0.02
             if element_type in {"text", "point"}:
                 x = data.get("x")
                 y = data.get("y")
@@ -24192,8 +25431,8 @@ class UnifiedApp(tk.Tk):
                     ymin, ymax = -pad_y, 1.0 + pad_y
                 else:
                     try:
-                        y0, y1 = ax.get_ylim()
-                        ymin, ymax = y0 - pad_y, y1 + pad_y
+                        y0_lim, y1_lim = ax.get_ylim()
+                        ymin, ymax = y0_lim - pad_y, y1_lim + pad_y
                     except Exception:
                         ymin, ymax = -pad_y, 1.0 + pad_y
             elif element_type == "freehand":
@@ -24206,6 +25445,8 @@ class UnifiedApp(tk.Tk):
                     return
                 xmin, xmax = min(xs) - pad_x, max(xs) + pad_x
                 ymin, ymax = min(ys) - pad_y, max(ys) + pad_y
+            else:
+                return
             if None in (xmin, xmax, ymin, ymax):
                 return
             from matplotlib import patches as mpatches
@@ -24295,11 +25536,53 @@ class UnifiedApp(tk.Tk):
 
             _pending_render = editor.after(30, _run)
 
+        axis_options = controller.get_axis_choices()
+        coords_options = [
+            ("Data (x/y)", "data"),
+            ("Axes fraction (0–1)", "axes"),
+        ]
+        coords_display_options = list(coords_options)
+
+        axis_label_by_role = {}
+        axis_role_by_label = {}
+        for label, role in axis_options:
+            role_value = str(role or "").strip().lower()
+            if not role_value:
+                continue
+            label_value = str(label or "").strip() or role_value
+            if role_value not in axis_label_by_role:
+                axis_label_by_role[role_value] = label_value
+            if label_value and label_value not in axis_role_by_label:
+                axis_role_by_label[label_value] = role_value  # keep first role if labels repeat
+
+        coords_display_by_value = {value: label for label, value in coords_options}
+        coords_value_by_display = {label: value for label, value in coords_options}
+
+        def _coords_display_for(value: str) -> str:
+            value_key = str(value or "").strip().lower()
+            return coords_display_by_value.get(
+                value_key, coords_display_by_value.get("data", "Data (x/y)")
+            )
+
+        def _coords_value_for(display: str) -> str:
+            return coords_value_by_display.get(str(display or "").strip(), "data")
+
+        def _axis_display_for(role: str) -> str:
+            role_key = str(role or "").strip().lower()
+            if not role_key:
+                role_key = "primary"
+            return axis_label_by_role.get(role_key, role_key)
+
+        def _axis_role_for(display: str) -> str:
+            return axis_role_by_label.get(str(display or "").strip(), "primary")
+
         tool_var = tk.StringVar(value="select")
         coords_var = tk.StringVar(value="data")
-        coords_display_var = tk.StringVar(value=_coords_display_for("data"))
+        coords_display_var = tk.StringVar(value=_coords_display_for(coords_var.get()))
         axes_target_var = tk.StringVar(value="primary")
-        axes_display_var = tk.StringVar(value=_axis_display_for("primary"))
+        axes_display_var = tk.StringVar(
+            value=_axis_display_for(axes_target_var.get())
+        )
         color_var = tk.StringVar(value="#000000")
         alpha_var = tk.StringVar(value="0.9")
         alpha_scale_var = tk.DoubleVar(value=0.9)
@@ -24323,8 +25606,62 @@ class UnifiedApp(tk.Tk):
         def _update_instruction() -> None:
             instruction_var.set(instruction_text.get(tool_var.get(), ""))
 
-        def _on_tool_change() -> None:
+        def _style_overrides_from_ui() -> Dict[str, Any]:
+            try:
+                alpha_value = float(alpha_var.get())
+            except Exception:
+                alpha_value = 0.9
+            alpha_value = max(0.0, min(1.0, alpha_value))
+            try:
+                linewidth_value = float(linewidth_var.get())
+            except Exception:
+                linewidth_value = 1.5
+            linewidth_value = max(0.5, linewidth_value)
+            try:
+                fontsize_value = float(fontsize_var.get())
+            except Exception:
+                fontsize_value = 10.0
+            fontsize_value = max(6.0, fontsize_value)
+            return {
+                "alpha": alpha_value,
+                "linewidth": linewidth_value,
+                "fontsize": fontsize_value,
+                "color": _normalize_mpl_color(color_var.get()),
+            }
+
+        def _on_tool_change(*_args) -> None:
             _update_instruction()
+            tool = tool_var.get()
+            axis_target = axes_target_var.get() or "primary"
+            coord_space = coords_var.get() or "data"
+            style_overrides = _style_overrides_from_ui()
+            if tool == "select":
+                controller.set_mode("select")
+                controller.cancel_place_element()
+            elif tool == "delete":
+                controller.set_mode("erase")
+                controller.cancel_place_element()
+            else:
+                tool_map = {
+                    "text": "text",
+                    "arrow": "arrow",
+                    "point": "point",
+                    "xspan": "xspan",
+                    "xspan_text": "xspan_label",
+                    "freehand": "ink",
+                }
+                mapped = tool_map.get(tool)
+                if mapped is None:
+                    controller.set_mode("select")
+                    controller.cancel_place_element()
+                else:
+                    controller.set_mode(mapped)
+                    controller.begin_place_element(
+                        mapped,
+                        style_overrides,
+                        axis_target=axis_target,
+                        coord_space=coord_space,
+                    )
             _render_all()
 
         main = ttk.Frame(editor, padding=10)
@@ -24356,7 +25693,6 @@ class UnifiedApp(tk.Tk):
                 text=label,
                 value=value,
                 variable=tool_var,
-                command=_on_tool_change,
             ).grid(row=idx, column=0, sticky="w", padx=6, pady=2)
 
         props_frame = ttk.LabelFrame(main, text="Properties")
@@ -24742,6 +26078,7 @@ class UnifiedApp(tk.Tk):
             _sync_coords_from_display()
             _on_property_change()
 
+        tool_var.trace_add("write", _on_tool_change)
         axes_display_var.trace_add("write", _on_axes_display_change)
         coords_display_var.trace_add("write", _on_coords_display_change)
         alpha_var.trace_add("write", _on_property_change)
@@ -25167,6 +26504,10 @@ class UnifiedApp(tk.Tk):
 
         def _close_editor():
             try:
+                controller.cancel_place_element()
+            except Exception:
+                pass
+            try:
                 if state.get("cid_press") is not None:
                     canvas.mpl_disconnect(state["cid_press"])
                 if state.get("cid_motion") is not None:
@@ -25208,8 +26549,7 @@ class UnifiedApp(tk.Tk):
         state["cid_release"] = canvas.mpl_connect("button_release_event", _on_release)
         self._plot_element_editors[plot_id] = state
 
-        _update_instruction()
-        _render_all()
+        _on_tool_change()
         _refresh_listbox()
 
     def _apply_layout_editor_changes(
@@ -31418,7 +32758,7 @@ class UnifiedApp(tk.Tk):
 
         ttk.Checkbutton(
             lf_cycle_integration,
-            text='Show Cycle Legend on Core Plots (Peaks/Troughs/Cycles/I"P)',
+            text='Show Cycle Legend on Core Plots (Peaks/Troughs/Cycles/ΔP)',
             variable=self.show_cycle_legend_on_core,
         ).grid(row=0, column=1, sticky="w", padx=6, pady=4)
 
@@ -31973,7 +33313,7 @@ class UnifiedApp(tk.Tk):
             },
             tooltip=(
                 "Close and regenerate the 'Figure 3: Cycle Analysis' tab using the markers currently "
-                'shown in this interactive plot. This ignores the Minimum I"P threshold.'
+                'shown in this interactive plot. This ignores the Minimum ΔP threshold.'
             ),
             allow_wrap=False,
         )
@@ -35476,7 +36816,7 @@ class UnifiedApp(tk.Tk):
             delta_text = f"{delta_psi:.2f}" if math.isfinite(delta_psi) else "N/A"
             temp_text = f"{mean_temp:.2f}" if math.isfinite(mean_temp) else "N/A"
             lines.append(
-                f'Cycle {idx}: I"P={delta_text} PSI, Mean T={temp_text} AøC{suffix}, {ideal_text}, {vdw_text}'
+                f'Cycle {idx}: ΔP={delta_text} PSI, Mean T={temp_text} AøC{suffix}, {ideal_text}, {vdw_text}'
             )
         if len(cycle_rows) > CAP:
             lines.append(f"(+{len(cycle_rows) - CAP} more cycles)")
@@ -50610,7 +51950,17 @@ class UnifiedApp(tk.Tk):
             frame[self._stitched_x_col] = elapsed_seconds / unit_seconds
             frame[self._stitched_hms_col] = elapsed_seconds.apply(_format_elapsed_hms)
             if idx > 0:
-                separator = {col: np.nan for col in frame.columns}
+                separator = {}
+                for col in frame.columns:
+                    dtype = frame[col].dtype
+                    if pd.api.types.is_datetime64_any_dtype(dtype):
+                        separator[col] = pd.NaT
+                    elif pd.api.types.is_bool_dtype(dtype):
+                        separator[col] = ""
+                    elif pd.api.types.is_numeric_dtype(dtype):
+                        separator[col] = np.nan
+                    else:
+                        separator[col] = ""
                 stitched_parts.append(pd.DataFrame([separator]))
             stitched_parts.append(frame)
 
