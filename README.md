@@ -1,9 +1,14 @@
-# GL-260 Data Analysis and Plotter (V1.6.6)
+# GL-260 Data Analysis and Plotter (V1.6.8)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data exported to Excel, mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.6.6`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.6.8`.
+
+## V1.6.8 Update Highlights
+- Combined triple-axis plots keep clean breaks between stitched sheets in the display window.
+- Plot element placement works across all element types in the combined plot view.
+- Span + Label selections respect the configured appearance color immediately and the textbox is draggable.
 
 ## Intended Audience
 - Chemists, process engineers, and researchers analyzing GL-260 pressure/temperature datasets.
@@ -406,9 +411,10 @@ Persistence:
 - `settings["plot_elements"]` stores element lists per plot ID.
 - `settings["annotations_ui"]` stores per-plot UI state (collapsed state, last mode, add defaults, live update).
 
-### Plot Elements Updates (V1.6.6)
+### Plot Elements Updates (V1.6.8)
+- Span selection highlights respect the configured appearance color immediately.
+- Span + Label textboxes drag from the label body with persistent placement.
 - Span fills render behind data traces while labels stay above for readability.
-- Span + Label text can be dragged directly by clicking the label body.
 - Span + Label now supports resizable text wrapping with persistent width.
 - The Plot Elements editor is resizable with a persistent layout and a wider default size.
 - Add/edit workflows are consistent across all plot element types (type, axis, coordinate mode, then place).
@@ -565,7 +571,7 @@ The script includes internal change summaries:
   - Treeview selection recursion fix in annotations editor.
   - Layout fixes for the annotations Toplevel.
 
-Note: the UI title uses `APP_VERSION` set to `V1.6.6`.
+Note: the UI title uses `APP_VERSION` set to `V1.6.8`.
 
 ## Troubleshooting
 - **"No Data" or "Missing Columns" errors**: Load a sheet on the Data tab and set required columns on the Columns tab.

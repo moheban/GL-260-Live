@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.6.6
-# Date: 2026-01-07
+# Version: V1.6.8
+# Date: 2026-01-08
 
 import os
 import sys
@@ -2011,7 +2011,7 @@ class AnnotationRenderer:
         if text_artist is None:
             return
         try:
-            text_artist.set_picker(True)
+            text_artist.set_picker(5)
         except Exception:
             pass
         if element_id:
@@ -2021,6 +2021,10 @@ class AnnotationRenderer:
                 pass
             try:
                 text_artist._gl260_annotation_handle = handle_id
+            except Exception:
+                pass
+            try:
+                text_artist._gl260_element_id = element_id
             except Exception:
                 pass
         try:
@@ -2043,6 +2047,10 @@ class AnnotationRenderer:
                 pass
             try:
                 bbox_patch._gl260_annotation_handle = handle_id
+            except Exception:
+                pass
+            try:
+                bbox_patch._gl260_element_id = element_id
             except Exception:
                 pass
 
@@ -3589,6 +3597,7 @@ class PlotAnnotationsController:
         self._dirty = False
         self._cids: List[int] = []
         self._style_clipboard: Optional[Dict[str, Any]] = None
+        self._span_selector_props: Dict[str, Any] = {}
         self._history.push(self._elements())
         self._connect_events()
         self.render()
@@ -3600,6 +3609,19 @@ class PlotAnnotationsController:
         self._panel = panel
         if self._panel is not None:
             self._panel.refresh()
+
+    def set_target(self, fig: Figure, canvas: FigureCanvasTkAgg) -> None:
+        if fig is None or canvas is None:
+            return
+        canvas_changed = self._canvas is not canvas
+        fig_changed = self._fig is not fig
+        if not canvas_changed and not fig_changed:
+            return
+        if canvas_changed:
+            self.disconnect()
+            self._canvas = canvas
+            self._connect_events()
+        self._fig = fig
 
     def set_mode(self, mode: str) -> None:
         if mode not in ANNOTATION_MODES:
@@ -3679,6 +3701,16 @@ class PlotAnnotationsController:
     def _clear_span_selectors(self) -> None:
         for selector in list(self._span_selectors):
             try:
+                rect = getattr(selector, "rect", None)
+                if rect is None:
+                    rect = getattr(selector, "_selection_artist", None)
+                if rect is None:
+                    rect = getattr(selector, "_rect", None)
+                if rect is not None:
+                    rect.set_visible(False)
+            except Exception:
+                pass
+            try:
                 selector.set_active(False)
             except Exception:
                 pass
@@ -3688,9 +3720,69 @@ class PlotAnnotationsController:
                 pass
         self._span_selectors = []
 
+    def _span_selector_style(self) -> Dict[str, Any]:
+        base = _default_style_for_type("xspan")
+        base.update(self._placing_style_overrides or {})
+        alpha = _coerce_float(base.get("alpha"))
+        if alpha is None:
+            alpha = 0.9
+        linewidth = _coerce_float(base.get("linewidth"))
+        if linewidth is None:
+            linewidth = 1.5
+        color = base.get("color") or "#000000"
+        facecolor = base.get("facecolor") or base.get("fill_color") or color
+        edgecolor = base.get("edgecolor") or color
+        linestyle = base.get("linestyle")
+        props = {
+            "facecolor": facecolor,
+            "edgecolor": edgecolor,
+            "alpha": max(0.0, min(1.0, float(alpha))),
+            "linewidth": max(0.5, float(linewidth)),
+        }
+        if linestyle:
+            props["linestyle"] = linestyle
+        return props
+
+    def _apply_span_selector_style(
+        self, selector: SpanSelector, props: Mapping[str, Any]
+    ) -> None:
+        if selector is None or not props:
+            return
+        applied = False
+        if hasattr(selector, "set_props"):
+            try:
+                selector.set_props(props)
+                applied = True
+            except Exception:
+                applied = False
+        if applied:
+            return
+        rect = getattr(selector, "rect", None)
+        if rect is None:
+            rect = getattr(selector, "_selection_artist", None)
+        if rect is None:
+            rect = getattr(selector, "_rect", None)
+        if rect is None:
+            return
+        try:
+            if "facecolor" in props:
+                rect.set_facecolor(props["facecolor"])
+            if "edgecolor" in props:
+                rect.set_edgecolor(props["edgecolor"])
+            if "alpha" in props:
+                rect.set_alpha(props["alpha"])
+            if "linewidth" in props:
+                rect.set_linewidth(props["linewidth"])
+            if "linestyle" in props:
+                rect.set_linestyle(props["linestyle"])
+        except Exception:
+            pass
+
     def _arm_span_selectors(self) -> bool:
         self._clear_span_selectors()
         self._span_commit_in_progress = False
+        props = self._span_selector_style()
+        self._span_selector_props = dict(props)
         axes: List[Axes] = []
         for role in ("primary", "right", "third"):
             ax = self._axes_map.get(role)
@@ -3711,15 +3803,27 @@ class PlotAnnotationsController:
                     useblit=False,
                     interactive=False,
                     minspan=1e-9,
+                    props=props,
                 )
             except TypeError:
-                selector = SpanSelector(
-                    ax,
-                    self._commit_new_xspan_from_selector,
-                    "horizontal",
-                    useblit=False,
-                    minspan=1e-9,
-                )
+                try:
+                    selector = SpanSelector(
+                        ax,
+                        self._commit_new_xspan_from_selector,
+                        "horizontal",
+                        useblit=False,
+                        minspan=1e-9,
+                        rectprops=props,
+                    )
+                except TypeError:
+                    selector = SpanSelector(
+                        ax,
+                        self._commit_new_xspan_from_selector,
+                        "horizontal",
+                        useblit=False,
+                        minspan=1e-9,
+                    )
+            self._apply_span_selector_style(selector, props)
             self._span_selectors.append(selector)
         return True
 
@@ -3739,6 +3843,14 @@ class PlotAnnotationsController:
         if self._span_commit_in_progress:
             return
         self._span_commit_in_progress = True
+        if self._span_selectors and self._span_selector_props:
+            for selector in self._span_selectors:
+                self._apply_span_selector_style(selector, self._span_selector_props)
+            if self._canvas is not None:
+                try:
+                    self._canvas.draw_idle()
+                except Exception:
+                    pass
         self._clear_span_selectors()
         element_type = self._placing_type
         style = _default_style_for_type(element_type)
@@ -4322,32 +4434,37 @@ class PlotAnnotationsController:
             artist is not None
             and getattr(artist, "_gl260_annotation_handle", None) == "label"
         ):
-            if self._placing_type is not None or self._mode != "select":
-                return
-            element_id = getattr(artist, "_gl260_annotation_id", None) or getattr(
-                artist, "_gl260_element_id", None
-            )
-            if element_id:
-                element = next(
-                    (el for el in self._elements() if el.get("id") == element_id), None
+            if self._placing_type is None:
+                if self._mode != "select":
+                    return
+                element_id = getattr(artist, "_gl260_annotation_id", None) or getattr(
+                    artist, "_gl260_element_id", None
                 )
-                if element is None:
-                    return
-                if self._placing_type not in {"xspan", "xspan_label"} or (
-                    self._placing_coord_space or "data"
-                ) != "data":
-                    self._clear_span_selectors()
-                self.set_selected_id(element.get("id"))
-                if element.get("locked"):
-                    return
-                ax = self._axes_map.get(element.get("axes_target", "primary"))
-                if ax is None:
-                    ax = getattr(press_event, "inaxes", None)
-                if ax is None:
-                    return
-                self._start_drag(element, "label", press_event, ax)
-            return
-        if getattr(event, "name", "") == "pick_event":
+                if element_id:
+                    element = next(
+                        (el for el in self._elements() if el.get("id") == element_id),
+                        None,
+                    )
+                    if element is None:
+                        return
+                    if self._placing_type not in {"xspan", "xspan_label"} or (
+                        self._placing_coord_space or "data"
+                    ) != "data":
+                        self._clear_span_selectors()
+                    self.set_selected_id(element.get("id"))
+                    if element.get("locked"):
+                        return
+                    ax = self._axes_map.get(element.get("axes_target", "primary"))
+                    if ax is None:
+                        ax = getattr(press_event, "inaxes", None)
+                    if ax is None:
+                        return
+                    self._start_drag(element, "label", press_event, ax)
+                return
+        if (
+            getattr(event, "name", "") == "pick_event"
+            and self._placing_type is None
+        ):
             return
         if press_event.inaxes is None:
             return
@@ -5429,6 +5546,7 @@ class AnnotationsPanel:
         self._add_keep_placing_var = tk.BooleanVar(value=False)
         self._add_status_var = tk.StringVar(value="")
         self._add_armed = False
+        self._add_armed_guard = False
         self._add_place_button: Optional[ttk.Button] = None
         self._add_cancel_button: Optional[ttk.Button] = None
         self._add_label_entry: Optional[ttk.Entry] = None
@@ -5544,6 +5662,7 @@ class AnnotationsPanel:
 
     def set_add_placement_active(self, active: bool) -> None:
         self._add_armed = bool(active)
+        self._add_armed_guard = self._add_armed
         if self._add_place_button is not None:
             self._add_place_button.configure(
                 state="disabled" if self._add_armed else "normal"
@@ -6174,6 +6293,8 @@ class AnnotationsPanel:
         self._add_axis_label_var.set(axis_value_map.get(current_role, values[0]))
 
     def _on_mode_changed(self) -> None:
+        if self._add_armed_guard:
+            return
         if self._add_armed:
             self._on_cancel_add_element()
         self._controller.set_mode(self._mode_var.get())
@@ -6966,7 +7087,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.6.6"
+APP_VERSION = "V1.6.8"
 
 
 DEBUG_SERIES_FLOW = False
@@ -25142,6 +25263,10 @@ class UnifiedApp(tk.Tk):
                     axis_labels = self._plot_element_axis_labels(new_fig)
                     controller = self._plot_annotation_controllers.get(plot_id)
                     if controller is not None:
+                        try:
+                            controller.set_target(new_fig, canvas)
+                        except Exception:
+                            pass
                         controller.update_axis_map(new_fig, axes_map, axis_labels)
                         try:
                             controller.render()
@@ -25581,6 +25706,10 @@ class UnifiedApp(tk.Tk):
 
         axes_map = self._resolve_plot_element_axes(fig)
         axis_labels = self._plot_element_axis_labels(fig)
+        try:
+            controller.set_target(fig, canvas)
+        except Exception:
+            pass
         try:
             controller.update_axis_map(fig, axes_map, axis_labels)
         except Exception:
@@ -28146,6 +28275,10 @@ class UnifiedApp(tk.Tk):
                     axis_labels,
                 )
                 self._plot_annotation_controllers[plot_id] = controller
+                try:
+                    controller.set_target(fig, canvas)
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -54395,6 +54528,56 @@ class UnifiedApp(tk.Tk):
             return x_values, series_values
         if idx[-1] != x_array.size - 1:
             idx = np.append(idx, x_array.size - 1)
+        required_mask = np.zeros(x_array.size, dtype=bool)
+        try:
+            x_nan = np.isnan(x_array)
+        except Exception:
+            x_nan = None
+        if x_nan is not None:
+            try:
+                x_nan = np.asarray(x_nan).reshape(-1)
+            except Exception:
+                x_nan = None
+        if x_nan is not None and x_nan.size == x_array.size:
+            required_mask |= x_nan
+        for values in series_values.values():
+            if values is None:
+                continue
+            try:
+                y_array = np.asarray(values)
+            except Exception:
+                continue
+            if y_array.shape[0] != x_array.shape[0]:
+                continue
+            try:
+                y_nan = np.isnan(y_array)
+            except Exception:
+                try:
+                    y_nan = pd.isna(y_array)
+                except Exception:
+                    y_nan = None
+            if y_nan is None:
+                continue
+            try:
+                y_nan = np.asarray(y_nan).reshape(-1)
+            except Exception:
+                continue
+            if y_nan.size != x_array.size:
+                continue
+            required_mask |= y_nan
+        if required_mask.any():
+            required_idx = np.flatnonzero(required_mask)
+            if required_idx.size:
+                neighbor_idx = np.unique(
+                    np.concatenate([required_idx - 1, required_idx + 1])
+                )
+                neighbor_idx = neighbor_idx[
+                    (neighbor_idx >= 0) & (neighbor_idx < x_array.size)
+                ]
+                required_idx = np.unique(
+                    np.concatenate([required_idx, neighbor_idx])
+                )
+                idx = np.unique(np.concatenate([idx, required_idx]))
         x_dec = x_array[idx]
         decimated: Dict[str, Any] = {}
         for key, values in series_values.items():
