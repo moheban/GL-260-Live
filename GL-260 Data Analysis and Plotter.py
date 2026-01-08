@@ -1797,10 +1797,12 @@ class AnnotationStore:
 class AnnotationRenderer:
     def __init__(self) -> None:
         self._warned_legacy: Set[str] = set()
+        self._wrap_cache: Dict[Tuple[Any, ...], str] = {}
 
     def clear(self, fig: Figure) -> None:
         if fig is None:
             return
+        self._wrap_cache.clear()
         artists = list(getattr(fig, "_gl260_annotation_artists", []) or [])
         for artist in artists:
             if isinstance(artist, (list, tuple)):
@@ -1949,6 +1951,101 @@ class AnnotationRenderer:
             ax, text_value, data0[0], data0[1], wrap_width_data, fontsize
         )
 
+    def _wrap_cache_key(
+        self,
+        ax: Axes,
+        element_id: Optional[str],
+        text_value: str,
+        fontsize: float,
+        wrap_width_x: Optional[float],
+        coord_space: str,
+    ) -> Tuple[Any, ...]:
+        xlim = None
+        ylim = None
+        try:
+            xlim = tuple(round(val, 6) for val in ax.get_xlim())
+            ylim = tuple(round(val, 6) for val in ax.get_ylim())
+        except Exception:
+            xlim = None
+            ylim = None
+        return (
+            element_id or "",
+            text_value,
+            round(float(fontsize or 0.0), 3),
+            wrap_width_x,
+            coord_space,
+            xlim,
+            ylim,
+        )
+
+    def _cached_wrap_text_for_coord_space(
+        self,
+        ax: Axes,
+        element_id: Optional[str],
+        text_value: str,
+        x: Optional[float],
+        y: Optional[float],
+        wrap_width_x: Optional[float],
+        fontsize: float,
+        coord_space: str,
+    ) -> str:
+        if not wrap_width_x or x is None or y is None:
+            return text_value
+        key = self._wrap_cache_key(
+            ax, element_id, text_value, fontsize, wrap_width_x, coord_space
+        )
+        cached = self._wrap_cache.get(key)
+        if cached is not None:
+            return cached
+        wrapped = self._wrap_text_for_coord_space(
+            ax, text_value, x, y, wrap_width_x, fontsize, coord_space
+        )
+        if len(self._wrap_cache) >= 256:
+            self._wrap_cache.clear()
+        self._wrap_cache[key] = wrapped
+        return wrapped
+
+    def _arm_text_bbox_picker(
+        self, text_artist: Any, element_id: Optional[str], handle_id: str = "label"
+    ) -> None:
+        if text_artist is None:
+            return
+        try:
+            text_artist.set_picker(True)
+        except Exception:
+            pass
+        if element_id:
+            try:
+                text_artist._gl260_annotation_id = element_id
+            except Exception:
+                pass
+            try:
+                text_artist._gl260_annotation_handle = handle_id
+            except Exception:
+                pass
+        try:
+            bbox_patch = text_artist.get_bbox_patch()
+        except Exception:
+            bbox_patch = None
+        if bbox_patch is None:
+            return
+        try:
+            bbox_patch.set_picker(5)
+        except Exception:
+            try:
+                bbox_patch.set_picker(True)
+            except Exception:
+                pass
+        if element_id:
+            try:
+                bbox_patch._gl260_annotation_id = element_id
+            except Exception:
+                pass
+            try:
+                bbox_patch._gl260_annotation_handle = handle_id
+            except Exception:
+                pass
+
     def _resolve_label_y_data(self, ax: Axes, geometry: Mapping[str, Any]) -> float:
         label_axes = geometry.get("label_y_axes")
         if label_axes is not None:
@@ -2069,6 +2166,7 @@ class AnnotationRenderer:
             if isinstance(element.get("geometry"), Mapping)
             else {}
         )
+        element_id = str(element.get("id") or "")
         coord_space = str(element.get("coord_space") or "data").strip().lower()
         if coord_space == "axes":
             self._migrate_axes_to_data(ax, element)
@@ -2087,8 +2185,15 @@ class AnnotationRenderer:
             fontsize = self._style_float(style, "fontsize", 10.0, 4.0)
             text_value = geometry.get("text", "Text")
             wrap_width = _coerce_float(geometry.get("wrap_width_x"))
-            wrapped = self._wrap_text_for_coord_space(
-                ax, str(text_value), x, y, wrap_width, fontsize, coord_space
+            wrapped = self._cached_wrap_text_for_coord_space(
+                ax,
+                element_id,
+                str(text_value),
+                x,
+                y,
+                wrap_width,
+                fontsize,
+                coord_space,
             )
             artist = ax.text(
                 x,
@@ -2106,6 +2211,7 @@ class AnnotationRenderer:
                 bbox=self._text_bbox(style),
             )
             artist.set_wrap(True)
+            self._arm_text_bbox_picker(artist, element_id, "label")
             self._apply_text_shadow(artist, style)
             return artist
 
@@ -2141,6 +2247,7 @@ class AnnotationRenderer:
                 },
             )
             artist.set_zorder(zorder)
+            self._arm_text_bbox_picker(artist, element_id, "label")
             self._apply_text_shadow(artist, style)
             return artist
 
@@ -2176,6 +2283,7 @@ class AnnotationRenderer:
             )
             artist.set_zorder(zorder)
             if text_value:
+                self._arm_text_bbox_picker(artist, element_id, "label")
                 self._apply_text_shadow(artist, style)
             return artist
 
@@ -2260,8 +2368,9 @@ class AnnotationRenderer:
                     wrap_target_y = label_y
                 else:
                     wrap_target_y = label_y_data
-                wrapped = self._wrap_text_for_coord_space(
+                wrapped = self._cached_wrap_text_for_coord_space(
                     ax,
+                    element_id,
                     text_value,
                     label_x,
                     wrap_target_y,
@@ -2284,11 +2393,7 @@ class AnnotationRenderer:
                     zorder=zorder + 1,
                     bbox=self._text_bbox(style),
                 )
-                text_artist.set_picker(True)
-                text_artist._gl260_annotation_handle = "label"
-                element_id = str(element.get("id") or "")
-                if element_id:
-                    text_artist._gl260_annotation_id = element_id
+                self._arm_text_bbox_picker(text_artist, element_id, "label")
                 text_artist.set_wrap(True)
                 self._apply_text_shadow(text_artist, style)
                 artists.append(text_artist)
@@ -2340,6 +2445,7 @@ class AnnotationRenderer:
                     zorder=zorder + 1,
                     bbox=self._text_bbox(style),
                 )
+                self._arm_text_bbox_picker(text_artist, element_id, "label")
                 self._apply_text_shadow(text_artist, style)
                 artists.append(text_artist)
             return artists
@@ -2395,6 +2501,7 @@ class AnnotationRenderer:
                     zorder=zorder + 1,
                     bbox=self._text_bbox(style),
                 )
+                self._arm_text_bbox_picker(text_artist, element_id, "label")
                 self._apply_text_shadow(text_artist, style)
                 artists.append(text_artist)
             return artists
@@ -2428,7 +2535,12 @@ class AnnotationRenderer:
         return None
 
     def update_artists(
-        self, ax: Axes, element: Mapping[str, Any], artists: Sequence[Any]
+        self,
+        ax: Axes,
+        element: Mapping[str, Any],
+        artists: Sequence[Any],
+        *,
+        skip_wrap: bool = False,
     ) -> bool:
         if ax is None or not artists:
             return False
@@ -2458,20 +2570,34 @@ class AnnotationRenderer:
                 fontsize = self._style_float(style, "fontsize", 10.0, 4.0)
                 text_value = geometry.get("text", "Text")
                 wrap_width = _coerce_float(geometry.get("wrap_width_x"))
-                wrapped = self._wrap_text_for_coord_space(
-                    ax, str(text_value), x, y, wrap_width, fontsize, coord_space
-                )
+                element_id = str(element.get("id") or "")
+                if skip_wrap:
+                    wrapped = artist.get_text()
+                else:
+                    wrapped = self._cached_wrap_text_for_coord_space(
+                        ax,
+                        element_id,
+                        str(text_value),
+                        x,
+                        y,
+                        wrap_width,
+                        fontsize,
+                        coord_space,
+                    )
                 artist.set_transform(transform)
                 artist.set_position((x, y))
-                artist.set_text(wrapped)
+                if not skip_wrap:
+                    artist.set_text(wrapped)
                 artist.set_fontsize(fontsize)
                 artist.set_color(self._resolve_color(style, "text_color", "color"))
                 artist.set_alpha(alpha)
                 artist.set_ha(style.get("text_align", "left"))
                 artist.set_va(style.get("text_valign", "bottom"))
                 artist.set_zorder(zorder)
-                artist.set_bbox(self._text_bbox(style))
-                artist.set_wrap(True)
+                if not skip_wrap:
+                    artist.set_bbox(self._text_bbox(style))
+                    artist.set_wrap(True)
+                    self._arm_text_bbox_picker(artist, element_id, "label")
                 return True
 
             if element_type == "callout":
@@ -2489,6 +2615,7 @@ class AnnotationRenderer:
                 artist.set_alpha(alpha)
                 artist.set_fontsize(self._style_float(style, "fontsize", 10.0, 4.0))
                 artist.set_bbox(self._text_bbox(style))
+                self._arm_text_bbox_picker(artist, str(element.get("id") or ""), "label")
                 arrow_patch = getattr(artist, "arrow_patch", None)
                 if arrow_patch is not None:
                     arrow_patch.set_linewidth(linewidth)
@@ -2513,6 +2640,9 @@ class AnnotationRenderer:
                     artist.set_text(str(text_value))
                     artist.set_bbox(self._text_bbox(style))
                     artist.set_color(self._resolve_color(style, "text_color", "color"))
+                    self._arm_text_bbox_picker(
+                        artist, str(element.get("id") or ""), "label"
+                    )
                 arrow_patch = getattr(artist, "arrow_patch", None)
                 if arrow_patch is not None:
                     arrow_patch.set_linewidth(linewidth)
@@ -2600,26 +2730,33 @@ class AnnotationRenderer:
                     fontsize = self._style_float(style, "fontsize", 10.0, 4.0)
                     wrap_width = _coerce_float(geometry.get("wrap_width_x"))
                     wrap_target_y = label_y if coord_space == "axes" else label_y_data
-                    wrapped = self._wrap_text_for_coord_space(
-                        ax,
-                        text_value,
-                        label_x,
-                        wrap_target_y,
-                        wrap_width,
-                        fontsize,
-                        coord_space,
-                    )
                     text_artist.set_transform(label_transform)
                     text_artist.set_position((label_x, label_y))
-                    text_artist.set_text(wrapped)
+                    if not skip_wrap:
+                        element_id = str(element.get("id") or "")
+                        wrapped = self._cached_wrap_text_for_coord_space(
+                            ax,
+                            element_id,
+                            text_value,
+                            label_x,
+                            wrap_target_y,
+                            wrap_width,
+                            fontsize,
+                            coord_space,
+                        )
+                        text_artist.set_text(wrapped)
                     text_artist.set_fontsize(fontsize)
                     text_artist.set_color(self._resolve_color(style, "text_color", "color"))
                     text_artist.set_alpha(alpha)
                     text_artist.set_ha(style.get("text_align", geometry.get("label_anchor", "center")))
                     text_artist.set_va(style.get("text_valign", "center"))
                     text_artist.set_zorder(zorder + 1)
-                    text_artist.set_bbox(self._text_bbox(style))
-                    text_artist.set_wrap(True)
+                    if not skip_wrap:
+                        text_artist.set_bbox(self._text_bbox(style))
+                        text_artist.set_wrap(True)
+                        self._arm_text_bbox_picker(
+                            text_artist, str(element.get("id") or ""), "label"
+                        )
                 return True
 
             if element_type == "rect":
@@ -2664,6 +2801,9 @@ class AnnotationRenderer:
                     text_artist.set_fontsize(self._style_float(style, "fontsize", 10.0, 4.0))
                     text_artist.set_zorder(zorder + 1)
                     text_artist.set_bbox(self._text_bbox(style))
+                    self._arm_text_bbox_picker(
+                        text_artist, str(element.get("id") or ""), "label"
+                    )
                 return True
 
             if element_type == "ref_line":
@@ -2707,6 +2847,9 @@ class AnnotationRenderer:
                     text_artist.set_fontsize(self._style_float(style, "fontsize", 10.0, 4.0))
                     text_artist.set_zorder(zorder + 1)
                     text_artist.set_bbox(self._text_bbox(style))
+                    self._arm_text_bbox_picker(
+                        text_artist, str(element.get("id") or ""), "label"
+                    )
                 return True
 
             if element_type == "ink":
@@ -2732,6 +2875,14 @@ class AnnotationRenderer:
 class AnnotationHitTest:
     def __init__(self, pixel_tolerance: float = 8.0) -> None:
         self._pixel_tolerance = float(pixel_tolerance)
+        self._text_bbox_cache: Dict[Tuple[Any, ...], Tuple[float, float, float, float]] = {}
+        self._span_bbox_cache: Dict[
+            Tuple[Any, ...], Tuple[Tuple[float, float, float, float], Optional[float]]
+        ] = {}
+
+    def clear_cache(self) -> None:
+        self._text_bbox_cache.clear()
+        self._span_bbox_cache.clear()
 
     def _text_bbox_display(
         self, ax: Axes, element: Mapping[str, Any]
@@ -2762,6 +2913,28 @@ class AnnotationHitTest:
             fontsize = _style_float_from_style(style, "fontsize", 10.0, 4.0)
             text_value = geometry.get("text", "Text")
             wrap_width = _coerce_float(geometry.get("wrap_width_x"))
+            element_id = str(element.get("id") or "")
+            xlim = ylim = None
+            try:
+                xlim = tuple(round(val, 6) for val in ax.get_xlim())
+                ylim = tuple(round(val, 6) for val in ax.get_ylim())
+            except Exception:
+                xlim = None
+                ylim = None
+            cache_key = (
+                element_id,
+                str(text_value),
+                round(float(fontsize or 0.0), 3),
+                wrap_width,
+                coord_space,
+                round(float(x), 6),
+                round(float(y), 6),
+                xlim,
+                ylim,
+            )
+            cached = self._text_bbox_cache.get(cache_key)
+            if cached is not None:
+                return cached
             wrapped = str(text_value)
             if coord_space == "axes":
                 try:
@@ -2803,7 +2976,11 @@ class AnnotationHitTest:
             )
             text_artist.set_wrap(True)
             bbox = text_artist.get_window_extent(renderer=renderer)
-            return (bbox.x0, bbox.y0, bbox.x1, bbox.y1)
+            result = (bbox.x0, bbox.y0, bbox.x1, bbox.y1)
+            if len(self._text_bbox_cache) >= 256:
+                self._text_bbox_cache.clear()
+            self._text_bbox_cache[cache_key] = result
+            return result
         except Exception:
             return None
         finally:
@@ -2948,123 +3125,6 @@ class AnnotationHitTest:
                         text_artist.remove()
                     except Exception:
                         pass
-
-    def _span_label_bbox_display(
-        self, ax: Axes, element: Mapping[str, Any]
-    ) -> Optional[Tuple[Tuple[float, float, float, float], Optional[float]]]:
-        text_artist = None
-        try:
-            if ax is None or element is None:
-                return None
-            geometry = (
-                element.get("geometry")
-                if isinstance(element.get("geometry"), Mapping)
-                else {}
-            )
-            style = (
-                element.get("style")
-                if isinstance(element.get("style"), Mapping)
-                else {}
-            )
-            coord_space = str(element.get("coord_space") or "data").strip().lower()
-            x0 = _coerce_float(geometry.get("x0"))
-            x1 = _coerce_float(geometry.get("x1"))
-            label_x = _coerce_float(geometry.get("label_x"))
-            if label_x is None and x0 is not None and x1 is not None:
-                label_x = (x0 + x1) / 2.0
-            if label_x is None:
-                return None
-            label_y_axes = _coerce_float(geometry.get("label_y_axes"))
-            if label_y_axes is not None:
-                label_y_axes = max(0.0, min(1.0, float(label_y_axes)))
-            if label_y_axes is not None:
-                if coord_space == "axes":
-                    label_transform = ax.transAxes
-                    label_y = label_y_axes
-                else:
-                    label_transform = blended_transform_factory(ax.transData, ax.transAxes)
-                    label_y = label_y_axes
-                label_y_data = self._resolve_label_y_from_event(ax, geometry)
-            else:
-                label_y_data = _coerce_float(geometry.get("label_y_data"))
-                if label_y_data is None:
-                    label_y_data = self._resolve_label_y_from_event(ax, geometry)
-                label_y = label_y_data
-                label_transform = ax.transAxes if coord_space == "axes" else ax.transData
-            text_value = str(geometry.get("text", "Label"))
-            fontsize = _style_float_from_style(style, "fontsize", 10.0, 4.0)
-            wrap_width_value = _coerce_float(geometry.get("wrap_width_x"))
-            data_x = label_x
-            data_y = label_y_data
-            wrap_width_data = wrap_width_value
-            if coord_space == "axes":
-                try:
-                    disp = ax.transAxes.transform((label_x, label_y))
-                    data_x, data_y = ax.transData.inverted().transform(disp)
-                except Exception:
-                    data_x, data_y = label_x, label_y_data
-                if wrap_width_value is not None:
-                    try:
-                        disp0 = ax.transAxes.transform((label_x, label_y))
-                        disp1 = ax.transAxes.transform(
-                            (label_x + wrap_width_value, label_y)
-                        )
-                        data0 = ax.transData.inverted().transform(disp0)
-                        data1 = ax.transData.inverted().transform(disp1)
-                        wrap_width_data = data1[0] - data0[0]
-                    except Exception:
-                        wrap_width_data = None
-            wrapped = _wrap_text_for_display(
-                ax, text_value, data_x, data_y, wrap_width_data, fontsize
-            )
-            fig = ax.figure
-            if fig is None or fig.canvas is None:
-                return None
-            renderer = fig.canvas.get_renderer()
-            if renderer is None:
-                return None
-            text_artist = ax.text(
-                label_x,
-                label_y,
-                wrapped,
-                transform=label_transform,
-                fontsize=fontsize,
-                fontfamily=style.get("fontfamily", None),
-                fontweight=style.get("fontweight", None),
-                color=style.get("text_color") or style.get("color") or "#000000",
-                alpha=_style_alpha_from_style(style, 0.9),
-                ha=style.get("text_align", geometry.get("label_anchor", "center")),
-                va=style.get("text_valign", "center"),
-                bbox=_annotation_text_bbox_style(style),
-            )
-            text_artist.set_wrap(True)
-            bbox = text_artist.get_window_extent(renderer=renderer)
-            wrap_edge_x = None
-            if wrap_width_value is not None:
-                try:
-                    if coord_space == "axes":
-                        wrap_edge_x = ax.transAxes.transform(
-                            (label_x + wrap_width_value, label_y)
-                        )[0]
-                    elif label_y_axes is not None:
-                        wrap_edge_x = blended_transform_factory(
-                            ax.transData, ax.transAxes
-                        ).transform((label_x + wrap_width_value, label_y_axes))[0]
-                    else:
-                        wrap_edge_x = ax.transData.transform(
-                            (label_x + wrap_width_value, label_y)
-                        )[0]
-                except Exception:
-                    wrap_edge_x = None
-            return (bbox.x0, bbox.y0, bbox.x1, bbox.y1), wrap_edge_x
-        except Exception:
-            return None
-        finally:
-            if text_artist is not None:
-                try:
-                    text_artist.remove()
-                except Exception:
-                    pass
 
         if element_type == "arrow":
             x0 = _coerce_float(geometry.get("x0"))
@@ -3221,6 +3281,151 @@ class AnnotationHitTest:
 
         return None
 
+    def _span_label_bbox_display(
+        self, ax: Axes, element: Mapping[str, Any]
+    ) -> Optional[Tuple[Tuple[float, float, float, float], Optional[float]]]:
+        text_artist = None
+        try:
+            if ax is None or element is None:
+                return None
+            geometry = (
+                element.get("geometry")
+                if isinstance(element.get("geometry"), Mapping)
+                else {}
+            )
+            style = (
+                element.get("style")
+                if isinstance(element.get("style"), Mapping)
+                else {}
+            )
+            coord_space = str(element.get("coord_space") or "data").strip().lower()
+            x0 = _coerce_float(geometry.get("x0"))
+            x1 = _coerce_float(geometry.get("x1"))
+            label_x = _coerce_float(geometry.get("label_x"))
+            if label_x is None and x0 is not None and x1 is not None:
+                label_x = (x0 + x1) / 2.0
+            if label_x is None:
+                return None
+            label_y_axes = _coerce_float(geometry.get("label_y_axes"))
+            if label_y_axes is not None:
+                label_y_axes = max(0.0, min(1.0, float(label_y_axes)))
+            if label_y_axes is not None:
+                if coord_space == "axes":
+                    label_transform = ax.transAxes
+                    label_y = label_y_axes
+                else:
+                    label_transform = blended_transform_factory(ax.transData, ax.transAxes)
+                    label_y = label_y_axes
+                label_y_data = self._resolve_label_y_from_event(ax, geometry)
+            else:
+                label_y_data = _coerce_float(geometry.get("label_y_data"))
+                if label_y_data is None:
+                    label_y_data = self._resolve_label_y_from_event(ax, geometry)
+                label_y = label_y_data
+                label_transform = ax.transAxes if coord_space == "axes" else ax.transData
+            text_value = str(geometry.get("text", "Label"))
+            fontsize = _style_float_from_style(style, "fontsize", 10.0, 4.0)
+            wrap_width_value = _coerce_float(geometry.get("wrap_width_x"))
+            element_id = str(element.get("id") or "")
+            xlim = ylim = None
+            try:
+                xlim = tuple(round(val, 6) for val in ax.get_xlim())
+                ylim = tuple(round(val, 6) for val in ax.get_ylim())
+            except Exception:
+                xlim = None
+                ylim = None
+            cache_key = (
+                element_id,
+                str(text_value),
+                round(float(fontsize or 0.0), 3),
+                wrap_width_value,
+                coord_space,
+                round(float(label_x), 6),
+                round(float(label_y), 6) if label_y is not None else None,
+                round(float(label_y_data), 6) if label_y_data is not None else None,
+                label_y_axes,
+                xlim,
+                ylim,
+            )
+            cached = self._span_bbox_cache.get(cache_key)
+            if cached is not None:
+                return cached
+            data_x = label_x
+            data_y = label_y_data
+            wrap_width_data = wrap_width_value
+            if coord_space == "axes":
+                try:
+                    disp = ax.transAxes.transform((label_x, label_y))
+                    data_x, data_y = ax.transData.inverted().transform(disp)
+                except Exception:
+                    data_x, data_y = label_x, label_y_data
+                if wrap_width_value is not None:
+                    try:
+                        disp0 = ax.transAxes.transform((label_x, label_y))
+                        disp1 = ax.transAxes.transform(
+                            (label_x + wrap_width_value, label_y)
+                        )
+                        data0 = ax.transData.inverted().transform(disp0)
+                        data1 = ax.transData.inverted().transform(disp1)
+                        wrap_width_data = data1[0] - data0[0]
+                    except Exception:
+                        wrap_width_data = None
+            wrapped = _wrap_text_for_display(
+                ax, text_value, data_x, data_y, wrap_width_data, fontsize
+            )
+            fig = ax.figure
+            if fig is None or fig.canvas is None:
+                return None
+            renderer = fig.canvas.get_renderer()
+            if renderer is None:
+                return None
+            text_artist = ax.text(
+                label_x,
+                label_y,
+                wrapped,
+                transform=label_transform,
+                fontsize=fontsize,
+                fontfamily=style.get("fontfamily", None),
+                fontweight=style.get("fontweight", None),
+                color=style.get("text_color") or style.get("color") or "#000000",
+                alpha=_style_alpha_from_style(style, 0.9),
+                ha=style.get("text_align", geometry.get("label_anchor", "center")),
+                va=style.get("text_valign", "center"),
+                bbox=_annotation_text_bbox_style(style),
+            )
+            text_artist.set_wrap(True)
+            bbox = text_artist.get_window_extent(renderer=renderer)
+            wrap_edge_x = None
+            if wrap_width_value is not None:
+                try:
+                    if coord_space == "axes":
+                        wrap_edge_x = ax.transAxes.transform(
+                            (label_x + wrap_width_value, label_y)
+                        )[0]
+                    elif label_y_axes is not None:
+                        wrap_edge_x = blended_transform_factory(
+                            ax.transData, ax.transAxes
+                        ).transform((label_x + wrap_width_value, label_y_axes))[0]
+                    else:
+                        wrap_edge_x = ax.transData.transform(
+                            (label_x + wrap_width_value, label_y)
+                        )[0]
+                except Exception:
+                    wrap_edge_x = None
+            result = ((bbox.x0, bbox.y0, bbox.x1, bbox.y1), wrap_edge_x)
+            if len(self._span_bbox_cache) >= 256:
+                self._span_bbox_cache.clear()
+            self._span_bbox_cache[cache_key] = result
+            return result
+        except Exception:
+            return None
+        finally:
+            if text_artist is not None:
+                try:
+                    text_artist.remove()
+                except Exception:
+                    pass
+
     def _resolve_label_y_from_event(
         self, ax: Axes, geometry: Mapping[str, Any]
     ) -> float:
@@ -3368,6 +3573,7 @@ class PlotAnnotationsController:
         self._selected_id = ui_state.get("last_selected_id")
         self._panel: Optional["AnnotationsPanel"] = None
         self._drag_state: Optional[Dict[str, Any]] = None
+        self._drag_blit_state: Optional[Dict[str, Any]] = None
         self._placing_type: Optional[str] = None
         self._placing_style_overrides: Dict[str, Any] = {}
         self._placing_geometry_seed: Optional[Dict[str, Any]] = None
@@ -3664,6 +3870,10 @@ class PlotAnnotationsController:
     def render(self) -> None:
         if self._fig is None:
             return
+        try:
+            self._hit_test.clear_cache()
+        except Exception:
+            pass
         self._clear_overlays()
         self._renderer.render(self._fig, self._axes_map, self._elements())
         self._render_handles()
@@ -3692,7 +3902,9 @@ class PlotAnnotationsController:
         except Exception:
             pass
 
-    def _sync_dragged_element_artists(self, element: Mapping[str, Any]) -> bool:
+    def _sync_dragged_element_artists(
+        self, element: Mapping[str, Any], *, skip_wrap: bool = False
+    ) -> bool:
         if self._fig is None or element is None:
             return False
         element_id = str(element.get("id") or "")
@@ -3707,7 +3919,68 @@ class PlotAnnotationsController:
         ax = self._axes_map.get(element.get("axes_target", "primary"))
         if ax is None:
             return False
-        return self._renderer.update_artists(ax, element, artists)
+        return self._renderer.update_artists(
+            ax, element, artists, skip_wrap=skip_wrap
+        )
+
+    def _arm_drag_blit(self, element_id: str) -> None:
+        if self._fig is None or self._canvas is None:
+            self._drag_blit_state = None
+            return
+        artist_map = getattr(self._fig, "_gl260_annotation_artist_map", None)
+        if not isinstance(artist_map, dict):
+            self._drag_blit_state = None
+            return
+        artists = [a for a in artist_map.get(element_id, []) if a is not None]
+        if not artists:
+            self._drag_blit_state = None
+            return
+        for artist in artists:
+            try:
+                artist.set_animated(True)
+            except Exception:
+                pass
+        background = None
+        try:
+            background = self._canvas.copy_from_bbox(self._fig.bbox)
+        except Exception:
+            background = None
+        self._drag_blit_state = {"background": background, "artists": artists}
+
+    def _blit_drag_update(self) -> bool:
+        if self._fig is None or self._canvas is None:
+            return False
+        state = self._drag_blit_state
+        if not isinstance(state, dict):
+            return False
+        background = state.get("background")
+        artists = state.get("artists")
+        if background is None or not artists:
+            return False
+        try:
+            self._canvas.restore_region(background)
+            for artist in artists:
+                try:
+                    self._fig.draw_artist(artist)
+                except Exception:
+                    continue
+            self._canvas.blit(self._fig.bbox)
+            return True
+        except Exception:
+            return False
+
+    def _end_drag_blit(self) -> None:
+        state = self._drag_blit_state
+        if not isinstance(state, dict):
+            self._drag_blit_state = None
+            return
+        artists = state.get("artists") or []
+        for artist in artists:
+            try:
+                artist.set_animated(False)
+            except Exception:
+                pass
+        self._drag_blit_state = None
 
     def _render_handles(self) -> None:
         element = self.selected_element()
@@ -4146,9 +4419,17 @@ class PlotAnnotationsController:
             return
         self._dirty = True
         self._update_dragged_element(element, event)
-        if self._sync_dragged_element_artists(element):
-            self._refresh_overlays_only()
+        handle = self._drag_state.get("handle", "move") if self._drag_state else "move"
+        skip_wrap = handle != "wrap"
+        if self._sync_dragged_element_artists(element, skip_wrap=skip_wrap):
+            if not self._blit_drag_update():
+                try:
+                    if self._canvas is not None:
+                        self._canvas.draw_idle()
+                except Exception:
+                    pass
         else:
+            self._end_drag_blit()
             self.render()
 
     def _on_release(self, event: Any) -> None:
@@ -4220,6 +4501,14 @@ class PlotAnnotationsController:
                 self.cancel_place_element()
                 self.set_mode("select")
             return
+        element = self._drag_state.get("element")
+        if element and not element.get("locked"):
+            try:
+                self._sync_dragged_element_artists(element, skip_wrap=False)
+            except Exception:
+                pass
+        self._end_drag_blit()
+        self._refresh_overlays_only()
         if self._dirty:
             self._commit_history()
         self._drag_state = None
@@ -4598,6 +4887,9 @@ class PlotAnnotationsController:
             "ax": ax,
             "coord_space": coord_space,
         }
+        element_id = str(element.get("id") or "")
+        if element_id:
+            self._arm_drag_blit(element_id)
 
     def _start_creation(
         self, ax: Axes, event: Any, *, element_type: Optional[str] = None
@@ -18934,15 +19226,18 @@ def _apply_cycle_legend_axis_offset(
     dx: float,
     dy: float,
     loc_value: Any,
+    *,
+    allow_draw: bool = True,
 ) -> bool:
     if fig is None or legend is None or ref_axis is None:
         return False
     if fig.canvas is None:
         FigureCanvasAgg(fig)
-    try:
-        fig.canvas.draw()
-    except Exception:
-        pass
+    if allow_draw:
+        try:
+            fig.canvas.draw()
+        except Exception:
+            pass
     try:
         renderer = fig.canvas.get_renderer()
     except Exception:
@@ -19262,7 +19557,7 @@ class PlotLayoutManager:
     def set_legend_alignment(self, alignment: str) -> None:
         self.legend_alignment = _normalize_legend_alignment(alignment)
 
-    def _get_renderer(self):
+    def _get_renderer(self, allow_draw: bool = True):
         canvas = self.fig.canvas
         if canvas is None:
             canvas = FigureCanvasAgg(self.fig)
@@ -19270,14 +19565,15 @@ class PlotLayoutManager:
                 self.fig.set_canvas(canvas)
             except Exception:
                 pass
-        try:
-            canvas.draw()
-        except Exception:
+        if allow_draw:
             try:
-                canvas.draw_idle()
                 canvas.draw()
             except Exception:
-                pass
+                try:
+                    canvas.draw_idle()
+                    canvas.draw()
+                except Exception:
+                    pass
         try:
             return canvas.get_renderer()
         except Exception:
@@ -19349,7 +19645,7 @@ class PlotLayoutManager:
             )
         return ("lower center", center_x)
 
-    def solve(self, *, max_passes: int = 3) -> None:
+    def solve(self, *, max_passes: int = 3, allow_draw: bool = True) -> None:
         """Measure artists + ticks and grow margins until nothing clips."""
         if not self._axes:
             return
@@ -19420,7 +19716,7 @@ class PlotLayoutManager:
 
         for _ in range(max_passes):
             self.fig.subplots_adjust(left=left, right=right, bottom=bottom, top=top)
-            renderer = self._get_renderer()
+            renderer = self._get_renderer(allow_draw)
             axes_bbox = self._axes_union_position()
             main_center_x = None
             if primary_axis is not None:
@@ -19478,7 +19774,7 @@ class PlotLayoutManager:
                 except Exception:
                     pass
 
-            renderer = self._get_renderer()
+            renderer = self._get_renderer(allow_draw)
             legend_bbox = self._bbox_in_fig(legend, renderer) if legend else None
             if legend is not None and legend_bbox is not None:
                 if legend_bbox.y0 < legend_anchor_y:
@@ -19495,7 +19791,7 @@ class PlotLayoutManager:
                     except Exception:
                         pass
 
-            renderer = self._get_renderer()
+            renderer = self._get_renderer(allow_draw)
             data_axes_tight = self._axes_tight_union(renderer)
             legend_bbox = self._bbox_in_fig(legend, renderer) if legend else None
             xlabel_bbox = self._bbox_in_fig(xlabel, renderer) if xlabel else None
@@ -19533,7 +19829,7 @@ class PlotLayoutManager:
                 except Exception:
                     pass
 
-            renderer = self._get_renderer()
+            renderer = self._get_renderer(allow_draw)
             legend_bbox = self._bbox_in_fig(legend, renderer) if legend else None
             xlabel_bbox = self._bbox_in_fig(xlabel, renderer) if xlabel else None
             if xlabel_bbox is not None:
@@ -19558,13 +19854,13 @@ class PlotLayoutManager:
                         )
                     except Exception:
                         pass
-                    renderer = self._get_renderer()
+                    renderer = self._get_renderer(allow_draw)
                     xlabel_bbox = (
                         self._bbox_in_fig(xlabel, renderer) if xlabel else None
                     )
                     if xlabel_bbox is not None:
                         bottom = max(bottom, xlabel_bbox.y1 + xlabel_tick_gap_frac)
-            renderer = self._get_renderer()
+            renderer = self._get_renderer(allow_draw)
             title_bbox = self._bbox_in_fig(title, renderer) if title else None
             suptitle_bbox = self._bbox_in_fig(suptitle, renderer) if suptitle else None
 
@@ -19578,7 +19874,7 @@ class PlotLayoutManager:
                     except Exception:
                         pass
 
-            renderer = self._get_renderer()
+            renderer = self._get_renderer(allow_draw)
             suptitle_bbox = self._bbox_in_fig(suptitle, renderer) if suptitle else None
 
             if (
@@ -19602,7 +19898,7 @@ class PlotLayoutManager:
                     except Exception:
                         pass
 
-            renderer = self._get_renderer()
+            renderer = self._get_renderer(allow_draw)
             data_axes_tight = self._axes_tight_union(renderer)
             if cycle_legend is not None:
                 cycle_bbox = self._bbox_in_fig(cycle_legend, renderer)
@@ -19757,6 +20053,7 @@ def build_combined_triple_axis_figure(
     fmt = _format_axis_label
     svg_safe = _svg_safe_text
     handles = []
+    line_map: Dict[str, Any] = {}
     time_range = (min_time, max_time)
     ax_temp: Optional[Axes] = None
     ax_deriv: Optional[Axes] = None
@@ -20016,7 +20313,7 @@ def build_combined_triple_axis_figure(
         }
         if series_key == "z2":
             style_kwargs["line_style"] = "--"
-        return _plot_series(
+        artist = _plot_series(
             ax_target,
             x,
             series,
@@ -20024,6 +20321,15 @@ def build_combined_triple_axis_figure(
             color=meta.get("color"),
             **style_kwargs,
         )
+        if artist is None:
+            return None
+        if series_key:
+            try:
+                artist._gl260_series_key = series_key
+            except Exception:
+                pass
+            line_map[series_key] = artist
+        return artist
 
     primary_meta = dataset_meta.get(left_key, dataset_meta["y1"])
     right_meta = dataset_meta.get(right_key, dataset_meta["z"])
@@ -20490,7 +20796,10 @@ def build_combined_triple_axis_figure(
     layout_manager.register_artist("plot_legend", main_legend)
     layout_manager.register_artist("cycle_legend", cycle_legend)
     layout_manager.set_legend_alignment(legend_alignment)
-    layout_manager.solve()
+    if mode_value == "export":
+        layout_manager.solve()
+    else:
+        layout_manager.solve(max_passes=1, allow_draw=False)
     fig._gl260_layout_manager = layout_manager  # type: ignore[attr-defined]
     fig._gl260_title_state = {
         "suptitle": suptitle_display,
@@ -20505,7 +20814,10 @@ def build_combined_triple_axis_figure(
     if fig.canvas is None:
         FigureCanvasAgg(fig)
     try:
-        fig.canvas.draw()
+        if mode_value == "export":
+            fig.canvas.draw()
+        else:
+            fig.canvas.draw_idle()
     except Exception:
         pass
 
@@ -20527,6 +20839,7 @@ def build_combined_triple_axis_figure(
                 axis_offset_values[0],
                 axis_offset_values[1],
                 loc_value,
+                allow_draw=(mode_value == "export"),
             )
         else:
             legacy_anchor = _validated_anchor_pair(
@@ -20557,6 +20870,7 @@ def build_combined_triple_axis_figure(
                         offsets[0],
                         offsets[1],
                         loc_value,
+                        allow_draw=(mode_value == "export"),
                     )
                     try:
                         _save_settings_to_disk()
@@ -20575,7 +20889,10 @@ def build_combined_triple_axis_figure(
 
     # Final pass: enforce y-axis label font family/size after all positioning.
     try:
-        fig.canvas.draw()
+        if mode_value == "export":
+            fig.canvas.draw()
+        else:
+            fig.canvas.draw_idle()
     except Exception:
         pass
     y_label_sizes: List[float] = []
@@ -20662,6 +20979,21 @@ def build_combined_triple_axis_figure(
             "[WARN] Combined axis tick font families mismatch:",
             [sorted(vals) for vals in family_sets],
         )
+
+    try:
+        fig._gl260_combined_line_map = line_map  # type: ignore[attr-defined]
+        fig._gl260_combined_axes_map = {  # type: ignore[attr-defined]
+            "primary": ax,
+            "right": ax_temp,
+            "third": ax_deriv,
+        }
+        fig._gl260_combined_axis_keys = {  # type: ignore[attr-defined]
+            "left": left_key,
+            "right": right_key,
+            "third": third_key,
+        }
+    except Exception:
+        pass
 
     return fig
 
@@ -21766,6 +22098,9 @@ class UnifiedApp(tk.Tk):
         self._final_report_preview_save_button: Optional[ttk.Button] = None
         self._final_report_preview_after_id: Optional[str] = None
         self._combined_plot_preview_fig: Optional[Figure] = None
+        self._combined_plot_state: Optional[Dict[str, Any]] = None
+        self._combined_layout_state: Optional[Tuple[Any, ...]] = None
+        self._combined_layout_dirty = True
         stored_combined_anchor = settings.get("combined_legend_anchor")
         if (
             isinstance(stored_combined_anchor, (list, tuple))
@@ -24773,7 +25108,11 @@ class UnifiedApp(tk.Tk):
                     except Exception:
                         fig_size = self._compute_target_figsize_inches()
                     new_fig = self._build_combined_triple_axis_from_state(
-                        args=args, fig_size=fig_size, mode="display"
+                        args=args,
+                        fig_size=fig_size,
+                        mode="display",
+                        reuse=True,
+                        canvas=canvas,
                     )
             except Exception:
                 new_fig = None
@@ -24788,7 +25127,12 @@ class UnifiedApp(tk.Tk):
                         self._teardown_layout_editor(plot_id, apply_changes=False)
                     except Exception:
                         pass
-                if plot_id:
+                reused_combined = (
+                    plot_key == "fig_combined"
+                    and canvas is not None
+                    and getattr(canvas, "figure", None) is new_fig
+                )
+                if plot_id and not reused_combined:
                     self._apply_plot_elements(new_fig, plot_id)
             except Exception:
                 pass
@@ -24815,7 +25159,10 @@ class UnifiedApp(tk.Tk):
                     canvas.resize_event()
                 except Exception:
                     pass
-                canvas.draw()
+                if plot_key == "fig_combined":
+                    canvas.draw_idle()
+                else:
+                    canvas.draw()
             except Exception:
                 pass
             try:
@@ -26158,6 +26505,26 @@ class UnifiedApp(tk.Tk):
                 if contains:
                     return getattr(artist, "_gl260_plot_element_index", None)
             return None
+
+        def _coords_from_event(
+            event: Any, ax: Optional[Axes], coords_kind: str
+        ) -> Optional[Tuple[float, float]]:
+            if event is None or ax is None:
+                return None
+            coords_kind = str(coords_kind or "data").strip().lower()
+            if coords_kind == "axes":
+                if event.x is None or event.y is None:
+                    return None
+                try:
+                    x_val, y_val = ax.transAxes.inverted().transform((event.x, event.y))
+                except Exception:
+                    return None
+                return (x_val, y_val)
+            if event.inaxes != ax:
+                return None
+            if event.xdata is None or event.ydata is None:
+                return None
+            return (event.xdata, event.ydata)
 
         def _sync_artist_from_element(element: Mapping[str, Any], artist: Any) -> None:
             element_type = str(element.get("type") or "").strip().lower()
@@ -30718,6 +31085,7 @@ class UnifiedApp(tk.Tk):
         settings["combined_xlabel_tick_gap_pts"] = xlabel_tick_gap_value
         settings["combined_legend_bottom_margin_pts"] = legend_margin_value
         settings.pop("combined_legend_panel_height", None)
+        self._combined_layout_dirty = True
         try:
             self._schedule_save_settings()
         except Exception:
@@ -37016,17 +37384,22 @@ class UnifiedApp(tk.Tk):
             canvas = fig.canvas
             if canvas is not None:
                 try:
-                    canvas.draw_idle()
-                except Exception:
-                    pass
-                try:
-                    canvas.draw()
-                except Exception:
-                    pass
-                try:
                     renderer = canvas.get_renderer()
                 except Exception:
                     renderer = None
+                if renderer is None:
+                    try:
+                        canvas.draw_idle()
+                    except Exception:
+                        pass
+                    try:
+                        canvas.draw()
+                    except Exception:
+                        pass
+                    try:
+                        renderer = canvas.get_renderer()
+                    except Exception:
+                        renderer = None
         except Exception:
             renderer = None
 
@@ -37289,6 +37662,7 @@ class UnifiedApp(tk.Tk):
                 _save_settings_to_disk()
             except Exception:
                 pass
+            self._combined_layout_dirty = True
 
     def _register_combined_legend_tracking(self, fig: Optional[Figure]) -> None:
         """Enable dragging on the combined legend and persist the dragged position for reuse."""
@@ -53622,84 +53996,18 @@ class UnifiedApp(tk.Tk):
 
         fig_size = self._compute_target_figsize_inches()
         fig = self._build_combined_triple_axis_from_state(
-            args=args, fig_size=fig_size, mode="display"
+            args=args, fig_size=fig_size, mode="display", reuse=True
         )
 
         if fig is not None:
 
             self._render_figures_in_tabs({"fig_combined": fig})
 
-    def _build_combined_triple_axis_from_state(
-        self,
-        *,
-        args: Optional[Tuple[Any, ...]] = None,
-        fig_size: Optional[Tuple[float, float]] = None,
-        mode: str = "display",
-    ) -> Optional[Figure]:
-
-        if self.df is None:
-
-            return None
-
-        try:
-            ignore_min_drop = bool(getattr(self, "_cycle_last_ignore_min_drop", True))
-            self._refresh_final_report_cycle_snapshot(
-                ignore_min_drop=ignore_min_drop
-            )
-            self._prime_core_cycle_overlay_globals()
-        except Exception:
-            pass
-
-        if args is None:
-
-            try:
-
-                self._prepare_series_globals()
-
-                args = self._collect_plot_args()
-
-            except Exception:
-
-                args = getattr(self, "_last_plot_args", None)
-
+    def _combined_plot_config(
+        self, args: Tuple[Any, ...], mode: str
+    ) -> Optional[Dict[str, Any]]:
         if not args or len(args) < 24:
-
             return None
-
-        try:
-            ignore_min_drop = bool(getattr(self, "_cycle_last_ignore_min_drop", True))
-            self._refresh_final_report_cycle_snapshot(ignore_min_drop=ignore_min_drop)
-        except Exception:
-            pass
-
-        try:
-            self._prime_core_cycle_overlay_globals()
-        except Exception:
-            pass
-
-        required_series = {
-            "y1": globals().get("y1"),
-            "y3": globals().get("y3"),
-            "y2": globals().get("y2"),
-            "z": globals().get("z"),
-            "z2": globals().get("z2"),
-        }
-        missing_required = [
-            self._combined_dataset_label(key)
-            for key, series in required_series.items()
-            if series is None
-        ]
-        if missing_required:
-            try:
-                messagebox.showerror(
-                    "Missing Columns",
-                    "The combined triple-axis plot requires the following datasets: "
-                    + ", ".join(missing_required),
-                )
-            except Exception:
-                pass
-            return None
-
         base_args = args[:24]
         deriv_offset = self._safe_get_var(self.combined_deriv_axis_offset, float)
         legend_rows_value = self._safe_get_var(self.combined_legend_rows, int)
@@ -53809,14 +54117,9 @@ class UnifiedApp(tk.Tk):
         self.combined_y_left_key.set(left_key)
         self.combined_y_right_key.set(right_key)
         self.combined_y_third_key.set(third_key)
-        if args is not None:
-            show_cycle_markers = bool(args[-3])
-            show_cycle_legend = bool(args[-2])
-            include_moles_core = bool(args[-1])
-        else:
-            show_cycle_markers = bool(self.show_cycle_markers_on_core.get())
-            show_cycle_legend = bool(self.show_cycle_legend_on_core.get())
-            include_moles_core = bool(self.include_moles_core_legend.get())
+        show_cycle_markers = bool(args[-3])
+        show_cycle_legend = bool(args[-2])
+        include_moles_core = bool(args[-1])
         settings["show_cycle_markers_on_core_plots"] = bool(show_cycle_markers)
         settings["show_cycle_legend_on_core_plots"] = bool(show_cycle_legend)
         settings["include_moles_in_core_plot_legend"] = bool(include_moles_core)
@@ -53890,6 +54193,879 @@ class UnifiedApp(tk.Tk):
                 offset_value = None
             if offset_value is not None and math.isfinite(offset_value):
                 deriv_offset = offset_value
+        axis_label_overrides = self._combined_axis_label_overrides()
+        return {
+            "base_args": base_args,
+            "deriv_offset": deriv_offset,
+            "wrap_enabled": wrap_enabled,
+            "legend_rows_value": legend_rows_value,
+            "legend_alignment_value": legend_alignment_value,
+            "legend_gap_value": legend_gap_value,
+            "xlabel_tick_gap_value": xlabel_tick_gap_value,
+            "legend_margin_value": legend_margin_value,
+            "left_padding_pct": left_padding_pct,
+            "right_padding_pct": right_padding_pct,
+            "export_pad_pts": export_pad_pts,
+            "title_pad_pts": title_pad_pts,
+            "suptitle_pad_pts": suptitle_pad_pts,
+            "suptitle_y_value": suptitle_y_value,
+            "top_margin_pct": top_margin_pct,
+            "suptitle_font_value": suptitle_font_value,
+            "title_font_value": title_font_value,
+            "label_font_value": label_font_value,
+            "tick_font_value": tick_font_value,
+            "legend_font_value": legend_font_value,
+            "font_family_value": font_family_value,
+            "left_key": left_key,
+            "right_key": right_key,
+            "third_key": third_key,
+            "show_cycle_markers": show_cycle_markers,
+            "show_cycle_legend": show_cycle_legend,
+            "include_moles_core": include_moles_core,
+            "legend_anchor": legend_anchor,
+            "cycle_legend_anchor": cycle_legend_anchor,
+            "legend_loc": legend_loc,
+            "cycle_legend_loc": cycle_legend_loc,
+            "cycle_legend_anchor_space": cycle_legend_anchor_space,
+            "baseline_margins": profile_margins,
+            "legend_anchor_y": profile_legend_anchor_y,
+            "xlabel_pad_value": xlabel_pad_value,
+            "axis_label_overrides": axis_label_overrides,
+            "labelpad_overrides": labelpad_overrides,
+            "layout_section": layout_section,
+            "axis_offset_values": axis_offset_values,
+        }
+
+    def _combined_scatter_signature(
+        self, series_keys: Sequence[str]
+    ) -> Tuple[Any, ...]:
+        signature = []
+        for key in series_keys:
+            cfg = _get_scatter_config(key)
+            signature.append(
+                (
+                    key,
+                    bool(cfg.get("enabled")),
+                    cfg.get("marker"),
+                    cfg.get("linestyle"),
+                    cfg.get("color"),
+                    cfg.get("edgecolor"),
+                    _coerce_float(cfg.get("size")),
+                    _coerce_float(cfg.get("linewidth")),
+                    _coerce_float(cfg.get("alpha")),
+                )
+            )
+        return tuple(signature)
+
+    def _combined_structure_signature(
+        self, config: Mapping[str, Any], args: Tuple[Any, ...]
+    ) -> Tuple[Any, ...]:
+        base_args = config.get("base_args") or ()
+        enable_temp_axis = bool(base_args[22]) if len(base_args) > 22 else False
+        enable_deriv_axis = bool(base_args[23]) if len(base_args) > 23 else False
+        cycle_overlay = globals().get("core_cycle_overlay")
+        cycle_sig = None
+        if isinstance(cycle_overlay, dict):
+            peaks = cycle_overlay.get("peak_points") or []
+            troughs = cycle_overlay.get("trough_points") or []
+            cycles = cycle_overlay.get("cycles") or []
+            total_drop = _coerce_float(cycle_overlay.get("total_drop"))
+            if total_drop is None:
+                total_drop = 0.0
+            cycle_sig = (
+                len(peaks),
+                len(troughs),
+                len(cycles),
+                round(total_drop, 6),
+            )
+        return (
+            config.get("left_key"),
+            config.get("right_key"),
+            config.get("third_key"),
+            enable_temp_axis,
+            enable_deriv_axis,
+            bool(config.get("show_cycle_markers")),
+            bool(config.get("show_cycle_legend")),
+            bool(config.get("include_moles_core")),
+            self._combined_scatter_signature(("y1", "y3", "y2", "z", "z2")),
+            cycle_sig,
+        )
+
+    def _combined_layout_signature(
+        self,
+        config: Mapping[str, Any],
+        args: Tuple[Any, ...],
+        fig_size: Optional[Tuple[float, float]],
+    ) -> Tuple[Any, ...]:
+        base_args = config.get("base_args") or ()
+        auto_time_ticks = bool(base_args[8]) if len(base_args) > 8 else False
+        auto_y_ticks = bool(base_args[9]) if len(base_args) > 9 else False
+        auto_temp_ticks = bool(base_args[10]) if len(base_args) > 10 else False
+        auto_deriv_ticks = bool(base_args[11]) if len(base_args) > 11 else False
+        title_text = base_args[12] if len(base_args) > 12 else ""
+        suptitle_text = base_args[13] if len(base_args) > 13 else ""
+        fig_size_value = None
+        if fig_size is not None:
+            try:
+                fig_size_value = (
+                    round(float(fig_size[0]), 4),
+                    round(float(fig_size[1]), 4),
+                )
+            except Exception:
+                fig_size_value = None
+        baseline_margins = config.get("baseline_margins") or {}
+        labelpad_overrides = config.get("labelpad_overrides") or {}
+        label_overrides = config.get("axis_label_overrides") or {}
+        return (
+            fig_size_value,
+            config.get("font_family_value"),
+            config.get("suptitle_font_value"),
+            config.get("title_font_value"),
+            config.get("label_font_value"),
+            config.get("tick_font_value"),
+            config.get("legend_font_value"),
+            title_text or "",
+            suptitle_text or "",
+            config.get("legend_alignment_value"),
+            config.get("legend_anchor"),
+            config.get("legend_anchor_y"),
+            config.get("legend_loc"),
+            bool(config.get("wrap_enabled")),
+            config.get("legend_rows_value"),
+            config.get("cycle_legend_anchor"),
+            config.get("cycle_legend_loc"),
+            config.get("cycle_legend_anchor_space"),
+            config.get("axis_offset_values"),
+            auto_time_ticks,
+            auto_y_ticks,
+            auto_temp_ticks,
+            auto_deriv_ticks,
+            config.get("legend_gap_value"),
+            config.get("xlabel_tick_gap_value"),
+            config.get("legend_margin_value"),
+            config.get("left_padding_pct"),
+            config.get("right_padding_pct"),
+            config.get("export_pad_pts"),
+            config.get("title_pad_pts"),
+            config.get("suptitle_pad_pts"),
+            config.get("suptitle_y_value"),
+            config.get("top_margin_pct"),
+            config.get("xlabel_pad_value"),
+            tuple(sorted(baseline_margins.items())),
+            tuple(sorted(labelpad_overrides.items())),
+            tuple(sorted(label_overrides.items())),
+        )
+
+    def _combined_preview_decimate(
+        self,
+        fig: Optional[Figure],
+        canvas: Optional[FigureCanvasTkAgg],
+        x_values: Any,
+        series_values: Dict[str, Any],
+    ) -> Tuple[Any, Dict[str, Any]]:
+        if x_values is None:
+            return x_values, series_values
+        try:
+            x_array = np.asarray(x_values)
+        except Exception:
+            return x_values, series_values
+        if x_array.size <= 1:
+            return x_values, series_values
+        width_px = None
+        if canvas is not None:
+            try:
+                width_px = int(canvas.get_width_height()[0])
+            except Exception:
+                width_px = None
+        if width_px is None and fig is not None:
+            try:
+                width_px = int(max(fig.get_size_inches()[0] * fig.dpi, 1.0))
+            except Exception:
+                width_px = None
+        if width_px is None or width_px <= 0:
+            return x_values, series_values
+        target_points = int(max(width_px * 3.0, 1.0))
+        if x_array.size <= target_points:
+            return x_array, series_values
+        step = int(math.ceil(x_array.size / float(target_points)))
+        if step <= 1:
+            return x_array, series_values
+        idx = np.arange(0, x_array.size, step)
+        if idx.size == 0:
+            return x_values, series_values
+        if idx[-1] != x_array.size - 1:
+            idx = np.append(idx, x_array.size - 1)
+        x_dec = x_array[idx]
+        decimated: Dict[str, Any] = {}
+        for key, values in series_values.items():
+            if values is None:
+                decimated[key] = None
+                continue
+            try:
+                y_array = np.asarray(values)
+            except Exception:
+                decimated[key] = values
+                continue
+            if y_array.shape[0] != x_array.shape[0]:
+                decimated[key] = values
+                continue
+            decimated[key] = y_array[idx]
+        return x_dec, decimated
+
+    def _update_combined_triple_axis_display(
+        self,
+        config: Mapping[str, Any],
+        args: Tuple[Any, ...],
+        fig_size: Optional[Tuple[float, float]],
+        canvas: Optional[FigureCanvasTkAgg],
+    ) -> Optional[Figure]:
+        base_args = config.get("base_args") or ()
+        if len(base_args) < 24:
+            return None
+        structure_sig = self._combined_structure_signature(config, args)
+        state = (
+            self._combined_plot_state if isinstance(self._combined_plot_state, dict) else {}
+        )
+        fig = state.get("fig") if state else None
+        if fig is None or state.get("structure_sig") != structure_sig:
+            fig = build_combined_triple_axis_figure(
+                *base_args,
+                deriv_axis_offset=config.get("deriv_offset"),
+                legend_wrap=config.get("wrap_enabled"),
+                legend_rows=config.get("legend_rows_value"),
+                legend_alignment=config.get("legend_alignment_value"),
+                legend_label_gap_pts=config.get("legend_gap_value"),
+                xlabel_tick_gap_pts=config.get("xlabel_tick_gap_value"),
+                legend_bottom_margin_pts=config.get("legend_margin_value"),
+                left_pad_pct=config.get("left_padding_pct"),
+                right_pad_pct=config.get("right_padding_pct"),
+                export_pad_pts=config.get("export_pad_pts"),
+                title_pad_pts=config.get("title_pad_pts"),
+                suptitle_pad_pts=config.get("suptitle_pad_pts"),
+                suptitle_y=config.get("suptitle_y_value"),
+                top_margin_pct=config.get("top_margin_pct"),
+                suptitle_fontsize=config.get("suptitle_font_value"),
+                title_fontsize=config.get("title_font_value"),
+                label_fontsize_override=config.get("label_font_value"),
+                tick_fontsize_override=config.get("tick_font_value"),
+                legend_fontsize_override=config.get("legend_font_value"),
+                font_family=config.get("font_family_value"),
+                axis_label_overrides=config.get("axis_label_overrides"),
+                labelpad_overrides=config.get("labelpad_overrides"),
+                left_dataset_key=config.get("left_key"),
+                right_dataset_key=config.get("right_key"),
+                third_dataset_key=config.get("third_key"),
+                show_cycle_markers_on_core_plots=config.get("show_cycle_markers"),
+                show_cycle_legend_on_core_plots=config.get("show_cycle_legend"),
+                include_moles_in_core_plot_legend=config.get("include_moles_core"),
+                legend_anchor=config.get("legend_anchor"),
+                cycle_legend_anchor=config.get("cycle_legend_anchor"),
+                legend_loc=config.get("legend_loc"),
+                cycle_legend_loc=config.get("cycle_legend_loc"),
+                cycle_legend_anchor_space=config.get("cycle_legend_anchor_space"),
+                baseline_margins=config.get("baseline_margins"),
+                legend_anchor_y=config.get("legend_anchor_y"),
+                xlabel_pad_pts=config.get("xlabel_pad_value"),
+                mode="display",
+                fig_size=fig_size,
+            )
+            if fig is None:
+                return None
+            self._combined_plot_state = {
+                "fig": fig,
+                "structure_sig": structure_sig,
+            }
+            self._combined_layout_state = None
+            self._combined_layout_dirty = True
+            try:
+                fig._gl260_expect_cycle_legend = bool(config.get("show_cycle_legend"))
+                fig._gl260_expect_cycle_markers = bool(
+                    config.get("show_cycle_markers")
+                )
+            except Exception:
+                pass
+
+        axes_map = getattr(fig, "_gl260_combined_axes_map", None)
+        if not isinstance(axes_map, dict):
+            axes_map = self._resolve_plot_element_axes(fig)
+        ax = axes_map.get("primary")
+        ax_temp = axes_map.get("right")
+        ax_deriv = axes_map.get("third")
+        if ax is None:
+            return fig
+        try:
+            current_size = tuple(fig.get_size_inches())
+        except Exception:
+            current_size = None
+        if fig_size is not None and current_size is not None:
+            if len(current_size) >= 2:
+                if (
+                    abs(current_size[0] - fig_size[0]) > 1e-3
+                    or abs(current_size[1] - fig_size[1]) > 1e-3
+                ):
+                    try:
+                        fig.set_size_inches(fig_size, forward=False)
+                    except Exception:
+                        pass
+
+        (
+            min_time,
+            max_time,
+            min_y,
+            max_y,
+            twin_y_min,
+            twin_y_max,
+            deriv_y_min,
+            deriv_y_max,
+            auto_time_ticks,
+            auto_y_ticks,
+            auto_temp_ticks,
+            auto_deriv_ticks,
+            title_text,
+            suptitle_text,
+            xmaj_tick,
+            xmin_tick,
+            ymaj_tick,
+            ymin_tick,
+            twin_maj_tick,
+            twin_min_tick,
+            deriv_maj_tick,
+            deriv_min_tick,
+            _enable_temp_axis,
+            _enable_deriv_axis,
+        ) = base_args
+
+        from matplotlib.ticker import AutoLocator, AutoMinorLocator, MultipleLocator
+
+        def _apply_axis_ticks(axis, auto_flag, major_tick, minor_tick):
+            if axis is None:
+                return
+            if auto_flag:
+                axis.yaxis.set_major_locator(AutoLocator())
+                axis.yaxis.set_minor_locator(AutoMinorLocator())
+            else:
+                axis.yaxis.set_major_locator(MultipleLocator(major_tick))
+                axis.yaxis.set_minor_locator(MultipleLocator(minor_tick))
+            axis.minorticks_on()
+            axis.tick_params(
+                axis="y",
+                which="major",
+                labelcolor="black",
+                labelsize=config.get("tick_font_value"),
+            )
+
+        family_value = (config.get("font_family_value") or "").strip()
+
+        def _apply_tick_font(axis):
+            if axis is None or not family_value:
+                return
+            try:
+                labels = list(axis.get_xticklabels()) + list(axis.get_yticklabels())
+                for lbl in labels:
+                    lbl.set_fontfamily(family_value)
+            except Exception:
+                pass
+
+        selected_columns = globals().get("selected_columns", {})
+        svg_safe = _svg_safe_text
+        fmt = _format_axis_label
+
+        def _fmt_safe(value: Any) -> str:
+            return svg_safe(fmt(value))
+
+        label_y1 = _fmt_safe(selected_columns.get("y1", "y1"))
+        label_y3 = _fmt_safe(selected_columns.get("y3", "y3"))
+        label_y2 = _fmt_safe(selected_columns.get("y2", "Derivative"))
+        label_z = _fmt_safe(selected_columns.get("z", "Temp"))
+        label_z2 = _fmt_safe(selected_columns.get("z2", "Temp 2"))
+        default_x_label = _fmt_safe(selected_columns.get("x", "Time"))
+
+        dataset_meta = {
+            "y1": {
+                "series": globals().get("y1"),
+                "label": label_y1,
+                "axis_type": "primary",
+            },
+            "y3": {
+                "series": globals().get("y3"),
+                "label": label_y3,
+                "axis_type": "primary",
+            },
+            "y2": {
+                "series": globals().get("y2"),
+                "label": label_y2,
+                "axis_type": "derivative",
+            },
+            "z": {
+                "series": globals().get("z"),
+                "label": label_z,
+                "axis_type": "temperature",
+            },
+            "z2": {
+                "series": globals().get("z2"),
+                "label": label_z2,
+                "axis_type": "temperature",
+            },
+        }
+        valid_dataset_keys = set(dataset_meta.keys())
+
+        def _resolve_dataset_key(value: Any, default_key: str) -> str:
+            if value is None:
+                return default_key
+            candidate = str(value).strip().lower()
+            return candidate if candidate in valid_dataset_keys else default_key
+
+        left_key = _resolve_dataset_key(config.get("left_key"), "y1")
+        right_key = _resolve_dataset_key(config.get("right_key"), "z")
+        third_key = _resolve_dataset_key(config.get("third_key"), "y2")
+
+        temp_axis_active = (
+            bool(_enable_temp_axis)
+            or dataset_meta["z"]["series"] is not None
+            or dataset_meta["z2"]["series"] is not None
+        )
+        deriv_axis_active = (
+            bool(_enable_deriv_axis) or dataset_meta["y2"]["series"] is not None
+        )
+
+        right_meta = dataset_meta.get(right_key, dataset_meta["z"])
+        third_meta = dataset_meta.get(third_key, dataset_meta["y2"])
+        temp_available = (
+            dataset_meta["z"]["series"] is not None
+            or dataset_meta["z2"]["series"] is not None
+        )
+        deriv_available = dataset_meta["y2"]["series"] is not None
+
+        def _temperature_meta() -> Mapping[str, Any]:
+            if dataset_meta["z"]["series"] is not None:
+                return dataset_meta["z"]
+            if dataset_meta["z2"]["series"] is not None:
+                return dataset_meta["z2"]
+            return dataset_meta["z"]
+
+        right_role = right_meta.get("axis_type", "primary")
+        third_role = third_meta.get("axis_type", "primary")
+        if temp_available and "temperature" not in {right_role, third_role}:
+            right_meta = _temperature_meta()
+            right_role = right_meta.get("axis_type", "primary")
+        if deriv_available and "derivative" not in {right_role, third_role}:
+            if third_role != "temperature":
+                third_meta = dataset_meta["y2"]
+            else:
+                if temp_available:
+                    right_meta = _temperature_meta()
+                    right_role = right_meta.get("axis_type", "primary")
+                third_meta = dataset_meta["y2"]
+            third_role = third_meta.get("axis_type", "primary")
+
+        right_role = right_meta.get("axis_type", "primary")
+        third_role = third_meta.get("axis_type", "primary")
+        if temp_available and "temperature" not in {right_role, third_role}:
+            right_meta = _temperature_meta()
+
+        primary_meta = dataset_meta.get(left_key, dataset_meta["y1"])
+        label_overrides = (
+            config.get("axis_label_overrides")
+            if isinstance(config.get("axis_label_overrides"), dict)
+            else {}
+        )
+        pad_overrides = (
+            config.get("labelpad_overrides")
+            if isinstance(config.get("labelpad_overrides"), dict)
+            else {}
+        )
+
+        def _label_or_default(key: str, default: str) -> str:
+            raw = label_overrides.get(key)
+            if raw is None:
+                return default
+            text = str(raw).strip()
+            return _fmt_safe(text) if text else default
+
+        x_label_text = _label_or_default("x", default_x_label)
+
+        def _pad_or_default(key: str, default: float) -> float:
+            try:
+                candidate = float(pad_overrides.get(key))
+                if math.isfinite(candidate):
+                    return candidate
+            except Exception:
+                pass
+            return default
+
+        primary_labelpad = _pad_or_default("primary", yaxis_labelpad_amount)
+        temp_labelpad = _pad_or_default("temperature", twinyaxis_labelpad_amount)
+        deriv_labelpad = _pad_or_default("derivative", 15)
+        label_fontsize = _sanitize_spacing_value(
+            config.get("label_font_value"),
+            DEFAULT_COMBINED_LABEL_FONTSIZE,
+            MIN_COMBINED_FONT_SIZE,
+            MAX_COMBINED_FONT_SIZE,
+        )
+        tick_fontsize = _sanitize_spacing_value(
+            config.get("tick_font_value"),
+            DEFAULT_COMBINED_TICK_FONTSIZE,
+            MIN_COMBINED_FONT_SIZE,
+            MAX_COMBINED_FONT_SIZE,
+        )
+
+        if ax is not None:
+            ax.set_xlim(min_time, max_time)
+            ax.set_ylim(min_y, max_y)
+            ax.set_ylabel(
+                _label_or_default("primary", primary_meta.get("label", "")),
+                labelpad=primary_labelpad,
+                fontsize=label_fontsize,
+                fontfamily=family_value if family_value else None,
+            )
+
+        if ax_temp is not None and temp_axis_active:
+            ax_temp.set_ylim(twin_y_min, twin_y_max)
+            ax_temp.set_ylabel(
+                _label_or_default("temperature", right_meta.get("label", "")),
+                labelpad=temp_labelpad,
+                fontsize=label_fontsize,
+                fontfamily=family_value if family_value else None,
+                rotation=-90,
+                color="black",
+            )
+            ax_temp.tick_params(axis="y", labelcolor="black", labelsize=tick_fontsize)
+
+        if ax_deriv is not None and deriv_axis_active:
+            ax_deriv.set_ylim(deriv_y_min, deriv_y_max)
+            ax_deriv.set_ylabel(
+                _label_or_default("derivative", third_meta.get("label", "")),
+                labelpad=deriv_labelpad,
+                fontsize=label_fontsize,
+                fontfamily=family_value if family_value else None,
+                rotation=-90,
+                color="black",
+            )
+            ax_deriv.tick_params(axis="y", labelcolor="black", labelsize=tick_fontsize)
+
+        if ax is not None:
+            if auto_time_ticks:
+                ax.xaxis.set_major_locator(AutoLocator())
+                ax.xaxis.set_minor_locator(AutoMinorLocator())
+            else:
+                ax.xaxis.set_major_locator(MultipleLocator(xmaj_tick))
+                ax.xaxis.set_minor_locator(MultipleLocator(xmin_tick))
+            _apply_axis_ticks(ax, auto_y_ticks, ymaj_tick, ymin_tick)
+            ax.tick_params(
+                axis="both", which="major", labelcolor="black", labelsize=tick_fontsize
+            )
+
+        if ax_temp is not None:
+            _apply_axis_ticks(ax_temp, auto_temp_ticks, twin_maj_tick, twin_min_tick)
+        if ax_deriv is not None:
+            _apply_axis_ticks(ax_deriv, auto_deriv_ticks, deriv_maj_tick, deriv_min_tick)
+
+        _apply_tick_font(ax)
+        _apply_tick_font(ax_temp)
+        _apply_tick_font(ax_deriv)
+
+        line_map = getattr(fig, "_gl260_combined_line_map", None)
+        if not isinstance(line_map, dict) or not line_map:
+            return fig
+
+        series_values = {
+            "y1": globals().get("y1"),
+            "y3": globals().get("y3"),
+            "y2": globals().get("y2"),
+            "z": globals().get("z"),
+            "z2": globals().get("z2"),
+        }
+        x_values = globals().get("x")
+        x_plot, decimated = self._combined_preview_decimate(
+            fig, canvas, x_values, series_values
+        )
+
+        labels_changed = False
+        for key, artist in line_map.items():
+            if artist is None:
+                continue
+            y_vals = decimated.get(key)
+            if y_vals is None or x_plot is None:
+                continue
+            if isinstance(artist, Line2D):
+                artist.set_data(x_plot, y_vals)
+            elif hasattr(artist, "set_offsets"):
+                try:
+                    offsets = np.column_stack([x_plot, y_vals])
+                except Exception:
+                    offsets = None
+                if offsets is not None:
+                    artist.set_offsets(offsets)
+            new_label = None
+            if key == "y1":
+                new_label = label_y1
+            elif key == "y3":
+                new_label = label_y3
+            elif key == "y2":
+                new_label = label_y2
+            elif key == "z":
+                new_label = label_z
+            elif key == "z2":
+                new_label = label_z2
+            if new_label is not None:
+                try:
+                    if artist.get_label() != new_label:
+                        artist.set_label(new_label)
+                        labels_changed = True
+                except Exception:
+                    pass
+
+        title_display = svg_safe(title_text)
+        suptitle_display = svg_safe(suptitle_text)
+        if ax is not None:
+            title_artist = getattr(fig, "_gl260_title_text", None)
+            if title_artist is None:
+                title_artist = ax.set_title(title_display)
+                try:
+                    fig._gl260_title_text = title_artist  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+            try:
+                title_artist.set_text(title_display)
+                title_artist.set_fontsize(config.get("title_font_value"))
+                title_artist.set_pad(config.get("title_pad_pts"))
+                if family_value:
+                    title_artist.set_fontfamily(family_value)
+            except Exception:
+                pass
+        suptitle_artist = getattr(fig, "_gl260_suptitle_text", None)
+        if suptitle_artist is not None:
+            try:
+                suptitle_artist.set_text(suptitle_display)
+                suptitle_artist.set_fontsize(config.get("suptitle_font_value"))
+                if family_value:
+                    suptitle_artist.set_fontfamily(family_value)
+            except Exception:
+                pass
+        xlabel_artist = getattr(fig, "_gl260_xlabel_text", None)
+        if xlabel_artist is not None:
+            try:
+                xlabel_artist.set_text(x_label_text)
+                xlabel_artist.set_fontsize(label_fontsize)
+                if family_value:
+                    xlabel_artist.set_fontfamily(family_value)
+            except Exception:
+                pass
+
+        fig._gl260_title_state = {
+            "suptitle": suptitle_display,
+            "title_fs": config.get("title_font_value"),
+            "suptitle_fs": config.get("suptitle_font_value"),
+            "font_family": family_value,
+            "title_pad_pts": config.get("title_pad_pts"),
+            "suptitle_pad_pts": config.get("suptitle_pad_pts"),
+            "suptitle_y": config.get("suptitle_y_value"),
+        }
+
+        layout_sig = self._combined_layout_signature(config, args, fig_size)
+        layout_dirty = self._combined_layout_dirty or self._combined_layout_state != layout_sig
+
+        layout_mgr = PlotLayoutManager(
+            fig,
+            mode="display",
+            baseline_margins=config.get("baseline_margins"),
+            left_pad_pct=config.get("left_padding_pct", 0.0),
+            right_pad_pct=config.get("right_padding_pct", 0.0),
+            export_pad_pts=config.get("export_pad_pts", 0.0),
+            legend_gap_pts=config.get("legend_gap_value", DEFAULT_COMBINED_LEGEND_GAP_PTS),
+            xlabel_tick_gap_pts=config.get("xlabel_tick_gap_value", DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS),
+            legend_margin_pts=config.get("legend_margin_value", DEFAULT_COMBINED_LEGEND_MARGIN_PTS),
+            title_pad_pts=config.get("title_pad_pts", DEFAULT_COMBINED_TITLE_PAD_PTS),
+            suptitle_pad_pts=config.get("suptitle_pad_pts", DEFAULT_COMBINED_SUPTITLE_PAD_PTS),
+            suptitle_y=config.get("suptitle_y_value", DEFAULT_COMBINED_SUPTITLE_Y),
+            top_margin_pct=config.get("top_margin_pct", DEFAULT_COMBINED_TOP_MARGIN_PCT),
+            legend_anchor=config.get("legend_anchor"),
+            legend_anchor_y=config.get("legend_anchor_y"),
+            xlabel_pad_pts=config.get("xlabel_pad_value") or 0.0,
+        )
+        layout_mgr.register_axes(ax, ax_temp, ax_deriv)
+        layout_mgr.register_artist("title", getattr(fig, "_gl260_title_text", None))
+        layout_mgr.register_artist("suptitle", getattr(fig, "_gl260_suptitle_text", None))
+        layout_mgr.register_artist("xlabel", getattr(fig, "_gl260_xlabel_text", None))
+        main_legend = None
+        cycle_legend = None
+        for legend in self._collect_combined_legends(fig):
+            if self._is_combined_cycle_legend(legend):
+                cycle_legend = legend
+            elif getattr(legend, "_combined_main_legend", False):
+                main_legend = legend
+        layout_mgr.register_artist("plot_legend", main_legend)
+        layout_mgr.register_artist("cycle_legend", cycle_legend)
+        layout_mgr.set_legend_alignment(config.get("legend_alignment_value", "center"))
+        if layout_dirty:
+            layout_mgr.solve(max_passes=1, allow_draw=False)
+            self._combined_layout_state = layout_sig
+            self._combined_layout_dirty = False
+        fig._gl260_layout_manager = layout_mgr  # type: ignore[attr-defined]
+
+        axis_offset_values = config.get("axis_offset_values")
+        if axis_offset_values is not None and cycle_legend is not None:
+            try:
+                ref_axis = _resolve_combined_cycle_ref_axis(
+                    fig,
+                    ref_axis_key=settings.get("combined_cycle_legend_ref_axis"),
+                )
+                loc_value = _resolve_combined_cycle_legend_loc()
+                _apply_cycle_legend_axis_offset(
+                    fig,
+                    cycle_legend,
+                    ref_axis,
+                    settings.get("combined_cycle_legend_ref_corner"),
+                    axis_offset_values[0],
+                    axis_offset_values[1],
+                    loc_value,
+                    allow_draw=False,
+                )
+            except Exception:
+                pass
+
+        if labels_changed and main_legend is not None:
+            try:
+                legend_handles = getattr(main_legend, "legendHandles", [])
+                new_labels = [
+                    handle.get_label() for handle in legend_handles if handle is not None
+                ]
+                legend_texts = list(main_legend.get_texts())
+                if len(legend_texts) == len(new_labels):
+                    for text, label in zip(legend_texts, new_labels):
+                        if text.get_text() != label:
+                            text.set_text(label)
+            except Exception:
+                pass
+
+        if fig.canvas is not None:
+            try:
+                fig.canvas.draw_idle()
+            except Exception:
+                pass
+        return fig
+
+    def _build_combined_triple_axis_from_state(
+        self,
+        *,
+        args: Optional[Tuple[Any, ...]] = None,
+        fig_size: Optional[Tuple[float, float]] = None,
+        mode: str = "display",
+        reuse: bool = False,
+        canvas: Optional[FigureCanvasTkAgg] = None,
+    ) -> Optional[Figure]:
+
+        if self.df is None:
+
+            return None
+
+        try:
+            ignore_min_drop = bool(getattr(self, "_cycle_last_ignore_min_drop", True))
+            self._refresh_final_report_cycle_snapshot(
+                ignore_min_drop=ignore_min_drop
+            )
+            self._prime_core_cycle_overlay_globals()
+        except Exception:
+            pass
+
+        if args is None:
+
+            try:
+
+                self._prepare_series_globals()
+
+                args = self._collect_plot_args()
+
+            except Exception:
+
+                args = getattr(self, "_last_plot_args", None)
+
+        if not args or len(args) < 24:
+
+            return None
+
+        try:
+            ignore_min_drop = bool(getattr(self, "_cycle_last_ignore_min_drop", True))
+            self._refresh_final_report_cycle_snapshot(ignore_min_drop=ignore_min_drop)
+        except Exception:
+            pass
+
+        try:
+            self._prime_core_cycle_overlay_globals()
+        except Exception:
+            pass
+
+        required_series = {
+            "y1": globals().get("y1"),
+            "y3": globals().get("y3"),
+            "y2": globals().get("y2"),
+            "z": globals().get("z"),
+            "z2": globals().get("z2"),
+        }
+        missing_required = [
+            self._combined_dataset_label(key)
+            for key, series in required_series.items()
+            if series is None
+        ]
+        if missing_required:
+            try:
+                messagebox.showerror(
+                    "Missing Columns",
+                    "The combined triple-axis plot requires the following datasets: "
+                    + ", ".join(missing_required),
+                )
+            except Exception:
+                pass
+            return None
+
+        config = self._combined_plot_config(args, mode)
+        if config is None:
+            return None
+
+        if reuse and mode == "display":
+            return self._update_combined_triple_axis_display(
+                config, args, fig_size, canvas
+            )
+
+        base_args = config["base_args"]
+        deriv_offset = config["deriv_offset"]
+        legend_rows_value = config["legend_rows_value"]
+        wrap_enabled = config["wrap_enabled"]
+        legend_alignment_value = config["legend_alignment_value"]
+        legend_gap_value = config["legend_gap_value"]
+        xlabel_tick_gap_value = config["xlabel_tick_gap_value"]
+        legend_margin_value = config["legend_margin_value"]
+        left_padding_pct = config["left_padding_pct"]
+        right_padding_pct = config["right_padding_pct"]
+        export_pad_pts = config["export_pad_pts"]
+        title_pad_pts = config["title_pad_pts"]
+        suptitle_pad_pts = config["suptitle_pad_pts"]
+        suptitle_y_value = config["suptitle_y_value"]
+        top_margin_pct = config["top_margin_pct"]
+        suptitle_font_value = config["suptitle_font_value"]
+        title_font_value = config["title_font_value"]
+        label_font_value = config["label_font_value"]
+        tick_font_value = config["tick_font_value"]
+        legend_font_value = config["legend_font_value"]
+        font_family_value = config["font_family_value"]
+        left_key = config["left_key"]
+        right_key = config["right_key"]
+        third_key = config["third_key"]
+        show_cycle_markers = config["show_cycle_markers"]
+        show_cycle_legend = config["show_cycle_legend"]
+        include_moles_core = config["include_moles_core"]
+        legend_anchor = config["legend_anchor"]
+        cycle_legend_anchor = config["cycle_legend_anchor"]
+        legend_loc = config["legend_loc"]
+        cycle_legend_loc = config["cycle_legend_loc"]
+        cycle_legend_anchor_space = config["cycle_legend_anchor_space"]
+        profile_margins = config["baseline_margins"]
+        labelpad_overrides = config["labelpad_overrides"]
+        axis_label_overrides = config["axis_label_overrides"]
+        layout_section = config["layout_section"]
+        axis_offset_values = config["axis_offset_values"]
+        profile_legend_anchor_y = config["legend_anchor_y"]
+        xlabel_pad_value = config["xlabel_pad_value"]
 
         fig = build_combined_triple_axis_figure(
             *base_args,
@@ -53913,7 +55089,7 @@ class UnifiedApp(tk.Tk):
             tick_fontsize_override=tick_font_value,
             legend_fontsize_override=legend_font_value,
             font_family=font_family_value,
-            axis_label_overrides=self._combined_axis_label_overrides(),
+            axis_label_overrides=axis_label_overrides,
             labelpad_overrides=labelpad_overrides,
             left_dataset_key=left_key,
             right_dataset_key=right_key,
@@ -53946,9 +55122,15 @@ class UnifiedApp(tk.Tk):
                 layout_mgr = getattr(fig, "_gl260_layout_manager", None)
                 if layout_mgr is not None:
                     # Pipeline boundary: build -> apply elements -> layout solve -> render.
-                    layout_mgr.solve()
+                    if mode == "export":
+                        layout_mgr.solve()
+                    else:
+                        layout_mgr.solve(max_passes=1, allow_draw=False)
                     if fig.canvas is not None:
-                        fig.canvas.draw()
+                        if mode == "export":
+                            fig.canvas.draw()
+                        else:
+                            fig.canvas.draw_idle()
             except Exception:
                 pass
             try:
@@ -54006,6 +55188,7 @@ class UnifiedApp(tk.Tk):
                         axis_offset_values[0],
                         axis_offset_values[1],
                         loc_value,
+                        allow_draw=(mode == "export"),
                     )
             except Exception:
                 pass
@@ -54014,6 +55197,18 @@ class UnifiedApp(tk.Tk):
                 title_xy=layout_section.get("title_xy"),
                 suptitle_xy=layout_section.get("suptitle_xy"),
             )
+            if mode == "display":
+                try:
+                    self._combined_plot_state = {
+                        "fig": fig,
+                        "structure_sig": self._combined_structure_signature(config, args),
+                    }
+                    self._combined_layout_state = self._combined_layout_signature(
+                        config, args, fig_size
+                    )
+                    self._combined_layout_dirty = False
+                except Exception:
+                    pass
         return fig
 
     def open_cycle_analysis_tab(self):
