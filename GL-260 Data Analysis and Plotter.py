@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.6.8
-# Date: 2026-01-08
+# Version: V1.7.0
+# Date: 2026-01-12
 
 import os
 import sys
@@ -3014,6 +3014,20 @@ class AnnotationHitTest:
         event_xy = (event.x, event.y)
         if event_xy[0] is None or event_xy[1] is None:
             return None
+        event_data = None
+        event_axes = None
+
+        def _event_data_coords() -> Optional[Tuple[float, float]]:
+            try:
+                return tuple(ax.transData.inverted().transform(event_xy))
+            except Exception:
+                return None
+
+        def _event_axes_coords() -> Optional[Tuple[float, float]]:
+            try:
+                return tuple(ax.transAxes.inverted().transform(event_xy))
+            except Exception:
+                return None
 
         def _dist_to_point(data_x: float, data_y: float) -> float:
             try:
@@ -3161,13 +3175,16 @@ class AnnotationHitTest:
         if element_type in {"xspan", "xspan_label"}:
             x0 = _coerce_float(geometry.get("x0"))
             x1 = _coerce_float(geometry.get("x1"))
-            if x0 is None or x1 is None or event.inaxes != ax:
+            if x0 is None or x1 is None:
                 return None
-            y_ref = (
-                ax.transAxes.inverted().transform(event_xy)[1]
-                if coord_space == "axes"
-                else event.ydata
-            )
+            if coord_space == "axes":
+                if event_axes is None:
+                    event_axes = _event_axes_coords()
+                y_ref = event_axes[1] if event_axes is not None else None
+            else:
+                if event_data is None:
+                    event_data = _event_data_coords()
+                y_ref = event_data[1] if event_data is not None else None
             if y_ref is None:
                 y_min, y_max = ax.get_ylim()
                 y_ref = (y_min + y_max) / 2.0
@@ -3218,7 +3235,7 @@ class AnnotationHitTest:
             x1 = _coerce_float(geometry.get("x1"))
             y0 = _coerce_float(geometry.get("y0"))
             y1 = _coerce_float(geometry.get("y1"))
-            if None in (x0, x1, y0, y1) or event.inaxes != ax:
+            if None in (x0, x1, y0, y1):
                 return None
             for handle_id, (hx, hy) in {
                 "nw": (x0, y1),
@@ -3248,11 +3265,15 @@ class AnnotationHitTest:
         if element_type == "ref_line":
             orientation = str(geometry.get("orientation") or "vertical").strip().lower()
             value = _coerce_float(geometry.get("value"))
-            if value is None or event.inaxes != ax:
+            if value is None:
                 return None
+            if event_data is None:
+                event_data = _event_data_coords()
             if orientation == "horizontal":
                 x_ref = (
-                    event.xdata if event.xdata is not None else sum(ax.get_xlim()) / 2.0
+                    event_data[0]
+                    if event_data is not None
+                    else sum(ax.get_xlim()) / 2.0
                 )
                 try:
                     y_disp = transform.transform((x_ref, value))[1]
@@ -3263,7 +3284,9 @@ class AnnotationHitTest:
                     if abs(y_disp - event_xy[1]) <= self._pixel_tolerance
                     else None
                 )
-            y_ref = event.ydata if event.ydata is not None else sum(ax.get_ylim()) / 2.0
+            y_ref = (
+                event_data[1] if event_data is not None else sum(ax.get_ylim()) / 2.0
+            )
             try:
                 x_disp = transform.transform((value, y_ref))[0]
             except Exception:
@@ -3278,7 +3301,7 @@ class AnnotationHitTest:
                 if isinstance(geometry.get("points"), list)
                 else []
             )
-            if not points or event.inaxes != ax:
+            if not points:
                 return None
             for i in range(len(points) - 1):
                 p0 = points[i]
@@ -3565,6 +3588,7 @@ class PlotAnnotationsController:
         renderer: AnnotationRenderer,
         axes_map: Dict[str, Axes],
         axis_labels: Dict[str, str],
+        on_elements_changed: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._plot_id = plot_id
         self._fig = fig
@@ -3573,6 +3597,7 @@ class PlotAnnotationsController:
         self._renderer = renderer
         self._axes_map = axes_map
         self._axis_labels = axis_labels
+        self._on_elements_changed = on_elements_changed
         self._axes_role_map = {ax: role for role, ax in axes_map.items() if ax}
         self._history = AnnotationHistory()
         self._hit_test = AnnotationHitTest()
@@ -4430,6 +4455,9 @@ class PlotAnnotationsController:
             return
         press_event = getattr(event, "mouseevent", None) or event
         artist = getattr(event, "artist", None)
+        resolved_ax = getattr(press_event, "inaxes", None) or self._resolve_axes_from_pixels(
+            press_event
+        )
         if (
             artist is not None
             and getattr(artist, "_gl260_annotation_handle", None) == "label"
@@ -4456,7 +4484,7 @@ class PlotAnnotationsController:
                         return
                     ax = self._axes_map.get(element.get("axes_target", "primary"))
                     if ax is None:
-                        ax = getattr(press_event, "inaxes", None)
+                        ax = resolved_ax
                     if ax is None:
                         return
                     self._start_drag(element, "label", press_event, ax)
@@ -4466,32 +4494,33 @@ class PlotAnnotationsController:
             and self._placing_type is None
         ):
             return
-        if press_event.inaxes is None:
-            return
         if DEBUG_ANNOTATIONS_INTERACTION:
             print(
                 "[ANNOTATIONS] press armed="
                 f"{self._placing_type} mode={self._mode} "
                 f"inaxes={press_event.inaxes is not None} "
+                f"resolved={resolved_ax is not None} "
                 f"drag={self._drag_state is not None} "
                 f"selected={self._selected_id}"
             )
+        if resolved_ax is None:
+            return
         if self._placing_type is not None:
             if self._span_selectors:
                 selector_axes = {
                     getattr(selector, "ax", None) for selector in self._span_selectors
                 }
-                if press_event.inaxes in selector_axes:
+                if resolved_ax in selector_axes:
                     return
             self._start_placing(press_event)
             return
-        ax = press_event.inaxes
+        ax = resolved_ax
         if self._mode == "erase":
             if self._erase_ink(ax, press_event):
                 self._commit_history()
             return
         if self._mode == "select":
-            element, handle = self._hit_test_element(ax, press_event)
+            element, handle, hit_ax = self._hit_test_element(press_event)
             if element is None:
                 self.set_selected_id(None)
                 return
@@ -4503,7 +4532,7 @@ class PlotAnnotationsController:
             ) != "data":
                 self._clear_span_selectors()
             self.set_selected_id(element.get("id"))
-            self._start_drag(element, handle, press_event, ax)
+            self._start_drag(element, handle, press_event, hit_ax or ax)
             return
         self._start_creation(ax, press_event)
 
@@ -4527,7 +4556,9 @@ class PlotAnnotationsController:
         if self._drag_state is None:
             return
         drag_ax = self._drag_state.get("ax")
-        if event.inaxes is None or drag_ax is None or event.inaxes != drag_ax:
+        if drag_ax is None:
+            return
+        if getattr(event, "x", None) is None or getattr(event, "y", None) is None:
             return
         element = self._drag_state.get("element")
         if not element:
@@ -4639,10 +4670,50 @@ class PlotAnnotationsController:
         self._history.push(self._elements())
         if self._panel is not None:
             self._panel.refresh()
+        if self._on_elements_changed is not None:
+            try:
+                self._on_elements_changed(self._plot_id)
+            except Exception:
+                pass
+
+    def _resolve_axes_from_pixels(self, event: Any) -> Optional[Axes]:
+        if event is None:
+            return None
+        x = getattr(event, "x", None)
+        y = getattr(event, "y", None)
+        if x is None or y is None:
+            return None
+        candidates = list(self._axes_map.values()) if self._axes_map else []
+        if not candidates:
+            fig_axes = getattr(self._fig, "axes", None)
+            if isinstance(fig_axes, list):
+                candidates = fig_axes
+        seen = set()
+        unique_axes: List[Axes] = []
+        for ax in candidates:
+            if ax is None or ax in seen:
+                continue
+            unique_axes.append(ax)
+            seen.add(ax)
+        matches: List[Tuple[float, int, Axes]] = []
+        for idx, ax in enumerate(unique_axes):
+            try:
+                if ax.bbox.contains(x, y):
+                    try:
+                        zorder = float(ax.get_zorder())
+                    except Exception:
+                        zorder = 0.0
+                    matches.append((zorder, idx, ax))
+            except Exception:
+                continue
+        if not matches:
+            return None
+        matches.sort(key=lambda item: (item[0], item[1]))
+        return matches[-1][2]
 
     def _hit_test_element(
-        self, ax: Axes, event: Any
-    ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        self, event: Any
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[Axes]]:
         elements = sorted(
             self._elements(),
             key=lambda item: float(item.get("zorder", ANNOTATION_DEFAULT_ZORDER)),
@@ -4652,12 +4723,12 @@ class PlotAnnotationsController:
             if not element.get("visible", True):
                 continue
             target_ax = self._axes_map.get(element.get("axes_target", "primary"))
-            if target_ax is None or target_ax is not ax:
+            if target_ax is None:
                 continue
-            handle = self._hit_test.hit_test(ax, element, event)
+            handle = self._hit_test.hit_test(target_ax, element, event)
             if handle:
-                return element, handle
-        return None, None
+                return element, handle, target_ax
+        return None, None, None
 
     def _event_coords(
         self, event: Any, coord_space: str, ax: Axes
@@ -4665,9 +4736,15 @@ class PlotAnnotationsController:
         try:
             if coord_space == "axes":
                 return tuple(ax.transAxes.inverted().transform((event.x, event.y)))
-            if event.xdata is None or event.ydata is None:
+            x = getattr(event, "x", None)
+            y = getattr(event, "y", None)
+            if x is None or y is None:
                 return None
-            return float(event.xdata), float(event.ydata)
+            xdata = getattr(event, "xdata", None)
+            ydata = getattr(event, "ydata", None)
+            if xdata is not None and ydata is not None:
+                return float(xdata), float(ydata)
+            return tuple(ax.transData.inverted().transform((x, y)))
         except Exception:
             return None
 
@@ -4677,16 +4754,25 @@ class PlotAnnotationsController:
         try:
             if coord_space == "axes":
                 return tuple(ax.transAxes.inverted().transform((event.x, event.y)))
-            return tuple(ax.transData.inverted().transform((event.x, event.y)))
+            x = getattr(event, "x", None)
+            y = getattr(event, "y", None)
+            if x is None or y is None:
+                return None
+            return tuple(ax.transData.inverted().transform((x, y)))
         except Exception:
             return None
 
-    def _placement_axis(self, event: Any) -> Tuple[str, Axes]:
+    def _placement_axis(self, event: Any) -> Tuple[str, Optional[Axes]]:
         axis_role = self._placing_axis_target
+        resolved_ax = getattr(event, "inaxes", None) or self._resolve_axes_from_pixels(
+            event
+        )
         if not axis_role:
-            axis_role = self._axes_role_map.get(event.inaxes, "primary")
+            axis_role = self._axes_role_map.get(resolved_ax, "primary")
         axis_role = _normalize_axes_target(axis_role)
-        ax = self._axes_map.get(axis_role) or event.inaxes
+        ax = self._axes_map.get(axis_role) or resolved_ax
+        if ax is None:
+            ax = next((axis for axis in self._axes_map.values() if axis), None)
         return axis_role, ax
 
     def _default_span_wrap_width(
@@ -4771,9 +4857,11 @@ class PlotAnnotationsController:
         }
 
     def _start_placing(self, event: Any) -> None:
-        if self._placing_type is None or event is None or event.inaxes is None:
+        if self._placing_type is None or event is None:
             return
         axis_role, ax = self._placement_axis(event)
+        if ax is None:
+            return
         coord_space = self._placing_coord_space or "data"
         coords = self._event_coords_for_axis(event, coord_space, ax)
         if coords is None:
@@ -5337,6 +5425,11 @@ class PlotAnnotationsController:
         self.render()
         if self._panel is not None:
             self._panel.refresh()
+        if self._on_elements_changed is not None:
+            try:
+                self._on_elements_changed(self._plot_id)
+            except Exception:
+                pass
 
     def redo(self) -> None:
         restored = self._history.redo()
@@ -5347,6 +5440,11 @@ class PlotAnnotationsController:
         self.render()
         if self._panel is not None:
             self._panel.refresh()
+        if self._on_elements_changed is not None:
+            try:
+                self._on_elements_changed(self._plot_id)
+            except Exception:
+                pass
 
     def delete_selected(self) -> None:
         element = self.selected_element()
@@ -7087,7 +7185,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.6.8"
+APP_VERSION = "V1.7.0"
 
 
 DEBUG_SERIES_FLOW = False
@@ -22321,6 +22419,7 @@ class UnifiedApp(tk.Tk):
         self._plot_element_editors: Dict[str, Dict[str, Any]] = {}
         self._layout_editor_windows: Dict[str, tk.Toplevel] = {}
         self._layout_editor_states: Dict[str, Dict[str, Any]] = {}
+        self._plot_dirty_flags: Dict[str, Dict[str, bool]] = {}
         raw_series_settings = settings.get("scatter_series", {})
         self._stored_scatter_series = self._sanitize_series_settings_dict(
             raw_series_settings
@@ -22384,7 +22483,8 @@ class UnifiedApp(tk.Tk):
         self._regression_listbox: Optional[tk.Listbox] = None
         self._regression_status_var: Optional[tk.StringVar] = None
         self._last_plot_args: Optional[Tuple[Any, ...]] = None
-        self._combined_axis_pref_window: Optional[tk.Toplevel] = None
+        self._plot_settings_window: Optional[tk.Toplevel] = None
+        self._plot_settings_target_id: Optional[str] = None
         self._axis_range_pref_window: Optional[tk.Toplevel] = None
         self._font_family_window: Optional[tk.Toplevel] = None
 
@@ -22454,8 +22554,8 @@ class UnifiedApp(tk.Tk):
             command=self._open_saved_output_preferences,
         )
         preferences_menu.add_command(
-            label="Combined Axis Settings...",
-            command=self._open_combined_axis_preferences,
+            label="Plot Settings...",
+            command=self._open_plot_settings_for_active_tab,
         )
         preferences_menu.add_command(
             label="Axis Auto-Range Settings...",
@@ -25179,10 +25279,129 @@ class UnifiedApp(tk.Tk):
     def _force_plot_refresh(self, frame, canvas):
         """Manually refresh a plot canvas and rebuild only that figure."""
         plot_key = getattr(frame, "_plot_key", None)
+        plot_id = self._plot_key_to_plot_id(plot_key)
+        if not plot_id:
+            plot_id = getattr(frame, "_plot_id", None)
         try:
             self._refresh_canvas_display(frame, canvas, trigger_resize=True)
         except Exception:
             pass
+        flags = self._ensure_plot_dirty_flags(plot_id) if plot_id else None
+        dirty_data = True
+        if flags is not None:
+            dirty_data = bool(flags.get("dirty_data", True))
+
+        if plot_id and not dirty_data:
+            if plot_key == "fig_combined":
+                args = getattr(self, "_last_plot_args", None)
+                new_fig: Optional[Figure] = None
+                if args:
+                    try:
+                        self._capture_combined_legend_anchor_from_fig(
+                            getattr(canvas, "figure", None)
+                        )
+                    except Exception:
+                        pass
+                    fig_size = None
+                    try:
+                        widget = canvas.get_tk_widget()
+                        widget.update_idletasks()
+                        width_px = max(int(widget.winfo_width()), 1)
+                        height_px = max(int(widget.winfo_height()), 1)
+                        dpi = float(getattr(canvas.figure, "dpi", 100.0))
+                        if not math.isfinite(dpi) or dpi <= 0:
+                            dpi = 100.0
+                        fig_size = (
+                            max(width_px / dpi, 1.0),
+                            max(height_px / dpi, 1.0),
+                        )
+                    except Exception:
+                        fig_size = self._compute_target_figsize_inches()
+                    try:
+                        new_fig = self._build_combined_triple_axis_from_state(
+                            args=args,
+                            fig_size=fig_size,
+                            mode="display",
+                            reuse=True,
+                            canvas=canvas,
+                        )
+                    except Exception:
+                        new_fig = None
+                if new_fig is not None:
+                    try:
+                        self._teardown_layout_editor(plot_id, apply_changes=False)
+                    except Exception:
+                        pass
+                    reused_combined = (
+                        canvas is not None
+                        and getattr(canvas, "figure", None) is new_fig
+                    )
+                    if not reused_combined:
+                        try:
+                            self._apply_plot_elements(new_fig, plot_id)
+                        except Exception:
+                            pass
+                    try:
+                        new_fig.set_canvas(canvas)
+                    except Exception:
+                        pass
+                    canvas.figure = new_fig
+                    try:
+                        canvas.resize_event()
+                    except Exception:
+                        pass
+                    try:
+                        self._retarget_plot_annotation_controller(
+                            plot_id, new_fig, canvas
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        canvas.draw_idle()
+                    except Exception:
+                        pass
+                    try:
+                        self._refresh_canvas_display(
+                            frame, canvas, trigger_resize=False
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        self._register_combined_legend_tracking(new_fig)
+                    except Exception:
+                        pass
+                    try:
+                        self._set_plot_dirty_flags(
+                            plot_id, dirty_layout=False, dirty_elements=False
+                        )
+                    except Exception:
+                        pass
+                    return
+            fig = getattr(canvas, "figure", None)
+            if fig is not None:
+                try:
+                    _apply_layout_profile_to_figure(fig, plot_id, "display")
+                except Exception:
+                    pass
+                try:
+                    controller = self._plot_annotation_controllers.get(plot_id)
+                    if controller is not None:
+                        controller.render()
+                    else:
+                        self._apply_plot_elements(fig, plot_id)
+                except Exception:
+                    pass
+                try:
+                    canvas.draw_idle()
+                except Exception:
+                    pass
+                try:
+                    self._set_plot_dirty_flags(
+                        plot_id, dirty_layout=False, dirty_elements=False
+                    )
+                except Exception:
+                    pass
+                return
 
         new_fig: Optional[Figure] = None
         args = getattr(self, "_last_plot_args", None)
@@ -25225,7 +25444,10 @@ class UnifiedApp(tk.Tk):
                         dpi = float(getattr(canvas.figure, "dpi", 100.0))
                         if not math.isfinite(dpi) or dpi <= 0:
                             dpi = 100.0
-                        fig_size = (max(width_px / dpi, 1.0), max(height_px / dpi, 1.0))
+                        fig_size = (
+                            max(width_px / dpi, 1.0),
+                            max(height_px / dpi, 1.0),
+                        )
                     except Exception:
                         fig_size = self._compute_target_figsize_inches()
                     new_fig = self._build_combined_triple_axis_from_state(
@@ -25240,9 +25462,6 @@ class UnifiedApp(tk.Tk):
 
         if new_fig is not None:
             try:
-                plot_id = self._plot_key_to_plot_id(plot_key)
-                if not plot_id:
-                    plot_id = getattr(frame, "_plot_id", None)
                 if plot_id:
                     try:
                         self._teardown_layout_editor(plot_id, apply_changes=False)
@@ -25259,19 +25478,7 @@ class UnifiedApp(tk.Tk):
                 pass
             if plot_id:
                 try:
-                    axes_map = self._resolve_plot_element_axes(new_fig)
-                    axis_labels = self._plot_element_axis_labels(new_fig)
-                    controller = self._plot_annotation_controllers.get(plot_id)
-                    if controller is not None:
-                        try:
-                            controller.set_target(new_fig, canvas)
-                        except Exception:
-                            pass
-                        controller.update_axis_map(new_fig, axes_map, axis_labels)
-                        try:
-                            controller.render()
-                        except Exception:
-                            pass
+                    self._retarget_plot_annotation_controller(plot_id, new_fig, canvas)
                 except Exception:
                     pass
             try:
@@ -25297,6 +25504,16 @@ class UnifiedApp(tk.Tk):
             if plot_key == "fig_combined":
                 try:
                     self._register_combined_legend_tracking(new_fig)
+                except Exception:
+                    pass
+            if plot_id:
+                try:
+                    self._set_plot_dirty_flags(
+                        plot_id,
+                        dirty_data=False,
+                        dirty_layout=False,
+                        dirty_elements=False,
+                    )
                 except Exception:
                     pass
 
@@ -25650,6 +25867,166 @@ class UnifiedApp(tk.Tk):
         axes_map = self._resolve_plot_element_axes(fig)
         self._annotation_renderer.render(fig, axes_map, elements or [])
 
+    def _retarget_plot_annotation_controller(
+        self, plot_id: str, fig: Figure, canvas: FigureCanvasTkAgg
+    ) -> None:
+        if not plot_id or fig is None or canvas is None:
+            return
+        controller = self._plot_annotation_controllers.get(plot_id)
+        if controller is None:
+            return
+        try:
+            controller.set_target(fig, canvas)
+        except Exception:
+            pass
+        try:
+            axes_map = self._resolve_plot_element_axes(fig)
+            axis_labels = self._plot_element_axis_labels(fig)
+            controller.update_axis_map(fig, axes_map, axis_labels)
+        except Exception:
+            pass
+        try:
+            controller.cancel_place_element()
+        except Exception:
+            pass
+        try:
+            controller.render()
+        except Exception:
+            pass
+        window = self._plot_element_windows.get(plot_id)
+        panel = self._plot_annotation_panels.get(plot_id)
+        if window is not None:
+            try:
+                if not window.winfo_exists():
+                    window = None
+            except Exception:
+                window = None
+        if window is not None:
+            if panel is not None:
+                try:
+                    panel.refresh()
+                except Exception:
+                    pass
+            else:
+                try:
+                    window.destroy()
+                except Exception:
+                    pass
+                self._plot_element_windows.pop(plot_id, None)
+                self._plot_element_editors.pop(plot_id, None)
+
+    def _ensure_plot_dirty_flags(
+        self, plot_id: Optional[str]
+    ) -> Optional[Dict[str, bool]]:
+        if not plot_id:
+            return None
+        flags = self._plot_dirty_flags.get(plot_id)
+        if not isinstance(flags, dict):
+            flags = {
+                "dirty_data": True,
+                "dirty_layout": True,
+                "dirty_elements": True,
+            }
+            self._plot_dirty_flags[plot_id] = flags
+        else:
+            flags.setdefault("dirty_data", True)
+            flags.setdefault("dirty_layout", True)
+            flags.setdefault("dirty_elements", True)
+        return flags
+
+    def _set_plot_dirty_flags(
+        self,
+        plot_id: Optional[str],
+        *,
+        dirty_data: Optional[bool] = None,
+        dirty_layout: Optional[bool] = None,
+        dirty_elements: Optional[bool] = None,
+    ) -> None:
+        flags = self._ensure_plot_dirty_flags(plot_id)
+        if flags is None:
+            return
+        if dirty_data is not None:
+            flags["dirty_data"] = bool(dirty_data)
+        if dirty_layout is not None:
+            flags["dirty_layout"] = bool(dirty_layout)
+        if dirty_elements is not None:
+            flags["dirty_elements"] = bool(dirty_elements)
+
+    def _mark_plot_data_dirty(self, plot_id: Optional[str] = None) -> None:
+        if plot_id:
+            self._set_plot_dirty_flags(plot_id, dirty_data=True)
+            return
+        seen = set(self._plot_dirty_flags.keys())
+        for key in list(self._plot_annotation_controllers.keys()):
+            seen.add(key)
+        for key in seen:
+            self._set_plot_dirty_flags(key, dirty_data=True)
+
+    def _mark_plot_layout_dirty(self, plot_id: Optional[str] = None) -> None:
+        if not plot_id:
+            return
+        self._set_plot_dirty_flags(plot_id, dirty_layout=True)
+
+    def _mark_plot_elements_dirty(self, plot_id: Optional[str] = None) -> None:
+        if not plot_id:
+            return
+        self._set_plot_dirty_flags(plot_id, dirty_elements=True)
+
+    def _refresh_plot_for_plot_id(self, plot_id: Optional[str]) -> None:
+        if not plot_id:
+            return
+        for idx, tab in enumerate(getattr(self, "_plot_tabs", []) or []):
+            if getattr(tab, "_plot_id", None) != plot_id:
+                continue
+            if idx < len(getattr(self, "_canvases", []) or []):
+                canvas = self._canvases[idx]
+                try:
+                    self._force_plot_refresh(tab, canvas)
+                except Exception:
+                    pass
+            break
+
+    def _open_plot_settings_for_active_tab(self) -> None:
+        plot_id = None
+        try:
+            current = self.nb.select()
+            if current:
+                tab = self.nametowidget(current)
+                plot_id = getattr(tab, "_plot_id", None)
+        except Exception:
+            plot_id = None
+        self._open_plot_settings_dialog(plot_id or "fig_combined_triple_axis")
+
+    def _sync_plot_layout_profile(
+        self,
+        plot_id: str,
+        *,
+        display_margins: Optional[Mapping[str, float]] = None,
+        export_margins: Optional[Mapping[str, float]] = None,
+        legend_anchor_y_display: Optional[float] = None,
+        legend_anchor_y_export: Optional[float] = None,
+    ) -> None:
+        profile = _get_layout_profile(plot_id)
+        for mode, margins, anchor_y in (
+            ("display", display_margins, legend_anchor_y_display),
+            ("export", export_margins, legend_anchor_y_export),
+        ):
+            section = profile.setdefault(mode, {})
+            if margins is not None:
+                section["margins"] = _normalize_layout_margins(
+                    margins, _default_layout_margins(plot_id, mode)
+                )
+            if anchor_y is not None:
+                try:
+                    anchor_value = float(anchor_y)
+                except Exception:
+                    anchor_value = None
+                if anchor_value is not None and math.isfinite(anchor_value):
+                    section["legend_anchor_y"] = max(-0.1, min(1.1, anchor_value))
+        settings["layout_profiles"] = _normalize_layout_profiles(
+            settings.get("layout_profiles")
+        )
+
     def _clear_plot_elements_for_plot_id(
         self,
         plot_id: str,
@@ -25685,6 +26062,10 @@ class UnifiedApp(tk.Tk):
             pass
         if save:
             _save_settings_to_disk()
+        try:
+            self._mark_plot_elements_dirty(plot_id)
+        except Exception:
+            pass
 
     def _open_plot_elements_editor(
         self, fig: Figure, canvas: FigureCanvasTkAgg, plot_id: str
@@ -27128,6 +27509,10 @@ class UnifiedApp(tk.Tk):
                     canvas.draw_idle()
             except Exception:
                 pass
+        try:
+            self._mark_plot_layout_dirty(plot_id)
+        except Exception:
+            pass
 
     def _teardown_layout_editor(
         self,
@@ -28183,6 +28568,11 @@ class UnifiedApp(tk.Tk):
             self._teardown_layout_editor(plot_id, apply_changes=False)
         self._layout_editor_windows = {}
         self._layout_editor_states = {}
+        self._plot_dirty_flags = {}
+        try:
+            self._close_plot_settings_dialog()
+        except Exception:
+            pass
 
         for tab in getattr(self, "_plot_tabs", []):
 
@@ -28242,16 +28632,6 @@ class UnifiedApp(tk.Tk):
 
         plot_id = self._plot_key_to_plot_id(plot_key, title)
         frame._plot_id = plot_id
-        if plot_id:
-            try:
-                _apply_layout_profile_to_figure(fig, plot_id, "display")
-            except Exception:
-                pass
-        if plot_id:
-            try:
-                self._apply_plot_elements(fig, plot_id)
-            except Exception:
-                pass
 
         canvas = FigureCanvasTkAgg(fig, master=frame)
 
@@ -28261,6 +28641,50 @@ class UnifiedApp(tk.Tk):
 
         toolbar.pack(side="left", fill="x")
 
+        widget = canvas.get_tk_widget()
+        widget.pack(fill="both", expand=True)
+
+        try:
+            self.nb.update_idletasks()
+            self.update_idletasks()
+            widget.update_idletasks()
+        except Exception:
+            pass
+
+        fig_size = None
+        try:
+            width_px = max(int(widget.winfo_width()), 1)
+            height_px = max(int(widget.winfo_height()), 1)
+            if width_px > 1 and height_px > 1:
+                dpi = float(getattr(fig, "dpi", 100.0))
+                if not math.isfinite(dpi) or dpi <= 0.0:
+                    dpi = 100.0
+                fig_size = (
+                    max(width_px / dpi, 1.0),
+                    max(height_px / dpi, 1.0),
+                )
+        except Exception:
+            fig_size = None
+        if fig_size is None:
+            try:
+                fig_size = self._compute_target_figsize_inches()
+            except Exception:
+                fig_size = None
+        if fig_size is not None:
+            try:
+                fig.set_size_inches(fig_size, forward=False)
+            except Exception:
+                pass
+
+        if plot_id:
+            try:
+                _apply_layout_profile_to_figure(fig, plot_id, "display")
+            except Exception:
+                pass
+            try:
+                self._apply_plot_elements(fig, plot_id)
+            except Exception:
+                pass
         if plot_id:
             try:
                 axes_map = self._resolve_plot_element_axes(fig)
@@ -28273,12 +28697,13 @@ class UnifiedApp(tk.Tk):
                     self._annotation_renderer,
                     axes_map,
                     axis_labels,
+                    on_elements_changed=self._mark_plot_elements_dirty,
                 )
                 self._plot_annotation_controllers[plot_id] = controller
-                try:
-                    controller.set_target(fig, canvas)
-                except Exception:
-                    pass
+            except Exception:
+                pass
+            try:
+                self._retarget_plot_annotation_controller(plot_id, fig, canvas)
             except Exception:
                 pass
 
@@ -28528,6 +28953,32 @@ class UnifiedApp(tk.Tk):
 
             self._log_plot_tab_debug(f"Close requested for '{title}'")
 
+            if plot_id:
+                controller = self._plot_annotation_controllers.pop(plot_id, None)
+                if controller is not None:
+                    try:
+                        controller.disconnect()
+                    except Exception:
+                        pass
+                self._plot_annotation_panels.pop(plot_id, None)
+                window = self._plot_element_windows.pop(plot_id, None)
+                if window is not None:
+                    try:
+                        window.destroy()
+                    except Exception:
+                        pass
+                self._plot_element_editors.pop(plot_id, None)
+                try:
+                    self._teardown_layout_editor(plot_id, apply_changes=False)
+                except Exception:
+                    pass
+                self._plot_dirty_flags.pop(plot_id, None)
+                if getattr(self, "_plot_settings_target_id", None) == plot_id:
+                    try:
+                        self._close_plot_settings_dialog()
+                    except Exception:
+                        pass
+
             try:
 
                 self.nb.forget(frame)
@@ -28598,6 +29049,12 @@ class UnifiedApp(tk.Tk):
                     ),
                 )
                 btn_elements.pack(side="right", padx=6, pady=4)
+                btn_settings = ttk.Button(
+                    topbar,
+                    text="Plot Settings...",
+                    command=lambda: self._open_plot_settings_dialog(plot_id),
+                )
+                btn_settings.pack(side="right", padx=6, pady=4)
                 btn_layout = ttk.Button(
                     topbar,
                     text="Layout Editor...",
@@ -28613,6 +29070,12 @@ class UnifiedApp(tk.Tk):
                     ),
                 )
                 btn_elements.pack(side="right", padx=6, pady=4)
+                btn_settings = ttk.Button(
+                    topbar,
+                    text="Plot Settings...",
+                    command=lambda: self._open_plot_settings_dialog(plot_id),
+                )
+                btn_settings.pack(side="right", padx=6, pady=4)
                 btn_layout = ttk.Button(
                     topbar,
                     text="Layout Editor...",
@@ -28674,8 +29137,6 @@ class UnifiedApp(tk.Tk):
 
         widget = canvas.get_tk_widget()
 
-        widget.pack(fill="both", expand=True)
-
         refresh_state = {"scheduled": False}
 
         def _schedule_canvas_sync(_event=None):
@@ -28729,6 +29190,17 @@ class UnifiedApp(tk.Tk):
         self._plot_tabs.append(frame)
 
         self._canvases.append(canvas)
+
+        if plot_id:
+            try:
+                self._set_plot_dirty_flags(
+                    plot_id,
+                    dirty_data=False,
+                    dirty_layout=False,
+                    dirty_elements=False,
+                )
+            except Exception:
+                pass
 
         if plot_key == "fig_combined":
             try:
@@ -28948,6 +29420,12 @@ class UnifiedApp(tk.Tk):
                             pass
                         self._plot_annotation_controllers.pop(plot_id, None)
                         self._plot_annotation_panels.pop(plot_id, None)
+                        self._plot_dirty_flags.pop(plot_id, None)
+                        if getattr(self, "_plot_settings_target_id", None) == plot_id:
+                            try:
+                                self._close_plot_settings_dialog()
+                            except Exception:
+                                pass
                         window = self._plot_element_windows.pop(plot_id, None)
                         if window is not None:
                             try:
@@ -30207,25 +30685,40 @@ class UnifiedApp(tk.Tk):
         self._export_dpi_entry_var = None
         self._output_profile_title_var.set("")
 
-    def _open_combined_axis_preferences(self) -> None:
-        if (
-            self._combined_axis_pref_window is not None
-            and self._combined_axis_pref_window.winfo_exists()
-        ):
+    def _open_plot_settings_dialog(self, plot_id: Optional[str] = None) -> None:
+        plot_id = plot_id or "fig_combined_triple_axis"
+        is_combined = plot_id == "fig_combined_triple_axis"
+        existing = getattr(self, "_plot_settings_window", None)
+        if existing is not None and existing.winfo_exists():
+            if getattr(self, "_plot_settings_target_id", None) == plot_id:
+                try:
+                    existing.deiconify()
+                    existing.lift()
+                    existing.focus_force()
+                except Exception:
+                    pass
+                return
             try:
-                self._combined_axis_pref_window.deiconify()
-                self._combined_axis_pref_window.lift()
-                self._combined_axis_pref_window.focus_force()
+                existing.destroy()
             except Exception:
                 pass
-            return
+            self._plot_settings_window = None
+            self._plot_settings_target_id = None
 
         window = tk.Toplevel(self)
-        window.title("Combined Axis Settings")
+        plot_label_map = {
+            "fig_pressure_temp": "Figure 1: Pressure + Temperature",
+            "fig_pressure_derivative": "Figure 2: Pressure + Derivative",
+            "fig_combined_triple_axis": "Combined Triple-Axis",
+            "fig_cycle_analysis": "Figure 3: Cycle Analysis",
+        }
+        display_label = plot_label_map.get(plot_id, plot_id)
+        window.title(f"Plot Settings - {display_label}")
         window.transient(self)
         window.geometry("576x990")
         window.resizable(True, True)
-        self._combined_axis_pref_window = window
+        self._plot_settings_window = window
+        self._plot_settings_target_id = plot_id
 
         window.grid_rowconfigure(0, weight=1)
         window.grid_columnconfigure(0, weight=1)
@@ -30283,104 +30776,110 @@ class UnifiedApp(tk.Tk):
 
         self.after_idle(lambda: _bind_mousewheel(container))
 
-        layout_profile = _get_layout_profile("fig_combined_triple_axis")
+        layout_profile = _get_layout_profile(plot_id)
         display_section = _layout_profile_section(layout_profile, "display")
         export_section = _layout_profile_section(layout_profile, "export")
         display_margins = display_section.get(
-            "margins", _default_layout_margins("fig_combined_triple_axis", "display")
+            "margins", _default_layout_margins(plot_id, "display")
         )
         export_margins = export_section.get(
-            "margins", _default_layout_margins("fig_combined_triple_axis", "export")
+            "margins", _default_layout_margins(plot_id, "export")
         )
         legend_anchor_display = display_section.get("legend_anchor_y")
         legend_anchor_export = export_section.get("legend_anchor_y")
 
-        stage_vars = {
-            "combined_x_axis_label": tk.StringVar(
-                value=self.combined_x_axis_label.get()
-            ),
-            "combined_primary_axis_label": tk.StringVar(
-                value=self.combined_primary_axis_label.get()
-            ),
-            "combined_deriv_axis_label": tk.StringVar(
-                value=self.combined_deriv_axis_label.get()
-            ),
-            "combined_temp_axis_label": tk.StringVar(
-                value=self.combined_temp_axis_label.get()
-            ),
-            "combined_deriv_axis_offset": tk.DoubleVar(
-                value=self.combined_deriv_axis_offset.get()
-            ),
-            "combined_primary_labelpad": tk.DoubleVar(
-                value=self.combined_primary_labelpad.get()
-            ),
-            "combined_deriv_labelpad": tk.DoubleVar(
-                value=self.combined_deriv_labelpad.get()
-            ),
-            "combined_temp_labelpad": tk.DoubleVar(
-                value=self.combined_temp_labelpad.get()
-            ),
-            "combined_left_padding_pct": tk.DoubleVar(
-                value=self.combined_left_padding_pct.get()
-            ),
-            "combined_right_padding_pct": tk.DoubleVar(
-                value=self.combined_right_padding_pct.get()
-            ),
-            "combined_export_pad_pts": tk.DoubleVar(
-                value=self.combined_export_pad_pts.get()
-            ),
-            "combined_title_pad_pts": tk.DoubleVar(
-                value=self.combined_title_pad_pts.get()
-            ),
-            "combined_suptitle_pad_pts": tk.DoubleVar(
-                value=self.combined_suptitle_pad_pts.get()
-            ),
-            "combined_suptitle_y": tk.DoubleVar(value=self.combined_suptitle_y.get()),
-            "combined_top_margin_pct": tk.DoubleVar(
-                value=self.combined_top_margin_pct.get()
-            ),
-            "combined_font_family": tk.StringVar(value=self.combined_font_family.get()),
-            "combined_suptitle_fontsize": tk.DoubleVar(
-                value=self.combined_suptitle_fontsize.get()
-            ),
-            "combined_title_fontsize": tk.DoubleVar(
-                value=self.combined_title_fontsize.get()
-            ),
-            "combined_label_fontsize": tk.DoubleVar(
-                value=self.combined_label_fontsize.get()
-            ),
-            "combined_tick_fontsize": tk.DoubleVar(
-                value=self.combined_tick_fontsize.get()
-            ),
-            "combined_legend_fontsize": tk.DoubleVar(
-                value=self.combined_legend_fontsize.get()
-            ),
-            "combined_legend_wrap": tk.BooleanVar(
-                value=bool(self.combined_legend_wrap.get())
-            ),
-            "combined_legend_rows": tk.IntVar(value=self.combined_legend_rows.get()),
-            "combined_legend_label_gap": tk.DoubleVar(
-                value=self.combined_legend_label_gap.get()
-            ),
-            "combined_xlabel_tick_gap": tk.DoubleVar(
-                value=self.combined_xlabel_tick_gap.get()
-            ),
-            "combined_legend_bottom_margin": tk.DoubleVar(
-                value=self.combined_legend_bottom_margin.get()
-            ),
-            "combined_legend_alignment": tk.StringVar(
-                value=self.combined_legend_alignment.get()
-            ),
-            "combined_cycle_legend_loc_choice": tk.StringVar(
-                value=self.combined_cycle_legend_loc_choice.get()
-            ),
-            "combined_cycle_legend_ref_axis": tk.StringVar(
-                value=self.combined_cycle_legend_ref_axis.get()
-            ),
-            "combined_cycle_legend_ref_corner": tk.StringVar(
-                value=self.combined_cycle_legend_ref_corner.get()
-            ),
-        }
+        stage_vars: Dict[str, tk.Variable] = {}
+        if is_combined:
+            stage_vars = {
+                "combined_x_axis_label": tk.StringVar(
+                    value=self.combined_x_axis_label.get()
+                ),
+                "combined_primary_axis_label": tk.StringVar(
+                    value=self.combined_primary_axis_label.get()
+                ),
+                "combined_deriv_axis_label": tk.StringVar(
+                    value=self.combined_deriv_axis_label.get()
+                ),
+                "combined_temp_axis_label": tk.StringVar(
+                    value=self.combined_temp_axis_label.get()
+                ),
+                "combined_deriv_axis_offset": tk.DoubleVar(
+                    value=self.combined_deriv_axis_offset.get()
+                ),
+                "combined_primary_labelpad": tk.DoubleVar(
+                    value=self.combined_primary_labelpad.get()
+                ),
+                "combined_deriv_labelpad": tk.DoubleVar(
+                    value=self.combined_deriv_labelpad.get()
+                ),
+                "combined_temp_labelpad": tk.DoubleVar(
+                    value=self.combined_temp_labelpad.get()
+                ),
+                "combined_left_padding_pct": tk.DoubleVar(
+                    value=self.combined_left_padding_pct.get()
+                ),
+                "combined_right_padding_pct": tk.DoubleVar(
+                    value=self.combined_right_padding_pct.get()
+                ),
+                "combined_export_pad_pts": tk.DoubleVar(
+                    value=self.combined_export_pad_pts.get()
+                ),
+                "combined_title_pad_pts": tk.DoubleVar(
+                    value=self.combined_title_pad_pts.get()
+                ),
+                "combined_suptitle_pad_pts": tk.DoubleVar(
+                    value=self.combined_suptitle_pad_pts.get()
+                ),
+                "combined_suptitle_y": tk.DoubleVar(
+                    value=self.combined_suptitle_y.get()
+                ),
+                "combined_top_margin_pct": tk.DoubleVar(
+                    value=self.combined_top_margin_pct.get()
+                ),
+                "combined_font_family": tk.StringVar(
+                    value=self.combined_font_family.get()
+                ),
+                "combined_suptitle_fontsize": tk.DoubleVar(
+                    value=self.combined_suptitle_fontsize.get()
+                ),
+                "combined_title_fontsize": tk.DoubleVar(
+                    value=self.combined_title_fontsize.get()
+                ),
+                "combined_label_fontsize": tk.DoubleVar(
+                    value=self.combined_label_fontsize.get()
+                ),
+                "combined_tick_fontsize": tk.DoubleVar(
+                    value=self.combined_tick_fontsize.get()
+                ),
+                "combined_legend_fontsize": tk.DoubleVar(
+                    value=self.combined_legend_fontsize.get()
+                ),
+                "combined_legend_wrap": tk.BooleanVar(
+                    value=bool(self.combined_legend_wrap.get())
+                ),
+                "combined_legend_rows": tk.IntVar(value=self.combined_legend_rows.get()),
+                "combined_legend_label_gap": tk.DoubleVar(
+                    value=self.combined_legend_label_gap.get()
+                ),
+                "combined_xlabel_tick_gap": tk.DoubleVar(
+                    value=self.combined_xlabel_tick_gap.get()
+                ),
+                "combined_legend_bottom_margin": tk.DoubleVar(
+                    value=self.combined_legend_bottom_margin.get()
+                ),
+                "combined_legend_alignment": tk.StringVar(
+                    value=self.combined_legend_alignment.get()
+                ),
+                "combined_cycle_legend_loc_choice": tk.StringVar(
+                    value=self.combined_cycle_legend_loc_choice.get()
+                ),
+                "combined_cycle_legend_ref_axis": tk.StringVar(
+                    value=self.combined_cycle_legend_ref_axis.get()
+                ),
+                "combined_cycle_legend_ref_corner": tk.StringVar(
+                    value=self.combined_cycle_legend_ref_corner.get()
+                ),
+            }
 
         stage_layout_display_left = tk.DoubleVar(
             value=display_margins.get("left", 0.125)
@@ -30414,148 +30913,173 @@ class UnifiedApp(tk.Tk):
         )
         stage_mirror_detached_labelpad = tk.BooleanVar(
             value=bool(layout_profile.get("mirror_detached_labelpad", False))
-        )
+        ) if is_combined else tk.BooleanVar(value=False)
 
-        label_frame = ttk.Labelframe(container, text="Axis labels")
-        label_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        label_frame.grid_columnconfigure(1, weight=1)
+        row_idx = 0
+        if is_combined:
+            label_frame = ttk.Labelframe(container, text="Axis labels")
+            label_frame.grid(row=row_idx, column=0, sticky="ew", pady=(0, 8))
+            label_frame.grid_columnconfigure(1, weight=1)
 
-        label_entries = [
-            ("X-axis label", stage_vars["combined_x_axis_label"]),
-            ("Primary Y-axis label", stage_vars["combined_primary_axis_label"]),
-            ("Derivative Y-axis label", stage_vars["combined_deriv_axis_label"]),
-            ("Temperature axis label", stage_vars["combined_temp_axis_label"]),
-        ]
-        for row_index, (label_text, var) in enumerate(label_entries):
-            ttk.Label(label_frame, text=label_text).grid(
-                row=row_index, column=0, sticky="w", padx=(0, 6), pady=2
-            )
-            entry = ttk.Entry(label_frame, textvariable=var)
-            entry.grid(row=row_index, column=1, sticky="ew", pady=2)
-
-        spacing_frame = ttk.Labelframe(container, text="Spacing & padding")
-        spacing_frame.grid(row=1, column=0, sticky="ew")
-        spacing_frame.grid_columnconfigure(1, weight=1)
-
-        ttk.Label(spacing_frame, text="Derivative axis offset").grid(
-            row=0, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            spacing_frame,
-            textvariable=stage_vars["combined_deriv_axis_offset"],
-            width=8,
-        ).grid(row=0, column=1, sticky="w", pady=2)
-
-        ttk.Label(spacing_frame, text="Primary Y label padding").grid(
-            row=1, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            spacing_frame, textvariable=stage_vars["combined_primary_labelpad"], width=8
-        ).grid(row=1, column=1, sticky="w", pady=2)
-
-        ttk.Label(spacing_frame, text="Derivative label padding").grid(
-            row=2, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        deriv_label_entry = ttk.Entry(
-            spacing_frame, textvariable=stage_vars["combined_deriv_labelpad"], width=8
-        )
-        deriv_label_entry.grid(row=2, column=1, sticky="w", pady=2)
-
-        ttk.Label(spacing_frame, text="Temperature label padding").grid(
-            row=3, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            spacing_frame, textvariable=stage_vars["combined_temp_labelpad"], width=8
-        ).grid(row=3, column=1, sticky="w", pady=2)
-        ttk.Checkbutton(
-            spacing_frame,
-            text="Mirror attached right Y-axis label spacing to detached axis",
-            variable=stage_mirror_detached_labelpad,
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 2))
-        ttk.Label(spacing_frame, text="Left padding (%)").grid(
-            row=5, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            spacing_frame, textvariable=stage_vars["combined_left_padding_pct"], width=8
-        ).grid(row=5, column=1, sticky="w", pady=2)
-        ttk.Label(spacing_frame, text="Right padding (%)").grid(
-            row=6, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            spacing_frame,
-            textvariable=stage_vars["combined_right_padding_pct"],
-            width=8,
-        ).grid(row=6, column=1, sticky="w", pady=2)
-        ttk.Label(spacing_frame, text="Export padding (pt)").grid(
-            row=7, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            spacing_frame, textvariable=stage_vars["combined_export_pad_pts"], width=8
-        ).grid(row=7, column=1, sticky="w", pady=2)
-        ttk.Label(
-            spacing_frame,
-            text=(
-                "Extra whitespace reserved inside the figure so additional Y axes "
-                "and tick labels stay visible in the combined plot and saved export."
-            ),
-            wraplength=420,
-            foreground="#555555",
-        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(2, 0))
-        ttk.Label(spacing_frame, text="Title padding (pt)").grid(
-            row=9, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            spacing_frame, textvariable=stage_vars["combined_title_pad_pts"], width=8
-        ).grid(row=9, column=1, sticky="w", pady=2)
-        ttk.Label(spacing_frame, text="Suptitle padding (pt)").grid(
-            row=10, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            spacing_frame, textvariable=stage_vars["combined_suptitle_pad_pts"], width=8
-        ).grid(row=10, column=1, sticky="w", pady=2)
-        ttk.Label(spacing_frame, text="Suptitle Y (0-1)").grid(
-            row=11, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            spacing_frame, textvariable=stage_vars["combined_suptitle_y"], width=8
-        ).grid(row=11, column=1, sticky="w", pady=2)
-        ttk.Label(spacing_frame, text="Top margin above plot (%)").grid(
-            row=12, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            spacing_frame, textvariable=stage_vars["combined_top_margin_pct"], width=8
-        ).grid(row=12, column=1, sticky="w", pady=2)
-        ttk.Label(
-            spacing_frame,
-            text=(
-                "Control title/suptitle spacing: title pad adds gap above the axes title; "
-                "suptitle pad nudges the figure title upward; top margin reserves space above the plot."
-            ),
-            wraplength=420,
-            foreground="#555555",
-        ).grid(row=13, column=0, columnspan=2, sticky="w", pady=(2, 0))
-
-        def _sync_detached_labelpad(*_):
-            if stage_mirror_detached_labelpad.get():
-                stage_vars["combined_deriv_labelpad"].set(
-                    stage_vars["combined_temp_labelpad"].get()
+            label_entries = [
+                ("X-axis label", stage_vars["combined_x_axis_label"]),
+                ("Primary Y-axis label", stage_vars["combined_primary_axis_label"]),
+                ("Derivative Y-axis label", stage_vars["combined_deriv_axis_label"]),
+                ("Temperature axis label", stage_vars["combined_temp_axis_label"]),
+            ]
+            for row_index, (label_text, var) in enumerate(label_entries):
+                ttk.Label(label_frame, text=label_text).grid(
+                    row=row_index, column=0, sticky="w", padx=(0, 6), pady=2
                 )
-                try:
-                    deriv_label_entry.configure(state="disabled")
-                except Exception:
-                    pass
-            else:
-                try:
-                    deriv_label_entry.configure(state="normal")
-                except Exception:
-                    pass
+                entry = ttk.Entry(label_frame, textvariable=var)
+                entry.grid(row=row_index, column=1, sticky="ew", pady=2)
 
-        stage_mirror_detached_labelpad.trace_add("write", _sync_detached_labelpad)
-        stage_vars["combined_temp_labelpad"].trace_add("write", _sync_detached_labelpad)
-        _sync_detached_labelpad()
+            row_idx += 1
+            spacing_frame = ttk.Labelframe(container, text="Spacing & padding")
+            spacing_frame.grid(row=row_idx, column=0, sticky="ew")
+            spacing_frame.grid_columnconfigure(1, weight=1)
+
+            ttk.Label(spacing_frame, text="Derivative axis offset").grid(
+                row=0, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                spacing_frame,
+                textvariable=stage_vars["combined_deriv_axis_offset"],
+                width=8,
+            ).grid(row=0, column=1, sticky="w", pady=2)
+
+            ttk.Label(spacing_frame, text="Primary Y label padding").grid(
+                row=1, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                spacing_frame,
+                textvariable=stage_vars["combined_primary_labelpad"],
+                width=8,
+            ).grid(row=1, column=1, sticky="w", pady=2)
+
+            ttk.Label(spacing_frame, text="Derivative label padding").grid(
+                row=2, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            deriv_label_entry = ttk.Entry(
+                spacing_frame,
+                textvariable=stage_vars["combined_deriv_labelpad"],
+                width=8,
+            )
+            deriv_label_entry.grid(row=2, column=1, sticky="w", pady=2)
+
+            ttk.Label(spacing_frame, text="Temperature label padding").grid(
+                row=3, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                spacing_frame,
+                textvariable=stage_vars["combined_temp_labelpad"],
+                width=8,
+            ).grid(row=3, column=1, sticky="w", pady=2)
+            ttk.Checkbutton(
+                spacing_frame,
+                text="Mirror attached right Y-axis label spacing to detached axis",
+                variable=stage_mirror_detached_labelpad,
+            ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 2))
+            ttk.Label(spacing_frame, text="Left padding (%)").grid(
+                row=5, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                spacing_frame,
+                textvariable=stage_vars["combined_left_padding_pct"],
+                width=8,
+            ).grid(row=5, column=1, sticky="w", pady=2)
+            ttk.Label(spacing_frame, text="Right padding (%)").grid(
+                row=6, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                spacing_frame,
+                textvariable=stage_vars["combined_right_padding_pct"],
+                width=8,
+            ).grid(row=6, column=1, sticky="w", pady=2)
+            ttk.Label(spacing_frame, text="Export padding (pt)").grid(
+                row=7, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                spacing_frame,
+                textvariable=stage_vars["combined_export_pad_pts"],
+                width=8,
+            ).grid(row=7, column=1, sticky="w", pady=2)
+            ttk.Label(
+                spacing_frame,
+                text=(
+                    "Extra whitespace reserved inside the figure so additional Y axes "
+                    "and tick labels stay visible in the combined plot and saved export."
+                ),
+                wraplength=420,
+                foreground="#555555",
+            ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(2, 0))
+            ttk.Label(spacing_frame, text="Title padding (pt)").grid(
+                row=9, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                spacing_frame,
+                textvariable=stage_vars["combined_title_pad_pts"],
+                width=8,
+            ).grid(row=9, column=1, sticky="w", pady=2)
+            ttk.Label(spacing_frame, text="Suptitle padding (pt)").grid(
+                row=10, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                spacing_frame,
+                textvariable=stage_vars["combined_suptitle_pad_pts"],
+                width=8,
+            ).grid(row=10, column=1, sticky="w", pady=2)
+            ttk.Label(spacing_frame, text="Suptitle Y (0-1)").grid(
+                row=11, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                spacing_frame,
+                textvariable=stage_vars["combined_suptitle_y"],
+                width=8,
+            ).grid(row=11, column=1, sticky="w", pady=2)
+            ttk.Label(spacing_frame, text="Top margin above plot (%)").grid(
+                row=12, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                spacing_frame,
+                textvariable=stage_vars["combined_top_margin_pct"],
+                width=8,
+            ).grid(row=12, column=1, sticky="w", pady=2)
+            ttk.Label(
+                spacing_frame,
+                text=(
+                    "Control title/suptitle spacing: title pad adds gap above the axes title; "
+                    "suptitle pad nudges the figure title upward; top margin reserves space above the plot."
+                ),
+                wraplength=420,
+                foreground="#555555",
+            ).grid(row=13, column=0, columnspan=2, sticky="w", pady=(2, 0))
+
+            def _sync_detached_labelpad(*_):
+                if stage_mirror_detached_labelpad.get():
+                    stage_vars["combined_deriv_labelpad"].set(
+                        stage_vars["combined_temp_labelpad"].get()
+                    )
+                    try:
+                        deriv_label_entry.configure(state="disabled")
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        deriv_label_entry.configure(state="normal")
+                    except Exception:
+                        pass
+
+            stage_mirror_detached_labelpad.trace_add("write", _sync_detached_labelpad)
+            stage_vars["combined_temp_labelpad"].trace_add(
+                "write", _sync_detached_labelpad
+            )
+            _sync_detached_labelpad()
+
+            row_idx += 1
 
         margins_frame = ttk.Labelframe(container, text="Layout margins")
-        margins_frame.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        margins_frame.grid(row=row_idx, column=0, sticky="ew", pady=(8, 0))
         margins_frame.grid_columnconfigure(1, weight=1)
 
         def _build_margin_row(row, title, left_var, right_var, top_var, bottom_var):
@@ -30601,198 +31125,214 @@ class UnifiedApp(tk.Tk):
             foreground="#555555",
         ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
-        font_frame = ttk.Labelframe(container, text="Fonts")
-        font_frame.grid(row=3, column=0, sticky="ew", pady=(8, 0))
-        font_frame.grid_columnconfigure(1, weight=1)
+        row_idx += 1
 
-        ttk.Label(font_frame, text="Font family").grid(
-            row=0, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            font_frame, textvariable=stage_vars["combined_font_family"], width=18
-        ).grid(row=0, column=1, sticky="w", pady=2)
-        ttk.Label(font_frame, text="Suptitle size").grid(
-            row=1, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            font_frame, textvariable=stage_vars["combined_suptitle_fontsize"], width=8
-        ).grid(row=1, column=1, sticky="w", pady=2)
-        ttk.Label(font_frame, text="Title size").grid(
-            row=2, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            font_frame, textvariable=stage_vars["combined_title_fontsize"], width=8
-        ).grid(row=2, column=1, sticky="w", pady=2)
-        ttk.Label(font_frame, text="Axis label size").grid(
-            row=3, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            font_frame, textvariable=stage_vars["combined_label_fontsize"], width=8
-        ).grid(row=3, column=1, sticky="w", pady=2)
-        ttk.Label(font_frame, text="Tick label size").grid(
-            row=4, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            font_frame, textvariable=stage_vars["combined_tick_fontsize"], width=8
-        ).grid(row=4, column=1, sticky="w", pady=2)
-        ttk.Label(font_frame, text="Legend size").grid(
-            row=5, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            font_frame, textvariable=stage_vars["combined_legend_fontsize"], width=8
-        ).grid(row=5, column=1, sticky="w", pady=2)
-        ttk.Label(
-            font_frame,
-            text="Leave font family blank to use the default plot font.",
-            wraplength=420,
-            foreground="#555555",
-        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        if is_combined:
+            font_frame = ttk.Labelframe(container, text="Fonts")
+            font_frame.grid(row=row_idx, column=0, sticky="ew", pady=(8, 0))
+            font_frame.grid_columnconfigure(1, weight=1)
+
+            ttk.Label(font_frame, text="Font family").grid(
+                row=0, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                font_frame, textvariable=stage_vars["combined_font_family"], width=18
+            ).grid(row=0, column=1, sticky="w", pady=2)
+            ttk.Label(font_frame, text="Suptitle size").grid(
+                row=1, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                font_frame,
+                textvariable=stage_vars["combined_suptitle_fontsize"],
+                width=8,
+            ).grid(row=1, column=1, sticky="w", pady=2)
+            ttk.Label(font_frame, text="Title size").grid(
+                row=2, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                font_frame,
+                textvariable=stage_vars["combined_title_fontsize"],
+                width=8,
+            ).grid(row=2, column=1, sticky="w", pady=2)
+            ttk.Label(font_frame, text="Axis label size").grid(
+                row=3, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                font_frame,
+                textvariable=stage_vars["combined_label_fontsize"],
+                width=8,
+            ).grid(row=3, column=1, sticky="w", pady=2)
+            ttk.Label(font_frame, text="Tick label size").grid(
+                row=4, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                font_frame,
+                textvariable=stage_vars["combined_tick_fontsize"],
+                width=8,
+            ).grid(row=4, column=1, sticky="w", pady=2)
+            ttk.Label(font_frame, text="Legend size").grid(
+                row=5, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                font_frame,
+                textvariable=stage_vars["combined_legend_fontsize"],
+                width=8,
+            ).grid(row=5, column=1, sticky="w", pady=2)
+            ttk.Label(
+                font_frame,
+                text="Leave font family blank to use the default plot font.",
+                wraplength=420,
+                foreground="#555555",
+            ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(2, 0))
+
+            row_idx += 1
 
         legend_frame = ttk.Labelframe(container, text="Legend layout")
-        legend_frame.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+        legend_frame.grid(row=row_idx, column=0, sticky="ew", pady=(8, 0))
         legend_frame.grid_columnconfigure(1, weight=0)
 
-        ttk.Checkbutton(
-            legend_frame,
-            text="Wrap legend into rows",
-            variable=stage_vars["combined_legend_wrap"],
-        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=2)
+        if is_combined:
+            ttk.Checkbutton(
+                legend_frame,
+                text="Wrap legend into rows",
+                variable=stage_vars["combined_legend_wrap"],
+            ).grid(row=0, column=0, columnspan=2, sticky="w", pady=2)
 
-        ttk.Label(legend_frame, text="Legend rows").grid(
-            row=1, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            legend_frame,
-            width=8,
-            textvariable=stage_vars["combined_legend_rows"],
-        ).grid(row=1, column=1, sticky="w", pady=2)
-        ttk.Label(
-            legend_frame,
-            text="Number of rows to divide the legend into when wrapping is enabled.",
-            wraplength=420,
-            foreground="#555555",
-        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 0))
+            ttk.Label(legend_frame, text="Legend rows").grid(
+                row=1, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                legend_frame,
+                width=8,
+                textvariable=stage_vars["combined_legend_rows"],
+            ).grid(row=1, column=1, sticky="w", pady=2)
+            ttk.Label(
+                legend_frame,
+                text="Number of rows to divide the legend into when wrapping is enabled.",
+                wraplength=420,
+                foreground="#555555",
+            ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
-        ttk.Label(legend_frame, text="Gap above legend (pt)").grid(
-            row=3, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            legend_frame,
-            width=8,
-            textvariable=stage_vars["combined_legend_label_gap"],
-        ).grid(row=3, column=1, sticky="w", pady=2)
-        ttk.Label(
-            legend_frame,
-            text="Distance from the lowest y-label to the top of the legend shadowbox.",
-            wraplength=420,
-            foreground="#555555",
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(2, 0))
+            ttk.Label(legend_frame, text="Gap above legend (pt)").grid(
+                row=3, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                legend_frame,
+                width=8,
+                textvariable=stage_vars["combined_legend_label_gap"],
+            ).grid(row=3, column=1, sticky="w", pady=2)
+            ttk.Label(
+                legend_frame,
+                text="Distance from the lowest y-label to the top of the legend shadowbox.",
+                wraplength=420,
+                foreground="#555555",
+            ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
-        ttk.Label(legend_frame, text="X-label spacing from x-ticks (pts)").grid(
-            row=5, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            legend_frame,
-            width=8,
-            textvariable=stage_vars["combined_xlabel_tick_gap"],
-        ).grid(row=5, column=1, sticky="w", pady=2)
-        ttk.Label(
-            legend_frame,
-            text="Minimum spacing between x tick labels and the x-axis label.",
-            wraplength=420,
-            foreground="#555555",
-        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(2, 0))
+            ttk.Label(legend_frame, text="X-label spacing from x-ticks (pts)").grid(
+                row=5, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                legend_frame,
+                width=8,
+                textvariable=stage_vars["combined_xlabel_tick_gap"],
+            ).grid(row=5, column=1, sticky="w", pady=2)
+            ttk.Label(
+                legend_frame,
+                text="Minimum spacing between x tick labels and the x-axis label.",
+                wraplength=420,
+                foreground="#555555",
+            ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
-        ttk.Label(legend_frame, text="Bottom margin (pt)").grid(
-            row=7, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ttk.Entry(
-            legend_frame,
-            width=8,
-            textvariable=stage_vars["combined_legend_bottom_margin"],
-        ).grid(row=7, column=1, sticky="w", pady=2)
-        ttk.Label(
-            legend_frame,
-            text="Space between the bottom of the legend and the figure edge in saved exports.",
-            wraplength=420,
-            foreground="#555555",
-        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(2, 0))
+            ttk.Label(legend_frame, text="Bottom margin (pt)").grid(
+                row=7, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                legend_frame,
+                width=8,
+                textvariable=stage_vars["combined_legend_bottom_margin"],
+            ).grid(row=7, column=1, sticky="w", pady=2)
+            ttk.Label(
+                legend_frame,
+                text="Space between the bottom of the legend and the figure edge in saved exports.",
+                wraplength=420,
+                foreground="#555555",
+            ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
-        ttk.Button(
-            legend_frame,
-            text="Combined Plot Layout Tuner...",
-            command=self._open_combined_layout_tuner,
-        ).grid(row=9, column=0, columnspan=2, sticky="w", pady=(6, 2))
+            ttk.Button(
+                legend_frame,
+                text="Combined Plot Layout Tuner...",
+                command=self._open_combined_layout_tuner,
+            ).grid(row=9, column=0, columnspan=2, sticky="w", pady=(6, 2))
 
-        ttk.Label(legend_frame, text="Legend alignment").grid(
-            row=10, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        alignment_menu = ttk.OptionMenu(
-            legend_frame,
-            stage_vars["combined_legend_alignment"],
-            stage_vars["combined_legend_alignment"].get(),
-            "left",
-            "center",
-            "right",
-        )
-        alignment_menu.grid(row=10, column=1, sticky="w", pady=2)
+            ttk.Label(legend_frame, text="Legend alignment").grid(
+                row=10, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            alignment_menu = ttk.OptionMenu(
+                legend_frame,
+                stage_vars["combined_legend_alignment"],
+                stage_vars["combined_legend_alignment"].get(),
+                "left",
+                "center",
+                "right",
+            )
+            alignment_menu.grid(row=10, column=1, sticky="w", pady=2)
 
-        cycle_loc_choices = [
-            "upper right",
-            "upper left",
-            "lower right",
-            "lower left",
-            "center right",
-            "center left",
-            "upper center",
-            "lower center",
-            "center",
-        ]
-        cycle_loc_var = stage_vars["combined_cycle_legend_loc_choice"]
-        if (cycle_loc_var.get() or "").strip().lower() not in cycle_loc_choices:
-            cycle_loc_var.set("upper right")
+            cycle_loc_choices = [
+                "upper right",
+                "upper left",
+                "lower right",
+                "lower left",
+                "center right",
+                "center left",
+                "upper center",
+                "lower center",
+                "center",
+            ]
+            cycle_loc_var = stage_vars["combined_cycle_legend_loc_choice"]
+            if (cycle_loc_var.get() or "").strip().lower() not in cycle_loc_choices:
+                cycle_loc_var.set("upper right")
 
-        ttk.Label(legend_frame, text="Cycle Legend Location").grid(
-            row=11, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        cycle_loc_menu = ttk.OptionMenu(
-            legend_frame,
-            cycle_loc_var,
-            cycle_loc_var.get(),
-            *cycle_loc_choices,
-        )
-        cycle_loc_menu.grid(row=11, column=1, sticky="w", pady=2)
+            ttk.Label(legend_frame, text="Cycle Legend Location").grid(
+                row=11, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            cycle_loc_menu = ttk.OptionMenu(
+                legend_frame,
+                cycle_loc_var,
+                cycle_loc_var.get(),
+                *cycle_loc_choices,
+            )
+            cycle_loc_menu.grid(row=11, column=1, sticky="w", pady=2)
 
-        ref_axis_var = stage_vars["combined_cycle_legend_ref_axis"]
-        if (ref_axis_var.get() or "").strip().lower() not in COMBINED_CYCLE_REF_AXIS_CHOICES:
-            ref_axis_var.set("main")
-        ttk.Label(legend_frame, text="Cycle Legend Reference Axis").grid(
-            row=12, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ref_axis_menu = ttk.OptionMenu(
-            legend_frame,
-            ref_axis_var,
-            ref_axis_var.get(),
-            *COMBINED_CYCLE_REF_AXIS_CHOICES,
-        )
-        ref_axis_menu.grid(row=12, column=1, sticky="w", pady=2)
+            ref_axis_var = stage_vars["combined_cycle_legend_ref_axis"]
+            if (ref_axis_var.get() or "").strip().lower() not in COMBINED_CYCLE_REF_AXIS_CHOICES:
+                ref_axis_var.set("main")
+            ttk.Label(legend_frame, text="Cycle Legend Reference Axis").grid(
+                row=12, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ref_axis_menu = ttk.OptionMenu(
+                legend_frame,
+                ref_axis_var,
+                ref_axis_var.get(),
+                *COMBINED_CYCLE_REF_AXIS_CHOICES,
+            )
+            ref_axis_menu.grid(row=12, column=1, sticky="w", pady=2)
 
-        ref_corner_var = stage_vars["combined_cycle_legend_ref_corner"]
-        if (
-            (ref_corner_var.get() or "").strip().lower()
-            not in COMBINED_CYCLE_REF_CORNER_CHOICES
-        ):
-            ref_corner_var.set("upper right")
-        ttk.Label(legend_frame, text="Cycle Legend Reference Corner").grid(
-            row=13, column=0, sticky="w", padx=(0, 6), pady=2
-        )
-        ref_corner_menu = ttk.OptionMenu(
-            legend_frame,
-            ref_corner_var,
-            ref_corner_var.get(),
-            *COMBINED_CYCLE_REF_CORNER_CHOICES,
-        )
-        ref_corner_menu.grid(row=13, column=1, sticky="w", pady=2)
+            ref_corner_var = stage_vars["combined_cycle_legend_ref_corner"]
+            if (
+                (ref_corner_var.get() or "").strip().lower()
+                not in COMBINED_CYCLE_REF_CORNER_CHOICES
+            ):
+                ref_corner_var.set("upper right")
+            ttk.Label(legend_frame, text="Cycle Legend Reference Corner").grid(
+                row=13, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ref_corner_menu = ttk.OptionMenu(
+                legend_frame,
+                ref_corner_var,
+                ref_corner_var.get(),
+                *COMBINED_CYCLE_REF_CORNER_CHOICES,
+            )
+            ref_corner_menu.grid(row=13, column=1, sticky="w", pady=2)
 
         def _parse_anchor_value(var: tk.StringVar) -> Optional[float]:
             raw = (var.get() or "").strip()
@@ -30810,11 +31350,12 @@ class UnifiedApp(tk.Tk):
             value = max(-0.1, min(1.1, value + (0.01 * direction)))
             var.set(f"{value:.4f}")
 
+        anchor_row = 14 if is_combined else 0
         ttk.Label(legend_frame, text="Legend anchor Y (display)").grid(
-            row=14, column=0, sticky="w", padx=(0, 6), pady=2
+            row=anchor_row, column=0, sticky="w", padx=(0, 6), pady=2
         )
         display_anchor_frame = ttk.Frame(legend_frame)
-        display_anchor_frame.grid(row=14, column=1, sticky="w", pady=2)
+        display_anchor_frame.grid(row=anchor_row, column=1, sticky="w", pady=2)
         ttk.Entry(
             display_anchor_frame,
             textvariable=stage_legend_anchor_y_display,
@@ -30834,10 +31375,10 @@ class UnifiedApp(tk.Tk):
         ).pack(side="left")
 
         ttk.Label(legend_frame, text="Legend anchor Y (export)").grid(
-            row=15, column=0, sticky="w", padx=(0, 6), pady=2
+            row=anchor_row + 1, column=0, sticky="w", padx=(0, 6), pady=2
         )
         export_anchor_frame = ttk.Frame(legend_frame)
-        export_anchor_frame.grid(row=15, column=1, sticky="w", pady=2)
+        export_anchor_frame.grid(row=anchor_row + 1, column=1, sticky="w", pady=2)
         ttk.Entry(
             export_anchor_frame,
             textvariable=stage_legend_anchor_y_export,
@@ -30861,24 +31402,27 @@ class UnifiedApp(tk.Tk):
             text="Up moves the legend toward the x-label; down moves it away.",
             wraplength=420,
             foreground="#555555",
-        ).grid(row=16, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        ).grid(row=anchor_row + 2, column=0, columnspan=2, sticky="w", pady=(2, 0))
+
+        row_idx += 1
 
         button_frame = ttk.Frame(container)
-        button_frame.grid(row=5, column=0, sticky="e", pady=(8, 0))
+        button_frame.grid(row=row_idx, column=0, sticky="e", pady=(8, 0))
 
         def _apply_stage_values(close_after: bool = False) -> None:
-            for key, var in stage_vars.items():
-                target_var = getattr(self, key, None)
-                if target_var is None:
-                    continue
-                try:
-                    target_var.set(var.get())
-                except Exception:
+            if is_combined:
+                for key, var in stage_vars.items():
+                    target_var = getattr(self, key, None)
+                    if target_var is None:
+                        continue
                     try:
                         target_var.set(var.get())
                     except Exception:
-                        pass
-            self._apply_combined_axis_preferences(skip_save=True)
+                        try:
+                            target_var.set(var.get())
+                        except Exception:
+                            pass
+                self._apply_combined_axis_preferences(skip_save=True)
             display_margins = {
                 "left": stage_layout_display_left.get(),
                 "right": stage_layout_display_right.get(),
@@ -30891,24 +31435,37 @@ class UnifiedApp(tk.Tk):
                 "top": stage_layout_export_top.get(),
                 "bottom": stage_layout_export_bottom.get(),
             }
-            self._sync_combined_layout_profile(
-                display_margins=display_margins,
-                export_margins=export_margins,
-                legend_anchor_y_display=_parse_anchor_value(
-                    stage_legend_anchor_y_display
-                ),
-                legend_anchor_y_export=_parse_anchor_value(
-                    stage_legend_anchor_y_export
-                ),
-                mirror_detached_labelpad=stage_mirror_detached_labelpad.get(),
-            )
+            legend_anchor_display = _parse_anchor_value(stage_legend_anchor_y_display)
+            legend_anchor_export = _parse_anchor_value(stage_legend_anchor_y_export)
+            if is_combined:
+                self._sync_combined_layout_profile(
+                    display_margins=display_margins,
+                    export_margins=export_margins,
+                    legend_anchor_y_display=legend_anchor_display,
+                    legend_anchor_y_export=legend_anchor_export,
+                    mirror_detached_labelpad=stage_mirror_detached_labelpad.get(),
+                )
+            else:
+                self._sync_plot_layout_profile(
+                    plot_id,
+                    display_margins=display_margins,
+                    export_margins=export_margins,
+                    legend_anchor_y_display=legend_anchor_display,
+                    legend_anchor_y_export=legend_anchor_export,
+                )
             try:
                 _save_settings_to_disk()
             except Exception:
                 pass
-            self._schedule_combined_preview_refresh()
+            try:
+                self._mark_plot_layout_dirty(plot_id)
+            except Exception:
+                pass
+            if is_combined:
+                self._schedule_combined_preview_refresh()
+            self._refresh_plot_for_plot_id(plot_id)
             if close_after:
-                self._close_combined_axis_preferences()
+                self._close_plot_settings_dialog()
 
         ttk.Button(
             button_frame, text="Apply", command=lambda: _apply_stage_values(False)
@@ -30919,14 +31476,18 @@ class UnifiedApp(tk.Tk):
 
         window.protocol("WM_DELETE_WINDOW", lambda: _apply_stage_values(True))
 
-    def _close_combined_axis_preferences(self) -> None:
-        window = getattr(self, "_combined_axis_pref_window", None)
+    def _close_plot_settings_dialog(self) -> None:
+        window = getattr(self, "_plot_settings_window", None)
         if window is not None:
             try:
                 window.destroy()
             except Exception:
                 pass
-        self._combined_axis_pref_window = None
+        self._plot_settings_window = None
+        self._plot_settings_target_id = None
+
+    def _open_combined_axis_preferences(self) -> None:
+        self._open_plot_settings_dialog("fig_combined_triple_axis")
 
     def _sync_combined_layout_profile(
         self,
@@ -30978,6 +31539,10 @@ class UnifiedApp(tk.Tk):
         settings["layout_profiles"] = _normalize_layout_profiles(
             settings.get("layout_profiles")
         )
+        try:
+            self._mark_plot_layout_dirty("fig_combined_triple_axis")
+        except Exception:
+            pass
 
     def _apply_combined_axis_preferences(self, *, skip_save: bool = False) -> None:
         def _label_value(var: tk.StringVar) -> str:
@@ -31176,6 +31741,11 @@ class UnifiedApp(tk.Tk):
         )
         self.combined_cycle_legend_ref_corner.set(ref_corner_value)
         settings["combined_cycle_legend_ref_corner"] = ref_corner_value
+
+        try:
+            self._mark_plot_layout_dirty("fig_combined_triple_axis")
+        except Exception:
+            pass
 
         if not skip_save:
             try:
@@ -38160,6 +38730,11 @@ class UnifiedApp(tk.Tk):
         if getattr(self, "_cycle_tab_added", False):
 
             self._show_cycle_apply_prompt()
+
+        try:
+            self._mark_plot_data_dirty()
+        except Exception:
+            pass
 
     def _on_gas_selected(self, *_):
 
