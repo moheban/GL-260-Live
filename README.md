@@ -1,9 +1,17 @@
-# GL-260 Data Analysis and Plotter (V1.6.8)
+# GL-260 Data Analysis and Plotter (V1.7.1)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data exported to Excel, mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.6.8`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.7.1`.
+
+## V1.7.1 Update Highlights
+- Plot elements remain interactive after Refresh Plot on the combined triple-axis tab (placement + drag stay armed).
+- Refresh now retargets plot annotations after a deterministic install/draw/finalize pipeline.
+
+## V1.7.0 Update Highlights
+- Plot Elements workflow updated with explicit placement arming and clearer add-status feedback.
+- Plot Elements editor keeps add defaults and provides a tighter edit/apply/revert loop.
 
 ## V1.6.8 Update Highlights
 - Combined triple-axis plots keep clean breaks between stitched sheets in the display window.
@@ -402,14 +410,18 @@ Key behaviors:
 - Axis-based legacy elements are automatically migrated into data coordinates.
 - Elements are applied both to on-screen figures and to exported PNG/PDF/SVG outputs.
 - Element placement uses a dedicated "Plot Elements" Toplevel editor with:
-  - Add Element controls and placement hints.
+  - Add Element controls (type, axis, coordinate space) with explicit "Place on Plot" arming and status hints.
   - Color, transparency, and label presets.
-  - Live update toggle for immediate redraw.
-  - Undo/redo history.
+  - Live update toggle for immediate redraw plus apply/revert/undo/redo for edits.
 
 Persistence:
 - `settings["plot_elements"]` stores element lists per plot ID.
 - `settings["annotations_ui"]` stores per-plot UI state (collapsed state, last mode, add defaults, live update).
+
+### Plot Elements Updates (V1.7.0)
+- Placement is explicitly armed via "Place on Plot", with status guidance and Esc-to-cancel.
+- Add defaults (type, axis, coord space, alpha, label text) are persisted per plot.
+- Live update and apply/revert controls tighten the edit workflow without changing settings keys.
 
 ### Plot Elements Updates (V1.6.8)
 - Span selection highlights respect the configured appearance color immediately.
@@ -540,8 +552,15 @@ Default output profiles include (keys shown as stored in `settings.json`):
 - The NaOH-CO2 Pitzer model is optional and requires a valid `pitzer.dat`.
 - Large datasets are loaded fully into memory.
 
-## Versioning and Change Highlights (V1.6.x and earlier)
+## Versioning and Change Highlights (V1.7.x and earlier)
 The script includes internal change summaries:
+
+- **V1.7.1**:
+  - Refresh retargets plot annotations after final draw so post-refresh interactions stay reliable.
+  - Hit-test and drag caches are cleared on retarget to avoid stale geometry.
+
+- **V1.7.0**:
+  - Plot Elements workflow updates (explicit placement arming and tighter editor flow).
 
 - **V1.6.3**:
   - Plot Preview/export now reflects manual Cycle Analysis edits correctly.
@@ -571,7 +590,7 @@ The script includes internal change summaries:
   - Treeview selection recursion fix in annotations editor.
   - Layout fixes for the annotations Toplevel.
 
-Note: the UI title uses `APP_VERSION` set to `V1.6.8`.
+Note: the UI title uses `APP_VERSION` set to `V1.7.1`.
 
 ## Troubleshooting
 - **"No Data" or "Missing Columns" errors**: Load a sheet on the Data tab and set required columns on the Columns tab.

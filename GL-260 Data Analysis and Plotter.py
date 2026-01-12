@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.7.0
+# Version: V1.7.1
 # Date: 2026-01-12
 
 import os
@@ -7185,7 +7185,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.7.0"
+APP_VERSION = "V1.7.1"
 
 
 DEBUG_SERIES_FLOW = False
@@ -25235,6 +25235,39 @@ class UnifiedApp(tk.Tk):
             force_draw=False,
         )
 
+    def _install_refreshed_figure_and_finalize(self, frame, canvas, new_fig) -> None:
+        """Install a refreshed figure onto a canvas and finalize layout."""
+        if canvas is None or new_fig is None:
+            return
+        self._log_plot_tab_debug("Installing refreshed figure onto canvas.")
+        try:
+            new_fig.set_canvas(canvas)
+        except Exception:
+            pass
+        try:
+            canvas.figure = new_fig
+        except Exception:
+            pass
+        try:
+            canvas.resize_event()
+        except Exception:
+            pass
+        try:
+            canvas.draw()
+            self._log_plot_tab_debug("Refreshed figure: first draw complete.")
+        except Exception:
+            pass
+        try:
+            self._refresh_canvas_display(frame, canvas, trigger_resize=False)
+            self._log_plot_tab_debug("Refreshed figure: canvas display finalized.")
+        except Exception:
+            pass
+        try:
+            canvas.draw()
+            self._log_plot_tab_debug("Refreshed figure: second draw complete.")
+        except Exception:
+            pass
+
     def _compute_target_figsize_inches(self):
         """Estimate the on-screen area to size Matplotlib figures before drawing."""
         width_px = 0
@@ -25342,27 +25375,14 @@ class UnifiedApp(tk.Tk):
                         except Exception:
                             pass
                     try:
-                        new_fig.set_canvas(canvas)
-                    except Exception:
-                        pass
-                    canvas.figure = new_fig
-                    try:
-                        canvas.resize_event()
+                        self._install_refreshed_figure_and_finalize(
+                            frame, canvas, new_fig
+                        )
                     except Exception:
                         pass
                     try:
                         self._retarget_plot_annotation_controller(
                             plot_id, new_fig, canvas
-                        )
-                    except Exception:
-                        pass
-                    try:
-                        canvas.draw_idle()
-                    except Exception:
-                        pass
-                    try:
-                        self._refresh_canvas_display(
-                            frame, canvas, trigger_resize=False
                         )
                     except Exception:
                         pass
@@ -25476,31 +25496,15 @@ class UnifiedApp(tk.Tk):
                     self._apply_plot_elements(new_fig, plot_id)
             except Exception:
                 pass
+            try:
+                self._install_refreshed_figure_and_finalize(frame, canvas, new_fig)
+            except Exception:
+                pass
             if plot_id:
                 try:
                     self._retarget_plot_annotation_controller(plot_id, new_fig, canvas)
                 except Exception:
                     pass
-            try:
-                try:
-                    new_fig.set_canvas(canvas)
-                except Exception:
-                    pass
-                canvas.figure = new_fig
-                try:
-                    canvas.resize_event()
-                except Exception:
-                    pass
-                if plot_key == "fig_combined":
-                    canvas.draw_idle()
-                else:
-                    canvas.draw()
-            except Exception:
-                pass
-            try:
-                self._refresh_canvas_display(frame, canvas, trigger_resize=False)
-            except Exception:
-                pass
             if plot_key == "fig_combined":
                 try:
                     self._register_combined_legend_tracking(new_fig)
@@ -25875,6 +25879,9 @@ class UnifiedApp(tk.Tk):
         controller = self._plot_annotation_controllers.get(plot_id)
         if controller is None:
             return
+        self._log_plot_tab_debug(
+            f"Retargeting plot annotation controller for {plot_id}."
+        )
         try:
             controller.set_target(fig, canvas)
         except Exception:
@@ -25889,10 +25896,25 @@ class UnifiedApp(tk.Tk):
             controller.cancel_place_element()
         except Exception:
             pass
+        self._log_plot_tab_debug("Clearing plot annotation caches.")
+        try:
+            controller._hit_test.clear_cache()
+        except Exception:
+            pass
+        try:
+            controller._end_drag_blit()
+        except Exception:
+            try:
+                controller._drag_blit_state = None
+            except Exception:
+                pass
         try:
             controller.render()
         except Exception:
             pass
+        self._log_plot_tab_debug(
+            f"Plot annotation controller retarget complete for {plot_id}."
+        )
         window = self._plot_element_windows.get(plot_id)
         panel = self._plot_annotation_panels.get(plot_id)
         if window is not None:
