@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.7.2
+# Version: V1.7.3
 # Date: 2026-01-12
 
 import os
@@ -7185,7 +7185,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.7.2"
+APP_VERSION = "V1.7.3"
 
 
 DEBUG_SERIES_FLOW = False
@@ -25235,6 +25235,64 @@ class UnifiedApp(tk.Tk):
             force_draw=False,
         )
 
+    def _finalize_combined_plot_display(self, frame, canvas) -> None:
+        if canvas is None:
+            return
+        fig = getattr(canvas, "figure", None)
+        if fig is None:
+            return
+        plot_id = getattr(frame, "_plot_id", None)
+        placement_state = self._capture_plot_element_placement_state(plot_id)
+        if plot_id:
+            try:
+                _apply_layout_profile_to_figure(fig, plot_id, "display")
+            except Exception:
+                pass
+        widget = None
+        try:
+            widget = canvas.get_tk_widget()
+        except Exception:
+            widget = None
+        self._finalize_matplotlib_canvas_layout(
+            canvas=canvas,
+            fig=fig,
+            tk_widget=widget,
+            keep_export_size=False,
+            trigger_resize_event=True,
+            force_draw=True,
+        )
+        try:
+            self._register_combined_legend_tracking(fig)
+        except Exception:
+            pass
+        if plot_id:
+            try:
+                self._retarget_plot_annotation_controller(plot_id, fig, canvas)
+            except Exception:
+                pass
+            try:
+                self._restore_plot_element_placement_state(plot_id, placement_state)
+            except Exception:
+                pass
+
+    def _finalize_plot_refresh(self, canvas, fig) -> None:
+        if canvas is None or fig is None:
+            return
+        try:
+            layout_mgr = getattr(fig, "_gl260_layout_manager", None)
+            if layout_mgr is not None:
+                layout_mgr.solve()
+        except Exception:
+            pass
+        try:
+            canvas.resize_event()
+        except Exception:
+            pass
+        try:
+            canvas.draw()
+        except Exception:
+            pass
+
     def _install_refreshed_figure_and_finalize(self, frame, canvas, new_fig) -> None:
         """Install a refreshed figure onto a canvas and finalize layout."""
         if canvas is None or new_fig is None:
@@ -25321,13 +25379,21 @@ class UnifiedApp(tk.Tk):
             pass
         flags = self._ensure_plot_dirty_flags(plot_id) if plot_id else None
         dirty_data = True
+        dirty_layout = True
+        dirty_elements = True
         if flags is not None:
             dirty_data = bool(flags.get("dirty_data", True))
+            dirty_layout = bool(flags.get("dirty_layout", True))
+            dirty_elements = bool(flags.get("dirty_elements", True))
+
+        placement_state = self._capture_plot_element_placement_state(plot_id)
+        prebuilt_fig: Optional[Figure] = None
 
         if plot_id and not dirty_data:
+            fig = getattr(canvas, "figure", None)
             if plot_key == "fig_combined":
                 args = getattr(self, "_last_plot_args", None)
-                new_fig: Optional[Figure] = None
+                updated_fig: Optional[Figure] = None
                 if args:
                     try:
                         self._capture_combined_legend_anchor_from_fig(
@@ -25351,7 +25417,7 @@ class UnifiedApp(tk.Tk):
                     except Exception:
                         fig_size = self._compute_target_figsize_inches()
                     try:
-                        new_fig = self._build_combined_triple_axis_from_state(
+                        updated_fig = self._build_combined_triple_axis_from_state(
                             args=args,
                             fig_size=fig_size,
                             mode="display",
@@ -25359,60 +25425,75 @@ class UnifiedApp(tk.Tk):
                             canvas=canvas,
                         )
                     except Exception:
-                        new_fig = None
-                if new_fig is not None:
-                    try:
-                        self._teardown_layout_editor(plot_id, apply_changes=False)
-                    except Exception:
-                        pass
-                    reused_combined = (
-                        canvas is not None
-                        and getattr(canvas, "figure", None) is new_fig
-                    )
-                    if not reused_combined:
+                        updated_fig = None
+                if updated_fig is None:
+                    updated_fig = fig
+                reused_combined = (
+                    canvas is not None
+                    and updated_fig is not None
+                    and getattr(canvas, "figure", None) is updated_fig
+                )
+                if reused_combined and updated_fig is not None:
+                    controller = self._plot_annotation_controllers.get(plot_id)
+                    if controller is None:
                         try:
-                            self._apply_plot_elements(new_fig, plot_id)
+                            self._apply_plot_elements(updated_fig, plot_id)
                         except Exception:
                             pass
                     try:
-                        self._install_refreshed_figure_and_finalize(
-                            frame, canvas, new_fig
-                        )
+                        self._register_combined_legend_tracking(updated_fig)
                     except Exception:
                         pass
                     try:
                         self._retarget_plot_annotation_controller(
-                            plot_id, new_fig, canvas
+                            plot_id, updated_fig, canvas
                         )
                     except Exception:
                         pass
                     try:
-                        self._register_combined_legend_tracking(new_fig)
+                        self._restore_plot_element_placement_state(
+                            plot_id, placement_state
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        self._finalize_plot_refresh(canvas, updated_fig)
                     except Exception:
                         pass
                     try:
                         self._set_plot_dirty_flags(
-                            plot_id, dirty_layout=False, dirty_elements=False
+                            plot_id,
+                            dirty_layout=False,
+                            dirty_elements=False,
                         )
                     except Exception:
                         pass
                     return
-            fig = getattr(canvas, "figure", None)
-            if fig is not None:
+                if updated_fig is not None and not reused_combined:
+                    prebuilt_fig = updated_fig
+            elif fig is not None:
                 try:
                     _apply_layout_profile_to_figure(fig, plot_id, "display")
                 except Exception:
                     pass
-                try:
-                    controller = self._plot_annotation_controllers.get(plot_id)
-                    if controller is not None:
-                        controller.render()
-                    else:
+                controller = self._plot_annotation_controllers.get(plot_id)
+                if controller is None:
+                    try:
                         self._apply_plot_elements(fig, plot_id)
+                    except Exception:
+                        pass
+                try:
+                    self._retarget_plot_annotation_controller(plot_id, fig, canvas)
                 except Exception:
                     pass
                 try:
-                    canvas.draw_idle()
+                    self._restore_plot_element_placement_state(
+                        plot_id, placement_state
+                    )
+                except Exception:
+                    pass
+                try:
+                    self._finalize_plot_refresh(canvas, fig)
                 except Exception:
                     pass
                 try:
@@ -25423,62 +25504,63 @@ class UnifiedApp(tk.Tk):
                     pass
                 return
 
-        new_fig: Optional[Figure] = None
+        new_fig: Optional[Figure] = prebuilt_fig
         args = getattr(self, "_last_plot_args", None)
-        try:
-            self._prepare_series_globals()
+        if new_fig is None:
             try:
-                ignore_min_drop = bool(
-                    getattr(self, "_cycle_last_ignore_min_drop", True)
-                )
-                self._refresh_final_report_cycle_snapshot(
-                    ignore_min_drop=ignore_min_drop
-                )
-            except Exception:
-                pass
-            self._prime_core_cycle_overlay_globals()
-            args = self._collect_plot_args()
-        except Exception:
-            args = getattr(self, "_last_plot_args", None)
-
-        if plot_key and args:
-            try:
-                if plot_key in {"fig1", "fig2", "fig_peaks"}:
-                    figs = main_plotting_function(*args)
-                    if isinstance(figs, dict):
-                        new_fig = figs.get(plot_key)
-                elif plot_key == "fig_combined":
-                    # Remember current legend position before rebuilding
-                    try:
-                        self._capture_combined_legend_anchor_from_fig(
-                            getattr(canvas, "figure", None)
-                        )
-                    except Exception:
-                        pass
-                    fig_size = None
-                    try:
-                        widget = canvas.get_tk_widget()
-                        widget.update_idletasks()
-                        width_px = max(int(widget.winfo_width()), 1)
-                        height_px = max(int(widget.winfo_height()), 1)
-                        dpi = float(getattr(canvas.figure, "dpi", 100.0))
-                        if not math.isfinite(dpi) or dpi <= 0:
-                            dpi = 100.0
-                        fig_size = (
-                            max(width_px / dpi, 1.0),
-                            max(height_px / dpi, 1.0),
-                        )
-                    except Exception:
-                        fig_size = self._compute_target_figsize_inches()
-                    new_fig = self._build_combined_triple_axis_from_state(
-                        args=args,
-                        fig_size=fig_size,
-                        mode="display",
-                        reuse=True,
-                        canvas=canvas,
+                self._prepare_series_globals()
+                try:
+                    ignore_min_drop = bool(
+                        getattr(self, "_cycle_last_ignore_min_drop", True)
                     )
+                    self._refresh_final_report_cycle_snapshot(
+                        ignore_min_drop=ignore_min_drop
+                    )
+                except Exception:
+                    pass
+                self._prime_core_cycle_overlay_globals()
+                args = self._collect_plot_args()
             except Exception:
-                new_fig = None
+                args = getattr(self, "_last_plot_args", None)
+
+            if plot_key and args:
+                try:
+                    if plot_key in {"fig1", "fig2", "fig_peaks"}:
+                        figs = main_plotting_function(*args)
+                        if isinstance(figs, dict):
+                            new_fig = figs.get(plot_key)
+                    elif plot_key == "fig_combined":
+                        # Remember current legend position before rebuilding
+                        try:
+                            self._capture_combined_legend_anchor_from_fig(
+                                getattr(canvas, "figure", None)
+                            )
+                        except Exception:
+                            pass
+                        fig_size = None
+                        try:
+                            widget = canvas.get_tk_widget()
+                            widget.update_idletasks()
+                            width_px = max(int(widget.winfo_width()), 1)
+                            height_px = max(int(widget.winfo_height()), 1)
+                            dpi = float(getattr(canvas.figure, "dpi", 100.0))
+                            if not math.isfinite(dpi) or dpi <= 0:
+                                dpi = 100.0
+                            fig_size = (
+                                max(width_px / dpi, 1.0),
+                                max(height_px / dpi, 1.0),
+                            )
+                        except Exception:
+                            fig_size = self._compute_target_figsize_inches()
+                        new_fig = self._build_combined_triple_axis_from_state(
+                            args=args,
+                            fig_size=fig_size,
+                            mode="display",
+                            reuse=True,
+                            canvas=canvas,
+                        )
+                except Exception:
+                    new_fig = None
 
         if new_fig is not None:
             try:
@@ -25503,6 +25585,12 @@ class UnifiedApp(tk.Tk):
             if plot_id:
                 try:
                     self._retarget_plot_annotation_controller(plot_id, new_fig, canvas)
+                except Exception:
+                    pass
+                try:
+                    self._restore_plot_element_placement_state(
+                        plot_id, placement_state
+                    )
                 except Exception:
                     pass
             if plot_key == "fig_combined":
@@ -25892,10 +25980,6 @@ class UnifiedApp(tk.Tk):
             controller.update_axis_map(fig, axes_map, axis_labels)
         except Exception:
             pass
-        try:
-            controller.cancel_place_element()
-        except Exception:
-            pass
         self._log_plot_tab_debug("Clearing plot annotation caches.")
         try:
             controller._hit_test.clear_cache()
@@ -25936,6 +26020,61 @@ class UnifiedApp(tk.Tk):
                     pass
                 self._plot_element_windows.pop(plot_id, None)
                 self._plot_element_editors.pop(plot_id, None)
+
+    def _capture_plot_element_placement_state(
+        self, plot_id: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
+        if not plot_id:
+            return None
+        controller = self._plot_annotation_controllers.get(plot_id)
+        if controller is None:
+            return None
+        element_type = getattr(controller, "_placing_type", None)
+        if not element_type:
+            return None
+        return {
+            "type": element_type,
+            "style_overrides": dict(
+                getattr(controller, "_placing_style_overrides", {}) or {}
+            ),
+            "geometry_seed": dict(
+                getattr(controller, "_placing_geometry_seed", {}) or {}
+            ),
+            "axis_target": getattr(controller, "_placing_axis_target", None),
+            "coord_space": getattr(controller, "_placing_coord_space", None),
+            "keep_placing": bool(getattr(controller, "_placing_keep_placing", False)),
+        }
+
+    def _restore_plot_element_placement_state(
+        self, plot_id: Optional[str], placement_state: Optional[Dict[str, Any]]
+    ) -> None:
+        if not plot_id or not placement_state:
+            return
+        controller = self._plot_annotation_controllers.get(plot_id)
+        if controller is None:
+            return
+        element_type = placement_state.get("type")
+        if not element_type:
+            return
+        style_overrides = dict(placement_state.get("style_overrides") or {})
+        if placement_state.get("keep_placing"):
+            style_overrides["_keep_placing"] = True
+        try:
+            controller.begin_place_element(
+                element_type,
+                style_overrides,
+                geometry_seed=placement_state.get("geometry_seed"),
+                axis_target=placement_state.get("axis_target"),
+                coord_space=placement_state.get("coord_space"),
+            )
+        except Exception:
+            return
+        panel = self._plot_annotation_panels.get(plot_id)
+        if panel is not None:
+            try:
+                panel.set_add_placement_active(True)
+            except Exception:
+                pass
 
     def _ensure_plot_dirty_flags(
         self, plot_id: Optional[str]
@@ -29205,7 +29344,10 @@ class UnifiedApp(tk.Tk):
 
                 pass
 
-            self._refresh_canvas_display(frame, canvas, trigger_resize=True)
+            if plot_key == "fig_combined":
+                self._finalize_combined_plot_display(frame, canvas)
+            else:
+                self._refresh_canvas_display(frame, canvas, trigger_resize=True)
 
         self.after_idle(_finalize_tab_display)
 
