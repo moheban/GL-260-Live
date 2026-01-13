@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.7.1
+# Version: V1.7.2
 # Date: 2026-01-12
 
 import os
@@ -7185,7 +7185,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.7.1"
+APP_VERSION = "V1.7.2"
 
 
 DEBUG_SERIES_FLOW = False
