@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.7.3
-# Date: 2026-01-12
+# Version: V1.7.4
+# Date: 2026-01-14
 
 import os
 import sys
@@ -7185,7 +7185,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.7.3"
+APP_VERSION = "V1.7.4"
 
 
 DEBUG_SERIES_FLOW = False
@@ -16124,6 +16124,8 @@ DEFAULT_CYCLE_TRACE_SETTINGS = {
     "line_width": 0.8,
     "peak_color": "#2ca02c",
     "trough_color": "#d62728",
+    "peak_marker": "^",
+    "trough_marker": "v",
     "marker_size": 28.0,
 }
 cycle_trace_settings = dict(DEFAULT_CYCLE_TRACE_SETTINGS)
@@ -16283,10 +16285,29 @@ def get_cycle_trace_style():
     if not (math.isfinite(marker_size) and marker_size > 0.0):
         marker_size = DEFAULT_CYCLE_TRACE_SETTINGS["marker_size"]
 
+    def _normalize_marker(value: Any, default: str) -> str:
+        if not isinstance(value, str):
+            return default
+        candidate = value.strip()
+        if not candidate:
+            return default
+        if candidate not in SCATTER_MARKER_CHOICES and len(candidate) > 1:
+            return default
+        return candidate
+
+    peak_marker = _normalize_marker(
+        style.get("peak_marker"), DEFAULT_CYCLE_TRACE_SETTINGS["peak_marker"]
+    )
+    trough_marker = _normalize_marker(
+        style.get("trough_marker"), DEFAULT_CYCLE_TRACE_SETTINGS["trough_marker"]
+    )
+
     style["line_style"] = line_style_label
     style["resolved_linestyle"] = resolved_linestyle
     style["line_width"] = line_width
     style["marker_size"] = marker_size
+    style["peak_marker"] = peak_marker
+    style["trough_marker"] = trough_marker
     style["line_color"] = _normalize_color(
         style.get("line_color"), DEFAULT_CYCLE_TRACE_SETTINGS["line_color"]
     )
@@ -16720,6 +16741,13 @@ if os.path.exists(SETTINGS_FILE):
         MIN_COMBINED_FONT_SIZE,
         MAX_COMBINED_FONT_SIZE,
     )
+    initial_combined_cycle_legend_fontsize = _sanitize_spacing_value(
+        settings.get("combined_cycle_legend_fontsize", initial_combined_legend_fontsize),
+        initial_combined_legend_fontsize,
+        MIN_COMBINED_FONT_SIZE,
+        MAX_COMBINED_FONT_SIZE,
+    )
+    settings["combined_cycle_legend_fontsize"] = initial_combined_cycle_legend_fontsize
     initial_combined_font_family = (
         settings.get("combined_font_family", DEFAULT_COMBINED_FONT_FAMILY) or ""
     )
@@ -16898,6 +16926,20 @@ if os.path.exists(SETTINGS_FILE):
     initial_include_moles_core_legend = settings.get(
         "include_moles_in_core_plot_legend", False
     )
+    initial_core_legend_fontsize = _sanitize_spacing_value(
+        settings.get("core_legend_fontsize", label_fontsize),
+        label_fontsize,
+        MIN_COMBINED_FONT_SIZE,
+        MAX_COMBINED_FONT_SIZE,
+    )
+    initial_core_cycle_legend_fontsize = _sanitize_spacing_value(
+        settings.get("core_cycle_legend_fontsize", initial_core_legend_fontsize),
+        initial_core_legend_fontsize,
+        MIN_COMBINED_FONT_SIZE,
+        MAX_COMBINED_FONT_SIZE,
+    )
+    settings["core_legend_fontsize"] = initial_core_legend_fontsize
+    settings["core_cycle_legend_fontsize"] = initial_core_cycle_legend_fontsize
 
     initial_combined_left_key = settings.get("combined_y_left_key", "y1")
     initial_combined_right_key = settings.get("combined_y_right_key", "z")
@@ -16969,6 +17011,7 @@ else:
     initial_combined_label_fontsize = DEFAULT_COMBINED_LABEL_FONTSIZE
     initial_combined_tick_fontsize = DEFAULT_COMBINED_TICK_FONTSIZE
     initial_combined_legend_fontsize = DEFAULT_COMBINED_LEGEND_FONTSIZE
+    initial_combined_cycle_legend_fontsize = initial_combined_legend_fontsize
     initial_combined_font_family = DEFAULT_COMBINED_FONT_FAMILY
     initial_font_family = ""
     settings["font_family"] = initial_font_family
@@ -16983,6 +17026,7 @@ else:
     settings["combined_cycle_legend_loc_choice"] = (
         initial_combined_cycle_legend_loc_choice
     )
+    settings["combined_cycle_legend_fontsize"] = initial_combined_cycle_legend_fontsize
     initial_combined_cycle_legend_ref_axis = "main"
     settings["combined_cycle_legend_ref_axis"] = initial_combined_cycle_legend_ref_axis
     initial_combined_cycle_legend_ref_corner = "upper right"
@@ -17067,6 +17111,10 @@ else:
     initial_show_cycle_markers_on_core = False
     initial_show_cycle_legend_on_core = False
     initial_include_moles_core_legend = False
+    initial_core_legend_fontsize = label_fontsize
+    initial_core_cycle_legend_fontsize = initial_core_legend_fontsize
+    settings["core_legend_fontsize"] = initial_core_legend_fontsize
+    settings["core_cycle_legend_fontsize"] = initial_core_cycle_legend_fontsize
 
     initial_combined_left_key = "y1"
     initial_combined_right_key = "z"
@@ -18374,7 +18422,7 @@ def analyze_pressure_cycles(
             ax.scatter(
                 x_vals[c["peak_idx"]],
                 c["peak"],
-                marker="^",
+                marker=style["peak_marker"],
                 s=style["marker_size"],
                 c=style["peak_color"],
                 zorder=3,
@@ -18396,7 +18444,7 @@ def analyze_pressure_cycles(
             ax.scatter(
                 x_vals[c["trough_idx"]],
                 c["trough"],
-                marker="v",
+                marker=style["trough_marker"],
                 s=style["marker_size"],
                 c=style["trough_color"],
                 zorder=3,
@@ -18520,6 +18568,33 @@ def _format_axis_label(label: Any) -> str:
     return str(label).replace("_", " ").replace(" (Â°C)", "")
 
 
+def _is_selected(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned:
+            return False
+        if cleaned.lower() == "none":
+            return False
+    return True
+
+
+def _filter_none_legend_entries(
+    handles: Sequence[Any], labels: Sequence[str]
+) -> Tuple[List[Any], List[str]]:
+    filtered_handles: List[Any] = []
+    filtered_labels: List[str] = []
+    for handle, label in zip(handles, labels):
+        if handle is None:
+            continue
+        if not _is_selected(label):
+            continue
+        filtered_handles.append(handle)
+        filtered_labels.append(label)
+    return filtered_handles, filtered_labels
+
+
 def main_plotting_function(
     min_time,
     max_time,
@@ -18571,6 +18646,21 @@ def main_plotting_function(
 
     target_figsize = tuple(fig_size) if fig_size else (11, 8.5)
     font_family = (settings.get("font_family") or "").strip()
+    core_legend_fontsize = _sanitize_spacing_value(
+        settings.get("core_legend_fontsize", label_fontsize),
+        label_fontsize,
+        MIN_COMBINED_FONT_SIZE,
+        MAX_COMBINED_FONT_SIZE,
+    )
+    core_cycle_legend_fontsize = _sanitize_spacing_value(
+        settings.get("core_cycle_legend_fontsize", core_legend_fontsize),
+        core_legend_fontsize,
+        MIN_COMBINED_FONT_SIZE,
+        MAX_COMBINED_FONT_SIZE,
+    )
+    base_core_legend_font = label_fontsize if label_fontsize else 1.0
+    core_legend_markerscale = core_legend_fontsize / base_core_legend_font
+    core_cycle_legend_markerscale = core_cycle_legend_fontsize / base_core_legend_font
 
     # Pull series/globals up front (needed for both paths)
 
@@ -18604,7 +18694,7 @@ def main_plotting_function(
 
     # Normal (full) plotting with cycle analysis
 
-    if y1 is not None:
+    if y1 is not None and _is_selected(selected_columns.get("y1", "y1")):
 
         # mask to keep x & y1 aligned (avoid NaNs mismatch)
 
@@ -18710,7 +18800,7 @@ def main_plotting_function(
             peak_artist = ax_target.scatter(
                 px,
                 py,
-                marker="^",
+                marker=cycle_style["peak_marker"],
                 s=cycle_style["marker_size"],
                 c=cycle_style["peak_color"],
                 zorder=4,
@@ -18721,7 +18811,7 @@ def main_plotting_function(
             trough_artist = ax_target.scatter(
                 tx,
                 ty,
-                marker="v",
+                marker=cycle_style["trough_marker"],
                 s=cycle_style["marker_size"],
                 c=cycle_style["trough_color"],
                 zorder=4,
@@ -18738,13 +18828,17 @@ def main_plotting_function(
             handles.append(peak_artist)
             labels.append("Peak")
         elif cycle_style:
-            handles.append(_marker_artist("^", cycle_style["peak_color"]))
+            handles.append(
+                _marker_artist(cycle_style["peak_marker"], cycle_style["peak_color"])
+            )
             labels.append("Peak")
         if trough_artist is not None:
             handles.append(trough_artist)
             labels.append("Trough")
         elif cycle_style:
-            handles.append(_marker_artist("v", cycle_style["trough_color"]))
+            handles.append(
+                _marker_artist(cycle_style["trough_marker"], cycle_style["trough_color"])
+            )
             labels.append("Trough")
         cycles_list = cycle_overlay.get("cycles") or []
         total_drop_val = cycle_overlay.get("total_drop", 0.0)
@@ -18765,7 +18859,8 @@ def main_plotting_function(
             labels,
             loc="upper right",
             bbox_to_anchor=(0.98, 0.98),
-            fontsize=label_fontsize,
+            fontsize=core_cycle_legend_fontsize,
+            markerscale=core_cycle_legend_markerscale,
             **_legend_shadowbox_kwargs(),
         )
         try:
@@ -18812,7 +18907,7 @@ def main_plotting_function(
 
     handles = []
 
-    if y1 is not None:
+    if y1 is not None and _is_selected(selected_columns.get("y1", "y1")):
 
         artist = _plot_series(
             ax,
@@ -18826,7 +18921,7 @@ def main_plotting_function(
 
         handles.append(artist)
 
-    if y3 is not None:
+    if y3 is not None and _is_selected(selected_columns.get("y3", "y3")):
 
         artist = _plot_series(
             ax,
@@ -18856,7 +18951,14 @@ def main_plotting_function(
         labelpad=yaxis_labelpad_amount,
     )
 
-    if enable_temp_axis and (z is not None or z2 is not None):
+    temp_axis_selected = (
+        (z is not None and _is_selected(selected_columns.get("z", "Temp")))
+        or (z2 is not None and _is_selected(selected_columns.get("z2", "Temp 2")))
+    )
+    deriv_axis_selected = y2 is not None and _is_selected(
+        selected_columns.get("y2", "Derivative")
+    )
+    if enable_temp_axis and temp_axis_selected:
 
         ax2 = ax.twinx()
         try:
@@ -18864,7 +18966,7 @@ def main_plotting_function(
         except Exception:
             pass
 
-        if z is not None:
+        if z is not None and _is_selected(selected_columns.get("z", "Temp")):
 
             artist = _plot_series(
                 ax2,
@@ -18878,7 +18980,7 @@ def main_plotting_function(
 
             handles.append(artist)
 
-        if z2 is not None:
+        if z2 is not None and _is_selected(selected_columns.get("z2", "Temp 2")):
 
             artist = _plot_series(
                 ax2,
@@ -18964,7 +19066,7 @@ def main_plotting_function(
         tick_fontsize=tick_labelsize,
         label_fontsize=label_fontsize,
     )
-    if enable_temp_axis and (z is not None or z2 is not None):
+    if enable_temp_axis and temp_axis_selected:
         _enforce_axis_text_style(
             ax2,
             font_family=font_family,
@@ -18975,7 +19077,7 @@ def main_plotting_function(
     fig1_peak_artist, fig1_trough_artist = _draw_cycle_markers(ax)
 
     axes_for_title = (
-        [ax, ax2] if enable_temp_axis and (z is not None or z2 is not None) else [ax]
+        [ax, ax2] if enable_temp_axis and temp_axis_selected else [ax]
     )
     _center_titles_to_axes_union(
         fig1,
@@ -18990,16 +19092,22 @@ def main_plotting_function(
         suptitle_y=suptitle_yposition,
     )
 
-    leg_fig1 = fig1.legend(
-        handles=handles,
-        loc="lower center",
-        bbox_to_anchor=(0.5, 0.02),
-        ncol=min(3, len(handles)),
-        shadow=True,
-        fontsize=label_fontsize,
+    handles_filtered, labels_filtered = _filter_none_legend_entries(
+        handles, [handle.get_label() for handle in handles]
     )
+    if handles_filtered:
+        leg_fig1 = fig1.legend(
+            handles=handles_filtered,
+            labels=labels_filtered,
+            loc="lower center",
+            bbox_to_anchor=(0.5, 0.02),
+            ncol=min(3, len(handles_filtered)),
+            shadow=True,
+            fontsize=core_legend_fontsize,
+            markerscale=core_legend_markerscale,
+        )
 
-    _make_legend_draggable(leg_fig1)
+        _make_legend_draggable(leg_fig1)
     _add_cycle_legend(ax, fig1_peak_artist, fig1_trough_artist)
 
     # Figure 2: pressure + derivative
@@ -19014,7 +19122,7 @@ def main_plotting_function(
 
     handles2 = []
 
-    if y1 is not None:
+    if y1 is not None and _is_selected(selected_columns.get("y1", "y1")):
 
         artist = _plot_series(
             ax_two,
@@ -19028,7 +19136,7 @@ def main_plotting_function(
 
         handles2.append(artist)
 
-    if y3 is not None:
+    if y3 is not None and _is_selected(selected_columns.get("y3", "y3")):
 
         artist = _plot_series(
             ax_two,
@@ -19054,7 +19162,7 @@ def main_plotting_function(
         fmt(selected_columns.get("y1", "Pressure")), fontsize=label_fontsize, labelpad=3
     )
 
-    if enable_deriv_axis and y2 is not None:
+    if enable_deriv_axis and deriv_axis_selected:
 
         ax3 = ax_two.twinx()
         try:
@@ -19143,7 +19251,7 @@ def main_plotting_function(
         tick_fontsize=tick_labelsize,
         label_fontsize=label_fontsize,
     )
-    if enable_deriv_axis and y2 is not None:
+    if enable_deriv_axis and deriv_axis_selected:
         _enforce_axis_text_style(
             ax3,
             font_family=font_family,
@@ -19154,7 +19262,7 @@ def main_plotting_function(
     fig2_peak_artist, fig2_trough_artist = _draw_cycle_markers(ax_two)
 
     axes_two_for_title = (
-        [ax_two, ax3] if enable_deriv_axis and y2 is not None else [ax_two]
+        [ax_two, ax3] if enable_deriv_axis and deriv_axis_selected else [ax_two]
     )
     _center_titles_to_axes_union(
         fig2,
@@ -19169,16 +19277,22 @@ def main_plotting_function(
         suptitle_y=suptitle_yposition,
     )
 
-    leg_fig2 = fig2.legend(
-        handles=handles2,
-        loc="lower center",
-        bbox_to_anchor=(0.5, 0.02),
-        ncol=min(3, len(handles2)),
-        shadow=True,
-        fontsize=label_fontsize,
+    handles2_filtered, labels2_filtered = _filter_none_legend_entries(
+        handles2, [handle.get_label() for handle in handles2]
     )
+    if handles2_filtered:
+        leg_fig2 = fig2.legend(
+            handles=handles2_filtered,
+            labels=labels2_filtered,
+            loc="lower center",
+            bbox_to_anchor=(0.5, 0.02),
+            ncol=min(3, len(handles2_filtered)),
+            shadow=True,
+            fontsize=core_legend_fontsize,
+            markerscale=core_legend_markerscale,
+        )
 
-    _make_legend_draggable(leg_fig2)
+        _make_legend_draggable(leg_fig2)
     _add_cycle_legend(ax_two, fig2_peak_artist, fig2_trough_artist)
 
     return {"fig1": fig1, "fig2": fig2, "fig_peaks": fig_peaks}
@@ -20208,6 +20322,7 @@ def build_combined_triple_axis_figure(
     label_fontsize_override=DEFAULT_COMBINED_LABEL_FONTSIZE,
     tick_fontsize_override=DEFAULT_COMBINED_TICK_FONTSIZE,
     legend_fontsize_override=DEFAULT_COMBINED_LEGEND_FONTSIZE,
+    cycle_legend_fontsize_override=None,
     font_family: str = DEFAULT_COMBINED_FONT_FAMILY,
     title_pad_pts=DEFAULT_COMBINED_TITLE_PAD_PTS,
     suptitle_pad_pts=DEFAULT_COMBINED_SUPTITLE_PAD_PTS,
@@ -20311,6 +20426,24 @@ def build_combined_triple_axis_figure(
         MIN_COMBINED_FONT_SIZE,
         MAX_COMBINED_FONT_SIZE,
     )
+    if cycle_legend_fontsize_override is None:
+        cycle_legend_fontsize_override = legend_fontsize_value
+    cycle_legend_fontsize_value = _sanitize_spacing_value(
+        cycle_legend_fontsize_override,
+        legend_fontsize_value,
+        MIN_COMBINED_FONT_SIZE,
+        MAX_COMBINED_FONT_SIZE,
+    )
+    legend_markerscale = _coerce_float(settings.get("combined_legend_markerscale"))
+    if legend_markerscale is None:
+        legend_markerscale = legend_fontsize_value / DEFAULT_COMBINED_LEGEND_FONTSIZE
+    cycle_legend_markerscale = _coerce_float(
+        settings.get("combined_cycle_legend_markerscale")
+    )
+    if cycle_legend_markerscale is None:
+        cycle_legend_markerscale = (
+            cycle_legend_fontsize_value / DEFAULT_COMBINED_LEGEND_FONTSIZE
+        )
 
     def _fmt_safe(value: Any) -> str:
         return svg_safe(fmt(value))
@@ -20420,6 +20553,14 @@ def build_combined_triple_axis_figure(
     label_z = _fmt_safe(selected_columns.get("z", "Temp"))
     label_z2 = _fmt_safe(selected_columns.get("z2", "Temp 2"))
 
+    selected_map = {
+        "y1": _is_selected(selected_columns.get("y1", "y1")),
+        "y3": _is_selected(selected_columns.get("y3", "y3")),
+        "y2": _is_selected(selected_columns.get("y2", "Derivative")),
+        "z": _is_selected(selected_columns.get("z", "Temp")),
+        "z2": _is_selected(selected_columns.get("z2", "Temp 2")),
+    }
+
     dataset_meta = {
         "y1": {
             "series": y1,
@@ -20427,6 +20568,7 @@ def build_combined_triple_axis_figure(
             "color": "blue",
             "series_key": "y1",
             "axis_type": "primary",
+            "selected": selected_map["y1"],
         },
         "y3": {
             "series": y3,
@@ -20434,6 +20576,7 @@ def build_combined_triple_axis_figure(
             "color": "green",
             "series_key": "y3",
             "axis_type": "primary",
+            "selected": selected_map["y3"],
         },
         "y2": {
             "series": y2,
@@ -20441,6 +20584,7 @@ def build_combined_triple_axis_figure(
             "color": "red",
             "series_key": "y2",
             "axis_type": "derivative",
+            "selected": selected_map["y2"],
         },
         "z": {
             "series": z,
@@ -20448,6 +20592,7 @@ def build_combined_triple_axis_figure(
             "color": "red",
             "series_key": "z",
             "axis_type": "temperature",
+            "selected": selected_map["z"],
         },
         "z2": {
             "series": z2,
@@ -20455,19 +20600,19 @@ def build_combined_triple_axis_figure(
             "color": "orange",
             "series_key": "z2",
             "axis_type": "temperature",
+            "selected": selected_map["z2"],
         },
     }
 
     valid_dataset_keys: Set[str] = set(dataset_meta.keys())
 
-    temp_axis_active = (
-        bool(enable_temp_axis)
-        or dataset_meta["z"]["series"] is not None
-        or dataset_meta["z2"]["series"] is not None
+    def _is_available(meta: Mapping[str, Any]) -> bool:
+        return bool(meta.get("series") is not None and meta.get("selected"))
+
+    temp_axis_active = bool(enable_temp_axis) and (
+        _is_available(dataset_meta["z"]) or _is_available(dataset_meta["z2"])
     )
-    deriv_axis_active = (
-        bool(enable_deriv_axis) or dataset_meta["y2"]["series"] is not None
-    )
+    deriv_axis_active = bool(enable_deriv_axis) and _is_available(dataset_meta["y2"])
 
     def _resolve_dataset_key(value: Any, default_key: str) -> str:
         if value is None:
@@ -20511,7 +20656,7 @@ def build_combined_triple_axis_figure(
     def _axis_enabled(meta: Mapping[str, Any]) -> bool:
         axis_kind = meta.get("axis_type", "primary")
         has_series = meta.get("series") is not None
-        if not has_series:
+        if not has_series or not meta.get("selected"):
             return False
         if axis_kind == "temperature":
             return temp_axis_active
@@ -20523,7 +20668,7 @@ def build_combined_triple_axis_figure(
 
     def _plot_dataset(ax_target: Axes, meta: Mapping[str, Any]) -> Optional[Any]:
         series = meta.get("series")
-        if series is None:
+        if series is None or not meta.get("selected"):
             return None
         series_key = meta.get("series_key")
         style_kwargs: Dict[str, Any] = {
@@ -20553,16 +20698,13 @@ def build_combined_triple_axis_figure(
     primary_meta = dataset_meta.get(left_key, dataset_meta["y1"])
     right_meta = dataset_meta.get(right_key, dataset_meta["z"])
     third_meta = dataset_meta.get(third_key, dataset_meta["y2"])
-    temp_available = (
-        dataset_meta["z"]["series"] is not None
-        or dataset_meta["z2"]["series"] is not None
-    )
-    deriv_available = dataset_meta["y2"]["series"] is not None
+    temp_available = _is_available(dataset_meta["z"]) or _is_available(dataset_meta["z2"])
+    deriv_available = _is_available(dataset_meta["y2"])
 
     def _temperature_meta() -> Mapping[str, Any]:
-        if dataset_meta["z"]["series"] is not None:
+        if _is_available(dataset_meta["z"]):
             return dataset_meta["z"]
-        if dataset_meta["z2"]["series"] is not None:
+        if _is_available(dataset_meta["z2"]):
             return dataset_meta["z2"]
         return dataset_meta["z"]
 
@@ -20587,6 +20729,13 @@ def build_combined_triple_axis_figure(
     third_role = third_meta.get("axis_type", "primary")
     if temp_available and "temperature" not in {right_role, third_role}:
         right_meta = _temperature_meta()
+        right_role = right_meta.get("axis_type", "primary")
+    if temp_available and right_role == "temperature" and not _is_available(right_meta):
+        right_meta = _temperature_meta()
+        right_role = right_meta.get("axis_type", "primary")
+    if temp_available and third_role == "temperature" and not _is_available(third_meta):
+        third_meta = _temperature_meta()
+        third_role = third_meta.get("axis_type", "primary")
 
     cycle_overlay = globals().get("core_cycle_overlay")
     cycle_style = get_cycle_trace_style() if cycle_overlay else None
@@ -20612,7 +20761,7 @@ def build_combined_triple_axis_figure(
             peak_artist = ax_target.scatter(
                 px,
                 py,
-                marker="^",
+                marker=cycle_style["peak_marker"],
                 s=cycle_style["marker_size"],
                 c=cycle_style["peak_color"],
                 zorder=4,
@@ -20623,7 +20772,7 @@ def build_combined_triple_axis_figure(
             trough_artist = ax_target.scatter(
                 tx,
                 ty,
-                marker="v",
+                marker=cycle_style["trough_marker"],
                 s=cycle_style["marker_size"],
                 c=cycle_style["trough_color"],
                 zorder=4,
@@ -20647,13 +20796,21 @@ def build_combined_triple_axis_figure(
             handles_cycle.append(peak_artist)
             labels_cycle.append(_text_safe("Peak"))
         elif cycle_style:
-            handles_cycle.append(_cycle_marker_artist("^", cycle_style["peak_color"]))
+            handles_cycle.append(
+                _cycle_marker_artist(
+                    cycle_style["peak_marker"], cycle_style["peak_color"]
+                )
+            )
             labels_cycle.append(_text_safe("Peak"))
         if trough_artist is not None:
             handles_cycle.append(trough_artist)
             labels_cycle.append(_text_safe("Trough"))
         elif cycle_style:
-            handles_cycle.append(_cycle_marker_artist("v", cycle_style["trough_color"]))
+            handles_cycle.append(
+                _cycle_marker_artist(
+                    cycle_style["trough_marker"], cycle_style["trough_color"]
+                )
+            )
             labels_cycle.append(_text_safe("Trough"))
         cycles_list = cycle_overlay.get("cycles") or []
         total_drop_val = cycle_overlay.get("total_drop", 0.0)
@@ -20672,8 +20829,9 @@ def build_combined_triple_axis_figure(
                 handles_cycle.append(mpatches.Patch(color="none"))
                 labels_cycle.append(_text_safe(line))
         legend_kwargs = {
-            "fontsize": legend_fontsize_value,
-            "prop": {"family": family_value, "size": legend_fontsize_value},
+            "fontsize": cycle_legend_fontsize_value,
+            "prop": {"family": family_value, "size": cycle_legend_fontsize_value},
+            "markerscale": cycle_legend_markerscale,
             **_legend_shadowbox_kwargs(),
         }
         loc_value = None
@@ -20718,6 +20876,7 @@ def build_combined_triple_axis_figure(
             legend._cycle_overlay_legend = True  # type: ignore[attr-defined]
             legend._combined_cycle_legend = True  # type: ignore[attr-defined]
             legend._gl260_legend_role = "combined_cycle"  # type: ignore[attr-defined]
+            legend._gl260_markerscale = cycle_legend_markerscale  # type: ignore[attr-defined]
         except Exception:
             pass
         try:
@@ -20901,7 +21060,11 @@ def build_combined_triple_axis_figure(
     except Exception:
         pass
 
-    legend_size = len(handles)
+    legend_labels = [_text_safe(handle.get_label()) for handle in handles]
+    handles_filtered, labels_filtered = _filter_none_legend_entries(
+        handles, legend_labels
+    )
+    legend_size = len(handles_filtered)
     main_legend = None
     if legend_size:
         if bool(legend_wrap):
@@ -20914,10 +21077,9 @@ def build_combined_triple_axis_figure(
             ncol = max(1, math.ceil(legend_size / rows_value))
         else:
             ncol = min(4, legend_size)
-        legend_labels = [_text_safe(handle.get_label()) for handle in handles]
-        wrapped_labels = [_wrap_legend_label(label) for label in legend_labels]
+        wrapped_labels = [_wrap_legend_label(label) for label in labels_filtered]
         main_legend = fig.legend(
-            handles=handles,
+            handles=handles_filtered,
             labels=wrapped_labels,
             loc="lower center",
             bbox_to_anchor=(main_center_x, 0.0),
@@ -20925,11 +21087,13 @@ def build_combined_triple_axis_figure(
             handletextpad=0.5,
             fontsize=legend_fontsize_value,
             prop={"family": family_value, "size": legend_fontsize_value},
+            markerscale=legend_markerscale,
             ncol=ncol,
             **_legend_shadowbox_kwargs(),
         )
         try:
             main_legend._combined_main_legend = True  # type: ignore[attr-defined]
+            main_legend._gl260_markerscale = legend_markerscale  # type: ignore[attr-defined]
         except Exception:
             pass
         if legend_anchor is not None:
@@ -22171,8 +22335,11 @@ class UnifiedApp(tk.Tk):
         self._var_defaults = {}
         self._apply_columns_indicator_state = "idle"
         self._apply_indicator_canvases = []
+        self._apply_vdw_indicator_state = "success"
+        self._apply_vdw_indicator_canvases = []
         self._apply_columns_buttons = []
         self._last_applied_columns = None
+        self._vdw_trace_ids = []
 
         # Track contamination tab preference and bind it to the menu toggle
         self._contamination_tab_title = "Contamination Calculator"
@@ -22451,6 +22618,16 @@ class UnifiedApp(tk.Tk):
         self.cycle_trough_color = tk.StringVar(
             value=cycle_trace_settings.get(
                 "trough_color", DEFAULT_CYCLE_TRACE_SETTINGS["trough_color"]
+            )
+        )
+        self.cycle_peak_marker = tk.StringVar(
+            value=cycle_trace_settings.get(
+                "peak_marker", DEFAULT_CYCLE_TRACE_SETTINGS["peak_marker"]
+            )
+        )
+        self.cycle_trough_marker = tk.StringVar(
+            value=cycle_trace_settings.get(
+                "trough_marker", DEFAULT_CYCLE_TRACE_SETTINGS["trough_marker"]
             )
         )
         self.cycle_marker_size = tk.DoubleVar(
@@ -22773,6 +22950,7 @@ class UnifiedApp(tk.Tk):
 
         self.v_gas = tk.StringVar(value=settings.get("vdw_gas", "Custom"))
         self._refresh_gas_preset_choices()
+        self._bind_vdw_dirty_traces()
 
         # Plot settings state (seed from loaded settings / defaults)
 
@@ -22848,6 +23026,12 @@ class UnifiedApp(tk.Tk):
                 "include_moles_in_core_plot_legend",
                 initial_include_moles_core_legend,
             )
+        )
+        self.core_legend_fontsize = tk.DoubleVar(
+            value=initial_core_legend_fontsize
+        )
+        self.core_cycle_legend_fontsize = tk.DoubleVar(
+            value=initial_core_cycle_legend_fontsize
         )
 
         (
@@ -22998,6 +23182,9 @@ class UnifiedApp(tk.Tk):
         self.combined_legend_fontsize = tk.DoubleVar(
             value=initial_combined_legend_fontsize
         )
+        self.combined_cycle_legend_fontsize = tk.DoubleVar(
+            value=initial_combined_cycle_legend_fontsize
+        )
         self.combined_font_family = tk.StringVar(value=initial_combined_font_family)
         self.combined_legend_wrap = tk.BooleanVar(value=initial_combined_legend_wrap)
         self.combined_legend_rows = tk.IntVar(value=initial_combined_legend_rows)
@@ -23072,7 +23259,16 @@ class UnifiedApp(tk.Tk):
             self.combined_legend_fontsize, initial_combined_legend_fontsize
         )
         self._register_var_default(
+            self.combined_cycle_legend_fontsize, initial_combined_cycle_legend_fontsize
+        )
+        self._register_var_default(
             self.combined_font_family, initial_combined_font_family
+        )
+        self._register_var_default(
+            self.core_legend_fontsize, initial_core_legend_fontsize
+        )
+        self._register_var_default(
+            self.core_cycle_legend_fontsize, initial_core_cycle_legend_fontsize
         )
         self._register_var_default(
             self.combined_legend_rows, initial_combined_legend_rows
@@ -25379,12 +25575,8 @@ class UnifiedApp(tk.Tk):
             pass
         flags = self._ensure_plot_dirty_flags(plot_id) if plot_id else None
         dirty_data = True
-        dirty_layout = True
-        dirty_elements = True
         if flags is not None:
             dirty_data = bool(flags.get("dirty_data", True))
-            dirty_layout = bool(flags.get("dirty_layout", True))
-            dirty_elements = bool(flags.get("dirty_elements", True))
 
         placement_state = self._capture_plot_element_placement_state(plot_id)
         prebuilt_fig: Optional[Figure] = None
@@ -29723,7 +29915,7 @@ class UnifiedApp(tk.Tk):
             ax.scatter(
                 xv[idx],
                 yv[idx],
-                marker="^",
+                marker=style["peak_marker"],
                 s=style["marker_size"],
                 c=style["peak_color"],
                 zorder=3,
@@ -29748,7 +29940,7 @@ class UnifiedApp(tk.Tk):
             ax.scatter(
                 xv[idx],
                 yv[idx],
-                marker="v",
+                marker=style["trough_marker"],
                 s=style["marker_size"],
                 c=style["trough_color"],
                 zorder=3,
@@ -30565,6 +30757,25 @@ class UnifiedApp(tk.Tk):
             raise ValueError("Marker size must be a positive number.")
         sanitized["marker_size"] = marker_size
 
+        def _sanitize_marker(field_name: str, default_marker: str) -> str:
+            raw_value = vars_map.get(field_name).get() if field_name in vars_map else ""
+            candidate = (raw_value or "").strip()
+            if not candidate:
+                return default_marker
+            if candidate not in SCATTER_MARKER_CHOICES and len(candidate) > 1:
+                warnings.append(
+                    f"{field_name.replace('_', ' ').title()} reset to default."
+                )
+                return default_marker
+            return candidate
+
+        sanitized["peak_marker"] = _sanitize_marker(
+            "peak_marker", defaults["peak_marker"]
+        )
+        sanitized["trough_marker"] = _sanitize_marker(
+            "trough_marker", defaults["trough_marker"]
+        )
+
         return sanitized, warnings
 
     def _apply_cycle_trace_settings_from_dialog(self, vars_map, status_label):
@@ -30583,6 +30794,8 @@ class UnifiedApp(tk.Tk):
         self.cycle_line_width.set(sanitized["line_width"])
         self.cycle_peak_color.set(sanitized["peak_color"])
         self.cycle_trough_color.set(sanitized["trough_color"])
+        self.cycle_peak_marker.set(sanitized["peak_marker"])
+        self.cycle_trough_marker.set(sanitized["trough_marker"])
         self.cycle_marker_size.set(sanitized["marker_size"])
 
         vars_map["line_color"].set(self.cycle_line_color.get())
@@ -30590,6 +30803,8 @@ class UnifiedApp(tk.Tk):
         vars_map["line_width"].set(f"{sanitized['line_width']:.3f}")
         vars_map["peak_color"].set(self.cycle_peak_color.get())
         vars_map["trough_color"].set(self.cycle_trough_color.get())
+        vars_map["peak_marker"].set(self.cycle_peak_marker.get())
+        vars_map["trough_marker"].set(self.cycle_trough_marker.get())
         vars_map["marker_size"].set(f"{sanitized['marker_size']:.3f}")
 
         self._persist_cycle_trace_settings(sanitized)
@@ -30852,6 +31067,15 @@ class UnifiedApp(tk.Tk):
     def _open_plot_settings_dialog(self, plot_id: Optional[str] = None) -> None:
         plot_id = plot_id or "fig_combined_triple_axis"
         is_combined = plot_id == "fig_combined_triple_axis"
+        is_core = plot_id in {"fig_pressure_temp", "fig_pressure_derivative"}
+        cycle_overlay = None
+        try:
+            cycle_overlay = self._core_cycle_overlay_state()
+        except Exception:
+            cycle_overlay = None
+        cycle_legend_available = bool(self.show_cycle_legend_on_core.get()) and bool(
+            cycle_overlay
+        )
         existing = getattr(self, "_plot_settings_window", None)
         if existing is not None and existing.winfo_exists():
             if getattr(self, "_plot_settings_target_id", None) == plot_id:
@@ -31018,6 +31242,9 @@ class UnifiedApp(tk.Tk):
                 "combined_legend_fontsize": tk.DoubleVar(
                     value=self.combined_legend_fontsize.get()
                 ),
+                "combined_cycle_legend_fontsize": tk.DoubleVar(
+                    value=self.combined_cycle_legend_fontsize.get()
+                ),
                 "combined_legend_wrap": tk.BooleanVar(
                     value=bool(self.combined_legend_wrap.get())
                 ),
@@ -31042,6 +31269,15 @@ class UnifiedApp(tk.Tk):
                 ),
                 "combined_cycle_legend_ref_corner": tk.StringVar(
                     value=self.combined_cycle_legend_ref_corner.get()
+                ),
+            }
+        elif is_core:
+            stage_vars = {
+                "core_legend_fontsize": tk.DoubleVar(
+                    value=self.core_legend_fontsize.get()
+                ),
+                "core_cycle_legend_fontsize": tk.DoubleVar(
+                    value=self.core_cycle_legend_fontsize.get()
                 ),
             }
 
@@ -31334,7 +31570,7 @@ class UnifiedApp(tk.Tk):
                 textvariable=stage_vars["combined_tick_fontsize"],
                 width=8,
             ).grid(row=4, column=1, sticky="w", pady=2)
-            ttk.Label(font_frame, text="Legend size").grid(
+            ttk.Label(font_frame, text="Main legend size").grid(
                 row=5, column=0, sticky="w", padx=(0, 6), pady=2
             )
             ttk.Entry(
@@ -31342,12 +31578,52 @@ class UnifiedApp(tk.Tk):
                 textvariable=stage_vars["combined_legend_fontsize"],
                 width=8,
             ).grid(row=5, column=1, sticky="w", pady=2)
+            ttk.Label(font_frame, text="Cycle legend size").grid(
+                row=6, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            cycle_legend_entry_state = (
+                "normal" if cycle_legend_available else "disabled"
+            )
+            ttk.Entry(
+                font_frame,
+                textvariable=stage_vars["combined_cycle_legend_fontsize"],
+                width=8,
+                state=cycle_legend_entry_state,
+            ).grid(row=6, column=1, sticky="w", pady=2)
             ttk.Label(
                 font_frame,
                 text="Leave font family blank to use the default plot font.",
                 wraplength=420,
                 foreground="#555555",
-            ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(2, 0))
+            ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(2, 0))
+
+            row_idx += 1
+
+        if is_core:
+            legend_size_frame = ttk.Labelframe(container, text="Legend sizes")
+            legend_size_frame.grid(row=row_idx, column=0, sticky="ew", pady=(8, 0))
+            legend_size_frame.grid_columnconfigure(1, weight=1)
+
+            ttk.Label(legend_size_frame, text="Main legend size").grid(
+                row=0, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            ttk.Entry(
+                legend_size_frame,
+                textvariable=stage_vars["core_legend_fontsize"],
+                width=8,
+            ).grid(row=0, column=1, sticky="w", pady=2)
+            ttk.Label(legend_size_frame, text="Cycle legend size").grid(
+                row=1, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            cycle_legend_entry_state = (
+                "normal" if cycle_legend_available else "disabled"
+            )
+            ttk.Entry(
+                legend_size_frame,
+                textvariable=stage_vars["core_cycle_legend_fontsize"],
+                width=8,
+                state=cycle_legend_entry_state,
+            ).grid(row=1, column=1, sticky="w", pady=2)
 
             row_idx += 1
 
@@ -31465,6 +31741,8 @@ class UnifiedApp(tk.Tk):
                 cycle_loc_var.get(),
                 *cycle_loc_choices,
             )
+            if not cycle_legend_available:
+                cycle_loc_menu.configure(state="disabled")
             cycle_loc_menu.grid(row=11, column=1, sticky="w", pady=2)
 
             ref_axis_var = stage_vars["combined_cycle_legend_ref_axis"]
@@ -31479,6 +31757,8 @@ class UnifiedApp(tk.Tk):
                 ref_axis_var.get(),
                 *COMBINED_CYCLE_REF_AXIS_CHOICES,
             )
+            if not cycle_legend_available:
+                ref_axis_menu.configure(state="disabled")
             ref_axis_menu.grid(row=12, column=1, sticky="w", pady=2)
 
             ref_corner_var = stage_vars["combined_cycle_legend_ref_corner"]
@@ -31496,6 +31776,8 @@ class UnifiedApp(tk.Tk):
                 ref_corner_var.get(),
                 *COMBINED_CYCLE_REF_CORNER_CHOICES,
             )
+            if not cycle_legend_available:
+                ref_corner_menu.configure(state="disabled")
             ref_corner_menu.grid(row=13, column=1, sticky="w", pady=2)
 
         def _parse_anchor_value(var: tk.StringVar) -> Optional[float]:
@@ -31574,7 +31856,7 @@ class UnifiedApp(tk.Tk):
         button_frame.grid(row=row_idx, column=0, sticky="e", pady=(8, 0))
 
         def _apply_stage_values(close_after: bool = False) -> None:
-            if is_combined:
+            if stage_vars:
                 for key, var in stage_vars.items():
                     target_var = getattr(self, key, None)
                     if target_var is None:
@@ -31586,6 +31868,23 @@ class UnifiedApp(tk.Tk):
                             target_var.set(var.get())
                         except Exception:
                             pass
+            if is_core:
+                core_legend_value = _sanitize_spacing_value(
+                    self._safe_get_var(self.core_legend_fontsize, float),
+                    label_fontsize,
+                    MIN_COMBINED_FONT_SIZE,
+                    MAX_COMBINED_FONT_SIZE,
+                )
+                core_cycle_legend_value = _sanitize_spacing_value(
+                    self._safe_get_var(self.core_cycle_legend_fontsize, float),
+                    core_legend_value,
+                    MIN_COMBINED_FONT_SIZE,
+                    MAX_COMBINED_FONT_SIZE,
+                )
+                self.core_legend_fontsize.set(core_legend_value)
+                self.core_cycle_legend_fontsize.set(core_cycle_legend_value)
+                settings["core_legend_fontsize"] = core_legend_value
+                settings["core_cycle_legend_fontsize"] = core_cycle_legend_value
                 self._apply_combined_axis_preferences(skip_save=True)
             display_margins = {
                 "left": stage_layout_display_left.get(),
@@ -31820,12 +32119,19 @@ class UnifiedApp(tk.Tk):
             MIN_COMBINED_FONT_SIZE,
             MAX_COMBINED_FONT_SIZE,
         )
+        cycle_legend_font_value = _sanitize_spacing_value(
+            self._safe_get_var(self.combined_cycle_legend_fontsize, float),
+            legend_font_value,
+            MIN_COMBINED_FONT_SIZE,
+            MAX_COMBINED_FONT_SIZE,
+        )
         family_value = (self.combined_font_family.get() or "").strip()
         self.combined_suptitle_fontsize.set(suptitle_font_value)
         self.combined_title_fontsize.set(title_font_value)
         self.combined_label_fontsize.set(label_font_value)
         self.combined_tick_fontsize.set(tick_font_value)
         self.combined_legend_fontsize.set(legend_font_value)
+        self.combined_cycle_legend_fontsize.set(cycle_legend_font_value)
         self.combined_font_family.set(family_value)
         settings["combined_left_pad_pct"] = left_pad_value
         settings["combined_right_pad_pct"] = right_pad_value
@@ -31839,6 +32145,7 @@ class UnifiedApp(tk.Tk):
         settings["combined_label_fontsize"] = label_font_value
         settings["combined_tick_fontsize"] = tick_font_value
         settings["combined_legend_fontsize"] = legend_font_value
+        settings["combined_cycle_legend_fontsize"] = cycle_legend_font_value
         settings["combined_font_family"] = family_value
         settings["combined_legend_wrap"] = bool(self.combined_legend_wrap.get())
         legend_rows_value = self._safe_get_var(self.combined_legend_rows, int)
@@ -32832,6 +33139,8 @@ class UnifiedApp(tk.Tk):
             "line_width": tk.StringVar(value=f"{self.cycle_line_width.get():.3f}"),
             "peak_color": tk.StringVar(value=self.cycle_peak_color.get()),
             "trough_color": tk.StringVar(value=self.cycle_trough_color.get()),
+            "peak_marker": tk.StringVar(value=self.cycle_peak_marker.get()),
+            "trough_marker": tk.StringVar(value=self.cycle_trough_marker.get()),
             "marker_size": tk.StringVar(value=f"{self.cycle_marker_size.get():.3f}"),
         }
 
@@ -32955,11 +33264,41 @@ class UnifiedApp(tk.Tk):
             vars_map["trough_color"], trough_preview, default_text="Auto"
         )
 
-        ttk.Label(container, text="Marker size (pt²)").grid(
+        ttk.Label(container, text="Peak marker shape").grid(
             row=5, column=0, sticky="w", padx=(0, 8), pady=4
         )
+        peak_marker_combo = ttk.Combobox(
+            container,
+            textvariable=vars_map["peak_marker"],
+            values=SCATTER_MARKER_CHOICES,
+            state="readonly",
+        )
+        peak_marker_combo.grid(row=5, column=1, sticky="ew", pady=4)
+        self._attach_tooltip(
+            peak_marker_combo,
+            "Controls the marker shape used for peak points across cycle plots.",
+        )
+
+        ttk.Label(container, text="Trough marker shape").grid(
+            row=6, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        trough_marker_combo = ttk.Combobox(
+            container,
+            textvariable=vars_map["trough_marker"],
+            values=SCATTER_MARKER_CHOICES,
+            state="readonly",
+        )
+        trough_marker_combo.grid(row=6, column=1, sticky="ew", pady=4)
+        self._attach_tooltip(
+            trough_marker_combo,
+            "Controls the marker shape used for trough points across cycle plots.",
+        )
+
+        ttk.Label(container, text="Marker size (pt²)").grid(
+            row=7, column=0, sticky="w", padx=(0, 8), pady=4
+        )
         marker_entry = ttk.Entry(container, textvariable=vars_map["marker_size"])
-        marker_entry.grid(row=5, column=1, sticky="ew", pady=4)
+        marker_entry.grid(row=7, column=1, sticky="ew", pady=4)
         self._attach_tooltip(
             marker_entry,
             "Controls the point size for peak/trough markers in both interactive and exported plots.",
@@ -32974,7 +33313,7 @@ class UnifiedApp(tk.Tk):
             wraplength=360,
             justify="left",
         )
-        hint.grid(row=6, column=0, columnspan=2, sticky="w", pady=(8, 12))
+        hint.grid(row=8, column=0, columnspan=2, sticky="w", pady=(8, 12))
 
         button_frame = ttk.Frame(container)
         button_frame.grid(row=7, column=0, columnspan=2, sticky="ew")
@@ -33849,8 +34188,14 @@ class UnifiedApp(tk.Tk):
 
         self.e_vol.grid(row=1, column=1, sticky="ew", padx=6, pady=4)
 
-        ttk.Button(lf_vdw, text="Apply VDW", command=self._apply_vdw).grid(
-            row=1, column=2, sticky="e", padx=6, pady=4
+        apply_vdw_frame = ttk.Frame(lf_vdw)
+        apply_vdw_frame.grid(row=1, column=2, sticky="e", padx=6, pady=4)
+        apply_vdw_frame.grid_columnconfigure(0, weight=1)
+        ttk.Button(apply_vdw_frame, text="Apply VDW", command=self._apply_vdw).grid(
+            row=0, column=0, sticky="e"
+        )
+        self._create_vdw_indicator(
+            apply_vdw_frame, row=0, column=1, padx=(6, 0), sticky="w"
         )
 
         ttk.Label(lf_vdw, text="VDW a (L^2*atm/mol^2)").grid(
@@ -36695,6 +37040,10 @@ class UnifiedApp(tk.Tk):
             float(plt.rcParams.get("axes.titlepad", 6.0)),
             0.0,
         )
+        try:
+            self._cycle_ax.figure.subplots_adjust(top=0.88)
+        except Exception:
+            pass
 
         xplot, yplot = self._apply_plot_selection_nan_mask(xv, yv, mask_arr)
 
@@ -36735,7 +37084,7 @@ class UnifiedApp(tk.Tk):
             self._peak_artist = self._cycle_ax.scatter(
                 xv[plot_peaks],
                 yv[plot_peaks],
-                marker="^",
+                marker=style["peak_marker"],
                 s=style["marker_size"],
                 c=style["peak_color"],
                 zorder=3,
@@ -36747,7 +37096,7 @@ class UnifiedApp(tk.Tk):
             self._trough_artist = self._cycle_ax.scatter(
                 xv[plot_troughs],
                 yv[plot_troughs],
-                marker="v",
+                marker=style["trough_marker"],
                 s=style["marker_size"],
                 c=style["trough_color"],
                 zorder=3,
@@ -37115,6 +37464,10 @@ class UnifiedApp(tk.Tk):
             float(plt.rcParams.get("axes.titlepad", 6.0)),
             0.0,
         )
+        try:
+            self._cycle_ax.figure.subplots_adjust(top=0.88)
+        except Exception:
+            pass
 
         style = get_cycle_trace_style()
 
@@ -37144,7 +37497,7 @@ class UnifiedApp(tk.Tk):
             self._peak_artist = self._cycle_ax.scatter(
                 px,
                 py,
-                marker="^",
+                marker=style["peak_marker"],
                 s=style["marker_size"],
                 c=style["peak_color"],
                 zorder=3,
@@ -37156,7 +37509,7 @@ class UnifiedApp(tk.Tk):
             self._trough_artist = self._cycle_ax.scatter(
                 tx,
                 ty,
-                marker="v",
+                marker=style["trough_marker"],
                 s=style["marker_size"],
                 c=style["trough_color"],
                 zorder=3,
@@ -37343,7 +37696,7 @@ class UnifiedApp(tk.Tk):
             ax.scatter(
                 px,
                 py,
-                marker="^",
+                marker=style["peak_marker"],
                 s=style["marker_size"],
                 c=style["peak_color"],
                 zorder=3,
@@ -37355,7 +37708,7 @@ class UnifiedApp(tk.Tk):
             ax.scatter(
                 tx,
                 ty,
-                marker="v",
+                marker=style["trough_marker"],
                 s=style["marker_size"],
                 c=style["trough_color"],
                 zorder=3,
@@ -38899,6 +39252,27 @@ class UnifiedApp(tk.Tk):
             self._mark_plot_data_dirty()
         except Exception:
             pass
+
+    def _bind_vdw_dirty_traces(self) -> None:
+        def _on_change(*_):
+            self._mark_vdw_dirty(reason="input change")
+
+        tracked_vars = (
+            self.v_volume,
+            self.v_a,
+            self.v_b,
+            self.v_gas_molar_mass,
+        )
+        for var in tracked_vars:
+            try:
+                handle = var.trace_add("write", _on_change)
+            except Exception:
+                continue
+            self._vdw_trace_ids.append((var, handle))
+
+    def _mark_vdw_dirty(self, reason: str = "") -> None:
+        _ = reason  # reserved for future logging
+        self._update_apply_vdw_indicator("pending")
 
     def _on_gas_selected(self, *_):
 
@@ -52965,6 +53339,44 @@ class UnifiedApp(tk.Tk):
         self._update_apply_columns_indicator(self._apply_columns_indicator_state)
         return canvas
 
+    def _create_vdw_indicator(
+        self,
+        parent,
+        *,
+        layout: str = "grid",
+        row: int = 0,
+        column: int = 0,
+        padx=(4, 0),
+        pady=0,
+        sticky="w",
+        side="left",
+    ):
+        canvas = tk.Canvas(parent, width=12, height=12, highlightthickness=0, bd=0)
+
+        background_candidates = (parent, getattr(parent, "master", None), self)
+        for candidate in background_candidates:
+            if candidate is None:
+                continue
+            try:
+                bg = candidate.cget("background")
+            except Exception:
+                continue
+            if bg:
+                try:
+                    canvas.configure(background=bg)
+                except Exception:
+                    pass
+                break
+
+        if layout == "pack":
+            canvas.pack(side=side, padx=padx, pady=pady)
+        else:
+            canvas.grid(row=row, column=column, padx=padx, pady=pady, sticky=sticky)
+
+        self._apply_vdw_indicator_canvases.append(canvas)
+        self._update_apply_vdw_indicator(self._apply_vdw_indicator_state)
+        return canvas
+
     def _update_apply_columns_indicator(self, state: str) -> None:
         """Update the UI indicator shown next to Apply Column Selection."""
         self._apply_columns_indicator_state = state
@@ -52991,6 +53403,33 @@ class UnifiedApp(tk.Tk):
                 outline="",
             )
         self._apply_indicator_canvases = active_canvases
+
+    def _update_apply_vdw_indicator(self, state: str) -> None:
+        """Update the UI indicator shown next to Apply VDW."""
+        self._apply_vdw_indicator_state = state
+
+        active_canvases = []
+        for canvas in list(self._apply_vdw_indicator_canvases):
+            if canvas is None or not canvas.winfo_exists():
+                continue
+            active_canvases.append(canvas)
+            canvas.delete("all")
+
+            radius = 4
+            if state == "success":
+                fill_color = "#2da44e"
+            else:
+                fill_color = "#d73a49"
+
+            canvas.create_oval(
+                2,
+                2,
+                2 + radius * 2,
+                2 + radius * 2,
+                fill=fill_color,
+                outline="",
+            )
+        self._apply_vdw_indicator_canvases = active_canvases
 
     def _register_apply_button(self, button):
         """Track Apply buttons so their visual state can be reset after background work."""
@@ -53966,6 +54405,29 @@ class UnifiedApp(tk.Tk):
             settings["gas_preset_overrides"] = self._gas_preset_overrides
 
         _save_settings_to_disk()
+
+        self.a_const = self.v_a.get()
+        self.b_const = self.v_b.get()
+
+        globals()["volume"] = self.v_volume.get()
+        globals()["a_const"] = self.v_a.get()
+        globals()["b_const"] = self.v_b.get()
+        globals()["starting_mass_g"] = self.v_starting_mass.get()
+        globals()["gas_molar_mass"] = gas_molar_mass
+
+        if self._cycle_ready():
+            try:
+                auto_flag = bool(self.auto_detect_cycles.get())
+            except Exception:
+                auto_flag = True
+            try:
+                self._recompute_cycle_analysis(
+                    auto_detect=auto_flag, preserve_view=True
+                )
+            except Exception:
+                self._show_cycle_ready_message()
+
+        self._update_apply_vdw_indicator("success")
 
     def _save_custom_gas_preset(self):
         try:
@@ -54978,6 +55440,12 @@ class UnifiedApp(tk.Tk):
             MIN_COMBINED_FONT_SIZE,
             MAX_COMBINED_FONT_SIZE,
         )
+        cycle_legend_font_value = _sanitize_spacing_value(
+            self._safe_get_var(self.combined_cycle_legend_fontsize, float),
+            legend_font_value,
+            MIN_COMBINED_FONT_SIZE,
+            MAX_COMBINED_FONT_SIZE,
+        )
         font_family_value = (self.combined_font_family.get() or "").strip()
         if not font_family_value:
             font_family_value = (settings.get("font_family") or "").strip()
@@ -55087,6 +55555,7 @@ class UnifiedApp(tk.Tk):
             "label_font_value": label_font_value,
             "tick_font_value": tick_font_value,
             "legend_font_value": legend_font_value,
+            "cycle_legend_font_value": cycle_legend_font_value,
             "font_family_value": font_family_value,
             "left_key": left_key,
             "right_key": right_key,
@@ -55196,6 +55665,7 @@ class UnifiedApp(tk.Tk):
             config.get("label_font_value"),
             config.get("tick_font_value"),
             config.get("legend_font_value"),
+            config.get("cycle_legend_font_value"),
             title_text or "",
             suptitle_text or "",
             config.get("legend_alignment_value"),
@@ -55371,6 +55841,7 @@ class UnifiedApp(tk.Tk):
                 label_fontsize_override=config.get("label_font_value"),
                 tick_fontsize_override=config.get("tick_font_value"),
                 legend_fontsize_override=config.get("legend_font_value"),
+                cycle_legend_fontsize_override=config.get("cycle_legend_font_value"),
                 font_family=config.get("font_family_value"),
                 axis_label_overrides=config.get("axis_label_overrides"),
                 labelpad_overrides=config.get("labelpad_overrides"),
@@ -55495,6 +55966,9 @@ class UnifiedApp(tk.Tk):
         def _fmt_safe(value: Any) -> str:
             return svg_safe(fmt(value))
 
+        def _text_safe(value: Any) -> str:
+            return svg_safe(value)
+
         label_y1 = _fmt_safe(selected_columns.get("y1", "y1"))
         label_y3 = _fmt_safe(selected_columns.get("y3", "y3"))
         label_y2 = _fmt_safe(selected_columns.get("y2", "Derivative"))
@@ -55502,31 +55976,44 @@ class UnifiedApp(tk.Tk):
         label_z2 = _fmt_safe(selected_columns.get("z2", "Temp 2"))
         default_x_label = _fmt_safe(selected_columns.get("x", "Time"))
 
+        selected_map = {
+            "y1": _is_selected(selected_columns.get("y1", "y1")),
+            "y3": _is_selected(selected_columns.get("y3", "y3")),
+            "y2": _is_selected(selected_columns.get("y2", "Derivative")),
+            "z": _is_selected(selected_columns.get("z", "Temp")),
+            "z2": _is_selected(selected_columns.get("z2", "Temp 2")),
+        }
+
         dataset_meta = {
             "y1": {
                 "series": globals().get("y1"),
                 "label": label_y1,
                 "axis_type": "primary",
+                "selected": selected_map["y1"],
             },
             "y3": {
                 "series": globals().get("y3"),
                 "label": label_y3,
                 "axis_type": "primary",
+                "selected": selected_map["y3"],
             },
             "y2": {
                 "series": globals().get("y2"),
                 "label": label_y2,
                 "axis_type": "derivative",
+                "selected": selected_map["y2"],
             },
             "z": {
                 "series": globals().get("z"),
                 "label": label_z,
                 "axis_type": "temperature",
+                "selected": selected_map["z"],
             },
             "z2": {
                 "series": globals().get("z2"),
                 "label": label_z2,
                 "axis_type": "temperature",
+                "selected": selected_map["z2"],
             },
         }
         valid_dataset_keys = set(dataset_meta.keys())
@@ -55541,27 +56028,23 @@ class UnifiedApp(tk.Tk):
         right_key = _resolve_dataset_key(config.get("right_key"), "z")
         third_key = _resolve_dataset_key(config.get("third_key"), "y2")
 
-        temp_axis_active = (
-            bool(_enable_temp_axis)
-            or dataset_meta["z"]["series"] is not None
-            or dataset_meta["z2"]["series"] is not None
+        def _is_available(meta: Mapping[str, Any]) -> bool:
+            return bool(meta.get("series") is not None and meta.get("selected"))
+
+        temp_axis_active = bool(_enable_temp_axis) and (
+            _is_available(dataset_meta["z"]) or _is_available(dataset_meta["z2"])
         )
-        deriv_axis_active = (
-            bool(_enable_deriv_axis) or dataset_meta["y2"]["series"] is not None
-        )
+        deriv_axis_active = bool(_enable_deriv_axis) and _is_available(dataset_meta["y2"])
 
         right_meta = dataset_meta.get(right_key, dataset_meta["z"])
         third_meta = dataset_meta.get(third_key, dataset_meta["y2"])
-        temp_available = (
-            dataset_meta["z"]["series"] is not None
-            or dataset_meta["z2"]["series"] is not None
-        )
-        deriv_available = dataset_meta["y2"]["series"] is not None
+        temp_available = _is_available(dataset_meta["z"]) or _is_available(dataset_meta["z2"])
+        deriv_available = _is_available(dataset_meta["y2"])
 
         def _temperature_meta() -> Mapping[str, Any]:
-            if dataset_meta["z"]["series"] is not None:
+            if _is_available(dataset_meta["z"]):
                 return dataset_meta["z"]
-            if dataset_meta["z2"]["series"] is not None:
+            if _is_available(dataset_meta["z2"]):
                 return dataset_meta["z2"]
             return dataset_meta["z"]
 
@@ -55569,6 +56052,13 @@ class UnifiedApp(tk.Tk):
         third_role = third_meta.get("axis_type", "primary")
         if temp_available and "temperature" not in {right_role, third_role}:
             right_meta = _temperature_meta()
+            right_role = right_meta.get("axis_type", "primary")
+        if temp_available and right_role == "temperature" and not _is_available(right_meta):
+            right_meta = _temperature_meta()
+            right_role = right_meta.get("axis_type", "primary")
+        if temp_available and third_role == "temperature" and not _is_available(third_meta):
+            third_meta = _temperature_meta()
+            third_role = third_meta.get("axis_type", "primary")
             right_role = right_meta.get("axis_type", "primary")
         if deriv_available and "derivative" not in {right_role, third_role}:
             if third_role != "temperature":
@@ -55641,29 +56131,39 @@ class UnifiedApp(tk.Tk):
                 fontfamily=family_value if family_value else None,
             )
 
-        if ax_temp is not None and temp_axis_active:
-            ax_temp.set_ylim(twin_y_min, twin_y_max)
-            ax_temp.set_ylabel(
-                _label_or_default("temperature", right_meta.get("label", "")),
-                labelpad=temp_labelpad,
-                fontsize=label_fontsize,
-                fontfamily=family_value if family_value else None,
-                rotation=-90,
-                color="black",
-            )
-            ax_temp.tick_params(axis="y", labelcolor="black", labelsize=tick_fontsize)
+        if ax_temp is not None:
+            try:
+                ax_temp.set_visible(bool(temp_axis_active))
+            except Exception:
+                pass
+            if temp_axis_active:
+                ax_temp.set_ylim(twin_y_min, twin_y_max)
+                ax_temp.set_ylabel(
+                    _label_or_default("temperature", right_meta.get("label", "")),
+                    labelpad=temp_labelpad,
+                    fontsize=label_fontsize,
+                    fontfamily=family_value if family_value else None,
+                    rotation=-90,
+                    color="black",
+                )
+                ax_temp.tick_params(axis="y", labelcolor="black", labelsize=tick_fontsize)
 
-        if ax_deriv is not None and deriv_axis_active:
-            ax_deriv.set_ylim(deriv_y_min, deriv_y_max)
-            ax_deriv.set_ylabel(
-                _label_or_default("derivative", third_meta.get("label", "")),
-                labelpad=deriv_labelpad,
-                fontsize=label_fontsize,
-                fontfamily=family_value if family_value else None,
-                rotation=-90,
-                color="black",
-            )
-            ax_deriv.tick_params(axis="y", labelcolor="black", labelsize=tick_fontsize)
+        if ax_deriv is not None:
+            try:
+                ax_deriv.set_visible(bool(deriv_axis_active))
+            except Exception:
+                pass
+            if deriv_axis_active:
+                ax_deriv.set_ylim(deriv_y_min, deriv_y_max)
+                ax_deriv.set_ylabel(
+                    _label_or_default("derivative", third_meta.get("label", "")),
+                    labelpad=deriv_labelpad,
+                    fontsize=label_fontsize,
+                    fontfamily=family_value if family_value else None,
+                    rotation=-90,
+                    color="black",
+                )
+                ax_deriv.tick_params(axis="y", labelcolor="black", labelsize=tick_fontsize)
 
         if ax is not None:
             if auto_time_ticks:
@@ -55677,9 +56177,9 @@ class UnifiedApp(tk.Tk):
                 axis="both", which="major", labelcolor="black", labelsize=tick_fontsize
             )
 
-        if ax_temp is not None:
+        if ax_temp is not None and temp_axis_active:
             _apply_axis_ticks(ax_temp, auto_temp_ticks, twin_maj_tick, twin_min_tick)
-        if ax_deriv is not None:
+        if ax_deriv is not None and deriv_axis_active:
             _apply_axis_ticks(ax_deriv, auto_deriv_ticks, deriv_maj_tick, deriv_min_tick)
 
         _apply_tick_font(ax)
@@ -55702,10 +56202,25 @@ class UnifiedApp(tk.Tk):
             fig, canvas, x_values, series_values
         )
 
-        labels_changed = False
+        legend_dirty = False
         for key, artist in line_map.items():
             if artist is None:
                 continue
+            meta = dataset_meta.get(key)
+            if not meta or not _is_available(meta):
+                try:
+                    if artist.get_visible():
+                        artist.set_visible(False)
+                        legend_dirty = True
+                except Exception:
+                    pass
+                continue
+            try:
+                if not artist.get_visible():
+                    artist.set_visible(True)
+                    legend_dirty = True
+            except Exception:
+                pass
             y_vals = decimated.get(key)
             if y_vals is None or x_plot is None:
                 continue
@@ -55733,9 +56248,90 @@ class UnifiedApp(tk.Tk):
                 try:
                     if artist.get_label() != new_label:
                         artist.set_label(new_label)
-                        labels_changed = True
+                        legend_dirty = True
                 except Exception:
                     pass
+
+        legend_handles: List[Any] = []
+        for key in ("y1", "y3", "z", "z2", "y2"):
+            artist = line_map.get(key)
+            meta = dataset_meta.get(key)
+            if artist is None or not meta or not _is_available(meta):
+                continue
+            legend_handles.append(artist)
+
+        if legend_dirty:
+            for legend in self._collect_combined_legends(fig):
+                if getattr(legend, "_combined_main_legend", False):
+                    try:
+                        legend.remove()
+                    except Exception:
+                        pass
+            legend_labels = [_text_safe(handle.get_label()) for handle in legend_handles]
+            legend_handles, legend_labels = _filter_none_legend_entries(
+                legend_handles, legend_labels
+            )
+            main_center_x = fig.subplotpars.left + (
+                (fig.subplotpars.right - fig.subplotpars.left) / 2.0
+            )
+            try:
+                pos = ax.get_position()
+                main_center_x = pos.x0 + (pos.width / 2.0)
+            except Exception:
+                pass
+            if legend_handles:
+                wrap_enabled = bool(config.get("wrap_enabled"))
+                legend_rows_value = config.get("legend_rows_value")
+                if wrap_enabled:
+                    rows_value = 2 if legend_rows_value is None else legend_rows_value
+                    try:
+                        rows_value = int(rows_value)
+                    except (TypeError, ValueError):
+                        rows_value = 1
+                    rows_value = max(1, rows_value)
+                    ncol = max(1, math.ceil(len(legend_handles) / rows_value))
+                else:
+                    ncol = min(4, len(legend_handles))
+                wrapped_labels = [_wrap_legend_label(label) for label in legend_labels]
+                legend_font_value = config.get("legend_font_value")
+                legend_markerscale = _coerce_float(
+                    settings.get("combined_legend_markerscale")
+                )
+                if legend_markerscale is None:
+                    base_font = legend_font_value if legend_font_value else 1.0
+                    legend_markerscale = base_font / DEFAULT_COMBINED_LEGEND_FONTSIZE
+                main_legend = fig.legend(
+                    handles=legend_handles,
+                    labels=wrapped_labels,
+                    loc="lower center",
+                    bbox_to_anchor=(main_center_x, 0.0),
+                    columnspacing=1.0,
+                    handletextpad=0.5,
+                    fontsize=legend_font_value,
+                    prop={"family": family_value, "size": legend_font_value},
+                    markerscale=legend_markerscale,
+                    ncol=ncol,
+                    **_legend_shadowbox_kwargs(),
+                )
+                try:
+                    main_legend._combined_main_legend = True  # type: ignore[attr-defined]
+                    main_legend._gl260_markerscale = legend_markerscale  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                legend_anchor = config.get("legend_anchor")
+                legend_loc = config.get("legend_loc")
+                if legend_anchor is not None:
+                    _apply_legend_anchor_to_artist(
+                        main_legend,
+                        legend_anchor,
+                        transform=fig.transFigure,
+                        loc_override=legend_loc,
+                    )
+                elif legend_loc is not None:
+                    try:
+                        main_legend.set_loc(_normalize_legend_loc_value(legend_loc))
+                    except Exception:
+                        pass
 
         title_display = svg_safe(title_text)
         suptitle_display = svg_safe(suptitle_text)
@@ -55846,20 +56442,6 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 pass
 
-        if labels_changed and main_legend is not None:
-            try:
-                legend_handles = getattr(main_legend, "legendHandles", [])
-                new_labels = [
-                    handle.get_label() for handle in legend_handles if handle is not None
-                ]
-                legend_texts = list(main_legend.get_texts())
-                if len(legend_texts) == len(new_labels):
-                    for text, label in zip(legend_texts, new_labels):
-                        if text.get_text() != label:
-                            text.set_text(label)
-            except Exception:
-                pass
-
         if fig.canvas is not None:
             try:
                 fig.canvas.draw_idle()
@@ -55924,10 +56506,11 @@ class UnifiedApp(tk.Tk):
             "z": globals().get("z"),
             "z2": globals().get("z2"),
         }
+        selected_columns = globals().get("selected_columns", {})
         missing_required = [
             self._combined_dataset_label(key)
             for key, series in required_series.items()
-            if series is None
+            if series is None and _is_selected(selected_columns.get(key, key))
         ]
         if missing_required:
             try:
@@ -56010,6 +56593,7 @@ class UnifiedApp(tk.Tk):
             label_fontsize_override=label_font_value,
             tick_fontsize_override=tick_font_value,
             legend_fontsize_override=legend_font_value,
+            cycle_legend_fontsize_override=config.get("cycle_legend_font_value"),
             font_family=font_family_value,
             axis_label_overrides=axis_label_overrides,
             labelpad_overrides=labelpad_overrides,
@@ -56057,17 +56641,28 @@ class UnifiedApp(tk.Tk):
                 pass
             try:
                 legend_prop = None
+                cycle_legend_prop = None
+                cycle_legend_font_value = config.get(
+                    "cycle_legend_font_value", legend_font_value
+                )
                 try:
                     if font_family_value:
                         legend_prop = font_manager.FontProperties(
                             family=font_family_value, size=legend_font_value
                         )
+                        cycle_legend_prop = font_manager.FontProperties(
+                            family=font_family_value, size=cycle_legend_font_value
+                        )
                     else:
                         legend_prop = font_manager.FontProperties(
                             size=legend_font_value
                         )
+                        cycle_legend_prop = font_manager.FontProperties(
+                            size=cycle_legend_font_value
+                        )
                 except Exception:
                     legend_prop = None
+                    cycle_legend_prop = None
                 main_legend = None
                 cycle_legend = None
                 legends: List[Any] = []
@@ -56094,8 +56689,72 @@ class UnifiedApp(tk.Tk):
                     main_legend, legend_prop, legend_font_value
                 )
                 self._enforce_legend_text_style(
-                    cycle_legend, legend_prop, legend_font_value
+                    cycle_legend, cycle_legend_prop, cycle_legend_font_value
                 )
+                legend_markerscale = _coerce_float(
+                    settings.get("combined_legend_markerscale")
+                )
+                if legend_markerscale is None:
+                    base_font = legend_font_value if legend_font_value else 1.0
+                    legend_markerscale = base_font / DEFAULT_COMBINED_LEGEND_FONTSIZE
+                cycle_legend_markerscale = _coerce_float(
+                    settings.get("combined_cycle_legend_markerscale")
+                )
+                if cycle_legend_markerscale is None:
+                    base_cycle_font = (
+                        cycle_legend_font_value if cycle_legend_font_value else 1.0
+                    )
+                    cycle_legend_markerscale = (
+                        base_cycle_font / DEFAULT_COMBINED_LEGEND_FONTSIZE
+                    )
+
+                def _apply_markerscale(legend_obj, target_scale):
+                    if legend_obj is None:
+                        return
+                    try:
+                        target_scale = float(target_scale)
+                    except Exception:
+                        return
+                    if not math.isfinite(target_scale) or target_scale <= 0:
+                        return
+                    prev_scale = getattr(legend_obj, "_gl260_markerscale", None)
+                    try:
+                        prev_scale = float(prev_scale)
+                    except Exception:
+                        prev_scale = 1.0
+                    if not math.isfinite(prev_scale) or prev_scale <= 0:
+                        prev_scale = 1.0
+                    ratio = target_scale / prev_scale
+                    if abs(ratio - 1.0) < 1e-3:
+                        return
+                    for handle in getattr(legend_obj, "legendHandles", []):
+                        if handle is None:
+                            continue
+                        if hasattr(handle, "get_markersize") and hasattr(
+                            handle, "set_markersize"
+                        ):
+                            try:
+                                handle.set_markersize(handle.get_markersize() * ratio)
+                            except Exception:
+                                pass
+                        elif hasattr(handle, "get_sizes") and hasattr(
+                            handle, "set_sizes"
+                        ):
+                            try:
+                                sizes = handle.get_sizes()
+                                if sizes is not None:
+                                    handle.set_sizes(
+                                        [float(s) * (ratio * ratio) for s in sizes]
+                                    )
+                            except Exception:
+                                pass
+                    try:
+                        legend_obj._gl260_markerscale = target_scale  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+
+                _apply_markerscale(main_legend, legend_markerscale)
+                _apply_markerscale(cycle_legend, cycle_legend_markerscale)
                 if axis_offset_values is not None and cycle_legend is not None:
                     ref_axis = _resolve_combined_cycle_ref_axis(
                         fig,

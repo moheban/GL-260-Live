@@ -153,7 +153,7 @@ Sections and key fields:
 - Vessel volume (L).
 - VDW `a` and `b` constants.
 - Gas molar mass (g/mol).
-- **Apply VDW** updates the constants used in cycle moles calculations.
+- **Apply VDW** updates the constants used in cycle moles calculations, refreshes Cycle Analysis, and updates the Apply VDW indicator.
 
 **Starting Material Settings**
 - Starting material molar mass and mass (used in reaction completion summaries).
@@ -165,6 +165,10 @@ Sections and key fields:
 - Show cycle markers on core plots.
 - Show cycle legend on core plots.
 - Include moles summary in core plot legends.
+
+**Legend sizing**
+- Main and cycle legends can be sized independently (text and symbols scale together).
+- Cycle legend controls appear only when a cycle legend is available.
 
 **Combined Triple-Axis Settings**
 - Choose the dataset for inner left, inner right, and outer right axes.
@@ -341,7 +345,7 @@ Export:
 - Show solubility input helper.
 - Auto-jump to Plot tab after Apply.
 - Scatter Plot Settings (marker, size, color, alpha, edge color, line width).
-- Cycle Analysis Plot Settings (trace line color/style/width, peak/trough colors, marker size).
+- Cycle Analysis Plot Settings (trace line color/style/width, peak/trough colors, marker size, marker shape).
 - Saved Output Options (export DPI and output size profiles).
 - Combined Axis Settings.
 - Axis Auto-Range Settings.
@@ -381,6 +385,7 @@ Export:
 
 ### Legend handling
 - Legends are created per figure and are draggable.
+- Legends omit datasets that are set to None in the Columns tab.
 - Cycle legends can be added to core plots when enabled.
 
 ### Combined cycle legend placement
