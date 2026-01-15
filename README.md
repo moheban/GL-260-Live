@@ -184,7 +184,9 @@ Sections and key fields:
 - Include moles summary in core plot legends.
 
 **Legend sizing**
-- Main and cycle legends can be sized independently (text and symbols scale together).
+- The Plot Settings popup (per-plot **Plot Settings...**) provides separate Main Legend and Cycle Legend size controls.
+- Main legend sizing targets the primary plot legend; Cycle legend sizing targets the cycle overlay legend (when enabled).
+- Text and symbols scale together, and sizes are enforced for preview, refresh, and exports (PNG/SVG/PDF).
 - Cycle legend controls appear only when a cycle legend is available.
 
 **Combined Triple-Axis Settings**
