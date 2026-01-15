@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.8.0
+# Version: V1.8.1
 # Date: 2026-01-15
 
 import os
@@ -7231,7 +7231,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.8.0"
+APP_VERSION = "V1.8.1"
 
 
 DEBUG_SERIES_FLOW = False
@@ -33387,14 +33387,20 @@ class UnifiedApp(tk.Tk):
             "Controls the marker shape used for trough points across cycle plots.",
         )
 
-        ttk.Label(container, text="Marker size (pt²)").grid(
+        ttk.Label(container, text="Peak / Trough Marker Size (pt²)").grid(
             row=7, column=0, sticky="w", padx=(0, 8), pady=4
         )
-        marker_entry = ttk.Entry(container, textvariable=vars_map["marker_size"])
-        marker_entry.grid(row=7, column=1, sticky="ew", pady=4)
+        marker_spin = ttk.Spinbox(
+            container,
+            from_=1,
+            to=500,
+            increment=1,
+            textvariable=vars_map["marker_size"],
+        )
+        marker_spin.grid(row=7, column=1, sticky="ew", pady=4)
         self._attach_tooltip(
-            marker_entry,
-            "Controls the point size for peak/trough markers in both interactive and exported plots.",
+            marker_spin,
+            "Maps to Matplotlib scatter s (area in points²) for peak/trough markers.",
         )
 
         hint = ttk.Label(
@@ -33409,10 +33415,10 @@ class UnifiedApp(tk.Tk):
         hint.grid(row=8, column=0, columnspan=2, sticky="w", pady=(8, 12))
 
         button_frame = ttk.Frame(container)
-        button_frame.grid(row=7, column=0, columnspan=2, sticky="ew")
+        button_frame.grid(row=9, column=0, columnspan=2, sticky="ew")
         button_frame.grid_columnconfigure(0, weight=1)
         status_label = ttk.Label(container, text="", foreground="forest green")
-        status_label.grid(row=8, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        status_label.grid(row=10, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         ttk.Button(
             button_frame,

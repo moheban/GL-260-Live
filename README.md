@@ -1,9 +1,12 @@
-# GL-260 Data Analysis and Plotter (V1.8.0)
+# GL-260 Data Analysis and Plotter (V1.8.1)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data exported to Excel, mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.8.0`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.8.1`.
+
+## V1.8.1 Update Highlights
+- Added a Cycle Analysis Plot Settings control for **Peak / Trough Marker Size (pt²)** to adjust marker area.
 
 ## V1.8.0 Update Highlights
 - Unified render pipeline for initial render, Refresh Plot, Plot Preview, and export (no split paths).
@@ -378,7 +381,7 @@ Export:
 - Show solubility input helper.
 - Auto-jump to Plot tab after Apply.
 - Scatter Plot Settings (marker, size, color, alpha, edge color, line width).
-- Cycle Analysis Plot Settings (trace line color/style/width, peak/trough colors, marker size, marker shape).
+- Cycle Analysis Plot Settings (trace line color/style/width, peak/trough colors, marker shapes, and **Peak / Trough Marker Size (pt²)**, which maps to Matplotlib scatter `s` area for peak/trough markers).
 - Saved Output Options (export DPI and output size profiles).
 - Combined Axis Settings.
 - Axis Auto-Range Settings.
@@ -629,7 +632,7 @@ The script includes internal change summaries:
   - Treeview selection recursion fix in annotations editor.
   - Layout fixes for the annotations Toplevel.
 
-Note: the UI title uses `APP_VERSION` set to `V1.8.0`.
+Note: the UI title uses `APP_VERSION` set to `V1.8.1`.
 
 ## Troubleshooting
 - **"No Data" or "Missing Columns" errors**: Load a sheet on the Data tab and set required columns on the Columns tab.
