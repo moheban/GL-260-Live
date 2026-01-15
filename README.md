@@ -1,9 +1,16 @@
-# GL-260 Data Analysis and Plotter (V1.7.4)
+# GL-260 Data Analysis and Plotter (V1.8.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data exported to Excel, mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.7.4`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.8.0`.
+
+## V1.8.0 Update Highlights
+- Unified render pipeline for initial render, Refresh Plot, Plot Preview, and export (no split paths).
+- Refresh Plot always builds a new figure while reusing cached prepared data and cycle metrics when the dataset is unchanged.
+- Deterministic overlay gating for markers, cycle legend, and moles summary; moles summary appends to the main legend when the cycle legend is off.
+- Manual vs auto marker sourcing is enforced (auto off uses manual-only markers; auto on supports manual add/remove overrides).
+- Plot Elements controllers are fully rebound on figure swaps so add/select/drag stays reliable after refresh and layout edits.
 
 ## V1.7.4 Update Highlights
 - Columns set to None are omitted from plots and legends (combined, core, export).
@@ -211,6 +218,25 @@ Per-plot layout:
 Export behavior:
 - Export DPI is controlled via **Preferences -> Saved Output Options...**.
 - Export size can be controlled per output profile (see "Output Size Profiles").
+
+### Unified Render Pipeline and Refresh Semantics (V1.8.0)
+- All display, preview, export, and report renders go through one canonical pipeline (`render_plot`).
+- **Refresh Plot** always rebuilds a fresh figure for interactivity, but reuses cached prepared data and cached cycle metrics when the dataset is unchanged.
+- Cache invalidation rules:
+  - **DataFingerprint** changes when the Excel file, selected sheet(s)/stitch order, column mappings, elapsed-time unit, or other preprocessing inputs change.
+  - **CycleFingerprint** adds the auto/manual toggle, auto detection parameters, and a manual marker revision counter (incremented on manual edits).
+- Overlay gating (applies to combined + core plots):
+  - **Show Cycle Peaks/Troughs on Core Plots** enables markers.
+  - **Show Cycle Legend on Core Plots** enables the cycle legend.
+  - **Include Moles Summary in Core Plot Legend** enables moles summary lines.
+  - When the cycle legend is off, moles summary lines are appended to the main legend.
+- Manual vs auto marker sourcing:
+  - Auto detection OFF -> use manual markers only (no auto fallback).
+  - Auto detection ON -> auto peaks/troughs plus manual add/remove overrides (mixed mode).
+- Layout/preview/export guarantees:
+  - Layout Editor targets the active figure after refresh, and layout changes persist across refresh and export without invalidating cached data.
+  - Plot Preview uses the same pipeline and gating rules (target="preview").
+  - Export uses the same pipeline (target="export") and preserves dragged Plot Elements positions via the existing display-to-export mapping.
 
 ### Cycle Analysis Tab
 Purpose: interactive cycle detection, manual correction, and moles summaries.
@@ -421,6 +447,7 @@ Key behaviors:
 - Elements can target the primary, right, or third axis in multi-axis plots.
 - Axis-based legacy elements are automatically migrated into data coordinates.
 - Elements are applied both to on-screen figures and to exported PNG/PDF/SVG outputs.
+- Plot Elements controllers are rebound on figure swaps (Refresh Plot, preview/export) so selection/dragging remains active.
 - Element placement uses a dedicated "Plot Elements" Toplevel editor with:
   - Add Element controls (type, axis, coordinate space) with explicit "Place on Plot" arming and status hints.
   - Color, transparency, and label presets.
@@ -602,7 +629,7 @@ The script includes internal change summaries:
   - Treeview selection recursion fix in annotations editor.
   - Layout fixes for the annotations Toplevel.
 
-Note: the UI title uses `APP_VERSION` set to `V1.7.1`.
+Note: the UI title uses `APP_VERSION` set to `V1.8.0`.
 
 ## Troubleshooting
 - **"No Data" or "Missing Columns" errors**: Load a sheet on the Data tab and set required columns on the Columns tab.

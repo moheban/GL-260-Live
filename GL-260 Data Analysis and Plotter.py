@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.7.4
-# Date: 2026-01-14
+# Version: V1.8.0
+# Date: 2026-01-15
 
 import os
 import sys
@@ -3648,6 +3648,52 @@ class PlotAnnotationsController:
             self._connect_events()
         self._fig = fig
 
+    def rebind(
+        self,
+        fig: Figure,
+        canvas: FigureCanvasTkAgg,
+        axes_map: Dict[str, Axes],
+        axis_labels: Dict[str, str],
+    ) -> None:
+        if fig is None or canvas is None:
+            return
+        try:
+            self.disconnect()
+        except Exception:
+            pass
+        self._canvas = canvas
+        self._fig = fig
+        self._connect_events()
+        self._axes_map = axes_map or {}
+        if axis_labels is not None:
+            self._axis_labels = axis_labels
+        self._axes_role_map = {ax: role for role, ax in self._axes_map.items() if ax}
+        self._drag_state = None
+        self._dirty = False
+        self._placing_state = None
+        self._clear_span_selectors()
+        self._span_commit_in_progress = False
+        try:
+            self.cancel_place_element()
+        except Exception:
+            pass
+        try:
+            self._end_drag_blit()
+        except Exception:
+            self._drag_blit_state = None
+        try:
+            self._hit_test = AnnotationHitTest()
+        except Exception:
+            try:
+                self._hit_test.clear_cache()
+            except Exception:
+                pass
+        self._clear_draft()
+        self._clear_overlays()
+        self.render()
+        if self._panel is not None:
+            self._panel.refresh()
+
     def set_mode(self, mode: str) -> None:
         if mode not in ANNOTATION_MODES:
             return
@@ -7185,10 +7231,11 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.7.4"
+APP_VERSION = "V1.8.0"
 
 
 DEBUG_SERIES_FLOW = False
+DEBUG_RENDER_CACHE = True
 DEBUG_TITLE_FONT_RESOLVE = False
 DEBUG_ANNOTATIONS_INTERACTION = False
 DEFAULT_EXPORT_DPI = EXPORT_DPI
@@ -8252,6 +8299,69 @@ _enable_windows_dpi_awareness()
 
 MIN_UI_SCALE = 0.75
 MAX_UI_SCALE = 2.5
+
+
+@dataclass(frozen=True)
+class DataFingerprint:
+    """Immutable key for prepared data cache entries."""
+
+    file_path: str
+    sheet_key: Tuple[str, ...]
+    columns_key: Tuple[Tuple[str, str], ...]
+    cycle_temp_column: str
+    elapsed_unit: str
+    multi_sheet: bool
+    prep_signature: Tuple[Any, ...] = ()
+
+
+@dataclass(frozen=True)
+class CycleFingerprint:
+    """Immutable key for cached cycle segmentation + metrics."""
+
+    data_fingerprint: DataFingerprint
+    mode: str
+    auto_params: Tuple[Any, ...]
+    manual_revision: int
+    mask_signature: int
+    moles_signature: Tuple[Any, ...]
+    policy: str
+
+
+@dataclass
+class RenderCacheManager:
+    """Simple cache manager for prepared series and cycle segmentation."""
+
+    prepared: Dict[DataFingerprint, Dict[str, Any]] = field(default_factory=dict)
+    cycles: Dict[CycleFingerprint, Dict[str, Any]] = field(default_factory=dict)
+
+    def get_prepared(self, fingerprint: DataFingerprint) -> Optional[Dict[str, Any]]:
+        return self.prepared.get(fingerprint)
+
+    def set_prepared(
+        self, fingerprint: DataFingerprint, payload: Dict[str, Any]
+    ) -> None:
+        self.prepared[fingerprint] = payload
+
+    def get_cycles(self, fingerprint: CycleFingerprint) -> Optional[Dict[str, Any]]:
+        return self.cycles.get(fingerprint)
+
+    def set_cycles(
+        self, fingerprint: CycleFingerprint, payload: Dict[str, Any]
+    ) -> None:
+        self.cycles[fingerprint] = payload
+
+
+@dataclass
+class RenderContext:
+    """Explicit render context passed into plot builders."""
+
+    data_ctx: Dict[str, Any]
+    cycle_ctx: Dict[str, Any]
+    overlay_ctx: Dict[str, Any]
+    gates_ctx: Dict[str, Any]
+    style_ctx: Dict[str, Any]
+    layout_ctx: Dict[str, Any]
+    plot_elements_ctx: Dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -16320,9 +16430,16 @@ def get_cycle_trace_style():
     return style
 
 
-def _get_scatter_config(series_key=None):
+def _get_scatter_config(
+    series_key=None,
+    *,
+    scatter_config: Optional[Dict[str, Any]] = None,
+    scatter_series_configs: Optional[Dict[str, Any]] = None,
+):
     """Return the current scatter configuration merged with defaults."""
-    cfg = globals().get("scatter_config")
+    cfg = scatter_config if isinstance(scatter_config, dict) else globals().get(
+        "scatter_config"
+    )
     merged = dict(DEFAULT_SCATTER_SETTINGS)
     overrides = {key: False for key in DEFAULT_SCATTER_SETTINGS}
     if isinstance(cfg, dict):
@@ -16339,7 +16456,11 @@ def _get_scatter_config(series_key=None):
                     overrides[key] = True
 
     if series_key:
-        series_cfgs = globals().get("scatter_series_configs") or {}
+        series_cfgs = (
+            scatter_series_configs
+            if isinstance(scatter_series_configs, dict)
+            else (globals().get("scatter_series_configs") or {})
+        )
         per_series = series_cfgs.get(series_key)
         if isinstance(per_series, dict):
             for key, value in per_series.items():
@@ -16394,6 +16515,8 @@ def _plot_series(
     linewidth=linewidth_thickness,
     force_line=False,
     series_key=None,
+    scatter_config: Optional[Dict[str, Any]] = None,
+    scatter_series_configs: Optional[Dict[str, Any]] = None,
 ):
     """
     Plot a series either as a line or scatter based on global scatter settings.
@@ -16403,7 +16526,11 @@ def _plot_series(
     rendering from preferences.
     """
 
-    cfg = _get_scatter_config(series_key)
+    cfg = _get_scatter_config(
+        series_key,
+        scatter_config=scatter_config,
+        scatter_series_configs=scatter_series_configs,
+    )
     overrides = cfg.get("_overrides", {})
 
     def _coerce_float(value, default):
@@ -18628,6 +18755,7 @@ def main_plotting_function(
     show_cycle_legend_on_core_plots=False,
     include_moles_in_core_plot_legend=False,
     fig_size=None,
+    render_ctx: Optional[RenderContext] = None,
 ):
 
     import matplotlib.pyplot as plt
@@ -18636,9 +18764,8 @@ def main_plotting_function(
 
     """
 
-    Regenerate ALL figures at once using the current globals:
-
-    - selected_columns, x, y1, y2, y3, z, z2, volume, a_const, b_const
+    Regenerate ALL figures at once using an explicit render context when provided.
+    Falls back to globals for legacy call sites.
 
     """
 
@@ -18662,21 +18789,42 @@ def main_plotting_function(
     core_legend_markerscale = core_legend_fontsize / base_core_legend_font
     core_cycle_legend_markerscale = core_cycle_legend_fontsize / base_core_legend_font
 
+    data_ctx = render_ctx.data_ctx if render_ctx else {}
+    style_ctx = render_ctx.style_ctx if render_ctx else {}
+    gates_ctx = render_ctx.gates_ctx if render_ctx else {}
+    overlay_ctx = render_ctx.overlay_ctx if render_ctx else {}
+
+    show_cycle_markers_on_core_plots = bool(
+        gates_ctx.get("show_cycle_markers", show_cycle_markers_on_core_plots)
+    )
+    show_cycle_legend_on_core_plots = bool(
+        gates_ctx.get("show_cycle_legend", show_cycle_legend_on_core_plots)
+    )
+    include_moles_in_core_plot_legend = bool(
+        gates_ctx.get("include_moles", include_moles_in_core_plot_legend)
+    )
+
+    scatter_config = style_ctx.get("scatter_config")
+    scatter_series_configs = style_ctx.get("scatter_series_configs")
+
+    series_map = data_ctx.get("series") or {}
+    selected_columns = data_ctx.get("selected_columns") or globals().get(
+        "selected_columns", {}
+    )
+
     # Pull series/globals up front (needed for both paths)
 
-    x = globals().get("x")
+    x = series_map.get("x", globals().get("x"))
 
-    y1 = globals().get("y1")
+    y1 = series_map.get("y1", globals().get("y1"))
 
-    y2 = globals().get("y2")
+    y2 = series_map.get("y2", globals().get("y2"))
 
-    y3 = globals().get("y3")
+    y3 = series_map.get("y3", globals().get("y3"))
 
-    z = globals().get("z")
+    z = series_map.get("z", globals().get("z"))
 
-    z2 = globals().get("z2")
-
-    selected_columns = globals().get("selected_columns", {})
+    z2 = series_map.get("z2", globals().get("z2"))
 
     fig_peaks = None  # will hold the cycle analysis figure if created
 
@@ -18714,7 +18862,9 @@ def main_plotting_function(
 
         else:
 
-            cycle_temp_series = globals().get("cycle_temp_series")
+            cycle_temp_series = data_ctx.get("cycle_temp_series")
+            if cycle_temp_series is None:
+                cycle_temp_series = globals().get("cycle_temp_series")
 
             if cycle_temp_series is not None:
 
@@ -18741,9 +18891,9 @@ def main_plotting_function(
             fig_peaks, summary_text = analyze_pressure_cycles(
                 pressure_series=y1[mask].reset_index(drop=True),
                 temp_series=temp_series,
-                volume=globals().get("volume", 1.0),
-                a_const=globals().get("a_const", 1.39),
-                b_const=globals().get("b_const", 0.0391),
+                volume=data_ctx.get("volume", globals().get("volume", 1.0)),
+                a_const=data_ctx.get("a_const", globals().get("a_const", 1.39)),
+                b_const=data_ctx.get("b_const", globals().get("b_const", 0.0391)),
                 min_cycle_drop=min_cycle_drop,
                 make_figure=True,
                 x_series=x[mask].reset_index(drop=True),
@@ -18775,9 +18925,14 @@ def main_plotting_function(
 
         return str(label).replace("_", " ").replace(" (°C)", "")
 
-    cycle_overlay = globals().get("core_cycle_overlay")
-    cycle_style = get_cycle_trace_style() if cycle_overlay else None
+    cycle_overlay = overlay_ctx.get("cycle_overlay")
+    markers_overlay = overlay_ctx.get("markers", cycle_overlay)
+    legend_overlay = overlay_ctx.get("cycle_legend", cycle_overlay)
+    cycle_style = get_cycle_trace_style() if (markers_overlay or legend_overlay) else None
     import matplotlib.patches as mpatches  # localized import to avoid circulars
+    moles_lines = overlay_ctx.get("moles_summary")
+    if moles_lines is None and isinstance(cycle_overlay, dict):
+        moles_lines = cycle_overlay.get("moles_lines")
 
     def _marker_artist(marker, color):
         size_val = None
@@ -18790,11 +18945,11 @@ def main_plotting_function(
         )
 
     def _draw_cycle_markers(ax_target):
-        if not (show_cycle_markers_on_core_plots and cycle_overlay and cycle_style):
+        if not (show_cycle_markers_on_core_plots and markers_overlay and cycle_style):
             return (None, None)
         peak_artist = trough_artist = None
-        peaks = cycle_overlay.get("peak_points") or []
-        troughs = cycle_overlay.get("trough_points") or []
+        peaks = markers_overlay.get("peak_points") or []
+        troughs = markers_overlay.get("trough_points") or []
         if peaks:
             px, py = zip(*peaks)
             peak_artist = ax_target.scatter(
@@ -18820,7 +18975,7 @@ def main_plotting_function(
         return peak_artist, trough_artist
 
     def _add_cycle_legend(ax_target, peak_artist, trough_artist):
-        if not (show_cycle_legend_on_core_plots and cycle_overlay):
+        if not (show_cycle_legend_on_core_plots and legend_overlay):
             return None
         handles: List[Any] = []
         labels: List[str] = []
@@ -18840,8 +18995,8 @@ def main_plotting_function(
                 _marker_artist(cycle_style["trough_marker"], cycle_style["trough_color"])
             )
             labels.append("Trough")
-        cycles_list = cycle_overlay.get("cycles") or []
-        total_drop_val = cycle_overlay.get("total_drop", 0.0)
+        cycles_list = legend_overlay.get("cycles") or []
+        total_drop_val = legend_overlay.get("total_drop", 0.0)
         try:
             total_drop_val = float(total_drop_val)
         except Exception:
@@ -18851,7 +19006,7 @@ def main_plotting_function(
         handles.append(mpatches.Patch(color="none"))
         labels.append(f"Total ΔP: {total_drop_val:.2f} PSI")
         if include_moles_in_core_plot_legend:
-            for line in cycle_overlay.get("moles_lines") or []:
+            for line in moles_lines or []:
                 handles.append(mpatches.Patch(color="none"))
                 labels.append(line)
         legend = ax_target.legend(
@@ -18881,19 +19036,21 @@ def main_plotting_function(
 
     twin_y_lim = (twin_y_min, twin_y_max)
 
-    x = globals().get("x")
+    x = series_map.get("x", globals().get("x"))
 
-    y1 = globals().get("y1")
+    y1 = series_map.get("y1", globals().get("y1"))
 
-    y2 = globals().get("y2")
+    y2 = series_map.get("y2", globals().get("y2"))
 
-    y3 = globals().get("y3")
+    y3 = series_map.get("y3", globals().get("y3"))
 
-    z = globals().get("z")
+    z = series_map.get("z", globals().get("z"))
 
-    z2 = globals().get("z2")
+    z2 = series_map.get("z2", globals().get("z2"))
 
-    selected_columns = globals().get("selected_columns", {})
+    selected_columns = data_ctx.get("selected_columns") or globals().get(
+        "selected_columns", {}
+    )
 
     # Figure 1: pressure + optional temps
 
@@ -18917,6 +19074,8 @@ def main_plotting_function(
             color="blue",
             zorder=2,
             series_key="y1",
+            scatter_config=scatter_config,
+            scatter_series_configs=scatter_series_configs,
         )
 
         handles.append(artist)
@@ -18931,6 +19090,8 @@ def main_plotting_function(
             color="green",
             zorder=1,
             series_key="y3",
+            scatter_config=scatter_config,
+            scatter_series_configs=scatter_series_configs,
         )
 
         handles.append(artist)
@@ -18976,6 +19137,8 @@ def main_plotting_function(
                 color="red",
                 zorder=3,
                 series_key="z",
+                scatter_config=scatter_config,
+                scatter_series_configs=scatter_series_configs,
             )
 
             handles.append(artist)
@@ -18991,6 +19154,8 @@ def main_plotting_function(
                 zorder=3,
                 line_style="--",
                 series_key="z2",
+                scatter_config=scatter_config,
+                scatter_series_configs=scatter_series_configs,
             )
 
             handles.append(artist)
@@ -19095,6 +19260,15 @@ def main_plotting_function(
     handles_filtered, labels_filtered = _filter_none_legend_entries(
         handles, [handle.get_label() for handle in handles]
     )
+    if (
+        handles_filtered
+        and include_moles_in_core_plot_legend
+        and not show_cycle_legend_on_core_plots
+        and moles_lines
+    ):
+        for line in moles_lines:
+            handles_filtered.append(mpatches.Patch(color="none"))
+            labels_filtered.append(line)
     if handles_filtered:
         leg_fig1 = fig1.legend(
             handles=handles_filtered,
@@ -19132,6 +19306,8 @@ def main_plotting_function(
             color="blue",
             zorder=2,
             series_key="y1",
+            scatter_config=scatter_config,
+            scatter_series_configs=scatter_series_configs,
         )
 
         handles2.append(artist)
@@ -19146,6 +19322,8 @@ def main_plotting_function(
             color="green",
             zorder=1,
             series_key="y3",
+            scatter_config=scatter_config,
+            scatter_series_configs=scatter_series_configs,
         )
 
         handles2.append(artist)
@@ -19178,6 +19356,8 @@ def main_plotting_function(
             color="red",
             zorder=3,
             series_key="y2",
+            scatter_config=scatter_config,
+            scatter_series_configs=scatter_series_configs,
         )
 
         ax3.set_ylim(deriv_y_min, deriv_y_max)
@@ -19280,6 +19460,15 @@ def main_plotting_function(
     handles2_filtered, labels2_filtered = _filter_none_legend_entries(
         handles2, [handle.get_label() for handle in handles2]
     )
+    if (
+        handles2_filtered
+        and include_moles_in_core_plot_legend
+        and not show_cycle_legend_on_core_plots
+        and moles_lines
+    ):
+        for line in moles_lines:
+            handles2_filtered.append(mpatches.Patch(color="none"))
+            labels2_filtered.append(line)
     if handles2_filtered:
         leg_fig2 = fig2.legend(
             handles=handles2_filtered,
@@ -20346,6 +20535,7 @@ def build_combined_triple_axis_figure(
     cycle_legend_anchor_space=None,
     mode: str = "display",
     fig_size=None,
+    render_ctx: Optional[RenderContext] = None,
 ):
     from matplotlib.ticker import AutoLocator, AutoMinorLocator, MultipleLocator
 
@@ -20377,13 +20567,35 @@ def build_combined_triple_axis_figure(
     except Exception:
         pass
 
-    x = globals().get("x")
-    y1 = globals().get("y1")
-    y2 = globals().get("y2")
-    y3 = globals().get("y3")
-    z = globals().get("z")
-    z2 = globals().get("z2")
-    selected_columns = globals().get("selected_columns", {})
+    data_ctx = render_ctx.data_ctx if render_ctx else {}
+    style_ctx = render_ctx.style_ctx if render_ctx else {}
+    gates_ctx = render_ctx.gates_ctx if render_ctx else {}
+    overlay_ctx = render_ctx.overlay_ctx if render_ctx else {}
+
+    show_cycle_markers_on_core_plots = bool(
+        gates_ctx.get("show_cycle_markers", show_cycle_markers_on_core_plots)
+    )
+    show_cycle_legend_on_core_plots = bool(
+        gates_ctx.get("show_cycle_legend", show_cycle_legend_on_core_plots)
+    )
+    include_moles_in_core_plot_legend = bool(
+        gates_ctx.get("include_moles", include_moles_in_core_plot_legend)
+    )
+
+    scatter_config = style_ctx.get("scatter_config")
+    scatter_series_configs = style_ctx.get("scatter_series_configs")
+
+    series_map = data_ctx.get("series") or {}
+    selected_columns = data_ctx.get("selected_columns") or globals().get(
+        "selected_columns", {}
+    )
+
+    x = series_map.get("x", globals().get("x"))
+    y1 = series_map.get("y1", globals().get("y1"))
+    y2 = series_map.get("y2", globals().get("y2"))
+    y3 = series_map.get("y3", globals().get("y3"))
+    z = series_map.get("z", globals().get("z"))
+    z2 = series_map.get("z2", globals().get("z2"))
     fmt = _format_axis_label
     svg_safe = _svg_safe_text
     handles = []
@@ -20683,6 +20895,8 @@ def build_combined_triple_axis_figure(
             series,
             label=meta.get("label", ""),
             color=meta.get("color"),
+            scatter_config=scatter_config,
+            scatter_series_configs=scatter_series_configs,
             **style_kwargs,
         )
         if artist is None:
@@ -20737,8 +20951,25 @@ def build_combined_triple_axis_figure(
         third_meta = _temperature_meta()
         third_role = third_meta.get("axis_type", "primary")
 
-    cycle_overlay = globals().get("core_cycle_overlay")
-    cycle_style = get_cycle_trace_style() if cycle_overlay else None
+    cycle_overlay = overlay_ctx.get("cycle_overlay")
+    markers_overlay = overlay_ctx.get("markers", cycle_overlay)
+    legend_overlay = overlay_ctx.get("cycle_legend", cycle_overlay)
+    cycle_style = get_cycle_trace_style() if (markers_overlay or legend_overlay) else None
+    moles_lines = overlay_ctx.get("moles_summary")
+    if moles_lines is None and isinstance(cycle_overlay, dict):
+        moles_lines = cycle_overlay.get("moles_lines")
+
+    try:
+        overlay_has_data = False
+        if isinstance(cycle_overlay, dict):
+            overlay_has_data = bool(
+                cycle_overlay.get("peak_points")
+                or cycle_overlay.get("trough_points")
+                or cycle_overlay.get("cycles")
+            )
+        fig._gl260_cycle_overlay_present = overlay_has_data  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
     def _cycle_marker_artist(marker, color):
         size_val = None
@@ -20751,11 +20982,11 @@ def build_combined_triple_axis_figure(
         )
 
     def _draw_cycle_markers(ax_target):
-        if not (show_cycle_markers_on_core_plots and cycle_overlay and cycle_style):
+        if not (show_cycle_markers_on_core_plots and markers_overlay and cycle_style):
             return (None, None)
         peak_artist = trough_artist = None
-        peaks = cycle_overlay.get("peak_points") or []
-        troughs = cycle_overlay.get("trough_points") or []
+        peaks = markers_overlay.get("peak_points") or []
+        troughs = markers_overlay.get("trough_points") or []
         if peaks:
             px, py = zip(*peaks)
             peak_artist = ax_target.scatter(
@@ -20788,7 +21019,7 @@ def build_combined_triple_axis_figure(
         loc_override=None,
         anchor_space=None,
     ):
-        if not (show_cycle_legend_on_core_plots and cycle_overlay):
+        if not (show_cycle_legend_on_core_plots and legend_overlay):
             return None
         handles_cycle: List[Any] = []
         labels_cycle: List[str] = []
@@ -20812,8 +21043,8 @@ def build_combined_triple_axis_figure(
                 )
             )
             labels_cycle.append(_text_safe("Trough"))
-        cycles_list = cycle_overlay.get("cycles") or []
-        total_drop_val = cycle_overlay.get("total_drop", 0.0)
+        cycles_list = legend_overlay.get("cycles") or []
+        total_drop_val = legend_overlay.get("total_drop", 0.0)
         try:
             total_drop_val = float(total_drop_val)
         except Exception:
@@ -20825,7 +21056,7 @@ def build_combined_triple_axis_figure(
         handles_cycle.append(mpatches.Patch(color="none"))
         labels_cycle.append(_text_safe(f"Total ΔP: {total_drop_val:.2f} PSI"))
         if include_moles_in_core_plot_legend:
-            for line in cycle_overlay.get("moles_lines") or []:
+            for line in moles_lines or []:
                 handles_cycle.append(mpatches.Patch(color="none"))
                 labels_cycle.append(_text_safe(line))
         legend_kwargs = {
@@ -21064,6 +21295,17 @@ def build_combined_triple_axis_figure(
     handles_filtered, labels_filtered = _filter_none_legend_entries(
         handles, legend_labels
     )
+    if (
+        handles_filtered
+        and include_moles_in_core_plot_legend
+        and not show_cycle_legend_on_core_plots
+        and moles_lines
+    ):
+        import matplotlib.patches as mpatches
+
+        for line in moles_lines:
+            handles_filtered.append(mpatches.Patch(color="none"))
+            labels_filtered.append(_text_safe(line))
     legend_size = len(handles_filtered)
     main_legend = None
     if legend_size:
@@ -22587,6 +22829,9 @@ class UnifiedApp(tk.Tk):
         self._layout_editor_windows: Dict[str, tk.Toplevel] = {}
         self._layout_editor_states: Dict[str, Dict[str, Any]] = {}
         self._plot_dirty_flags: Dict[str, Dict[str, bool]] = {}
+        self._render_cache = RenderCacheManager()
+        self._last_render_cache_status: Optional[str] = None
+        self._cycle_manual_revision = 0
         raw_series_settings = settings.get("scatter_series", {})
         self._stored_scatter_series = self._sanitize_series_settings_dict(
             raw_series_settings
@@ -25573,233 +25818,87 @@ class UnifiedApp(tk.Tk):
             self._refresh_canvas_display(frame, canvas, trigger_resize=True)
         except Exception:
             pass
-        flags = self._ensure_plot_dirty_flags(plot_id) if plot_id else None
-        dirty_data = True
-        if flags is not None:
-            dirty_data = bool(flags.get("dirty_data", True))
-
         placement_state = self._capture_plot_element_placement_state(plot_id)
-        prebuilt_fig: Optional[Figure] = None
-
-        if plot_id and not dirty_data:
-            fig = getattr(canvas, "figure", None)
-            if plot_key == "fig_combined":
-                args = getattr(self, "_last_plot_args", None)
-                updated_fig: Optional[Figure] = None
-                if args:
-                    try:
-                        self._capture_combined_legend_anchor_from_fig(
-                            getattr(canvas, "figure", None)
-                        )
-                    except Exception:
-                        pass
-                    fig_size = None
-                    try:
-                        widget = canvas.get_tk_widget()
-                        widget.update_idletasks()
-                        width_px = max(int(widget.winfo_width()), 1)
-                        height_px = max(int(widget.winfo_height()), 1)
-                        dpi = float(getattr(canvas.figure, "dpi", 100.0))
-                        if not math.isfinite(dpi) or dpi <= 0:
-                            dpi = 100.0
-                        fig_size = (
-                            max(width_px / dpi, 1.0),
-                            max(height_px / dpi, 1.0),
-                        )
-                    except Exception:
-                        fig_size = self._compute_target_figsize_inches()
-                    try:
-                        updated_fig = self._build_combined_triple_axis_from_state(
-                            args=args,
-                            fig_size=fig_size,
-                            mode="display",
-                            reuse=True,
-                            canvas=canvas,
-                        )
-                    except Exception:
-                        updated_fig = None
-                if updated_fig is None:
-                    updated_fig = fig
-                reused_combined = (
-                    canvas is not None
-                    and updated_fig is not None
-                    and getattr(canvas, "figure", None) is updated_fig
+        fig_size = None
+        if plot_key == "fig_combined":
+            try:
+                widget = canvas.get_tk_widget()
+                widget.update_idletasks()
+                width_px = max(int(widget.winfo_width()), 1)
+                height_px = max(int(widget.winfo_height()), 1)
+                dpi = float(getattr(canvas.figure, "dpi", 100.0))
+                if not math.isfinite(dpi) or dpi <= 0:
+                    dpi = 100.0
+                fig_size = (
+                    max(width_px / dpi, 1.0),
+                    max(height_px / dpi, 1.0),
                 )
-                if reused_combined and updated_fig is not None:
-                    controller = self._plot_annotation_controllers.get(plot_id)
-                    if controller is None:
-                        try:
-                            self._apply_plot_elements(updated_fig, plot_id)
-                        except Exception:
-                            pass
-                    try:
-                        self._register_combined_legend_tracking(updated_fig)
-                    except Exception:
-                        pass
-                    try:
-                        self._retarget_plot_annotation_controller(
-                            plot_id, updated_fig, canvas
-                        )
-                    except Exception:
-                        pass
-                    try:
-                        self._restore_plot_element_placement_state(
-                            plot_id, placement_state
-                        )
-                    except Exception:
-                        pass
-                    try:
-                        self._finalize_plot_refresh(canvas, updated_fig)
-                    except Exception:
-                        pass
-                    try:
-                        self._set_plot_dirty_flags(
-                            plot_id,
-                            dirty_layout=False,
-                            dirty_elements=False,
-                        )
-                    except Exception:
-                        pass
-                    return
-                if updated_fig is not None and not reused_combined:
-                    prebuilt_fig = updated_fig
-            elif fig is not None:
-                try:
-                    _apply_layout_profile_to_figure(fig, plot_id, "display")
-                except Exception:
-                    pass
-                controller = self._plot_annotation_controllers.get(plot_id)
-                if controller is None:
-                    try:
-                        self._apply_plot_elements(fig, plot_id)
-                    except Exception:
-                        pass
-                try:
-                    self._retarget_plot_annotation_controller(plot_id, fig, canvas)
-                except Exception:
-                    pass
-                try:
-                    self._restore_plot_element_placement_state(
-                        plot_id, placement_state
-                    )
-                except Exception:
-                    pass
-                try:
-                    self._finalize_plot_refresh(canvas, fig)
-                except Exception:
-                    pass
-                try:
-                    self._set_plot_dirty_flags(
-                        plot_id, dirty_layout=False, dirty_elements=False
-                    )
-                except Exception:
-                    pass
-                return
+            except Exception:
+                fig_size = self._compute_target_figsize_inches()
 
-        new_fig: Optional[Figure] = prebuilt_fig
-        args = getattr(self, "_last_plot_args", None)
+        new_fig: Optional[Figure] = None
+        if plot_key in {"fig1", "fig2", "fig_peaks"}:
+            new_fig = self.render_plot(plot_key, target="display", plot_id=plot_id)
+        elif plot_key == "fig_combined":
+            new_fig = self.render_plot(
+                "fig_combined",
+                target="display",
+                plot_id=plot_id,
+                fig_size=fig_size,
+            )
+
         if new_fig is None:
+            fig = getattr(canvas, "figure", None)
+            if fig is None:
+                return
             try:
-                self._prepare_series_globals()
-                try:
-                    ignore_min_drop = bool(
-                        getattr(self, "_cycle_last_ignore_min_drop", True)
-                    )
-                    self._refresh_final_report_cycle_snapshot(
-                        ignore_min_drop=ignore_min_drop
-                    )
-                except Exception:
-                    pass
-                self._prime_core_cycle_overlay_globals()
-                args = self._collect_plot_args()
+                self._finalize_plot_refresh(canvas, fig)
             except Exception:
-                args = getattr(self, "_last_plot_args", None)
+                pass
+            return
 
-            if plot_key and args:
-                try:
-                    if plot_key in {"fig1", "fig2", "fig_peaks"}:
-                        figs = main_plotting_function(*args)
-                        if isinstance(figs, dict):
-                            new_fig = figs.get(plot_key)
-                    elif plot_key == "fig_combined":
-                        # Remember current legend position before rebuilding
-                        try:
-                            self._capture_combined_legend_anchor_from_fig(
-                                getattr(canvas, "figure", None)
-                            )
-                        except Exception:
-                            pass
-                        fig_size = None
-                        try:
-                            widget = canvas.get_tk_widget()
-                            widget.update_idletasks()
-                            width_px = max(int(widget.winfo_width()), 1)
-                            height_px = max(int(widget.winfo_height()), 1)
-                            dpi = float(getattr(canvas.figure, "dpi", 100.0))
-                            if not math.isfinite(dpi) or dpi <= 0:
-                                dpi = 100.0
-                            fig_size = (
-                                max(width_px / dpi, 1.0),
-                                max(height_px / dpi, 1.0),
-                            )
-                        except Exception:
-                            fig_size = self._compute_target_figsize_inches()
-                        new_fig = self._build_combined_triple_axis_from_state(
-                            args=args,
-                            fig_size=fig_size,
-                            mode="display",
-                            reuse=True,
-                            canvas=canvas,
-                        )
-                except Exception:
-                    new_fig = None
-
-        if new_fig is not None:
+        if plot_id:
             try:
-                if plot_id:
-                    try:
-                        self._teardown_layout_editor(plot_id, apply_changes=False)
-                    except Exception:
-                        pass
-                reused_combined = (
-                    plot_key == "fig_combined"
-                    and canvas is not None
-                    and getattr(canvas, "figure", None) is new_fig
+                self._teardown_layout_editor(plot_id, apply_changes=False)
+            except Exception:
+                pass
+            try:
+                _apply_layout_profile_to_figure(new_fig, plot_id, "display")
+            except Exception:
+                pass
+            try:
+                self._apply_plot_elements(new_fig, plot_id)
+            except Exception:
+                pass
+
+        try:
+            self._install_refreshed_figure_and_finalize(frame, canvas, new_fig)
+        except Exception:
+            pass
+        if plot_id:
+            try:
+                self._retarget_plot_annotation_controller(plot_id, new_fig, canvas)
+            except Exception:
+                pass
+            try:
+                self._restore_plot_element_placement_state(plot_id, placement_state)
+            except Exception:
+                pass
+        if plot_key == "fig_combined":
+            try:
+                self._register_combined_legend_tracking(new_fig)
+            except Exception:
+                pass
+        if plot_id:
+            try:
+                self._set_plot_dirty_flags(
+                    plot_id,
+                    dirty_data=False,
+                    dirty_layout=False,
+                    dirty_elements=False,
                 )
-                if plot_id and not reused_combined:
-                    self._apply_plot_elements(new_fig, plot_id)
             except Exception:
                 pass
-            try:
-                self._install_refreshed_figure_and_finalize(frame, canvas, new_fig)
-            except Exception:
-                pass
-            if plot_id:
-                try:
-                    self._retarget_plot_annotation_controller(plot_id, new_fig, canvas)
-                except Exception:
-                    pass
-                try:
-                    self._restore_plot_element_placement_state(
-                        plot_id, placement_state
-                    )
-                except Exception:
-                    pass
-            if plot_key == "fig_combined":
-                try:
-                    self._register_combined_legend_tracking(new_fig)
-                except Exception:
-                    pass
-            if plot_id:
-                try:
-                    self._set_plot_dirty_flags(
-                        plot_id,
-                        dirty_data=False,
-                        dirty_layout=False,
-                        dirty_elements=False,
-                    )
-                except Exception:
-                    pass
 
     def _plot_key_to_plot_id(
         self, plot_key: Optional[str], title: Optional[str] = None
@@ -26162,32 +26261,31 @@ class UnifiedApp(tk.Tk):
         self._log_plot_tab_debug(
             f"Retargeting plot annotation controller for {plot_id}."
         )
-        try:
-            controller.set_target(fig, canvas)
-        except Exception:
-            pass
+        axes_map = {}
+        axis_labels = {}
         try:
             axes_map = self._resolve_plot_element_axes(fig)
+        except Exception:
+            axes_map = {}
+        try:
             axis_labels = self._plot_element_axis_labels(fig)
-            controller.update_axis_map(fig, axes_map, axis_labels)
         except Exception:
-            pass
-        self._log_plot_tab_debug("Clearing plot annotation caches.")
+            axis_labels = {}
         try:
-            controller._hit_test.clear_cache()
-        except Exception:
-            pass
-        try:
-            controller._end_drag_blit()
+            controller.rebind(fig, canvas, axes_map, axis_labels)
         except Exception:
             try:
-                controller._drag_blit_state = None
+                controller.set_target(fig, canvas)
             except Exception:
                 pass
-        try:
-            controller.render()
-        except Exception:
-            pass
+            try:
+                controller.update_axis_map(fig, axes_map, axis_labels)
+            except Exception:
+                pass
+            try:
+                controller.render()
+            except Exception:
+                pass
         self._log_plot_tab_debug(
             f"Plot annotation controller retarget complete for {plot_id}."
         )
@@ -29145,8 +29243,6 @@ class UnifiedApp(tk.Tk):
             try:
 
                 if plot_key == "fig_combined":
-                    export_fig_candidate = None
-                    combined_build_error = None
                     try:
                         preview_fig = getattr(self, "_combined_plot_preview_fig", None)
                         target_fig = preview_fig if preview_fig is not None else fig
@@ -29158,30 +29254,39 @@ class UnifiedApp(tk.Tk):
                         self._capture_combined_legend_anchor_from_fig(target_fig)
                     except Exception:
                         pass
-                    try:
-                        export_fig_candidate = (
-                            self._build_combined_triple_axis_from_state(
-                                fig_size=(11.0, 8.5), mode="export"
-                            )
-                        )
-                    except Exception as exc:
-                        combined_build_error = exc
-                    if export_fig_candidate is None:
+                    export_fig = self.render_plot(
+                        "fig_combined",
+                        target="export",
+                        mode="export",
+                        plot_id=plot_id,
+                        fig_size=(11.0, 8.5),
+                    )
+                    if export_fig is None:
                         msg = "Combined plot could not be rebuilt for export."
-                        if combined_build_error:
-                            msg = f"{msg}\n{combined_build_error}"
                         try:
                             messagebox.showerror("Save Error", msg)
                         except Exception:
                             print(f"Save Error: {msg}")
                         return
-                    export_fig = export_fig_candidate
                     close_export_fig = True
                     if not self._assert_combined_export_size(export_fig):
                         return
                 else:
-                    fig.set_size_inches(target_w, target_h, forward=False)
-                    resized_current_fig = True
+                    export_fig = self.render_plot(
+                        plot_key or "",
+                        target="export",
+                        mode="export",
+                        plot_id=plot_id,
+                        fig_size=(target_w, target_h),
+                    )
+                    if export_fig is None:
+                        msg = "Plot could not be rebuilt for export."
+                        try:
+                            messagebox.showerror("Save Error", msg)
+                        except Exception:
+                            print(f"Save Error: {msg}")
+                        return
+                    close_export_fig = True
                     if plot_id:
                         try:
                             _apply_layout_profile_to_figure(
@@ -29571,26 +29676,14 @@ class UnifiedApp(tk.Tk):
     ) -> None:
         if plot_key != "fig_combined":
             return
-        args = getattr(self, "_last_plot_args", None)
-        try:
-            self._prepare_series_globals()
-            ignore_min_drop = bool(getattr(self, "_cycle_last_ignore_min_drop", True))
-            self._refresh_final_report_cycle_snapshot(
-                ignore_min_drop=ignore_min_drop
-            )
-            self._prime_core_cycle_overlay_globals()
-            args = self._collect_plot_args()
-        except Exception:
-            args = getattr(self, "_last_plot_args", None)
-        if not args:
-            messagebox.showerror(
-                "Plot Preview", "Combined plot could not be rebuilt for preview."
-            )
-            return
         try:
             # Plot Preview uses the same export pipeline as Save As (fixed 11x8.5).
-            fig = self._build_combined_triple_axis_from_state(
-                args=args, fig_size=(11.0, 8.5), mode="export"
+            fig = self.render_plot(
+                "fig_combined",
+                target="preview",
+                mode="export",
+                plot_id=plot_id or "fig_combined_triple_axis",
+                fig_size=(11.0, 8.5),
             )
         except Exception as exc:
             messagebox.showerror(
@@ -35336,6 +35429,10 @@ class UnifiedApp(tk.Tk):
 
             return
 
+        changed = bool(
+            self._add_peaks or self._add_troughs or self._rm_peaks or self._rm_troughs
+        )
+
         self._add_peaks.clear()
 
         self._add_troughs.clear()
@@ -35343,6 +35440,9 @@ class UnifiedApp(tk.Tk):
         self._rm_peaks.clear()
 
         self._rm_troughs.clear()
+
+        if changed:
+            self._bump_manual_marker_revision()
 
         self._recompute_cycle_analysis(auto_detect=False, preserve_view=True)
 
@@ -35352,6 +35452,15 @@ class UnifiedApp(tk.Tk):
         if not self._cycle_ready():
 
             return
+
+        changed = bool(
+            self._auto_peaks
+            or self._auto_troughs
+            or self._add_peaks
+            or self._add_troughs
+            or self._rm_peaks
+            or self._rm_troughs
+        )
 
         # auto-detected sets
 
@@ -35368,6 +35477,9 @@ class UnifiedApp(tk.Tk):
         self._rm_peaks.clear()
 
         self._rm_troughs.clear()
+
+        if changed:
+            self._bump_manual_marker_revision()
 
         # Re-draw WITHOUT re-detecting, so the plot stays empty until you add markers
 
@@ -35759,6 +35871,13 @@ class UnifiedApp(tk.Tk):
 
             pass
 
+    def _bump_manual_marker_revision(self) -> None:
+        try:
+            self._cycle_manual_revision += 1
+        except Exception:
+            current = int(getattr(self, "_cycle_manual_revision", 0))
+            self._cycle_manual_revision = current + 1
+
     def _ensure_manual_peak(self, idx):
 
         idx = int(idx)
@@ -35766,16 +35885,30 @@ class UnifiedApp(tk.Tk):
         if idx in self._add_peaks:
 
             self._add_peaks.remove(idx)
+            self._bump_manual_marker_revision()
 
             return
 
-        self._add_troughs.discard(idx)
+        changed = False
 
-        self._rm_troughs.discard(idx)
+        if idx in self._add_troughs:
+            self._add_troughs.remove(idx)
+            changed = True
 
-        self._rm_peaks.discard(idx)
+        if idx in self._rm_troughs:
+            self._rm_troughs.remove(idx)
+            changed = True
 
-        self._add_peaks.add(idx)
+        if idx in self._rm_peaks:
+            self._rm_peaks.remove(idx)
+            changed = True
+
+        if idx not in self._add_peaks:
+            self._add_peaks.add(idx)
+            changed = True
+
+        if changed:
+            self._bump_manual_marker_revision()
 
     def _ensure_manual_trough(self, idx):
 
@@ -35784,16 +35917,30 @@ class UnifiedApp(tk.Tk):
         if idx in self._add_troughs:
 
             self._add_troughs.remove(idx)
+            self._bump_manual_marker_revision()
 
             return
 
-        self._add_peaks.discard(idx)
+        changed = False
 
-        self._rm_peaks.discard(idx)
+        if idx in self._add_peaks:
+            self._add_peaks.remove(idx)
+            changed = True
 
-        self._rm_troughs.discard(idx)
+        if idx in self._rm_peaks:
+            self._rm_peaks.remove(idx)
+            changed = True
 
-        self._add_troughs.add(idx)
+        if idx in self._rm_troughs:
+            self._rm_troughs.remove(idx)
+            changed = True
+
+        if idx not in self._add_troughs:
+            self._add_troughs.add(idx)
+            changed = True
+
+        if changed:
+            self._bump_manual_marker_revision()
 
     def _toggle_remove_nearest(self, idx, *, x_value=None):
         """Remove whichever marker (peak/trough) is closer in X."""
@@ -35859,10 +36006,12 @@ class UnifiedApp(tk.Tk):
             if px in self._add_peaks:
 
                 self._add_peaks.remove(px)
+                self._bump_manual_marker_revision()
 
             elif px in self._auto_peaks:
 
                 self._rm_peaks.add(px)
+                self._bump_manual_marker_revision()
 
         else:
 
@@ -35871,10 +36020,12 @@ class UnifiedApp(tk.Tk):
             if tx in self._add_troughs:
 
                 self._add_troughs.remove(tx)
+                self._bump_manual_marker_revision()
 
             elif tx in self._auto_troughs:
 
                 self._rm_troughs.add(tx)
+                self._bump_manual_marker_revision()
 
     def _nearest_in_set(self, idx, s, *, x_value=None, xv=None):
 
@@ -36228,6 +36379,7 @@ class UnifiedApp(tk.Tk):
             return
 
         auto_detect = bool(auto_detect and self.auto_detect_cycles.get())
+        manual_only = not auto_detect
 
         if (
             getattr(self, "_cycle_canvas", None) is None
@@ -36445,6 +36597,7 @@ class UnifiedApp(tk.Tk):
                 ignore_min_drop,
                 peak_finder,
                 snapshot,
+                manual_only=manual_only,
             )
 
         def _on_ok(result):
@@ -36489,6 +36642,9 @@ class UnifiedApp(tk.Tk):
         ignore_min_drop,
         peak_finder,
         snapshot,
+        *,
+        manual_only: bool = False,
+        data_ctx: Optional[Dict[str, Any]] = None,
     ):
         """Heavy lifting for cycle analysis executed in a worker thread."""
 
@@ -36517,9 +36673,11 @@ class UnifiedApp(tk.Tk):
 
         auto_troughs = _sanitize_indices(snapshot.get("auto_troughs", set()))
 
-        auto_detection_used = bool(auto_detect and peak_finder is not None)
+        auto_detection_used = bool(
+            auto_detect and peak_finder is not None and not manual_only
+        )
 
-        if auto_detect:
+        if auto_detect and not manual_only:
 
             if peak_finder is None:
 
@@ -36555,9 +36713,12 @@ class UnifiedApp(tk.Tk):
 
         rm_troughs = _sanitize_indices(snapshot.get("rm_troughs", set()))
 
-        effective_peaks = (auto_peaks | add_peaks) - rm_peaks
-
-        effective_troughs = (auto_troughs | add_troughs) - rm_troughs
+        if manual_only:
+            effective_peaks = set(add_peaks)
+            effective_troughs = set(add_troughs)
+        else:
+            effective_peaks = (auto_peaks | add_peaks) - rm_peaks
+            effective_troughs = (auto_troughs | add_troughs) - rm_troughs
 
         peaks = sorted(
             [i for i in effective_peaks if 0 <= i < mask_len and mask_arr[i]]
@@ -36625,11 +36786,10 @@ class UnifiedApp(tk.Tk):
 
         z_all = np.asarray(z_arr, dtype=float) if z_arr is not None else None
 
-        V_L = globals().get("volume", 1.0)
-
-        a_c = globals().get("a_const", 1.39)
-
-        b_c = globals().get("b_const", 0.0391)
+        context = data_ctx or {}
+        V_L = context.get("volume", globals().get("volume", 1.0))
+        a_c = context.get("a_const", globals().get("a_const", 1.39))
+        b_c = context.get("b_const", globals().get("b_const", 0.0391))
 
         (
             per_cycle,
@@ -36647,7 +36807,9 @@ class UnifiedApp(tk.Tk):
             force_vdw=False,
         )
 
-        gas_molar_mass = globals().get("gas_molar_mass", DEFAULT_GAS_MOLAR_MASS)
+        gas_molar_mass = context.get(
+            "gas_molar_mass", globals().get("gas_molar_mass", DEFAULT_GAS_MOLAR_MASS)
+        )
         try:
             gas_molar_mass = float(gas_molar_mass)
             if not math.isfinite(gas_molar_mass) or gas_molar_mass <= 0:
@@ -36679,7 +36841,9 @@ class UnifiedApp(tk.Tk):
 
         cumulative_moles = 0.0
         cycle_transfer_rows: List[Dict[str, Any]] = []
-        selected_columns_meta = globals().get("selected_columns", {})
+        selected_columns_meta = context.get("selected_columns") or globals().get(
+            "selected_columns", {}
+        )
         x_label = str(selected_columns_meta.get("x", "Elapsed Time (days)")).replace(
             "_", " "
         )
@@ -36838,12 +37002,19 @@ class UnifiedApp(tk.Tk):
 
             lines.append("VDW vs Ideal difference: N/A (SciPy not installed)")
 
-        product_name = globals().get("product_name", DEFAULT_PRODUCT_NAME)
-        product_molar_mass = globals().get(
-            "product_molar_mass", DEFAULT_PRODUCT_MOLAR_MASS
+        product_name = context.get(
+            "product_name", globals().get("product_name", DEFAULT_PRODUCT_NAME)
         )
-        product_formula = globals().get("product_formula", DEFAULT_PRODUCT_FORMULA)
-        starting_mass = globals().get("starting_mass_g", 0.0)
+        product_molar_mass = context.get(
+            "product_molar_mass",
+            globals().get("product_molar_mass", DEFAULT_PRODUCT_MOLAR_MASS),
+        )
+        product_formula = context.get(
+            "product_formula", globals().get("product_formula", DEFAULT_PRODUCT_FORMULA)
+        )
+        starting_mass = context.get(
+            "starting_mass_g", globals().get("starting_mass_g", 0.0)
+        )
 
         reagent_metrics = compute_reagent_metrics(
             total_moles_ideal,
@@ -38376,7 +38547,12 @@ class UnifiedApp(tk.Tk):
             "moles_lines": self._cycle_moles_legend_lines(payload),
         }
 
-    def _cycle_moles_legend_lines(self, payload: Optional[Dict[str, Any]]) -> List[str]:
+    def _cycle_moles_legend_lines(
+        self,
+        payload: Optional[Dict[str, Any]],
+        *,
+        data_ctx: Optional[Dict[str, Any]] = None,
+    ) -> List[str]:
         if not payload:
             return []
 
@@ -38433,16 +38609,23 @@ class UnifiedApp(tk.Tk):
             lines.append("Total moles (VDW): N/A (SciPy not installed)")
 
         metrics = payload.get("reagent_summary")
+        context = data_ctx or {}
         if not metrics:
             try:
-                product_name = globals().get("product_name", DEFAULT_PRODUCT_NAME)
-                product_formula = globals().get(
-                    "product_formula", DEFAULT_PRODUCT_FORMULA
+                product_name = context.get(
+                    "product_name", globals().get("product_name", DEFAULT_PRODUCT_NAME)
                 )
-                product_molar_mass = globals().get(
-                    "product_molar_mass", DEFAULT_PRODUCT_MOLAR_MASS
+                product_formula = context.get(
+                    "product_formula",
+                    globals().get("product_formula", DEFAULT_PRODUCT_FORMULA),
                 )
-                starting_mass = globals().get("starting_mass_g", 0.0)
+                product_molar_mass = context.get(
+                    "product_molar_mass",
+                    globals().get("product_molar_mass", DEFAULT_PRODUCT_MOLAR_MASS),
+                )
+                starting_mass = context.get(
+                    "starting_mass_g", globals().get("starting_mass_g", 0.0)
+                )
                 gas_molar_mass = payload.get("gas_molar_mass", DEFAULT_GAS_MOLAR_MASS)
                 metrics = compute_reagent_metrics(
                     total_moles_ideal,
@@ -38896,13 +39079,13 @@ class UnifiedApp(tk.Tk):
         legends = self._collect_combined_legends(fig)
         if not legends:
             return
-        cycle_overlay = globals().get("core_cycle_overlay")
         fig_expect_cycle = getattr(fig, "_gl260_expect_cycle_legend", None)
         if fig_expect_cycle is None:
             fig_expect_cycle = bool(
                 settings.get("show_cycle_legend_on_core_plots", False)
             )
-        expect_cycle_legend = bool(fig_expect_cycle) and bool(cycle_overlay)
+        overlay_present = getattr(fig, "_gl260_cycle_overlay_present", True)
+        expect_cycle_legend = bool(fig_expect_cycle) and bool(overlay_present)
         has_cycle_legend = any(self._is_combined_cycle_legend(lg) for lg in legends)
         if expect_cycle_legend and not has_cycle_legend:
             print(
@@ -50137,27 +50320,19 @@ class UnifiedApp(tk.Tk):
     ) -> Optional[Figure]:
         if self.df is None:
             return None
-        try:
-            self._prepare_series_globals()
-            args = self._collect_plot_args()
-        except Exception:
-            args = getattr(self, "_last_plot_args", None)
-        if not args:
-            return None
-        try:
-            self._prime_core_cycle_overlay_globals()
-        except Exception:
-            pass
-        try:
-            figs = main_plotting_function(*args, fig_size=page_size)
-        except Exception:
-            return None
-        if not isinstance(figs, dict):
-            return None
-        fig = figs.get(section_id)
+        fig = self.render_plot(
+            section_id,
+            target="export",
+            mode="export",
+            plot_id=self._plot_key_to_plot_id(section_id),
+            fig_size=page_size,
+        )
         if fig is None:
             return None
-        fig.set_size_inches(*page_size, forward=False)
+        try:
+            fig.set_size_inches(*page_size, forward=False)
+        except Exception:
+            pass
         return fig
 
     def _final_report_build_cycle_timeline_figure(
@@ -51088,8 +51263,12 @@ class UnifiedApp(tk.Tk):
                     figure_caption_text = self._final_report_figure_caption(section_id)
             elif page_type == "figure":
                 if section_id == "combined_plot":
-                    fig = self._build_combined_triple_axis_from_state(
-                        fig_size=page_size, mode="display"
+                    fig = self.render_plot(
+                        "fig_combined",
+                        target="export",
+                        mode="export",
+                        plot_id="fig_combined_triple_axis",
+                        fig_size=page_size,
                     )
                     if fig is not None:
                         has_caption = True
@@ -54536,6 +54715,64 @@ class UnifiedApp(tk.Tk):
             effective["x"] = self._stitched_x_col
         return effective
 
+    def _data_prep_signature(self) -> Tuple[Any, ...]:
+        signature: List[Any] = []
+        if self.multi_sheet_enabled:
+            per_sheet_entries: List[Tuple[str, Tuple[Tuple[str, str], ...]]] = []
+            for sheet_name in list(self.selected_sheets or []):
+                mapping = self._get_effective_sheet_column_map(sheet_name)
+                entry = tuple(
+                    sorted(
+                        (str(key), str(value or ""))
+                        for key, value in (mapping or {}).items()
+                    )
+                )
+                per_sheet_entries.append((str(sheet_name), entry))
+            signature.append(tuple(sorted(per_sheet_entries)))
+        return tuple(signature)
+
+    def _build_data_fingerprint(self) -> DataFingerprint:
+        try:
+            file_path = os.path.abspath(self.file_path) if self.file_path else ""
+        except Exception:
+            file_path = str(self.file_path or "")
+        if self.multi_sheet_enabled:
+            sheet_key = tuple(str(name) for name in (self.selected_sheets or []))
+        else:
+            sheet_key = (str(self.selected_sheet.get() or ""),)
+        columns_snapshot = dict(self.columns or {})
+        columns_key = tuple(
+            sorted(
+                (str(key), str(columns_snapshot.get(key) or ""))
+                for key in columns_snapshot
+            )
+        )
+        cycle_temp_column = CYCLE_TEMP_DEFAULT_LABEL
+        try:
+            cycle_temp_column = (
+                self.cycle_temp_column.get()
+                if hasattr(self, "cycle_temp_column")
+                else CYCLE_TEMP_DEFAULT_LABEL
+            )
+        except Exception:
+            cycle_temp_column = CYCLE_TEMP_DEFAULT_LABEL
+        elapsed_unit = self._elapsed_unit_label()
+        prep_signature = self._data_prep_signature()
+        return DataFingerprint(
+            file_path=file_path,
+            sheet_key=sheet_key,
+            columns_key=columns_key,
+            cycle_temp_column=str(cycle_temp_column or ""),
+            elapsed_unit=str(elapsed_unit or ""),
+            multi_sheet=bool(self.multi_sheet_enabled),
+            prep_signature=prep_signature,
+        )
+
+    def _log_render_cache(self, message: str) -> None:
+        self._last_render_cache_status = message
+        if DEBUG_RENDER_CACHE:
+            print(message)
+
     def _build_series_payload(self, columns_snapshot, cycle_temp_name):
 
         selected = dict(columns_snapshot or {})
@@ -54654,6 +54891,312 @@ class UnifiedApp(tk.Tk):
         payload = self._build_series_payload(dict(self.columns), cycle_temp_name)
 
         self._apply_series_payload(payload)
+
+    def _resolve_prepared_data_context(
+        self, *, apply_globals: bool = True
+    ) -> Tuple[DataFingerprint, Dict[str, Any]]:
+        fingerprint = self._build_data_fingerprint()
+        cached = self._render_cache.get_prepared(fingerprint)
+        if cached is not None:
+            if apply_globals:
+                try:
+                    self._apply_series_payload(cached)
+                except Exception:
+                    pass
+            self._log_render_cache("Render cache: prepared data hit.")
+            return fingerprint, cached
+
+        cycle_temp_name = CYCLE_TEMP_DEFAULT_LABEL
+        try:
+            cycle_temp_name = (
+                self.cycle_temp_column.get()
+                if hasattr(self, "cycle_temp_column")
+                else CYCLE_TEMP_DEFAULT_LABEL
+            )
+        except Exception:
+            cycle_temp_name = CYCLE_TEMP_DEFAULT_LABEL
+
+        payload = self._build_series_payload(dict(self.columns or {}), cycle_temp_name)
+        if not isinstance(payload, dict):
+            payload = {}
+
+        payload = dict(payload)
+        payload["volume"] = self.v_volume.get()
+        payload["a_const"] = self.v_a.get()
+        payload["b_const"] = self.v_b.get()
+        payload["starting_mass_g"] = self.v_starting_mass.get()
+        payload["gas_molar_mass"] = self.v_gas_molar_mass.get()
+        payload["product_name"] = (
+            self.v_product_name.get().strip() or DEFAULT_PRODUCT_NAME
+        )
+        preset_key = self.v_product_preset.get()
+        preset_info = PRODUCT_PRESETS.get(preset_key) or {}
+        payload["product_formula"] = preset_info.get("formula") or settings.get(
+            "product_formula", DEFAULT_PRODUCT_FORMULA
+        )
+        payload["product_molar_mass"] = self.v_product_molar_mass.get()
+
+        self._render_cache.set_prepared(fingerprint, payload)
+        if apply_globals:
+            try:
+                self._apply_series_payload(payload)
+            except Exception:
+                pass
+        self._log_render_cache("Render cache: prepared data miss.")
+        return fingerprint, payload
+
+    def _cycle_mask_for_data(self, data_ctx: Dict[str, Any]) -> np.ndarray:
+        series_map = data_ctx.get("series") or {}
+        x_values = series_map.get("x")
+        y_values = series_map.get("y1")
+        if x_values is None or y_values is None:
+            return np.zeros(0, dtype=bool)
+        base = (~pd.isna(x_values)) & (~pd.isna(y_values))
+        base = base.values if hasattr(base, "values") else np.asarray(base, dtype=bool)
+        mask_override = getattr(self, "_cycle_mask", None)
+        if mask_override is None:
+            return base
+        try:
+            mask_override = np.asarray(mask_override, dtype=bool)
+        except Exception:
+            return base
+        if mask_override.size != base.size:
+            return base
+        return base & mask_override
+
+    def _coerce_to_list(self, value, *, cast_int: bool = False) -> List[Any]:
+        if value is None:
+            return []
+        if isinstance(value, np.ndarray):
+            if value.ndim == 0:
+                scalar = value.item()
+                if cast_int:
+                    try:
+                        return [int(scalar)]
+                    except Exception:
+                        return []
+                return [scalar]
+            return value.tolist()
+        if isinstance(value, (list, tuple, set)):
+            return list(value)
+        if cast_int and isinstance(value, (np.integer, int)) and not isinstance(
+            value, bool
+        ):
+            return [int(value)]
+        return []
+
+    def _resolve_cycle_context(
+        self, data_ctx: Dict[str, Any], data_fingerprint: DataFingerprint
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        series_map = data_ctx.get("series") or {}
+        x_values = series_map.get("x")
+        y_values = series_map.get("y1")
+        if x_values is None or y_values is None:
+            empty_cycle = {
+                "peaks_idx": [],
+                "troughs_idx": [],
+                "cycles": [],
+                "total_drop": 0.0,
+                "source_mode": "none",
+            }
+            empty_overlay = {"cycle_overlay": None, "moles_summary": None}
+            return empty_cycle, empty_overlay
+
+        auto_enabled = False
+        try:
+            auto_enabled = bool(self.auto_detect_cycles.get())
+        except Exception:
+            auto_enabled = False
+
+        manual_overrides = bool(
+            getattr(self, "_add_peaks", set())
+            or getattr(self, "_add_troughs", set())
+            or getattr(self, "_rm_peaks", set())
+            or getattr(self, "_rm_troughs", set())
+        )
+        manual_only = not auto_enabled
+        if manual_only:
+            source_mode = "manual"
+            policy = "manual_only"
+        elif manual_overrides:
+            source_mode = "mixed"
+            policy = "auto_with_manual_overrides"
+        else:
+            source_mode = "auto"
+            policy = "auto_only"
+
+        try:
+            prom = float(self.pk_prominence.get())
+        except Exception:
+            prom = 1.0
+        try:
+            dist = max(1, int(self.pk_distance.get()))
+        except Exception:
+            dist = 1
+        try:
+            wid = max(1, int(self.pk_width.get()))
+        except Exception:
+            wid = 1
+        try:
+            min_cycle_drop = float(self.min_cycle_drop.get())
+        except Exception:
+            min_cycle_drop = 0.0
+        ignore_min_drop = bool(getattr(self, "_cycle_last_ignore_min_drop", False))
+
+        mask = self._cycle_mask_for_data(data_ctx)
+        mask_signature = 0
+        if mask.size:
+            try:
+                mask_signature = hash(mask.tobytes())
+            except Exception:
+                mask_signature = int(mask.sum())
+
+        moles_signature = (
+            _coerce_float(data_ctx.get("volume")),
+            _coerce_float(data_ctx.get("a_const")),
+            _coerce_float(data_ctx.get("b_const")),
+            _coerce_float(data_ctx.get("gas_molar_mass")),
+            str(data_ctx.get("product_name") or ""),
+            str(data_ctx.get("product_formula") or ""),
+            _coerce_float(data_ctx.get("product_molar_mass")),
+            _coerce_float(data_ctx.get("starting_mass_g")),
+        )
+        auto_params = (
+            float(prom),
+            int(dist),
+            int(wid),
+            float(min_cycle_drop),
+            bool(ignore_min_drop),
+            bool(auto_enabled),
+        )
+        cycle_fingerprint = CycleFingerprint(
+            data_fingerprint=data_fingerprint,
+            mode=source_mode,
+            auto_params=auto_params,
+            manual_revision=int(getattr(self, "_cycle_manual_revision", 0)),
+            mask_signature=mask_signature,
+            moles_signature=moles_signature,
+            policy=policy,
+        )
+
+        cached = self._render_cache.get_cycles(cycle_fingerprint)
+        if isinstance(cached, dict):
+            cached_cycle = cached.get("cycle_ctx")
+            cached_overlay = cached.get("overlay_ctx")
+            if isinstance(cached_cycle, dict) and isinstance(cached_overlay, dict):
+                self._log_render_cache("Render cache: cycle context hit.")
+                return cached_cycle, cached_overlay
+
+        peak_finder = _get_peak_finder()
+        snapshot = {
+            "auto_peaks": set(getattr(self, "_auto_peaks", set()))
+            if not manual_only
+            else set(),
+            "auto_troughs": set(getattr(self, "_auto_troughs", set()))
+            if not manual_only
+            else set(),
+            "add_peaks": set(getattr(self, "_add_peaks", set())),
+            "add_troughs": set(getattr(self, "_add_troughs", set())),
+            "rm_peaks": set(getattr(self, "_rm_peaks", set())),
+            "rm_troughs": set(getattr(self, "_rm_troughs", set())),
+        }
+        try:
+            result = self._compute_cycle_analysis_worker(
+                x_values,
+                y_values,
+                mask,
+                np.asarray(data_ctx.get("cycle_temp_series"), dtype=float)
+                if data_ctx.get("cycle_temp_series") is not None
+                else None,
+                prom,
+                dist,
+                wid,
+                min_cycle_drop,
+                auto_enabled,
+                ignore_min_drop,
+                peak_finder,
+                snapshot,
+                manual_only=manual_only,
+                data_ctx=data_ctx,
+            )
+        except Exception as exc:
+            self._log_render_cache(f"Render cache: cycle build failed ({exc}).")
+            empty_cycle = {
+                "peaks_idx": [],
+                "troughs_idx": [],
+                "cycles": [],
+                "total_drop": 0.0,
+                "source_mode": source_mode,
+            }
+            empty_overlay = {"cycle_overlay": None, "moles_summary": None}
+            return empty_cycle, empty_overlay
+
+        peak_indices = self._coerce_to_list(result.get("plot_peaks"), cast_int=True)
+        trough_indices = self._coerce_to_list(result.get("plot_troughs"), cast_int=True)
+        try:
+            xv = np.asarray(x_values, dtype=float)
+            yv = np.asarray(y_values, dtype=float)
+        except Exception:
+            xv = np.asarray(x_values)
+            yv = np.asarray(y_values)
+
+        def _points_for(indices: Sequence[Any]) -> List[Tuple[float, float]]:
+            points: List[Tuple[float, float]] = []
+            for idx in indices:
+                try:
+                    i = int(idx)
+                except Exception:
+                    continue
+                if i < 0 or i >= len(xv):
+                    continue
+                try:
+                    x_val = float(xv[i])
+                    y_val = float(yv[i])
+                except Exception:
+                    continue
+                if not (math.isfinite(x_val) and math.isfinite(y_val)):
+                    continue
+                points.append((x_val, y_val))
+            return points
+
+        peak_points = _points_for(peak_indices)
+        trough_points = _points_for(trough_indices)
+
+        payload = {
+            "cycle_transfer": self._coerce_to_list(result.get("cycle_transfer")),
+            "total_moles_ideal": result.get("total_moles_ideal"),
+            "total_moles_vdw": result.get("total_moles_vdw"),
+            "vdw_used": result.get("vdw_used"),
+            "reagent_summary": result.get("reagent_summary"),
+            "gas_molar_mass": result.get("gas_molar_mass"),
+        }
+        moles_lines = self._cycle_moles_legend_lines(payload, data_ctx=data_ctx)
+        cycle_overlay = {
+            "peaks_idx": list(peak_indices),
+            "troughs_idx": list(trough_indices),
+            "peak_points": peak_points,
+            "trough_points": trough_points,
+            "cycles": self._coerce_to_list(result.get("cycles")),
+            "total_drop": float(result.get("total_drop", 0.0) or 0.0),
+            "payload": payload,
+            "moles_lines": moles_lines,
+        }
+        cycle_ctx = {
+            "peaks_idx": list(peak_indices),
+            "troughs_idx": list(trough_indices),
+            "cycles": self._coerce_to_list(result.get("cycles")),
+            "total_drop": float(result.get("total_drop", 0.0) or 0.0),
+            "auto_detection_used": bool(result.get("auto_detection_used")),
+            "source_mode": source_mode,
+        }
+        overlay_ctx = {"cycle_overlay": cycle_overlay, "moles_summary": moles_lines}
+
+        self._render_cache.set_cycles(
+            cycle_fingerprint,
+            {"cycle_ctx": cycle_ctx, "overlay_ctx": overlay_ctx},
+        )
+        self._log_render_cache("Render cache: cycle context miss.")
+        return cycle_ctx, overlay_ctx
 
     def _prime_cycle_markers_from_cache(self):
         """Load cached markers into memory if the current context matches."""
@@ -55167,6 +55710,131 @@ class UnifiedApp(tk.Tk):
             include_moles_core_legend,
         )
 
+    def _override_plot_args_gates(
+        self, args: Tuple[Any, ...], gates_ctx: Dict[str, Any]
+    ) -> Tuple[Any, ...]:
+        if not args:
+            return args
+        args_list = list(args)
+        if len(args_list) >= 3:
+            args_list[-3] = bool(
+                gates_ctx.get("show_cycle_markers", args_list[-3])
+            )
+            args_list[-2] = bool(
+                gates_ctx.get("show_cycle_legend", args_list[-2])
+            )
+            args_list[-1] = bool(gates_ctx.get("include_moles", args_list[-1]))
+        return tuple(args_list)
+
+    def render_plot(
+        self,
+        plot_kind: str,
+        *,
+        target: str = "display",
+        mode: Optional[str] = None,
+        plot_id: Optional[str] = None,
+        fig_size: Optional[Tuple[float, float]] = None,
+    ) -> Optional[Any]:
+        target_value = (target or "display").strip().lower()
+        mode_value = (mode or ("export" if target_value == "export" else "display"))
+        plot_id = plot_id or self._plot_key_to_plot_id(plot_kind)
+
+        data_fingerprint, data_ctx = self._resolve_prepared_data_context(
+            apply_globals=True
+        )
+        cycle_ctx, overlay_ctx = self._resolve_cycle_context(
+            data_ctx, data_fingerprint
+        )
+
+        gates_ctx = {
+            "show_cycle_markers": bool(
+                self.show_cycle_markers_on_core.get()
+                if hasattr(self, "show_cycle_markers_on_core")
+                else settings.get("show_cycle_markers_on_core_plots", False)
+            ),
+            "show_cycle_legend": bool(
+                self.show_cycle_legend_on_core.get()
+                if hasattr(self, "show_cycle_legend_on_core")
+                else settings.get("show_cycle_legend_on_core_plots", False)
+            ),
+            "include_moles": bool(
+                self.include_moles_core_legend.get()
+                if hasattr(self, "include_moles_core_legend")
+                else settings.get("include_moles_in_core_plot_legend", False)
+            ),
+        }
+
+        overlay_ctx = dict(overlay_ctx or {})
+        cycle_overlay = overlay_ctx.get("cycle_overlay")
+        overlay_ctx["markers"] = (
+            cycle_overlay if gates_ctx.get("show_cycle_markers") else None
+        )
+        overlay_ctx["cycle_legend"] = (
+            cycle_overlay if gates_ctx.get("show_cycle_legend") else None
+        )
+        overlay_ctx["moles_summary"] = (
+            overlay_ctx.get("moles_summary")
+            if gates_ctx.get("include_moles")
+            else None
+        )
+
+        style_ctx = {
+            "scatter_config": self._gather_scatter_settings(),
+            "scatter_series_configs": self._gather_series_scatter_settings(),
+            "font_family": settings.get("font_family"),
+            "core_legend_fontsize": settings.get("core_legend_fontsize"),
+            "core_cycle_legend_fontsize": settings.get("core_cycle_legend_fontsize"),
+        }
+        layout_ctx = {
+            "plot_id": plot_id,
+            "profile": _get_layout_profile(plot_id) if plot_id else None,
+            "target": target_value,
+        }
+        plot_elements_ctx = {
+            "plot_id": plot_id,
+            "elements": settings.get("plot_elements", {}),
+        }
+
+        render_ctx = RenderContext(
+            data_ctx=data_ctx,
+            cycle_ctx=cycle_ctx,
+            overlay_ctx=overlay_ctx,
+            gates_ctx=gates_ctx,
+            style_ctx=style_ctx,
+            layout_ctx=layout_ctx,
+            plot_elements_ctx=plot_elements_ctx,
+        )
+
+        args = self._collect_plot_args()
+        args = self._override_plot_args_gates(args, gates_ctx)
+
+        plot_kind_value = (plot_kind or "").strip().lower()
+        if plot_kind_value in {"fig1", "fig2", "fig_peaks", "core"}:
+            figs = main_plotting_function(
+                *args, fig_size=fig_size, render_ctx=render_ctx
+            )
+            if not isinstance(figs, dict):
+                return None
+            if plot_kind_value == "core":
+                return figs
+            return figs.get(plot_kind_value)
+
+        if plot_kind_value in {"fig_combined", "combined"}:
+            if fig_size is None:
+                if mode_value == "export":
+                    fig_size = (11.0, 8.5)
+                else:
+                    fig_size = self._compute_target_figsize_inches()
+            return self._build_combined_triple_axis_from_state(
+                args=args,
+                fig_size=fig_size,
+                mode=mode_value,
+                reuse=False,
+                render_ctx=render_ctx,
+            )
+
+        return None
+
     def update_plots(self, *, include_cycle: bool = True):
 
         if self.df is None:
@@ -55187,11 +55855,6 @@ class UnifiedApp(tk.Tk):
 
             return
 
-        # make sure UI reflects latest state
-
-        self._prepare_series_globals()
-        self._prime_core_cycle_overlay_globals()
-
         args = self._collect_plot_args()
 
         self._save_settings_dict(args)
@@ -55200,7 +55863,7 @@ class UnifiedApp(tk.Tk):
 
         self._clear_plot_tabs()
 
-        figs = main_plotting_function(*args)  # now returns a dict
+        figs = self.render_plot("core", target="display")
 
         if isinstance(figs, dict):
             if not include_cycle:
@@ -55244,14 +55907,7 @@ class UnifiedApp(tk.Tk):
 
             return
 
-        # Sync globals
-
-        self._prepare_series_globals()
-        self._prime_core_cycle_overlay_globals()
-
-        args = self._collect_plot_args()
-
-        figs = main_plotting_function(*args)  # build everything
+        figs = self.render_plot("core", target="display")
 
         # Show ONLY Figure 1
 
@@ -55281,14 +55937,7 @@ class UnifiedApp(tk.Tk):
 
             return
 
-        # Sync globals
-
-        self._prepare_series_globals()
-        self._prime_core_cycle_overlay_globals()
-
-        args = self._collect_plot_args()
-
-        figs = main_plotting_function(*args)  # build everything
+        figs = self.render_plot("core", target="display")
 
         # Show ONLY Figure 2
 
@@ -55316,21 +55965,12 @@ class UnifiedApp(tk.Tk):
 
             return
 
-        self._prepare_series_globals()
-        try:
-            ignore_min_drop = bool(getattr(self, "_cycle_last_ignore_min_drop", True))
-            self._refresh_final_report_cycle_snapshot(
-                ignore_min_drop=ignore_min_drop
-            )
-        except Exception:
-            pass
-        self._prime_core_cycle_overlay_globals()
-
-        args = self._collect_plot_args()
-
         fig_size = self._compute_target_figsize_inches()
-        fig = self._build_combined_triple_axis_from_state(
-            args=args, fig_size=fig_size, mode="display", reuse=True
+        fig = self.render_plot(
+            "fig_combined",
+            target="display",
+            plot_id="fig_combined_triple_axis",
+            fig_size=fig_size,
         )
 
         if fig is not None:
@@ -55578,11 +56218,19 @@ class UnifiedApp(tk.Tk):
         }
 
     def _combined_scatter_signature(
-        self, series_keys: Sequence[str]
+        self,
+        series_keys: Sequence[str],
+        *,
+        scatter_config: Optional[Dict[str, Any]] = None,
+        scatter_series_configs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Any, ...]:
         signature = []
         for key in series_keys:
-            cfg = _get_scatter_config(key)
+            cfg = _get_scatter_config(
+                key,
+                scatter_config=scatter_config,
+                scatter_series_configs=scatter_series_configs,
+            )
             signature.append(
                 (
                     key,
@@ -55599,12 +56247,17 @@ class UnifiedApp(tk.Tk):
         return tuple(signature)
 
     def _combined_structure_signature(
-        self, config: Mapping[str, Any], args: Tuple[Any, ...]
+        self,
+        config: Mapping[str, Any],
+        args: Tuple[Any, ...],
+        *,
+        cycle_overlay: Optional[Dict[str, Any]] = None,
+        scatter_config: Optional[Dict[str, Any]] = None,
+        scatter_series_configs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Any, ...]:
         base_args = config.get("base_args") or ()
         enable_temp_axis = bool(base_args[22]) if len(base_args) > 22 else False
         enable_deriv_axis = bool(base_args[23]) if len(base_args) > 23 else False
-        cycle_overlay = globals().get("core_cycle_overlay")
         cycle_sig = None
         if isinstance(cycle_overlay, dict):
             peaks = cycle_overlay.get("peak_points") or []
@@ -55628,7 +56281,11 @@ class UnifiedApp(tk.Tk):
             bool(config.get("show_cycle_markers")),
             bool(config.get("show_cycle_legend")),
             bool(config.get("include_moles_core")),
-            self._combined_scatter_signature(("y1", "y3", "y2", "z", "z2")),
+            self._combined_scatter_signature(
+                ("y1", "y3", "y2", "z", "z2"),
+                scatter_config=scatter_config,
+                scatter_series_configs=scatter_series_configs,
+            ),
             cycle_sig,
         )
 
@@ -55810,11 +56467,27 @@ class UnifiedApp(tk.Tk):
         args: Tuple[Any, ...],
         fig_size: Optional[Tuple[float, float]],
         canvas: Optional[FigureCanvasTkAgg],
+        *,
+        render_ctx: Optional[RenderContext] = None,
     ) -> Optional[Figure]:
+        data_ctx = render_ctx.data_ctx if render_ctx else {}
+        style_ctx = render_ctx.style_ctx if render_ctx else {}
+        overlay_ctx = render_ctx.overlay_ctx if render_ctx else {}
+
+        scatter_config = style_ctx.get("scatter_config")
+        scatter_series_configs = style_ctx.get("scatter_series_configs")
+        cycle_overlay = overlay_ctx.get("cycle_overlay")
+
         base_args = config.get("base_args") or ()
         if len(base_args) < 24:
             return None
-        structure_sig = self._combined_structure_signature(config, args)
+        structure_sig = self._combined_structure_signature(
+            config,
+            args,
+            cycle_overlay=cycle_overlay,
+            scatter_config=scatter_config,
+            scatter_series_configs=scatter_series_configs,
+        )
         state = (
             self._combined_plot_state if isinstance(self._combined_plot_state, dict) else {}
         )
@@ -55959,7 +56632,9 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 pass
 
-        selected_columns = globals().get("selected_columns", {})
+        selected_columns = data_ctx.get("selected_columns") or globals().get(
+            "selected_columns", {}
+        )
         svg_safe = _svg_safe_text
         fmt = _format_axis_label
 
@@ -56190,14 +56865,15 @@ class UnifiedApp(tk.Tk):
         if not isinstance(line_map, dict) or not line_map:
             return fig
 
+        series_map = data_ctx.get("series") or {}
         series_values = {
-            "y1": globals().get("y1"),
-            "y3": globals().get("y3"),
-            "y2": globals().get("y2"),
-            "z": globals().get("z"),
-            "z2": globals().get("z2"),
+            "y1": series_map.get("y1", globals().get("y1")),
+            "y3": series_map.get("y3", globals().get("y3")),
+            "y2": series_map.get("y2", globals().get("y2")),
+            "z": series_map.get("z", globals().get("z")),
+            "z2": series_map.get("z2", globals().get("z2")),
         }
-        x_values = globals().get("x")
+        x_values = series_map.get("x", globals().get("x"))
         x_plot, decimated = self._combined_preview_decimate(
             fig, canvas, x_values, series_values
         )
@@ -56457,20 +57133,32 @@ class UnifiedApp(tk.Tk):
         mode: str = "display",
         reuse: bool = False,
         canvas: Optional[FigureCanvasTkAgg] = None,
+        render_ctx: Optional[RenderContext] = None,
     ) -> Optional[Figure]:
+
+        if str(mode or "").strip().lower() == "display":
+            reuse = False
+
+        data_ctx = render_ctx.data_ctx if render_ctx else {}
+        style_ctx = render_ctx.style_ctx if render_ctx else {}
+        overlay_ctx = render_ctx.overlay_ctx if render_ctx else {}
+        scatter_config = style_ctx.get("scatter_config")
+        scatter_series_configs = style_ctx.get("scatter_series_configs")
+        cycle_overlay = overlay_ctx.get("cycle_overlay")
 
         if self.df is None:
 
             return None
 
-        try:
-            ignore_min_drop = bool(getattr(self, "_cycle_last_ignore_min_drop", True))
-            self._refresh_final_report_cycle_snapshot(
-                ignore_min_drop=ignore_min_drop
-            )
-            self._prime_core_cycle_overlay_globals()
-        except Exception:
-            pass
+        if render_ctx is None:
+            try:
+                ignore_min_drop = bool(getattr(self, "_cycle_last_ignore_min_drop", True))
+                self._refresh_final_report_cycle_snapshot(
+                    ignore_min_drop=ignore_min_drop
+                )
+                self._prime_core_cycle_overlay_globals()
+            except Exception:
+                pass
 
         if args is None:
 
@@ -56488,25 +57176,29 @@ class UnifiedApp(tk.Tk):
 
             return None
 
-        try:
-            ignore_min_drop = bool(getattr(self, "_cycle_last_ignore_min_drop", True))
-            self._refresh_final_report_cycle_snapshot(ignore_min_drop=ignore_min_drop)
-        except Exception:
-            pass
+        if render_ctx is None:
+            try:
+                ignore_min_drop = bool(getattr(self, "_cycle_last_ignore_min_drop", True))
+                self._refresh_final_report_cycle_snapshot(ignore_min_drop=ignore_min_drop)
+            except Exception:
+                pass
 
-        try:
-            self._prime_core_cycle_overlay_globals()
-        except Exception:
-            pass
+            try:
+                self._prime_core_cycle_overlay_globals()
+            except Exception:
+                pass
 
+        series_map = data_ctx.get("series") or {}
         required_series = {
-            "y1": globals().get("y1"),
-            "y3": globals().get("y3"),
-            "y2": globals().get("y2"),
-            "z": globals().get("z"),
-            "z2": globals().get("z2"),
+            "y1": series_map.get("y1", globals().get("y1")),
+            "y3": series_map.get("y3", globals().get("y3")),
+            "y2": series_map.get("y2", globals().get("y2")),
+            "z": series_map.get("z", globals().get("z")),
+            "z2": series_map.get("z2", globals().get("z2")),
         }
-        selected_columns = globals().get("selected_columns", {})
+        selected_columns = data_ctx.get("selected_columns") or globals().get(
+            "selected_columns", {}
+        )
         missing_required = [
             self._combined_dataset_label(key)
             for key, series in required_series.items()
@@ -56529,7 +57221,7 @@ class UnifiedApp(tk.Tk):
 
         if reuse and mode == "display":
             return self._update_combined_triple_axis_display(
-                config, args, fig_size, canvas
+                config, args, fig_size, canvas, render_ctx=render_ctx
             )
 
         base_args = config["base_args"]
@@ -56613,6 +57305,7 @@ class UnifiedApp(tk.Tk):
             xlabel_pad_pts=xlabel_pad_value,
             mode=mode,
             fig_size=fig_size,
+            render_ctx=render_ctx,
         )
         if fig is not None:
             try:
@@ -56782,7 +57475,13 @@ class UnifiedApp(tk.Tk):
                 try:
                     self._combined_plot_state = {
                         "fig": fig,
-                        "structure_sig": self._combined_structure_signature(config, args),
+                        "structure_sig": self._combined_structure_signature(
+                            config,
+                            args,
+                            cycle_overlay=cycle_overlay,
+                            scatter_config=scatter_config,
+                            scatter_series_configs=scatter_series_configs,
+                        ),
                     }
                     self._combined_layout_state = self._combined_layout_signature(
                         config, args, fig_size
