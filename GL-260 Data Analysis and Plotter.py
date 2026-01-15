@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.8.1
+# Version: V1.8.2
 # Date: 2026-01-15
 
 import os
@@ -7231,7 +7231,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.8.1"
+APP_VERSION = "V1.8.2"
 
 
 DEBUG_SERIES_FLOW = False
@@ -19023,6 +19023,12 @@ def main_plotting_function(
         except Exception:
             pass
         try:
+            legend._gl260_legend_role = "cycle"  # type: ignore[attr-defined]
+            legend._gl260_markerscale = core_cycle_legend_markerscale  # type: ignore[attr-defined]
+            legend._gl260_markerscale_base_font = base_core_legend_font  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        try:
             legend.set_draggable(True)
         except Exception:
             _make_legend_draggable(legend)
@@ -19281,6 +19287,12 @@ def main_plotting_function(
             markerscale=core_legend_markerscale,
         )
 
+        try:
+            leg_fig1._gl260_legend_role = "main"  # type: ignore[attr-defined]
+            leg_fig1._gl260_markerscale = core_legend_markerscale  # type: ignore[attr-defined]
+            leg_fig1._gl260_markerscale_base_font = base_core_legend_font  # type: ignore[attr-defined]
+        except Exception:
+            pass
         _make_legend_draggable(leg_fig1)
     _add_cycle_legend(ax, fig1_peak_artist, fig1_trough_artist)
 
@@ -19481,10 +19493,297 @@ def main_plotting_function(
             markerscale=core_legend_markerscale,
         )
 
+        try:
+            leg_fig2._gl260_legend_role = "main"  # type: ignore[attr-defined]
+            leg_fig2._gl260_markerscale = core_legend_markerscale  # type: ignore[attr-defined]
+            leg_fig2._gl260_markerscale_base_font = base_core_legend_font  # type: ignore[attr-defined]
+        except Exception:
+            pass
         _make_legend_draggable(leg_fig2)
     _add_cycle_legend(ax_two, fig2_peak_artist, fig2_trough_artist)
 
+    try:
+        _enforce_gl260_legend_sizing(
+            fig1,
+            core_legend_fontsize,
+            core_cycle_legend_fontsize,
+            font_family=font_family,
+        )
+        _enforce_gl260_legend_sizing(
+            fig2,
+            core_legend_fontsize,
+            core_cycle_legend_fontsize,
+            font_family=font_family,
+        )
+    except Exception:
+        pass
+
     return {"fig1": fig1, "fig2": fig2, "fig_peaks": fig_peaks}
+
+
+def _collect_gl260_legends(fig: Optional[Figure]) -> List[Any]:
+    """Return all legend artists attached to a figure."""
+    if fig is None:
+        return []
+    legends: List[Any] = []
+    seen = set()
+    try:
+        from matplotlib.legend import Legend
+    except Exception:
+        Legend = None
+
+    def _is_legend(obj: Any) -> bool:
+        if obj is None:
+            return False
+        if Legend is not None:
+            return isinstance(obj, Legend)
+        return obj.__class__.__name__ == "Legend"
+
+    def _add_legend(obj: Any) -> None:
+        if not _is_legend(obj):
+            return
+        obj_id = id(obj)
+        if obj_id in seen:
+            return
+        seen.add(obj_id)
+        legends.append(obj)
+
+    try:
+        for lg in getattr(fig, "legends", []) or []:
+            _add_legend(lg)
+    except Exception:
+        pass
+    try:
+        for ax in getattr(fig, "axes", []) or []:
+            try:
+                _add_legend(ax.get_legend())
+            except Exception:
+                pass
+            try:
+                for child in ax.get_children():
+                    _add_legend(child)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    try:
+        for child in fig.get_children():
+            _add_legend(child)
+    except Exception:
+        pass
+    return legends
+
+
+def _gl260_legend_role(legend: Any) -> Optional[str]:
+    role = getattr(legend, "_gl260_legend_role", None)
+    if isinstance(role, str):
+        role_value = role.strip().lower()
+        if role_value in {"main", "cycle"}:
+            return role_value
+    if getattr(legend, "_combined_main_legend", False):
+        return "main"
+    if getattr(legend, "_cycle_overlay_legend", False) or getattr(
+        legend, "_combined_cycle_legend", False
+    ):
+        return "cycle"
+    return None
+
+
+def _legend_text_fontsize(legend: Any) -> Optional[float]:
+    if legend is None:
+        return None
+    try:
+        for text in legend.get_texts() or []:
+            try:
+                size = float(text.get_fontsize())
+            except Exception:
+                continue
+            if math.isfinite(size) and size > 0:
+                return size
+    except Exception:
+        pass
+    try:
+        title = legend.get_title()
+    except Exception:
+        title = None
+    if title:
+        try:
+            size = float(title.get_fontsize())
+        except Exception:
+            size = None
+        if size is not None and math.isfinite(size) and size > 0:
+            return size
+    return None
+
+
+def _legend_markerscale_value(legend: Any) -> Optional[float]:
+    if legend is None:
+        return None
+    scale = getattr(legend, "_gl260_markerscale", None)
+    if scale is None:
+        getter = getattr(legend, "get_markerscale", None)
+        if callable(getter):
+            try:
+                scale = getter()
+            except Exception:
+                scale = None
+    if scale is None:
+        scale = getattr(legend, "_markerscale", None)
+    try:
+        scale = float(scale)
+    except Exception:
+        return None
+    if not math.isfinite(scale) or scale <= 0:
+        return None
+    return scale
+
+
+def _apply_legend_markerscale(legend: Any, target_scale: float) -> None:
+    if legend is None:
+        return
+    try:
+        target_scale = float(target_scale)
+    except Exception:
+        return
+    if not math.isfinite(target_scale) or target_scale <= 0:
+        return
+    prev_scale = _legend_markerscale_value(legend)
+    if prev_scale is None or not math.isfinite(prev_scale) or prev_scale <= 0:
+        prev_scale = 1.0
+    ratio = target_scale / prev_scale
+    if abs(ratio - 1.0) < 1e-3:
+        try:
+            legend._gl260_markerscale = target_scale  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        try:
+            if hasattr(legend, "set_markerscale"):
+                legend.set_markerscale(target_scale)
+            elif hasattr(legend, "_markerscale"):
+                legend._markerscale = target_scale  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        return
+    for handle in getattr(legend, "legendHandles", []) or []:
+        if handle is None:
+            continue
+        if hasattr(handle, "get_markersize") and hasattr(handle, "set_markersize"):
+            try:
+                handle.set_markersize(handle.get_markersize() * ratio)
+            except Exception:
+                pass
+        elif hasattr(handle, "get_sizes") and hasattr(handle, "set_sizes"):
+            try:
+                sizes = handle.get_sizes()
+            except Exception:
+                sizes = None
+            if sizes is None:
+                continue
+            try:
+                handle.set_sizes([float(s) * (ratio * ratio) for s in sizes])
+            except Exception:
+                pass
+    try:
+        legend._gl260_markerscale = target_scale  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    try:
+        if hasattr(legend, "set_markerscale"):
+            legend.set_markerscale(target_scale)
+        elif hasattr(legend, "_markerscale"):
+            legend._markerscale = target_scale  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+
+def _resolve_gl260_markerscale(
+    legend: Any, target_fontsize: float, prev_fontsize: Optional[float]
+) -> Optional[float]:
+    if legend is None:
+        return None
+    if getattr(legend, "_combined_main_legend", False):
+        override = _coerce_float(settings.get("combined_legend_markerscale"))
+        if override is not None:
+            return override
+    if getattr(legend, "_combined_cycle_legend", False):
+        override = _coerce_float(settings.get("combined_cycle_legend_markerscale"))
+        if override is not None:
+            return override
+    base_font = getattr(legend, "_gl260_markerscale_base_font", None)
+    try:
+        base_font = float(base_font)
+    except Exception:
+        base_font = None
+    if base_font is not None and math.isfinite(base_font) and base_font > 0:
+        return target_fontsize / base_font
+    prev_scale = _legend_markerscale_value(legend)
+    if prev_scale is None or not math.isfinite(prev_scale) or prev_scale <= 0:
+        prev_scale = 1.0
+    if prev_fontsize is None or not math.isfinite(prev_fontsize) or prev_fontsize <= 0:
+        prev_fontsize = target_fontsize
+    if not math.isfinite(target_fontsize) or target_fontsize <= 0:
+        return prev_scale
+    return prev_scale * (target_fontsize / prev_fontsize)
+
+
+def _enforce_gl260_legend_sizing(
+    fig: Optional[Figure],
+    main_fontsize: float,
+    cycle_fontsize: float,
+    *,
+    font_family: Optional[str] = None,
+) -> None:
+    if fig is None:
+        return
+    try:
+        main_fontsize = float(main_fontsize)
+        cycle_fontsize = float(cycle_fontsize)
+    except Exception:
+        return
+    if not math.isfinite(main_fontsize) or not math.isfinite(cycle_fontsize):
+        return
+    legends = _collect_gl260_legends(fig)
+    if not legends:
+        return
+    family_value = (font_family or "").strip()
+    prop_main = (
+        font_manager.FontProperties(size=main_fontsize, family=family_value)
+        if family_value
+        else font_manager.FontProperties(size=main_fontsize)
+    )
+    prop_cycle = (
+        font_manager.FontProperties(size=cycle_fontsize, family=family_value)
+        if family_value
+        else font_manager.FontProperties(size=cycle_fontsize)
+    )
+    for legend in legends:
+        role = _gl260_legend_role(legend)
+        if role == "main":
+            target_fontsize = main_fontsize
+            legend_prop = prop_main
+        elif role == "cycle":
+            target_fontsize = cycle_fontsize
+            legend_prop = prop_cycle
+        else:
+            continue
+        prev_fontsize = _legend_text_fontsize(legend)
+        try:
+            for txt in legend.get_texts() or []:
+                txt.set_fontsize(target_fontsize)
+                if legend_prop is not None:
+                    txt.set_fontproperties(legend_prop)
+            title = legend.get_title()
+            if title:
+                title.set_fontsize(target_fontsize)
+                if legend_prop is not None:
+                    title.set_fontproperties(legend_prop)
+        except Exception:
+            pass
+        target_scale = _resolve_gl260_markerscale(
+            legend, target_fontsize, prev_fontsize
+        )
+        if target_scale is not None:
+            _apply_legend_markerscale(legend, target_scale)
 
 
 def _wrap_legend_label(label: str, max_chars: int = 20) -> str:
@@ -21106,8 +21405,11 @@ def build_combined_triple_axis_figure(
         try:
             legend._cycle_overlay_legend = True  # type: ignore[attr-defined]
             legend._combined_cycle_legend = True  # type: ignore[attr-defined]
-            legend._gl260_legend_role = "combined_cycle"  # type: ignore[attr-defined]
+            legend._gl260_legend_role = "cycle"  # type: ignore[attr-defined]
             legend._gl260_markerscale = cycle_legend_markerscale  # type: ignore[attr-defined]
+            legend._gl260_markerscale_base_font = (  # type: ignore[attr-defined]
+                DEFAULT_COMBINED_LEGEND_FONTSIZE
+            )
         except Exception:
             pass
         try:
@@ -21336,6 +21638,10 @@ def build_combined_triple_axis_figure(
         try:
             main_legend._combined_main_legend = True  # type: ignore[attr-defined]
             main_legend._gl260_markerscale = legend_markerscale  # type: ignore[attr-defined]
+            main_legend._gl260_legend_role = "main"  # type: ignore[attr-defined]
+            main_legend._gl260_markerscale_base_font = (  # type: ignore[attr-defined]
+                DEFAULT_COMBINED_LEGEND_FONTSIZE
+            )
         except Exception:
             pass
         if legend_anchor is not None:
@@ -24283,6 +24589,64 @@ class UnifiedApp(tk.Tk):
                 title.set_fontsize(legend_fontsize_value)
                 if legend_prop is not None:
                     title.set_fontproperties(legend_prop)
+        except Exception:
+            pass
+
+    def _apply_gl260_legend_sizing(
+        self,
+        fig: Optional[Figure],
+        *,
+        plot_id: Optional[str] = None,
+        plot_key: Optional[str] = None,
+        main_fontsize: Optional[float] = None,
+        cycle_fontsize: Optional[float] = None,
+        font_family: Optional[str] = None,
+    ) -> None:
+        if fig is None:
+            return
+        is_combined = False
+        if plot_id == "fig_combined_triple_axis" or plot_key == "fig_combined":
+            is_combined = True
+        if main_fontsize is None or cycle_fontsize is None:
+            if is_combined:
+                main_fontsize = _sanitize_spacing_value(
+                    settings.get("combined_legend_fontsize", DEFAULT_COMBINED_LEGEND_FONTSIZE),
+                    DEFAULT_COMBINED_LEGEND_FONTSIZE,
+                    MIN_COMBINED_FONT_SIZE,
+                    MAX_COMBINED_FONT_SIZE,
+                )
+                cycle_fontsize = _sanitize_spacing_value(
+                    settings.get("combined_cycle_legend_fontsize", main_fontsize),
+                    main_fontsize,
+                    MIN_COMBINED_FONT_SIZE,
+                    MAX_COMBINED_FONT_SIZE,
+                )
+                if font_family is None:
+                    font_family = (settings.get("combined_font_family") or "").strip()
+            else:
+                main_fontsize = _sanitize_spacing_value(
+                    settings.get("core_legend_fontsize", label_fontsize),
+                    label_fontsize,
+                    MIN_COMBINED_FONT_SIZE,
+                    MAX_COMBINED_FONT_SIZE,
+                )
+                cycle_fontsize = _sanitize_spacing_value(
+                    settings.get("core_cycle_legend_fontsize", main_fontsize),
+                    main_fontsize,
+                    MIN_COMBINED_FONT_SIZE,
+                    MAX_COMBINED_FONT_SIZE,
+                )
+                if font_family is None:
+                    font_family = (settings.get("font_family") or "").strip()
+        if main_fontsize is None or cycle_fontsize is None:
+            return
+        try:
+            _enforce_gl260_legend_sizing(
+                fig,
+                main_fontsize,
+                cycle_fontsize,
+                font_family=font_family,
+            )
         except Exception:
             pass
 
@@ -29300,6 +29664,12 @@ class UnifiedApp(tk.Tk):
                         self._apply_plot_elements(export_fig, plot_id)
                     except Exception:
                         pass
+                try:
+                    self._apply_gl260_legend_sizing(
+                        export_fig, plot_id=plot_id, plot_key=plot_key
+                    )
+                except Exception:
+                    pass
 
                 errors = []
                 export_dpi = self._get_export_dpi()
@@ -29703,6 +30073,14 @@ class UnifiedApp(tk.Tk):
                 pass
             return
         self._combined_plot_preview_fig = fig
+        try:
+            self._apply_gl260_legend_sizing(
+                fig,
+                plot_id=plot_id or "fig_combined_triple_axis",
+                plot_key="fig_combined",
+            )
+        except Exception:
+            pass
         win = tk.Toplevel(self)
         win.title("Plot Preview (Export 11x8.5)")
         win.transient(self)
@@ -32009,6 +32387,21 @@ class UnifiedApp(tk.Tk):
                     legend_anchor_y_display=legend_anchor_display,
                     legend_anchor_y_export=legend_anchor_export,
                 )
+            try:
+                fig = None
+                for idx, tab in enumerate(getattr(self, "_plot_tabs", []) or []):
+                    if getattr(tab, "_plot_id", None) != plot_id:
+                        continue
+                    if idx < len(getattr(self, "_canvases", []) or []):
+                        canvas = self._canvases[idx]
+                        fig = getattr(canvas, "figure", None)
+                    break
+                if fig is not None:
+                    self._apply_gl260_legend_sizing(fig, plot_id=plot_id)
+                    if fig.canvas is not None:
+                        fig.canvas.draw_idle()
+            except Exception:
+                pass
             try:
                 _save_settings_to_disk()
             except Exception:
@@ -38746,8 +39139,10 @@ class UnifiedApp(tk.Tk):
 
     def _is_combined_cycle_legend(self, legend: Any) -> bool:
         role = getattr(legend, "_gl260_legend_role", None)
-        if isinstance(role, str) and role.strip().lower() == "combined_cycle":
-            return True
+        if isinstance(role, str):
+            role_value = role.strip().lower()
+            if role_value in {"cycle", "combined_cycle"}:
+                return True
         if getattr(legend, "_combined_cycle_legend", False):
             return True
         if getattr(legend, "_cycle_overlay_legend", False):
@@ -56998,6 +57393,10 @@ class UnifiedApp(tk.Tk):
                 try:
                     main_legend._combined_main_legend = True  # type: ignore[attr-defined]
                     main_legend._gl260_markerscale = legend_markerscale  # type: ignore[attr-defined]
+                    main_legend._gl260_legend_role = "main"  # type: ignore[attr-defined]
+                    main_legend._gl260_markerscale_base_font = (  # type: ignore[attr-defined]
+                        DEFAULT_COMBINED_LEGEND_FONTSIZE
+                    )
                 except Exception:
                     pass
                 legend_anchor = config.get("legend_anchor")
@@ -57014,6 +57413,19 @@ class UnifiedApp(tk.Tk):
                         main_legend.set_loc(_normalize_legend_loc_value(legend_loc))
                     except Exception:
                         pass
+
+        try:
+            cycle_legend_font_value = config.get(
+                "cycle_legend_font_value", legend_font_value
+            )
+            _enforce_gl260_legend_sizing(
+                fig,
+                legend_font_value,
+                cycle_legend_font_value,
+                font_family=family_value,
+            )
+        except Exception:
+            pass
 
         title_display = svg_safe(title_text)
         suptitle_display = svg_safe(suptitle_text)
@@ -57339,29 +57751,9 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 pass
             try:
-                legend_prop = None
-                cycle_legend_prop = None
                 cycle_legend_font_value = config.get(
                     "cycle_legend_font_value", legend_font_value
                 )
-                try:
-                    if font_family_value:
-                        legend_prop = font_manager.FontProperties(
-                            family=font_family_value, size=legend_font_value
-                        )
-                        cycle_legend_prop = font_manager.FontProperties(
-                            family=font_family_value, size=cycle_legend_font_value
-                        )
-                    else:
-                        legend_prop = font_manager.FontProperties(
-                            size=legend_font_value
-                        )
-                        cycle_legend_prop = font_manager.FontProperties(
-                            size=cycle_legend_font_value
-                        )
-                except Exception:
-                    legend_prop = None
-                    cycle_legend_prop = None
                 main_legend = None
                 cycle_legend = None
                 legends: List[Any] = []
@@ -57382,78 +57774,14 @@ class UnifiedApp(tk.Tk):
                 for lg in legends:
                     if getattr(lg, "_combined_main_legend", False):
                         main_legend = lg
-                    if getattr(lg, "_cycle_overlay_legend", False):
+                    if self._is_combined_cycle_legend(lg):
                         cycle_legend = lg
-                self._enforce_legend_text_style(
-                    main_legend, legend_prop, legend_font_value
+                _enforce_gl260_legend_sizing(
+                    fig,
+                    legend_font_value,
+                    cycle_legend_font_value,
+                    font_family=font_family_value,
                 )
-                self._enforce_legend_text_style(
-                    cycle_legend, cycle_legend_prop, cycle_legend_font_value
-                )
-                legend_markerscale = _coerce_float(
-                    settings.get("combined_legend_markerscale")
-                )
-                if legend_markerscale is None:
-                    base_font = legend_font_value if legend_font_value else 1.0
-                    legend_markerscale = base_font / DEFAULT_COMBINED_LEGEND_FONTSIZE
-                cycle_legend_markerscale = _coerce_float(
-                    settings.get("combined_cycle_legend_markerscale")
-                )
-                if cycle_legend_markerscale is None:
-                    base_cycle_font = (
-                        cycle_legend_font_value if cycle_legend_font_value else 1.0
-                    )
-                    cycle_legend_markerscale = (
-                        base_cycle_font / DEFAULT_COMBINED_LEGEND_FONTSIZE
-                    )
-
-                def _apply_markerscale(legend_obj, target_scale):
-                    if legend_obj is None:
-                        return
-                    try:
-                        target_scale = float(target_scale)
-                    except Exception:
-                        return
-                    if not math.isfinite(target_scale) or target_scale <= 0:
-                        return
-                    prev_scale = getattr(legend_obj, "_gl260_markerscale", None)
-                    try:
-                        prev_scale = float(prev_scale)
-                    except Exception:
-                        prev_scale = 1.0
-                    if not math.isfinite(prev_scale) or prev_scale <= 0:
-                        prev_scale = 1.0
-                    ratio = target_scale / prev_scale
-                    if abs(ratio - 1.0) < 1e-3:
-                        return
-                    for handle in getattr(legend_obj, "legendHandles", []):
-                        if handle is None:
-                            continue
-                        if hasattr(handle, "get_markersize") and hasattr(
-                            handle, "set_markersize"
-                        ):
-                            try:
-                                handle.set_markersize(handle.get_markersize() * ratio)
-                            except Exception:
-                                pass
-                        elif hasattr(handle, "get_sizes") and hasattr(
-                            handle, "set_sizes"
-                        ):
-                            try:
-                                sizes = handle.get_sizes()
-                                if sizes is not None:
-                                    handle.set_sizes(
-                                        [float(s) * (ratio * ratio) for s in sizes]
-                                    )
-                            except Exception:
-                                pass
-                    try:
-                        legend_obj._gl260_markerscale = target_scale  # type: ignore[attr-defined]
-                    except Exception:
-                        pass
-
-                _apply_markerscale(main_legend, legend_markerscale)
-                _apply_markerscale(cycle_legend, cycle_legend_markerscale)
                 if axis_offset_values is not None and cycle_legend is not None:
                     ref_axis = _resolve_combined_cycle_ref_axis(
                         fig,
