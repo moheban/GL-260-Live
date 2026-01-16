@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.8.3
+# Version: V1.8.4
 # Date: 2026-01-16
 
 import os
@@ -7231,7 +7231,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.8.3"
+APP_VERSION = "V1.8.4"
 
 
 DEBUG_SERIES_FLOW = False
@@ -29885,7 +29885,7 @@ class UnifiedApp(tk.Tk):
 
         btn_refresh = ttk.Button(
             topbar,
-            text="Refresh Plot",
+            text="Refresh",
             command=lambda: self._force_plot_refresh(frame, canvas),
         )
 
@@ -29915,12 +29915,6 @@ class UnifiedApp(tk.Tk):
                     command=lambda: self._open_plot_settings_dialog(plot_id),
                 )
                 btn_settings.pack(side="right", padx=6, pady=4)
-                btn_layout = ttk.Button(
-                    topbar,
-                    text="Layout Editor...",
-                    command=lambda: self._open_layout_editor(canvas, plot_id),
-                )
-                btn_layout.pack(side="right", padx=6, pady=4)
             else:
                 btn_elements = ttk.Button(
                     topbar,
@@ -29936,16 +29930,16 @@ class UnifiedApp(tk.Tk):
                     command=lambda: self._open_plot_settings_dialog(plot_id),
                 )
                 btn_settings.pack(side="right", padx=6, pady=4)
-                btn_layout = ttk.Button(
-                    topbar,
-                    text="Layout Editor...",
-                    command=lambda: self._open_layout_editor(canvas, plot_id),
-                )
-                btn_layout.pack(side="right", padx=6, pady=4)
 
         save_controls = ttk.Frame(topbar)
 
-        save_controls.pack(side="right", padx=6, pady=4)
+        save_controls.pack(side="left", padx=6, pady=4)
+
+        save_button = ttk.Button(
+            save_controls, text="Save As", command=_save_selected_formats
+        )
+
+        save_button.pack(side="left", padx=(0, 8))
 
         if plot_key == "fig_combined":
             preview_button = ttk.Button(
@@ -29984,12 +29978,6 @@ class UnifiedApp(tk.Tk):
                 variable=format_vars[fmt],
                 command=_on_format_toggle,
             ).pack(side="left", padx=(0, 6))
-
-        save_button = ttk.Button(
-            checkbox_frame, text="Save As", command=_save_selected_formats
-        )
-
-        save_button.pack(side="left", padx=(4, 8))
 
         _update_save_button_state()
 
@@ -32358,7 +32346,108 @@ class UnifiedApp(tk.Tk):
         button_frame = ttk.Frame(container)
         button_frame.grid(row=row_idx, column=0, sticky="e", pady=(8, 0))
 
+        default_display_margins = _default_layout_margins(plot_id, "display")
+        default_export_margins = _default_layout_margins(plot_id, "export")
+
+        def _safe_stage_float(var: Optional[tk.Variable], default: float) -> float:
+            if var is None:
+                return default
+            try:
+                value = float(var.get())
+            except Exception:
+                return default
+            if not math.isfinite(value):
+                return default
+            return value
+
+        def _normalized_plot_settings_snapshot() -> Dict[str, Any]:
+            snapshot: Dict[str, Any] = {}
+            for key, var in stage_vars.items():
+                try:
+                    value = var.get()
+                except Exception:
+                    value = None
+                if isinstance(value, bool):
+                    snapshot[key] = bool(value)
+                elif isinstance(value, float):
+                    snapshot[key] = round(value, 6) if math.isfinite(value) else value
+                else:
+                    snapshot[key] = value
+            display_margins = {
+                "left": _safe_stage_float(
+                    stage_layout_display_left, default_display_margins.get("left", 0.125)
+                ),
+                "right": _safe_stage_float(
+                    stage_layout_display_right, default_display_margins.get("right", 0.9)
+                ),
+                "top": _safe_stage_float(
+                    stage_layout_display_top, default_display_margins.get("top", 0.88)
+                ),
+                "bottom": _safe_stage_float(
+                    stage_layout_display_bottom, default_display_margins.get("bottom", 0.11)
+                ),
+            }
+            export_margins = {
+                "left": _safe_stage_float(
+                    stage_layout_export_left, default_export_margins.get("left", 0.125)
+                ),
+                "right": _safe_stage_float(
+                    stage_layout_export_right, default_export_margins.get("right", 0.9)
+                ),
+                "top": _safe_stage_float(
+                    stage_layout_export_top, default_export_margins.get("top", 0.88)
+                ),
+                "bottom": _safe_stage_float(
+                    stage_layout_export_bottom,
+                    default_export_margins.get("bottom", DEFAULT_EXPORT_BOTTOM_MARGIN),
+                ),
+            }
+            snapshot["layout_display_margins"] = _normalize_layout_margins(
+                display_margins, default_display_margins
+            )
+            snapshot["layout_export_margins"] = _normalize_layout_margins(
+                export_margins, default_export_margins
+            )
+            snapshot["legend_anchor_y_display"] = _parse_anchor_value(
+                stage_legend_anchor_y_display
+            )
+            snapshot["legend_anchor_y_export"] = _parse_anchor_value(
+                stage_legend_anchor_y_export
+            )
+            if is_combined:
+                snapshot["mirror_detached_labelpad"] = bool(
+                    stage_mirror_detached_labelpad.get()
+                )
+            if is_core:
+                core_legend_value = _sanitize_spacing_value(
+                    _safe_stage_float(
+                        stage_vars.get("core_legend_fontsize"), label_fontsize
+                    ),
+                    label_fontsize,
+                    MIN_COMBINED_FONT_SIZE,
+                    MAX_COMBINED_FONT_SIZE,
+                )
+                core_cycle_legend_value = _sanitize_spacing_value(
+                    _safe_stage_float(
+                        stage_vars.get("core_cycle_legend_fontsize"), core_legend_value
+                    ),
+                    core_legend_value,
+                    MIN_COMBINED_FONT_SIZE,
+                    MAX_COMBINED_FONT_SIZE,
+                )
+                snapshot["core_legend_fontsize"] = core_legend_value
+                snapshot["core_cycle_legend_fontsize"] = core_cycle_legend_value
+            return snapshot
+
+        baseline_snapshot = _normalized_plot_settings_snapshot()
+
         def _apply_stage_values(close_after: bool = False) -> None:
+            nonlocal baseline_snapshot
+            staged_snapshot = _normalized_plot_settings_snapshot()
+            if staged_snapshot == baseline_snapshot:
+                if close_after:
+                    self._close_plot_settings_dialog()
+                return
             if stage_vars:
                 for key, var in stage_vars.items():
                     target_var = getattr(self, key, None)
@@ -32445,6 +32534,7 @@ class UnifiedApp(tk.Tk):
             if is_combined:
                 self._schedule_combined_preview_refresh()
             self._refresh_plot_for_plot_id(plot_id)
+            baseline_snapshot = _normalized_plot_settings_snapshot()
             if close_after:
                 self._close_plot_settings_dialog()
 
@@ -57814,6 +57904,21 @@ class UnifiedApp(tk.Tk):
                     cycle_legend_font_value,
                     font_family=font_family_value,
                 )
+                legend_anchor = config.get("legend_anchor")
+                legend_loc = config.get("legend_loc")
+                if main_legend is not None:
+                    if legend_anchor is not None:
+                        _apply_legend_anchor_to_artist(
+                            main_legend,
+                            legend_anchor,
+                            transform=fig.transFigure,
+                            loc_override=legend_loc,
+                        )
+                    elif legend_loc is not None:
+                        try:
+                            main_legend.set_loc(_normalize_legend_loc_value(legend_loc))
+                        except Exception:
+                            pass
                 if axis_offset_values is not None and cycle_legend is not None:
                     ref_axis = _resolve_combined_cycle_ref_axis(
                         fig,

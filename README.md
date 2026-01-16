@@ -9,8 +9,8 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - Added a Cycle Analysis Plot Settings control for **Peak / Trough Marker Size (pt²)** to adjust marker area.
 
 ## V1.8.0 Update Highlights
-- Unified render pipeline for initial render, Refresh Plot, Plot Preview, and export (no split paths).
-- Refresh Plot always builds a new figure while reusing cached prepared data and cycle metrics when the dataset is unchanged.
+- Unified render pipeline for initial render, Refresh, Plot Preview, and export (no split paths).
+- Refresh always builds a new figure while reusing cached prepared data and cycle metrics when the dataset is unchanged.
 - Deterministic overlay gating for markers, cycle legend, and moles summary; moles summary appends to the main legend when the cycle legend is off.
 - Manual vs auto marker sourcing is enforced (auto off uses manual-only markers; auto on supports manual add/remove overrides).
 - Plot Elements controllers are fully rebound on figure swaps so add/select/drag stays reliable after refresh and layout edits.
@@ -23,7 +23,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - Apply VDW now refreshes Cycle Analysis and shows a dirty/applied indicator.
 
 ## V1.7.1 Update Highlights
-- Plot elements remain interactive after Refresh Plot on the combined triple-axis tab (placement + drag stay armed).
+- Plot elements remain interactive after Refresh on the combined triple-axis tab (placement + drag stay armed).
 - Refresh now retargets plot annotations after a deterministic install/draw/finalize pipeline.
 
 ## V1.7.0 Update Highlights
@@ -188,6 +188,7 @@ Sections and key fields:
 - Main legend sizing targets the primary plot legend; Cycle legend sizing targets the cycle overlay legend (when enabled).
 - Text and symbols scale together, and sizes are enforced for preview, refresh, and exports (PNG/SVG/PDF).
 - Cycle legend controls appear only when a cycle legend is available.
+- Closing Plot Settings without changes skips saves and redraws.
 
 **Combined Triple-Axis Settings**
 - Choose the dataset for inner left, inner right, and outer right axes.
@@ -210,17 +211,17 @@ Common controls:
 - Matplotlib toolbar (pan, zoom, save, etc.).
 - **Save As** (PNG/PDF/SVG, multi-select).
 - Export format checkbox selections persist across restarts (settings.json).
-- **Save As** sits next to the PNG/PDF/SVG export checkboxes.
-- **Refresh Plot** (forces resize and redraw).
+- **Save As** stays separate from the PNG/PDF/SVG export checkboxes so it remains visible in narrow tabs.
+- **Refresh** (forces resize and redraw).
 - **Close Plot**.
 
 Per-plot annotations:
 - **Add Plot Elements...** on Figure 1/2/3.
 - **Plot Elements...** and **Clear Elements** on the combined plot.
-- Combined triple-axis plot applies cycle overlay toggles on first render (legend and peak/trough markers appear without requiring Refresh Plot).
+- Combined triple-axis plot applies cycle overlay toggles on first render (legend and peak/trough markers appear without requiring Refresh).
 
 Per-plot layout:
-- **Layout Editor...** for per-plot layout tweaks (title/suptitle positions, legend anchors/loc, axis label padding); apply to preview and/or export.
+- Combined plot layout tuning is accessed via **Plot Settings...** -> **Combined Plot Layout Tuner...** (title/suptitle positions, legend anchors/loc, axis label padding); apply to preview and/or export.
 
 Export behavior:
 - Export DPI is controlled via **Preferences -> Saved Output Options...**.
@@ -228,7 +229,7 @@ Export behavior:
 
 ### Unified Render Pipeline and Refresh Semantics (V1.8.0)
 - All display, preview, export, and report renders go through one canonical pipeline (`render_plot`).
-- **Refresh Plot** always rebuilds a fresh figure for interactivity, but reuses cached prepared data and cached cycle metrics when the dataset is unchanged.
+- **Refresh** always rebuilds a fresh figure for interactivity, but reuses cached prepared data and cached cycle metrics when the dataset is unchanged.
 - Cache invalidation rules:
   - **DataFingerprint** changes when the Excel file, selected sheet(s)/stitch order, column mappings, elapsed-time unit, or other preprocessing inputs change.
   - **CycleFingerprint** adds the auto/manual toggle, auto detection parameters, and a manual marker revision counter (incremented on manual edits).
@@ -241,7 +242,7 @@ Export behavior:
   - Auto detection OFF -> use manual markers only (no auto fallback).
   - Auto detection ON -> auto peaks/troughs plus manual add/remove overrides (mixed mode).
 - Layout/preview/export guarantees:
-  - Layout Editor targets the active figure after refresh, and layout changes persist across refresh and export without invalidating cached data.
+  - Combined Plot Layout Tuner targets the active figure after refresh, and layout changes persist across refresh and export without invalidating cached data.
   - Plot Preview uses the same pipeline and gating rules (target="preview").
   - Export uses the same pipeline (target="export") and preserves dragged Plot Elements positions via the existing display-to-export mapping.
 
@@ -454,7 +455,7 @@ Key behaviors:
 - Elements can target the primary, right, or third axis in multi-axis plots.
 - Axis-based legacy elements are automatically migrated into data coordinates.
 - Elements are applied both to on-screen figures and to exported PNG/PDF/SVG outputs.
-- Plot Elements controllers are rebound on figure swaps (Refresh Plot, preview/export) so selection/dragging remains active.
+- Plot Elements controllers are rebound on figure swaps (Refresh, preview/export) so selection/dragging remains active.
 - Element placement uses a dedicated "Plot Elements" Toplevel editor with:
   - Add Element controls (type, axis, coordinate space) with explicit "Place on Plot" arming and status hints.
   - Color, transparency, and label presets.
