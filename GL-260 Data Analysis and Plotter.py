@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.8.4
+# Version: V1.8.5
 # Date: 2026-01-16
 
 import os
@@ -7231,7 +7231,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.8.4"
+APP_VERSION = "V1.8.5"
 
 
 DEBUG_SERIES_FLOW = False
@@ -30159,7 +30159,23 @@ class UnifiedApp(tk.Tk):
             force_draw=True,
         )
 
-        def _close():
+        try:
+            self._register_combined_legend_tracking(fig)
+        except Exception:
+            pass
+
+        close_state = {"closed": False}
+
+        def _close(_event=None):
+            if _event is not None and getattr(_event, "widget", None) is not win:
+                return
+            if close_state["closed"]:
+                return
+            close_state["closed"] = True
+            try:
+                self._capture_combined_legend_anchor_from_fig(fig)
+            except Exception:
+                pass
             try:
                 after_id = resize_state.get("after_id")
                 if after_id is not None:
@@ -30176,11 +30192,13 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 pass
             try:
-                win.destroy()
+                if _event is None:
+                    win.destroy()
             except Exception:
                 pass
 
         win.protocol("WM_DELETE_WINDOW", _close)
+        win.bind("<Destroy>", _close, add="+")
 
     def _place_annotations_panel(
         self, frame: ttk.Frame, topbar: ttk.Frame, panel: AnnotationsPanel
@@ -31270,6 +31288,7 @@ class UnifiedApp(tk.Tk):
         return sanitized, warnings
 
     def _apply_cycle_trace_settings_from_dialog(self, vars_map, status_label):
+        prior_marker_size = cycle_trace_settings.get("marker_size")
         try:
             sanitized, warnings = self._collect_cycle_trace_settings(vars_map)
         except ValueError as exc:
@@ -31299,6 +31318,21 @@ class UnifiedApp(tk.Tk):
         vars_map["marker_size"].set(f"{sanitized['marker_size']:.3f}")
 
         self._persist_cycle_trace_settings(sanitized)
+        marker_size_changed = (
+            prior_marker_size != cycle_trace_settings.get("marker_size")
+        )
+        if marker_size_changed:
+            try:
+                self._render_cache.cycles.clear()
+            except Exception:
+                pass
+            self._combined_plot_state = None
+            self._combined_layout_state = None
+            self._combined_layout_dirty = True
+        try:
+            self._schedule_combined_preview_refresh()
+        except Exception:
+            pass
 
         if status_label is not None and status_label.winfo_exists():
             message = "Cycle plot settings applied."
@@ -32460,6 +32494,8 @@ class UnifiedApp(tk.Tk):
                             target_var.set(var.get())
                         except Exception:
                             pass
+            if is_combined:
+                self._apply_combined_axis_preferences(skip_save=True)
             if is_core:
                 core_legend_value = _sanitize_spacing_value(
                     self._safe_get_var(self.core_legend_fontsize, float),

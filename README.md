@@ -1,9 +1,14 @@
-# GL-260 Data Analysis and Plotter (V1.8.4)
+# GL-260 Data Analysis and Plotter (V1.8.5)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data exported to Excel, mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.8.4`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.8.5`.
+
+## V1.8.5 Update Highlights
+- Combined cycle legend drag placement now persists from the embedded plot or Plot Preview into exports (PNG/SVG/PDF).
+- Peak/trough marker size changes propagate to the embedded plot, Plot Preview, and exports without stale cache reuse.
+- Main and cycle legend size adjustments now persist in settings across preview open/close and export cycles.
 
 ## V1.8.4 Update Highlights
 - Plot Settings closes without a redraw when no values change.
@@ -644,7 +649,7 @@ The script includes internal change summaries:
   - Treeview selection recursion fix in annotations editor.
   - Layout fixes for the annotations Toplevel.
 
-Note: the UI title uses `APP_VERSION` set to `V1.8.4`.
+Note: the UI title uses `APP_VERSION` set to `V1.8.5`.
 
 ## Troubleshooting
 - **"No Data" or "Missing Columns" errors**: Load a sheet on the Data tab and set required columns on the Columns tab.
