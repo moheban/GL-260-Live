@@ -209,6 +209,8 @@ After plotting, each figure appears as a new tab in the main notebook.
 Common controls:
 - Matplotlib toolbar (pan, zoom, save, etc.).
 - **Save As** (PNG/PDF/SVG, multi-select).
+- Export format checkbox selections persist across restarts (settings.json).
+- **Save As** sits next to the PNG/PDF/SVG export checkboxes.
 - **Refresh Plot** (forces resize and redraw).
 - **Close Plot**.
 

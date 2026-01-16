@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.8.2
-# Date: 2026-01-15
+# Version: V1.8.3
+# Date: 2026-01-16
 
 import os
 import sys
@@ -7231,7 +7231,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.8.2"
+APP_VERSION = "V1.8.3"
 
 
 DEBUG_SERIES_FLOW = False
@@ -29528,10 +29528,36 @@ class UnifiedApp(tk.Tk):
             "pdf": ("PDF files", "*.pdf"),
             "svg": ("SVG files", "*.svg"),
         }
+
+        def _get_plot_export_formats_defaulted():
+            raw = settings.get("plot_export_formats")
+            if not isinstance(raw, dict):
+                raw = {}
+            normalized = {fmt: bool(raw.get(fmt, False)) for fmt in format_order}
+            if not any(normalized.values()):
+                normalized["svg"] = True
+            return normalized
+
+        format_defaults = _get_plot_export_formats_defaulted()
         format_vars = {
-            fmt: tk.BooleanVar(master=frame, value=(fmt == "svg"))
+            fmt: tk.BooleanVar(master=frame, value=bool(format_defaults.get(fmt, False)))
             for fmt in format_order
         }
+
+        def _persist_plot_export_formats():
+            settings["plot_export_formats"] = {
+                fmt: bool(format_vars[fmt].get()) for fmt in format_order
+            }
+            if hasattr(self, "_schedule_save_settings"):
+                try:
+                    self._schedule_save_settings()
+                    return
+                except Exception:
+                    pass
+            try:
+                _save_settings_to_disk()
+            except Exception:
+                pass
 
         def _selected_formats():
             return [fmt for fmt in format_order if format_vars[fmt].get()]
@@ -29546,7 +29572,13 @@ class UnifiedApp(tk.Tk):
             else:
                 save_button.state(["disabled"])
 
+        def _on_format_toggle():
+            _persist_plot_export_formats()
+            _update_save_button_state()
+
         def _save_selected_formats():
+
+            _persist_plot_export_formats()
 
             selected_formats = _selected_formats()
 
@@ -29915,12 +29947,6 @@ class UnifiedApp(tk.Tk):
 
         save_controls.pack(side="right", padx=6, pady=4)
 
-        save_button = ttk.Button(
-            save_controls, text="Save As", command=_save_selected_formats
-        )
-
-        save_button.pack(side="left", padx=(0, 8))
-
         if plot_key == "fig_combined":
             preview_button = ttk.Button(
                 save_controls,
@@ -29956,8 +29982,14 @@ class UnifiedApp(tk.Tk):
                 checkbox_frame,
                 text=fmt.upper(),
                 variable=format_vars[fmt],
-                command=_update_save_button_state,
+                command=_on_format_toggle,
             ).pack(side="left", padx=(0, 6))
+
+        save_button = ttk.Button(
+            checkbox_frame, text="Save As", command=_save_selected_formats
+        )
+
+        save_button.pack(side="left", padx=(4, 8))
 
         _update_save_button_state()
 
