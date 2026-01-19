@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.8.7
+# Version: V1.8.8
 # Date: 2026-01-19
 
 import os
@@ -7250,7 +7250,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.8.7"
+APP_VERSION = "V1.8.8"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -16670,6 +16670,8 @@ def _plot_series(
 
 DEFAULT_STARTING_MATERIAL_NAME = ""
 DEFAULT_STARTING_MATERIAL_FORMULA = ""
+DEFAULT_STARTING_MATERIAL_DISPLAY_NAME = ""
+DEFAULT_STARTING_MATERIAL_DISPLAY_NOTE = ""
 DEFAULT_STARTING_MATERIAL_MOLAR_MASS = 0.0
 DEFAULT_STOICH_MOL_GAS_PER_MOL_STARTING = 0.0
 
@@ -16680,15 +16682,9 @@ DEFAULT_PRODUCT_MOLAR_MASS = DEFAULT_STARTING_MATERIAL_MOLAR_MASS
 DEFAULT_GAS_MOLAR_MASS = 45.002
 gas_molar_mass = DEFAULT_GAS_MOLAR_MASS
 
-_PRODUCT_PRESET_CO2 = {
-    "name": "CO2",
-    "formula": "13CO2",
-    "molar_mass": 39.997,
-}
 PRODUCT_PRESETS = OrderedDict(
     [
         ("Custom", None),
-        ("CO2 (13CO2)", _PRODUCT_PRESET_CO2),
     ]
 )
 
@@ -16769,6 +16765,14 @@ if os.path.exists(SETTINGS_FILE):
     raw_formula = settings.get("starting_material_formula")
     if not isinstance(raw_formula, str):
         settings["starting_material_formula"] = DEFAULT_STARTING_MATERIAL_FORMULA
+
+    raw_display_name = settings.get("starting_material_display_name")
+    if not isinstance(raw_display_name, str):
+        settings["starting_material_display_name"] = DEFAULT_STARTING_MATERIAL_DISPLAY_NAME
+
+    raw_display_note = settings.get("starting_material_display_note")
+    if not isinstance(raw_display_note, str):
+        settings["starting_material_display_note"] = DEFAULT_STARTING_MATERIAL_DISPLAY_NOTE
 
     settings["starting_material_mw_g_mol"] = _coerce_setting_float(
         settings.get("starting_material_mw_g_mol"),
@@ -17207,6 +17211,13 @@ if os.path.exists(SETTINGS_FILE):
         "starting_material_name", DEFAULT_STARTING_MATERIAL_NAME
     )
 
+    initial_starting_material_display_name = settings.get(
+        "starting_material_display_name", DEFAULT_STARTING_MATERIAL_DISPLAY_NAME
+    )
+    initial_starting_material_display_note = settings.get(
+        "starting_material_display_note", DEFAULT_STARTING_MATERIAL_DISPLAY_NOTE
+    )
+
     initial_starting_material_mw = settings.get(
         "starting_material_mw_g_mol", DEFAULT_STARTING_MATERIAL_MOLAR_MASS
     )
@@ -17398,6 +17409,8 @@ else:
     initial_starting_material_preset = next(iter(PRODUCT_PRESETS))
 
     initial_starting_material_name = DEFAULT_STARTING_MATERIAL_NAME
+    initial_starting_material_display_name = DEFAULT_STARTING_MATERIAL_DISPLAY_NAME
+    initial_starting_material_display_note = DEFAULT_STARTING_MATERIAL_DISPLAY_NOTE
 
     initial_starting_material_mw = DEFAULT_STARTING_MATERIAL_MOLAR_MASS
 
@@ -17412,6 +17425,8 @@ else:
 
     settings["starting_material_preset"] = initial_starting_material_preset
     settings["starting_material_name"] = initial_starting_material_name
+    settings["starting_material_display_name"] = initial_starting_material_display_name
+    settings["starting_material_display_note"] = initial_starting_material_display_note
     settings["starting_material_formula"] = DEFAULT_STARTING_MATERIAL_FORMULA
     settings["starting_material_mw_g_mol"] = initial_starting_material_mw
     settings["starting_material_mass_g"] = initial_starting_mass
@@ -18180,17 +18195,26 @@ def resolve_cycle_summary_inputs(
     scipy_available = bool(ctx.get("scipy_available", fsolve is not None))
     vdw_computed = bool(ctx.get("vdw_computed", ctx.get("vdw_used", False)))
 
-    starting_material_name = str(
+    display_name = settings.get("starting_material_display_name")
+    if isinstance(display_name, str):
+        display_name = display_name.strip()
+    else:
+        display_name = ""
+    legacy_name = str(
         settings.get("starting_material_name", settings.get("product_name", ""))
         or ""
-    )
-    starting_material_formula = str(
+    ).strip()
+    legacy_formula = str(
         settings.get(
             "starting_material_formula",
             settings.get("product_formula", DEFAULT_STARTING_MATERIAL_FORMULA),
         )
         or ""
-    )
+    ).strip()
+    if not display_name:
+        display_name = legacy_name or legacy_formula
+    starting_material_name = display_name
+    starting_material_formula = legacy_formula
     starting_material_mass_g = _float_or_none(
         settings.get(
             "starting_material_mass_g",
@@ -18510,15 +18534,9 @@ def build_cycle_analysis_summary(
 
     if options.include_conversion_estimate and not missing_fields:
         _section("Conversion estimate")
+        lines.append(f"Gas used for uptake: {resolved_inputs.vdw_gas_label}")
         name = (resolved_inputs.starting_material_name or "").strip()
-        formula = (resolved_inputs.starting_material_formula or "").strip()
-        if name or formula:
-            label = name or "Starting material"
-            if name and formula:
-                label = f"{name} ({formula})"
-            elif formula and not name:
-                label = formula
-            lines.append(f"Starting material: {label}")
+        lines.append(f"Starting material: {name}")
         lines.append(
             "Starting material mass: "
             f"{_fmt(resolved_inputs.starting_material_mass_g, '.4f')} g"
@@ -24162,6 +24180,25 @@ class UnifiedApp(tk.Tk):
 
         self.v_product_name = tk.StringVar(
             value=default_product_name if preset_info else stored_product_name
+        )
+
+        stored_display_name = settings.get(
+            "starting_material_display_name", initial_starting_material_display_name
+        )
+        if not stored_display_name:
+            stored_display_name = settings.get(
+                "starting_material_name", initial_starting_material_name
+            )
+
+        stored_display_note = settings.get(
+            "starting_material_display_note", initial_starting_material_display_note
+        )
+
+        self.v_starting_material_display_name = tk.StringVar(
+            value=stored_display_name
+        )
+        self.v_starting_material_display_note = tk.StringVar(
+            value=stored_display_note
         )
 
         self.v_product_molar_mass = tk.DoubleVar(
@@ -35768,25 +35805,48 @@ class UnifiedApp(tk.Tk):
 
         lf_reagent.grid_columnconfigure(1, weight=1)
 
+        ttk.Label(
+            lf_reagent,
+            text="Starting material reacting with selected gas",
+        ).grid(row=0, column=0, sticky="w", padx=6, pady=4)
+
+        ent_display_name = ttk.Entry(
+            lf_reagent, textvariable=self.v_starting_material_display_name
+        )
+        ent_display_name.grid(row=0, column=1, sticky="ew", padx=6, pady=4)
+        ent_display_name.bind("<FocusOut>", self._apply_product_settings)
+        ent_display_name.bind("<Return>", self._apply_product_settings)
+
+        ttk.Label(lf_reagent, text="Starting material note (optional)").grid(
+            row=1, column=0, sticky="w", padx=6, pady=4
+        )
+
+        ent_display_note = ttk.Entry(
+            lf_reagent, textvariable=self.v_starting_material_display_note
+        )
+        ent_display_note.grid(row=1, column=1, sticky="ew", padx=6, pady=4)
+        ent_display_note.bind("<FocusOut>", self._apply_product_settings)
+        ent_display_note.bind("<Return>", self._apply_product_settings)
+
         ttk.Label(lf_reagent, text="Starting Material Molar Mass (g/mol)").grid(
-            row=0, column=0, sticky="w", padx=6, pady=4
+            row=2, column=0, sticky="w", padx=6, pady=4
         )
 
         ent_molar = ttk.Entry(lf_reagent, textvariable=self.v_product_molar_mass)
 
-        ent_molar.grid(row=0, column=1, sticky="ew", padx=6, pady=4)
+        ent_molar.grid(row=2, column=1, sticky="ew", padx=6, pady=4)
 
         ent_molar.bind("<FocusOut>", self._apply_product_settings)
 
         ent_molar.bind("<Return>", self._apply_product_settings)
 
         ttk.Label(lf_reagent, text="Starting Material Mass (g)").grid(
-            row=1, column=0, sticky="w", padx=6, pady=4
+            row=3, column=0, sticky="w", padx=6, pady=4
         )
 
         ent_start = ttk.Entry(lf_reagent, textvariable=self.v_starting_mass)
 
-        ent_start.grid(row=1, column=1, sticky="ew", padx=6, pady=4)
+        ent_start.grid(row=3, column=1, sticky="ew", padx=6, pady=4)
 
         ent_start.bind("<FocusOut>", self._apply_product_settings)
 
@@ -35795,11 +35855,11 @@ class UnifiedApp(tk.Tk):
         ttk.Label(
             lf_reagent,
             text="Stoichiometry (mol gas per mol starting)",
-        ).grid(row=2, column=0, sticky="w", padx=6, pady=4)
+        ).grid(row=4, column=0, sticky="w", padx=6, pady=4)
 
         ent_stoich = ttk.Entry(lf_reagent, textvariable=self.v_starting_stoich)
 
-        ent_stoich.grid(row=2, column=1, sticky="ew", padx=6, pady=4)
+        ent_stoich.grid(row=4, column=1, sticky="ew", padx=6, pady=4)
 
         ent_stoich.bind("<FocusOut>", self._apply_product_settings)
 
@@ -56802,25 +56862,20 @@ class UnifiedApp(tk.Tk):
         self.v_starting_mass.set(starting_mass)
         self.v_starting_stoich.set(stoich_val)
 
+        display_name = self.v_starting_material_display_name.get().strip()
+        display_note = self.v_starting_material_display_note.get().strip()
+        self.v_starting_material_display_name.set(display_name)
+        self.v_starting_material_display_note.set(display_note)
+
         settings["starting_material_preset"] = preset_key
-        settings["starting_material_name"] = name
+        settings["starting_material_display_name"] = display_name
+        settings["starting_material_display_note"] = display_note
         settings["starting_material_mw_g_mol"] = molar_mass
         settings["starting_material_mass_g"] = starting_mass
         settings["stoich_mol_gas_per_mol_starting"] = stoich_val
 
-        settings["product_preset"] = preset_key
-        settings["product_name"] = name
-        settings["product_molar_mass"] = molar_mass
         settings["starting_mass"] = starting_mass
         settings["naoh_mass"] = starting_mass
-
-        product_formula = preset_info.get("formula")
-        if not product_formula:
-            product_formula = settings.get(
-                "starting_material_formula", DEFAULT_STARTING_MATERIAL_FORMULA
-            )
-        settings["starting_material_formula"] = product_formula
-        settings["product_formula"] = product_formula
 
         _save_settings_to_disk()
 
@@ -57155,9 +57210,17 @@ class UnifiedApp(tk.Tk):
         globals()["starting_mass_g"] = self.v_starting_mass.get()
         globals()["starting_material_mass_g"] = self.v_starting_mass.get()
 
-        starting_name = self.v_product_name.get().strip()
-        globals()["starting_material_name"] = starting_name
-        globals()["product_name"] = starting_name or DEFAULT_STARTING_MATERIAL_NAME
+        starting_display_name = self.v_starting_material_display_name.get().strip()
+        if not starting_display_name:
+            starting_display_name = self.v_product_name.get().strip()
+        globals()["starting_material_display_name"] = starting_display_name
+        globals()["starting_material_display_note"] = (
+            self.v_starting_material_display_note.get().strip()
+        )
+        globals()["starting_material_name"] = starting_display_name
+        globals()["product_name"] = (
+            starting_display_name or DEFAULT_STARTING_MATERIAL_NAME
+        )
 
         preset_key = self.v_product_preset.get()
         preset_info = PRODUCT_PRESETS.get(preset_key) or {}
@@ -57238,9 +57301,17 @@ class UnifiedApp(tk.Tk):
         payload["starting_mass_g"] = self.v_starting_mass.get()
         payload["starting_material_mass_g"] = self.v_starting_mass.get()
         payload["gas_molar_mass"] = self.v_gas_molar_mass.get()
-        starting_name = self.v_product_name.get().strip()
-        payload["starting_material_name"] = starting_name
-        payload["product_name"] = starting_name or DEFAULT_STARTING_MATERIAL_NAME
+        starting_display_name = self.v_starting_material_display_name.get().strip()
+        if not starting_display_name:
+            starting_display_name = self.v_product_name.get().strip()
+        payload["starting_material_display_name"] = starting_display_name
+        payload["starting_material_display_note"] = (
+            self.v_starting_material_display_note.get().strip()
+        )
+        payload["starting_material_name"] = starting_display_name
+        payload["product_name"] = (
+            starting_display_name or DEFAULT_STARTING_MATERIAL_NAME
+        )
         preset_key = self.v_product_preset.get()
         preset_info = PRODUCT_PRESETS.get(preset_key) or {}
         payload["starting_material_formula"] = preset_info.get("formula") or settings.get(
@@ -60013,14 +60084,12 @@ class UnifiedApp(tk.Tk):
         settings["naoh_mass"] = self.v_starting_mass.get()
 
         settings["starting_material_preset"] = self.v_product_preset.get()
-        settings["product_preset"] = self.v_product_preset.get()
-
-        starting_name = self.v_product_name.get().strip()
-        settings["starting_material_name"] = starting_name
-        settings["product_name"] = starting_name or DEFAULT_STARTING_MATERIAL_NAME
+        starting_display_name = self.v_starting_material_display_name.get().strip()
+        starting_display_note = self.v_starting_material_display_note.get().strip()
+        settings["starting_material_display_name"] = starting_display_name
+        settings["starting_material_display_note"] = starting_display_note
 
         settings["starting_material_mw_g_mol"] = self.v_product_molar_mass.get()
-        settings["product_molar_mass"] = self.v_product_molar_mass.get()
 
         settings["stoich_mol_gas_per_mol_starting"] = self.v_starting_stoich.get()
 

@@ -1,9 +1,14 @@
-# GL-260 Data Analysis and Plotter (V1.8.7)
+# GL-260 Data Analysis and Plotter (V1.8.8)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data exported to Excel, mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.8.7`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.8.8`.
+
+## V1.8.8 Update Highlights
+- Starting Material Settings now include a display name and optional note for the material reacting with the selected gas.
+- CO2/13CO2 has been removed from starting-material presets; gas identity lives only in the VDW Gas Model selection.
+- Conversion estimates now explicitly report the gas used for uptake and the starting material label from the new field.
 
 ## V1.8.7 Update Highlights
 - Cycle Analysis Summary is unified across auto/mixed/manual-only paths with a single builder.
@@ -213,8 +218,9 @@ Sections and key fields:
 - **Apply VDW** updates the constants used in cycle moles calculations, refreshes Cycle Analysis, and updates the Apply VDW indicator.
 
 **Starting Material Settings**
+- Starting material display name (reacting with the selected gas) and optional note.
 - Starting material molar mass, mass, and stoichiometry (mol gas per mol starting).
-- These fields gate the optional conversion estimate in the Cycle Analysis Summary.
+- These fields gate the optional conversion estimate in the Cycle Analysis Summary; gas identity remains in the VDW Gas Model section.
 
 **Peak & Trough Detection**
 - Prominence (PSI), minimum distance (samples), minimum delta-P for a valid cycle, and minimum width (samples).
@@ -537,7 +543,7 @@ Moles calculations:
 
 Gas uptake and conversion:
 - Gas uptake mass is reported for ideal and (when available) VDW totals.
-- Conversion estimates are shown only when starting material mass, MW, and stoichiometry are provided.
+- Conversion estimates are shown only when starting material mass, MW, and stoichiometry are provided, and now list the gas used for uptake and the starting material label.
 
 ## Solubility and Speciation Engine (shared)
 The solubility system is used by both the legacy and advanced tabs.
@@ -679,7 +685,7 @@ The script includes internal change summaries:
   - Treeview selection recursion fix in annotations editor.
   - Layout fixes for the annotations Toplevel.
 
-Note: the UI title uses `APP_VERSION` set to `V1.8.7`.
+Note: the UI title uses `APP_VERSION` set to `V1.8.8`.
 
 ## Troubleshooting
 - **"No Data" or "Missing Columns" errors**: Load a sheet on the Data tab and set required columns on the Columns tab.
