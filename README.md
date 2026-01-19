@@ -1,9 +1,15 @@
-# GL-260 Data Analysis and Plotter (V1.8.5)
+# GL-260 Data Analysis and Plotter (V1.8.6)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data exported to Excel, mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.8.5`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.8.6`.
+
+## V1.8.6 Update Highlights
+- Added Auto Title support in Plot Settings -> Titles with render-time resolution for Preview/Refresh/Export.
+- Introduced managed Data Type lists (combobox + Manage Types dialog with add/rename/delete/reorder).
+- Added template editor with placeholder validation and a day-count mode selector (date diff vs inclusive).
+- Auto Title sources include full dataset or current view range, with deterministic fallback to full dataset when mapping is not possible.
 
 ## V1.8.5 Update Highlights
 - Combined cycle legend drag placement now persists from the embedded plot or Plot Preview into exports (PNG/SVG/PDF).
@@ -166,7 +172,22 @@ Purpose: control plot ranges, axes, style, cycle detection parameters, and combi
 Sections and key fields:
 
 **Titles**
-- Suptitle and Title text fields.
+- Suptitle (manual) and Title (manual) text fields.
+- **Auto-generate Title** toggle:
+  - When ON, manual Title is ignored during rendering; Suptitle remains manual.
+  - Use **Copy Auto Title -> Manual Title** to explicitly overwrite the manual Title.
+- **Data Type** combobox with **Manage Types...**:
+  - Add/rename/delete/reorder types; no empty names or duplicates (case-insensitive).
+  - At least one type is always preserved (fallback: "Reaction").
+- **Template** string (default: `{type} Day {day_start}-{day_end} {date_start}-{date_end}`) with **Edit...** dialog and validation.
+  - Supported placeholders: `{type}`, `{day_start}`, `{day_end}`, `{date_start}`, `{date_end}`, `{start_dt_iso}`, `{end_dt_iso}`, `{start_year}`, `{end_year}`.
+- **Auto Title uses**:
+  - **Full dataset (Columns tab)**: uses the loaded dataset date range (NaT rows ignored in stitched data).
+  - **Current view range**: attempts to map the visible x-range to datetime; if mapping is not possible, it falls back to full-dataset tokens.
+- **Day count mode**:
+  - **Date diff (end-start)**: 1/13 -> 1/19 yields Day 1-6.
+  - **Inclusive (end-start+1)**: 1/13 -> 1/19 yields Day 1-7.
+- **Auto Title Preview** shows the computed title (and notes when a fallback is used).
 
 **Ranges**
 - Time min/max, Pressure Y min/max, Temp Y min/max, Derivative Y min/max.
@@ -649,7 +670,7 @@ The script includes internal change summaries:
   - Treeview selection recursion fix in annotations editor.
   - Layout fixes for the annotations Toplevel.
 
-Note: the UI title uses `APP_VERSION` set to `V1.8.5`.
+Note: the UI title uses `APP_VERSION` set to `V1.8.6`.
 
 ## Troubleshooting
 - **"No Data" or "Missing Columns" errors**: Load a sheet on the Data tab and set required columns on the Columns tab.

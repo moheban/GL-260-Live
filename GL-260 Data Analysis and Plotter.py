@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.8.5
-# Date: 2026-01-16
+# Version: V1.8.6
+# Date: 2026-01-19
 
 import os
 import sys
@@ -700,6 +700,25 @@ def _normalize_elapsed_time_unit(value: Any) -> str:
         if normalized in ELAPSED_TIME_UNITS:
             return normalized
     return DEFAULT_ELAPSED_TIME_UNIT
+
+
+def _normalize_title_type_list(value: Any) -> List[str]:
+    if not isinstance(value, (list, tuple)):
+        return list(DEFAULT_TITLE_TYPES)
+    normalized: List[str] = []
+    seen: Set[str] = set()
+    for raw in value:
+        name = str(raw).strip() if raw is not None else ""
+        if not name:
+            continue
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(name)
+    if not normalized:
+        return list(DEFAULT_TITLE_TYPES)
+    return normalized
 
 
 def _normalize_mpl_color(value: Any) -> str:
@@ -7231,7 +7250,16 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.8.5"
+APP_VERSION = "V1.8.6"
+
+AUTO_TITLE_SOURCE_FULL = "full_dataset"
+AUTO_TITLE_SOURCE_CURRENT = "current_view"
+AUTO_TITLE_SOURCES = (AUTO_TITLE_SOURCE_FULL, AUTO_TITLE_SOURCE_CURRENT)
+AUTO_TITLE_DAY_DIFF = "date_diff"
+AUTO_TITLE_DAY_INCLUSIVE = "inclusive"
+AUTO_TITLE_DAY_MODES = (AUTO_TITLE_DAY_DIFF, AUTO_TITLE_DAY_INCLUSIVE)
+DEFAULT_AUTO_TITLE_TEMPLATE = "{type} Day {day_start}-{day_end} {date_start}-{date_end}"
+DEFAULT_TITLE_TYPES = ["Reaction"]
 
 
 DEBUG_SERIES_FLOW = False
@@ -16736,6 +16764,50 @@ if os.path.exists(SETTINGS_FILE):
 
     initial_suptitle = settings.get("suptitle_text", "PR-20332 CLM-11873-0 Synthesis")
 
+    # Auto title
+
+    auto_title_enabled = bool(settings.get("auto_title_enabled", False))
+    settings["auto_title_enabled"] = auto_title_enabled
+
+    auto_title_template = settings.get(
+        "auto_title_template", DEFAULT_AUTO_TITLE_TEMPLATE
+    )
+    if not isinstance(auto_title_template, str) or not auto_title_template.strip():
+        auto_title_template = DEFAULT_AUTO_TITLE_TEMPLATE
+    settings["auto_title_template"] = auto_title_template
+
+    auto_title_source = settings.get("auto_title_source", AUTO_TITLE_SOURCE_FULL)
+    if auto_title_source not in AUTO_TITLE_SOURCES:
+        auto_title_source = AUTO_TITLE_SOURCE_FULL
+    settings["auto_title_source"] = auto_title_source
+
+    auto_title_day_mode = settings.get("auto_title_day_mode", AUTO_TITLE_DAY_DIFF)
+    if auto_title_day_mode not in AUTO_TITLE_DAY_MODES:
+        auto_title_day_mode = AUTO_TITLE_DAY_DIFF
+    settings["auto_title_day_mode"] = auto_title_day_mode
+
+    title_types = _normalize_title_type_list(settings.get("title_data_types"))
+    settings["title_data_types"] = list(title_types)
+
+    selected_type = settings.get("title_selected_type", title_types[0])
+    selected_type = str(selected_type).strip() if selected_type is not None else ""
+    matched_type = None
+    if selected_type:
+        for entry in title_types:
+            if entry.casefold() == selected_type.casefold():
+                matched_type = entry
+                break
+    if matched_type is None:
+        matched_type = title_types[0]
+    settings["title_selected_type"] = matched_type
+
+    initial_auto_title_enabled = settings["auto_title_enabled"]
+    initial_auto_title_template = settings["auto_title_template"]
+    initial_auto_title_source = settings["auto_title_source"]
+    initial_auto_title_day_mode = settings["auto_title_day_mode"]
+    initial_title_types = list(settings["title_data_types"])
+    initial_title_selected_type = settings["title_selected_type"]
+
     # Columns
 
     initial_columns = settings.get("columns", {})
@@ -23854,6 +23926,21 @@ class UnifiedApp(tk.Tk):
         self.suptitle_text = tk.StringVar(
             value=settings.get("suptitle_text", initial_suptitle)
         )
+
+        self.auto_title_enabled_var = tk.BooleanVar(
+            value=initial_auto_title_enabled
+        )
+        self.auto_title_source_var = tk.StringVar(value=initial_auto_title_source)
+        self.auto_title_template_var = tk.StringVar(
+            value=initial_auto_title_template
+        )
+        self.auto_title_day_mode_var = tk.StringVar(
+            value=initial_auto_title_day_mode
+        )
+        self.title_data_type_var = tk.StringVar(value=initial_title_selected_type)
+        self._auto_title_preview_var = tk.StringVar(value="")
+        self._auto_title_warning_cache: Set[str] = set()
+        self._auto_title_view_cache: Dict[Any, Any] = {}
 
         min_cycle_default = settings.get("min_cycle_drop", initial_min_cycle_drop)
         self.min_cycle_drop = tk.DoubleVar(value=min_cycle_default)
@@ -34630,6 +34717,7 @@ class UnifiedApp(tk.Tk):
         lf_titles.grid(row=0, column=0, columnspan=4, sticky="ew", **pad)
 
         lf_titles.grid_columnconfigure(1, weight=1)
+        lf_titles.grid_columnconfigure(2, weight=0)
 
         ttk.Label(lf_titles, text="Suptitle").grid(
             row=0, column=0, sticky="w", padx=6, pady=4
@@ -34643,9 +34731,160 @@ class UnifiedApp(tk.Tk):
             row=1, column=0, sticky="w", padx=6, pady=4
         )
 
-        ttk.Entry(lf_titles, textvariable=self.title_text).grid(
+        title_entry = ttk.Entry(lf_titles, textvariable=self.title_text)
+        title_entry.grid(
             row=1, column=1, sticky="ew", padx=6, pady=4
         )
+        self._title_entry = title_entry
+
+        copy_btn = ttk.Button(
+            lf_titles,
+            text="Copy Auto Title -> Manual Title",
+            command=self._copy_auto_title_to_manual,
+        )
+        copy_btn.grid(row=1, column=2, sticky="e", padx=6, pady=4)
+        self._copy_auto_title_btn = copy_btn
+
+        auto_frame = ttk.Frame(lf_titles)
+        auto_frame.grid(
+            row=2, column=0, columnspan=3, sticky="ew", padx=6, pady=(2, 6)
+        )
+        auto_frame.grid_columnconfigure(1, weight=1)
+
+        ttk.Checkbutton(
+            auto_frame,
+            text="Auto-generate Title",
+            variable=self.auto_title_enabled_var,
+        ).grid(row=0, column=0, sticky="w", pady=(2, 4))
+
+        ttk.Label(auto_frame, text="Data Type").grid(
+            row=1, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        type_choices = self._get_title_type_choices()
+        type_combo = ttk.Combobox(
+            auto_frame,
+            textvariable=self.title_data_type_var,
+            state="readonly",
+            values=type_choices,
+        )
+        type_combo.grid(row=1, column=1, sticky="ew", padx=6, pady=2)
+        self._title_type_combo = type_combo
+        ttk.Button(
+            auto_frame, text="Manage Types...", command=self._open_manage_title_types_dialog
+        ).grid(row=1, column=2, sticky="e", padx=(6, 0), pady=2)
+
+        source_labels = {
+            AUTO_TITLE_SOURCE_FULL: "Full dataset (Columns tab)",
+            AUTO_TITLE_SOURCE_CURRENT: "Current view range",
+        }
+        source_label_to_value = {v: k for k, v in source_labels.items()}
+        source_display_var = tk.StringVar(
+            value=source_labels.get(
+                self.auto_title_source_var.get(), source_labels[AUTO_TITLE_SOURCE_FULL]
+            )
+        )
+        self._auto_title_source_display_var = source_display_var
+
+        ttk.Label(auto_frame, text="Auto Title uses").grid(
+            row=2, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        source_combo = ttk.Combobox(
+            auto_frame,
+            textvariable=source_display_var,
+            state="readonly",
+            values=list(source_labels.values()),
+        )
+        source_combo.grid(row=2, column=1, sticky="ew", padx=6, pady=2)
+        self._auto_title_source_combo = source_combo
+
+        day_mode_labels = {
+            AUTO_TITLE_DAY_DIFF: "Date diff (end-start)",
+            AUTO_TITLE_DAY_INCLUSIVE: "Inclusive (end-start+1)",
+        }
+        day_mode_label_to_value = {v: k for k, v in day_mode_labels.items()}
+        day_mode_display_var = tk.StringVar(
+            value=day_mode_labels.get(
+                self.auto_title_day_mode_var.get(), day_mode_labels[AUTO_TITLE_DAY_DIFF]
+            )
+        )
+        self._auto_title_day_mode_display_var = day_mode_display_var
+
+        ttk.Label(auto_frame, text="Day count mode").grid(
+            row=3, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        day_mode_combo = ttk.Combobox(
+            auto_frame,
+            textvariable=day_mode_display_var,
+            state="readonly",
+            values=list(day_mode_labels.values()),
+        )
+        day_mode_combo.grid(row=3, column=1, sticky="ew", padx=6, pady=2)
+        self._auto_title_day_mode_combo = day_mode_combo
+
+        ttk.Label(auto_frame, text="Template").grid(
+            row=4, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        template_entry = ttk.Entry(
+            auto_frame, textvariable=self.auto_title_template_var
+        )
+        template_entry.grid(row=4, column=1, sticky="ew", padx=6, pady=2)
+        self._auto_title_template_entry = template_entry
+        ttk.Button(
+            auto_frame, text="Edit...", command=self._open_auto_title_template_editor
+        ).grid(row=4, column=2, sticky="e", padx=(6, 0), pady=2)
+
+        ttk.Label(auto_frame, text="Auto Title Preview").grid(
+            row=5, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        ttk.Label(
+            auto_frame,
+            textvariable=self._auto_title_preview_var,
+            wraplength=540,
+        ).grid(row=5, column=1, columnspan=2, sticky="w", padx=6, pady=2)
+
+        def _sync_source_from_display(*_):
+            label = source_display_var.get()
+            value = source_label_to_value.get(label, AUTO_TITLE_SOURCE_FULL)
+            if value != self.auto_title_source_var.get():
+                self.auto_title_source_var.set(value)
+
+        def _sync_source_display(*_):
+            value = self.auto_title_source_var.get()
+            label = source_labels.get(value, source_labels[AUTO_TITLE_SOURCE_FULL])
+            if label != source_display_var.get():
+                source_display_var.set(label)
+
+        def _sync_day_mode_from_display(*_):
+            label = day_mode_display_var.get()
+            value = day_mode_label_to_value.get(label, AUTO_TITLE_DAY_DIFF)
+            if value != self.auto_title_day_mode_var.get():
+                self.auto_title_day_mode_var.set(value)
+
+        def _sync_day_mode_display(*_):
+            value = self.auto_title_day_mode_var.get()
+            label = day_mode_labels.get(value, day_mode_labels[AUTO_TITLE_DAY_DIFF])
+            if label != day_mode_display_var.get():
+                day_mode_display_var.set(label)
+
+        source_display_var.trace_add("write", _sync_source_from_display)
+        self.auto_title_source_var.trace_add("write", _sync_source_display)
+        day_mode_display_var.trace_add("write", _sync_day_mode_from_display)
+        self.auto_title_day_mode_var.trace_add("write", _sync_day_mode_display)
+
+        for var in (
+            self.auto_title_enabled_var,
+            self.auto_title_source_var,
+            self.auto_title_template_var,
+            self.auto_title_day_mode_var,
+            self.title_data_type_var,
+        ):
+            var.trace_add("write", self._update_auto_title_preview)
+
+        self.auto_title_enabled_var.trace_add(
+            "write", self._update_auto_title_controls_state
+        )
+        self._update_auto_title_controls_state()
+        self._update_auto_title_preview()
 
         # Ranges
 
@@ -40254,6 +40493,655 @@ class UnifiedApp(tk.Tk):
         self._numeric_cache[key] = result
 
         return result
+
+    def _get_title_type_choices(self) -> List[str]:
+        types = _normalize_title_type_list(settings.get("title_data_types"))
+        settings["title_data_types"] = list(types)
+        return types
+
+    def _resolve_title_type_selection(self) -> str:
+        types = self._get_title_type_choices()
+        selected = str(self.title_data_type_var.get() or "").strip()
+        matched = None
+        if selected:
+            for entry in types:
+                if entry.casefold() == selected.casefold():
+                    matched = entry
+                    break
+        if matched is None:
+            matched = types[0]
+        if matched != self.title_data_type_var.get():
+            try:
+                self.title_data_type_var.set(matched)
+            except Exception:
+                pass
+        settings["title_selected_type"] = matched
+        return matched
+
+    def _format_mmdd(self, dt_value: Any) -> str:
+        try:
+            return f"{dt_value.month}/{dt_value.day}"
+        except Exception:
+            return ""
+
+    def _safe_format_template(
+        self, template: str, tokens: Dict[str, Any]
+    ) -> Tuple[bool, str]:
+        try:
+            return True, template.format(**tokens)
+        except Exception as exc:
+            return False, str(exc)
+
+    def _emit_auto_title_warning(self, key: str, message: str) -> None:
+        if key in self._auto_title_warning_cache:
+            return
+        self._auto_title_warning_cache.add(key)
+        try:
+            messagebox.showwarning("Auto Title", message)
+        except Exception:
+            pass
+
+    def _get_datetime_series_for_title_full_dataset(self):
+        if self.df is None:
+            return None
+        dt_col = None
+        stitched_col = getattr(self, "_stitched_dt_col", None)
+        if stitched_col and stitched_col in self.df.columns:
+            dt_col = stitched_col
+        else:
+            dt_col = (self.columns or {}).get("dt")
+        if not dt_col or dt_col == "None" or dt_col not in self.df.columns:
+            return None
+        series = self.df[dt_col]
+        if not pd.api.types.is_datetime64_any_dtype(series.dtype):
+            series = pd.to_datetime(series, errors="coerce")
+        series = series.dropna()
+        if series.empty:
+            return None
+        return series
+
+    def _base_auto_title_tokens(self) -> Dict[str, Any]:
+        return {
+            "type": self._resolve_title_type_selection(),
+            "day_start": 1,
+            "day_end": 1,
+            "date_start": "",
+            "date_end": "",
+        }
+
+    def _tokens_from_dt_range(
+        self, start_dt: Any, end_dt: Any
+    ) -> Tuple[Dict[str, Any], Optional[str]]:
+        tokens = self._base_auto_title_tokens()
+        if start_dt is None or end_dt is None:
+            return tokens, "Auto Title needs a valid Date & Time mapping to compute date range."
+        if pd.isna(start_dt) or pd.isna(end_dt):
+            return tokens, "Auto Title needs a valid Date & Time mapping to compute date range."
+        try:
+            start_date = start_dt.date()
+            end_date = end_dt.date()
+        except Exception:
+            return tokens, "Auto Title needs a valid Date & Time mapping to compute date range."
+        day_mode = (self.auto_title_day_mode_var.get() or AUTO_TITLE_DAY_DIFF).strip()
+        delta_days = (end_date - start_date).days
+        if day_mode == AUTO_TITLE_DAY_INCLUSIVE:
+            day_end = max(1, delta_days + 1)
+        else:
+            day_end = max(1, delta_days)
+        tokens.update(
+            {
+                "day_end": day_end,
+                "date_start": self._format_mmdd(start_dt),
+                "date_end": self._format_mmdd(end_dt),
+                "start_dt_iso": start_dt.strftime("%Y-%m-%d"),
+                "end_dt_iso": end_dt.strftime("%Y-%m-%d"),
+                "start_year": getattr(start_dt, "year", ""),
+                "end_year": getattr(end_dt, "year", ""),
+            }
+        )
+        return tokens, None
+
+    def _compute_tokens_from_full_dataset(self) -> Tuple[Dict[str, Any], Optional[str]]:
+        dt_series = self._get_datetime_series_for_title_full_dataset()
+        if dt_series is None:
+            return (
+                self._base_auto_title_tokens(),
+                "Auto Title needs a valid Date & Time mapping to compute date range.",
+            )
+        try:
+            start_dt = dt_series.min()
+            end_dt = dt_series.max()
+        except Exception:
+            return (
+                self._base_auto_title_tokens(),
+                "Auto Title needs a valid Date & Time mapping to compute date range.",
+            )
+        return self._tokens_from_dt_range(start_dt, end_dt)
+
+    def _get_current_plot_xlim(self) -> Optional[Tuple[float, float]]:
+        try:
+            current_tab = self.nb.select()
+        except Exception:
+            current_tab = None
+        if not current_tab:
+            return None
+        try:
+            tab_index = self.nb.index(current_tab)
+        except Exception:
+            return None
+        try:
+            canvas = self._canvases[tab_index]
+        except Exception:
+            return None
+        fig = getattr(canvas, "figure", None)
+        if fig is None or not getattr(fig, "axes", None):
+            return None
+        ax = fig.axes[0]
+        try:
+            xlim = ax.get_xlim()
+        except Exception:
+            return None
+        try:
+            return (float(xlim[0]), float(xlim[1]))
+        except Exception:
+            return None
+
+    def _compute_tokens_from_current_view(
+        self,
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        if self.df is None:
+            return None, "Current view range unavailable; using full dataset."
+        xlim = self._get_current_plot_xlim()
+        if not xlim:
+            return None, "Current view range unavailable; using full dataset."
+        x0, x1 = xlim
+        if not (math.isfinite(x0) and math.isfinite(x1)):
+            return None, "Current view range unavailable; using full dataset."
+        if x0 > x1:
+            x0, x1 = x1, x0
+
+        x_col = (self.columns or {}).get("x")
+        if not x_col or x_col == "None" or x_col not in self.df.columns:
+            return None, "Current view range unavailable; using full dataset."
+
+        dt_col = None
+        stitched_col = getattr(self, "_stitched_dt_col", None)
+        if stitched_col and stitched_col in self.df.columns:
+            dt_col = stitched_col
+        else:
+            dt_col = (self.columns or {}).get("dt")
+
+        cache_key = (id(self.df), x_col, dt_col, round(x0, 6), round(x1, 6))
+        cached = self._auto_title_view_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        x_series = self.df[x_col]
+        if pd.api.types.is_datetime64_any_dtype(x_series.dtype):
+            try:
+                import matplotlib.dates as mdates
+
+                start_dt = mdates.num2date(x0)
+                end_dt = mdates.num2date(x1)
+            except Exception:
+                result = (None, "Current view range unavailable; using full dataset.")
+            else:
+                result = self._tokens_from_dt_range(start_dt, end_dt)
+            self._auto_title_view_cache[cache_key] = result
+            return result
+
+        if not dt_col or dt_col == "None" or dt_col not in self.df.columns:
+            result = (None, "Current view range unavailable; using full dataset.")
+            self._auto_title_view_cache[cache_key] = result
+            return result
+
+        try:
+            x_numeric = pd.to_numeric(x_series, errors="coerce")
+            dt_series = pd.to_datetime(self.df[dt_col], errors="coerce")
+            mask = x_numeric.notna() & dt_series.notna()
+            if not mask.any():
+                result = (None, "Current view range unavailable; using full dataset.")
+            else:
+                x_valid = x_numeric[mask]
+                dt_valid = dt_series[mask]
+                idx_start = (x_valid - x0).abs().idxmin()
+                idx_end = (x_valid - x1).abs().idxmin()
+                start_dt = dt_valid.loc[idx_start]
+                end_dt = dt_valid.loc[idx_end]
+                result = self._tokens_from_dt_range(start_dt, end_dt)
+        except Exception:
+            result = (None, "Current view range unavailable; using full dataset.")
+
+        self._auto_title_view_cache[cache_key] = result
+        return result
+
+    def _get_auto_title_tokens(
+        self, source_mode: str
+    ) -> Tuple[Dict[str, Any], Optional[str], bool]:
+        source_mode = (source_mode or "").strip().lower()
+        used_fallback = False
+        if source_mode == AUTO_TITLE_SOURCE_CURRENT:
+            tokens, warning = self._compute_tokens_from_current_view()
+            if tokens is None:
+                tokens, fallback_warning = self._compute_tokens_from_full_dataset()
+                used_fallback = True
+                if fallback_warning:
+                    warning = fallback_warning
+                elif warning is None:
+                    warning = "Current view range unavailable; using full dataset."
+        else:
+            tokens, warning = self._compute_tokens_from_full_dataset()
+        return tokens, warning, used_fallback
+
+    def _compute_auto_title_text(
+        self,
+    ) -> Tuple[Optional[str], Optional[str], bool, Optional[str]]:
+        tokens, warning, used_fallback = self._get_auto_title_tokens(
+            self.auto_title_source_var.get()
+        )
+        template = (self.auto_title_template_var.get() or "").strip()
+        if not template:
+            template = DEFAULT_AUTO_TITLE_TEMPLATE
+        ok, formatted = self._safe_format_template(template, tokens)
+        if not ok:
+            return None, warning, used_fallback, formatted
+        return formatted, warning, used_fallback, None
+
+    def _resolve_effective_title(self, manual_title: str, *, preview: bool = False) -> str:
+        if not self.auto_title_enabled_var.get():
+            return manual_title
+        computed, warning, _used_fallback, error = self._compute_auto_title_text()
+        if computed is None:
+            if not preview:
+                self._emit_auto_title_warning(
+                    f"template:{error}",
+                    f"Auto Title template error: {error}",
+                )
+            return manual_title
+        if warning and not preview:
+            self._emit_auto_title_warning(f"data:{warning}", warning)
+        return computed
+
+    def _update_auto_title_controls_state(self, *_args) -> None:
+        title_entry = getattr(self, "_title_entry", None)
+        if title_entry is None or not title_entry.winfo_exists():
+            return
+        state = "disabled" if self.auto_title_enabled_var.get() else "normal"
+        try:
+            title_entry.configure(state=state)
+        except Exception:
+            pass
+
+    def _update_auto_title_preview(self, *_args) -> None:
+        preview_var = getattr(self, "_auto_title_preview_var", None)
+        if preview_var is None:
+            return
+        if not self.auto_title_enabled_var.get():
+            preview_var.set("Auto Title disabled.")
+            return
+        computed, warning, used_fallback, error = self._compute_auto_title_text()
+        if computed is None:
+            preview_var.set(f"Template error: {error}")
+            return
+        preview_text = computed
+        if used_fallback:
+            preview_text += " (fallback: full dataset)"
+        elif warning:
+            preview_text += " (missing Date & Time mapping)"
+        preview_var.set(preview_text)
+
+    def _copy_auto_title_to_manual(self) -> None:
+        computed, warning, _used_fallback, error = self._compute_auto_title_text()
+        if computed is None:
+            try:
+                messagebox.showwarning(
+                    "Auto Title", f"Auto Title template error: {error}"
+                )
+            except Exception:
+                pass
+            return
+        try:
+            self.title_text.set(computed)
+        except Exception:
+            pass
+        if warning:
+            self._emit_auto_title_warning(f"data:{warning}", warning)
+        self._update_auto_title_preview()
+
+    def _open_auto_title_template_editor(self) -> None:
+        existing = getattr(self, "_auto_title_template_window", None)
+        if existing is not None and existing.winfo_exists():
+            try:
+                existing.deiconify()
+                existing.lift()
+                existing.focus_force()
+            except Exception:
+                pass
+            return
+
+        window = tk.Toplevel(self)
+        window.title("Edit Auto Title Template")
+        window.transient(self)
+        window.resizable(True, True)
+        window.grab_set()
+        self._auto_title_template_window = window
+
+        ttk.Label(
+            window,
+            text="Template placeholders:",
+        ).grid(row=0, column=0, sticky="w", padx=12, pady=(12, 4))
+        placeholders = (
+            "{type}, {day_start}, {day_end}, {date_start}, {date_end}, "
+            "{start_dt_iso}, {end_dt_iso}, {start_year}, {end_year}"
+        )
+        ttk.Label(window, text=placeholders, wraplength=520).grid(
+            row=1, column=0, sticky="w", padx=12, pady=(0, 8)
+        )
+
+        text = tk.Text(window, height=5, width=72, wrap="word")
+        text.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 8))
+        text.insert("1.0", self.auto_title_template_var.get() or "")
+
+        window.grid_rowconfigure(2, weight=1)
+        window.grid_columnconfigure(0, weight=1)
+
+        button_frame = ttk.Frame(window)
+        button_frame.grid(row=3, column=0, sticky="e", padx=12, pady=(0, 12))
+
+        def _validate_template() -> bool:
+            candidate = text.get("1.0", "end").strip()
+            if not candidate:
+                try:
+                    messagebox.showwarning(
+                        "Template Validation", "Template cannot be empty."
+                    )
+                except Exception:
+                    pass
+                return False
+            dummy_tokens = {
+                "type": "Reaction",
+                "day_start": 1,
+                "day_end": 6,
+                "date_start": "1/13",
+                "date_end": "1/19",
+                "start_dt_iso": "2026-01-13",
+                "end_dt_iso": "2026-01-19",
+                "start_year": 2026,
+                "end_year": 2026,
+            }
+            ok, formatted = self._safe_format_template(candidate, dummy_tokens)
+            if not ok:
+                try:
+                    messagebox.showwarning(
+                        "Template Validation", f"Invalid template: {formatted}"
+                    )
+                except Exception:
+                    pass
+                return False
+            try:
+                messagebox.showinfo(
+                    "Template Validation",
+                    f"Template looks good.\nExample: {formatted}",
+                )
+            except Exception:
+                pass
+            return True
+
+        def _apply():
+            candidate = text.get("1.0", "end").strip()
+            if not candidate:
+                try:
+                    messagebox.showwarning(
+                        "Template Validation", "Template cannot be empty."
+                    )
+                except Exception:
+                    pass
+                return
+            ok, formatted = self._safe_format_template(
+                candidate,
+                {
+                    "type": "Reaction",
+                    "day_start": 1,
+                    "day_end": 6,
+                    "date_start": "1/13",
+                    "date_end": "1/19",
+                    "start_dt_iso": "2026-01-13",
+                    "end_dt_iso": "2026-01-19",
+                    "start_year": 2026,
+                    "end_year": 2026,
+                },
+            )
+            if not ok:
+                try:
+                    messagebox.showwarning(
+                        "Template Validation", f"Invalid template: {formatted}"
+                    )
+                except Exception:
+                    pass
+                return
+            self.auto_title_template_var.set(candidate)
+            self._update_auto_title_preview()
+            _close()
+
+        def _close():
+            try:
+                window.grab_release()
+            except Exception:
+                pass
+            try:
+                window.destroy()
+            except Exception:
+                pass
+            self._auto_title_template_window = None
+
+        window.protocol("WM_DELETE_WINDOW", _close)
+
+        ttk.Button(button_frame, text="Validate", command=_validate_template).grid(
+            row=0, column=0, padx=(0, 6)
+        )
+        ttk.Button(button_frame, text="OK", command=_apply).grid(
+            row=0, column=1, padx=(0, 6)
+        )
+        ttk.Button(button_frame, text="Cancel", command=_close).grid(
+            row=0, column=2
+        )
+
+    def _apply_title_types_update(
+        self, types_list: Sequence[str], selected_type: Optional[str]
+    ) -> None:
+        types = _normalize_title_type_list(types_list)
+        settings["title_data_types"] = list(types)
+        selected_value = str(selected_type or "").strip()
+        matched = None
+        if selected_value:
+            for entry in types:
+                if entry.casefold() == selected_value.casefold():
+                    matched = entry
+                    break
+        if matched is None:
+            matched = types[0]
+        settings["title_selected_type"] = matched
+        try:
+            self.title_data_type_var.set(matched)
+        except Exception:
+            pass
+        combo = getattr(self, "_title_type_combo", None)
+        if combo is not None and combo.winfo_exists():
+            try:
+                combo.configure(values=list(types))
+            except Exception:
+                pass
+        self._update_auto_title_preview()
+
+    def _open_manage_title_types_dialog(self) -> None:
+        existing = getattr(self, "_manage_title_types_window", None)
+        if existing is not None and existing.winfo_exists():
+            try:
+                existing.deiconify()
+                existing.lift()
+                existing.focus_force()
+            except Exception:
+                pass
+            return
+
+        window = tk.Toplevel(self)
+        window.title("Manage Title Types")
+        window.transient(self)
+        window.resizable(False, False)
+        window.grab_set()
+        self._manage_title_types_window = window
+
+        types = list(self._get_title_type_choices())
+
+        ttk.Label(window, text="Data Types:").grid(
+            row=0, column=0, columnspan=2, sticky="w", padx=12, pady=(12, 6)
+        )
+
+        listbox = tk.Listbox(window, height=8, exportselection=False)
+        listbox.grid(row=1, column=0, rowspan=5, sticky="nsew", padx=12, pady=(0, 12))
+
+        button_frame = ttk.Frame(window)
+        button_frame.grid(row=1, column=1, sticky="n", padx=(0, 12), pady=(0, 12))
+
+        def _refresh_listbox(selected: Optional[int] = None) -> None:
+            listbox.delete(0, tk.END)
+            for entry in types:
+                listbox.insert(tk.END, entry)
+            if not types:
+                return
+            if selected is None:
+                selected = 0
+            selected = max(0, min(selected, len(types) - 1))
+            listbox.selection_clear(0, tk.END)
+            listbox.selection_set(selected)
+            listbox.activate(selected)
+            listbox.see(selected)
+
+        def _selected_index() -> Optional[int]:
+            try:
+                selection = listbox.curselection()
+                return int(selection[0]) if selection else None
+            except Exception:
+                return None
+
+        def _normalize_candidate(name: Optional[str]) -> str:
+            return str(name or "").strip()
+
+        def _has_duplicate(name: str, ignore_index: Optional[int] = None) -> bool:
+            key = name.casefold()
+            for idx, entry in enumerate(types):
+                if ignore_index is not None and idx == ignore_index:
+                    continue
+                if entry.casefold() == key:
+                    return True
+            return False
+
+        def _add_type() -> None:
+            name = simpledialog.askstring(
+                "Add Data Type", "Type name:", parent=window
+            )
+            name = _normalize_candidate(name)
+            if not name:
+                return
+            if _has_duplicate(name):
+                messagebox.showwarning(
+                    "Duplicate Type", "Type names must be unique."
+                )
+                return
+            types.append(name)
+            _refresh_listbox(len(types) - 1)
+
+        def _rename_type() -> None:
+            idx = _selected_index()
+            if idx is None:
+                messagebox.showinfo("Rename Type", "Select a type to rename.")
+                return
+            current = types[idx]
+            name = simpledialog.askstring(
+                "Rename Data Type", "New name:", initialvalue=current, parent=window
+            )
+            name = _normalize_candidate(name)
+            if not name:
+                return
+            if _has_duplicate(name, ignore_index=idx):
+                messagebox.showwarning(
+                    "Duplicate Type", "Type names must be unique."
+                )
+                return
+            types[idx] = name
+            _refresh_listbox(idx)
+
+        def _delete_type() -> None:
+            idx = _selected_index()
+            if idx is None:
+                messagebox.showinfo("Delete Type", "Select a type to delete.")
+                return
+            del types[idx]
+            if not types:
+                types[:] = list(DEFAULT_TITLE_TYPES)
+            _refresh_listbox(min(idx, len(types) - 1))
+
+        def _move(delta: int) -> None:
+            idx = _selected_index()
+            if idx is None:
+                return
+            new_idx = idx + delta
+            if new_idx < 0 or new_idx >= len(types):
+                return
+            types[idx], types[new_idx] = types[new_idx], types[idx]
+            _refresh_listbox(new_idx)
+
+        ttk.Button(button_frame, text="Add", command=_add_type).grid(
+            row=0, column=0, sticky="ew", pady=2
+        )
+        ttk.Button(button_frame, text="Rename", command=_rename_type).grid(
+            row=1, column=0, sticky="ew", pady=2
+        )
+        ttk.Button(button_frame, text="Delete", command=_delete_type).grid(
+            row=2, column=0, sticky="ew", pady=2
+        )
+        ttk.Button(button_frame, text="Move Up", command=lambda: _move(-1)).grid(
+            row=3, column=0, sticky="ew", pady=2
+        )
+        ttk.Button(button_frame, text="Move Down", command=lambda: _move(1)).grid(
+            row=4, column=0, sticky="ew", pady=2
+        )
+
+        def _apply() -> None:
+            selected_idx = _selected_index()
+            selected_value = None
+            if selected_idx is not None and selected_idx < len(types):
+                selected_value = types[selected_idx]
+            self._apply_title_types_update(types, selected_value)
+            _close()
+
+        def _close() -> None:
+            try:
+                window.grab_release()
+            except Exception:
+                pass
+            try:
+                window.destroy()
+            except Exception:
+                pass
+            self._manage_title_types_window = None
+
+        _refresh_listbox(
+            types.index(self._resolve_title_type_selection())
+            if self._resolve_title_type_selection() in types
+            else 0
+        )
+
+        window.protocol("WM_DELETE_WINDOW", _close)
+
+        action_frame = ttk.Frame(window)
+        action_frame.grid(row=6, column=0, columnspan=2, sticky="e", padx=12, pady=12)
+        ttk.Button(action_frame, text="OK", command=_apply).grid(
+            row=0, column=0, padx=(0, 6)
+        )
+        ttk.Button(action_frame, text="Cancel", command=_close).grid(
+            row=0, column=1
+        )
 
     def _refresh_gas_preset_choices(self, *, selected=None):
         names = list(BASE_GAS_PRESETS.keys()) or ["Custom"]
@@ -54455,6 +55343,8 @@ class UnifiedApp(tk.Tk):
                 self._refresh_columns_ui()
 
                 self._mark_columns_dirty(reason="load sheets")
+                self._auto_title_view_cache.clear()
+                self._update_auto_title_preview()
 
             except Exception as e:
 
@@ -54501,6 +55391,8 @@ class UnifiedApp(tk.Tk):
             self._refresh_columns_ui()
 
             self._mark_columns_dirty(reason="load sheet")
+            self._auto_title_view_cache.clear()
+            self._update_auto_title_preview()
 
         except Exception as e:
 
@@ -54961,6 +55853,15 @@ class UnifiedApp(tk.Tk):
         )
         if auto_jump:
             self._focus_plot_tab()
+
+        try:
+            self._auto_title_view_cache.clear()
+        except Exception:
+            pass
+        try:
+            self._update_auto_title_preview()
+        except Exception:
+            pass
 
         self._is_applying_columns = False
         if DEBUG_SERIES_FLOW:
@@ -56285,6 +57186,14 @@ class UnifiedApp(tk.Tk):
             args_list[-1] = bool(gates_ctx.get("include_moles", args_list[-1]))
         return tuple(args_list)
 
+    def _override_plot_args_title(self, args: Tuple[Any, ...]) -> Tuple[Any, ...]:
+        if not args or len(args) < 14:
+            return args
+        args_list = list(args)
+        manual_title = str(args_list[12] or "")
+        args_list[12] = self._resolve_effective_title(manual_title)
+        return tuple(args_list)
+
     def render_plot(
         self,
         plot_kind: str,
@@ -56366,6 +57275,7 @@ class UnifiedApp(tk.Tk):
 
         args = self._collect_plot_args()
         args = self._override_plot_args_gates(args, gates_ctx)
+        args = self._override_plot_args_title(args)
 
         plot_kind_value = (plot_kind or "").strip().lower()
         if plot_kind_value in {"fig1", "fig2", "fig_peaks", "core"}:
@@ -58157,6 +59067,22 @@ class UnifiedApp(tk.Tk):
         settings["title_text"] = title_text
 
         settings["suptitle_text"] = suptitle_text
+
+        auto_template = (self.auto_title_template_var.get() or "").strip()
+        if not auto_template:
+            auto_template = DEFAULT_AUTO_TITLE_TEMPLATE
+        auto_source = (self.auto_title_source_var.get() or "").strip().lower()
+        if auto_source not in AUTO_TITLE_SOURCES:
+            auto_source = AUTO_TITLE_SOURCE_FULL
+        auto_day_mode = (self.auto_title_day_mode_var.get() or "").strip().lower()
+        if auto_day_mode not in AUTO_TITLE_DAY_MODES:
+            auto_day_mode = AUTO_TITLE_DAY_DIFF
+        settings["auto_title_enabled"] = bool(self.auto_title_enabled_var.get())
+        settings["auto_title_template"] = auto_template
+        settings["auto_title_source"] = auto_source
+        settings["auto_title_day_mode"] = auto_day_mode
+        settings["title_data_types"] = list(self._get_title_type_choices())
+        settings["title_selected_type"] = self._resolve_title_type_selection()
 
         settings["auto_time_ticks"] = auto_time_ticks
 
