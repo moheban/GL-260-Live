@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.8.6
+# Version: V1.8.7
 # Date: 2026-01-19
 
 import os
@@ -7250,7 +7250,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.8.6"
+APP_VERSION = "V1.8.7"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -16668,25 +16668,27 @@ def _plot_series(
     return artist
 
 
-DEFAULT_PRODUCT_NAME = "CO2"
+DEFAULT_STARTING_MATERIAL_NAME = ""
+DEFAULT_STARTING_MATERIAL_FORMULA = ""
+DEFAULT_STARTING_MATERIAL_MOLAR_MASS = 0.0
+DEFAULT_STOICH_MOL_GAS_PER_MOL_STARTING = 0.0
 
-DEFAULT_PRODUCT_FORMULA = "13CO2"
-
-DEFAULT_PRODUCT_MOLAR_MASS = 39.997
+# Legacy aliases (avoid CO2 defaults for generic starting material settings)
+DEFAULT_PRODUCT_NAME = DEFAULT_STARTING_MATERIAL_NAME
+DEFAULT_PRODUCT_FORMULA = DEFAULT_STARTING_MATERIAL_FORMULA
+DEFAULT_PRODUCT_MOLAR_MASS = DEFAULT_STARTING_MATERIAL_MOLAR_MASS
 DEFAULT_GAS_MOLAR_MASS = 45.002
 gas_molar_mass = DEFAULT_GAS_MOLAR_MASS
 
+_PRODUCT_PRESET_CO2 = {
+    "name": "CO2",
+    "formula": "13CO2",
+    "molar_mass": 39.997,
+}
 PRODUCT_PRESETS = OrderedDict(
     [
-        (
-            "CO2 (13CO2)",
-            {
-                "name": DEFAULT_PRODUCT_NAME,
-                "formula": DEFAULT_PRODUCT_FORMULA,
-                "molar_mass": DEFAULT_PRODUCT_MOLAR_MASS,
-            },
-        ),
         ("Custom", None),
+        ("CO2 (13CO2)", _PRODUCT_PRESET_CO2),
     ]
 )
 
@@ -16739,6 +16741,58 @@ if os.path.exists(SETTINGS_FILE):
     else:
 
         settings = loaded_settings
+
+    def _coerce_setting_float(value, fallback):
+        try:
+            candidate = float(value)
+        except Exception:
+            return fallback
+        if not math.isfinite(candidate):
+            return fallback
+        return candidate
+
+    _starting_material_key_map = {
+        "product_preset": "starting_material_preset",
+        "product_name": "starting_material_name",
+        "product_formula": "starting_material_formula",
+        "product_molar_mass": "starting_material_mw_g_mol",
+        "starting_mass": "starting_material_mass_g",
+    }
+    for old_key, new_key in _starting_material_key_map.items():
+        if new_key not in settings and old_key in settings:
+            settings[new_key] = settings.get(old_key)
+
+    raw_name = settings.get("starting_material_name")
+    if not isinstance(raw_name, str):
+        settings["starting_material_name"] = DEFAULT_STARTING_MATERIAL_NAME
+
+    raw_formula = settings.get("starting_material_formula")
+    if not isinstance(raw_formula, str):
+        settings["starting_material_formula"] = DEFAULT_STARTING_MATERIAL_FORMULA
+
+    settings["starting_material_mw_g_mol"] = _coerce_setting_float(
+        settings.get("starting_material_mw_g_mol"),
+        DEFAULT_STARTING_MATERIAL_MOLAR_MASS,
+    )
+    settings["starting_material_mass_g"] = _coerce_setting_float(
+        settings.get("starting_material_mass_g"),
+        settings.get("starting_mass", settings.get("naoh_mass", 0.0)),
+    )
+    settings["stoich_mol_gas_per_mol_starting"] = _coerce_setting_float(
+        settings.get("stoich_mol_gas_per_mol_starting"),
+        DEFAULT_STOICH_MOL_GAS_PER_MOL_STARTING,
+    )
+
+    settings["summary_compact"] = bool(settings.get("summary_compact", True))
+    settings["summary_include_diagnostics"] = bool(
+        settings.get("summary_include_diagnostics", False)
+    )
+    settings["summary_include_per_cycle_gas_mass"] = bool(
+        settings.get("summary_include_per_cycle_gas_mass", False)
+    )
+    settings["summary_include_conversion_estimate"] = bool(
+        settings.get("summary_include_conversion_estimate", False)
+    )
 
     # Ranges
 
@@ -17144,16 +17198,38 @@ if os.path.exists(SETTINGS_FILE):
     initial_combined_right_key = settings.get("combined_y_right_key", "z")
     initial_combined_third_key = settings.get("combined_y_third_key", "y2")
 
-    initial_product_preset = settings.get("product_preset", next(iter(PRODUCT_PRESETS)))
+    initial_starting_material_preset = settings.get(
+        "starting_material_preset",
+        settings.get("product_preset", next(iter(PRODUCT_PRESETS))),
+    )
 
-    initial_product_name = settings.get("product_name", DEFAULT_PRODUCT_NAME)
+    initial_starting_material_name = settings.get(
+        "starting_material_name", DEFAULT_STARTING_MATERIAL_NAME
+    )
 
-    initial_product_molar_mass = settings.get(
-        "product_molar_mass", DEFAULT_PRODUCT_MOLAR_MASS
+    initial_starting_material_mw = settings.get(
+        "starting_material_mw_g_mol", DEFAULT_STARTING_MATERIAL_MOLAR_MASS
     )
 
     initial_starting_mass = settings.get(
-        "starting_mass", settings.get("naoh_mass", 0.0)
+        "starting_material_mass_g",
+        settings.get("starting_mass", settings.get("naoh_mass", 0.0)),
+    )
+
+    initial_starting_stoich = settings.get(
+        "stoich_mol_gas_per_mol_starting",
+        DEFAULT_STOICH_MOL_GAS_PER_MOL_STARTING,
+    )
+
+    initial_summary_compact = settings.get("summary_compact", True)
+    initial_summary_include_diagnostics = settings.get(
+        "summary_include_diagnostics", False
+    )
+    initial_summary_include_per_cycle_gas_mass = settings.get(
+        "summary_include_per_cycle_gas_mass", False
+    )
+    initial_summary_include_conversion_estimate = settings.get(
+        "summary_include_conversion_estimate", False
     )
 
     # Peak/Trough detection (UI defaults)
@@ -17319,13 +17395,36 @@ else:
     initial_combined_right_key = "z"
     initial_combined_third_key = "y2"
 
-    initial_product_preset = next(iter(PRODUCT_PRESETS))
+    initial_starting_material_preset = next(iter(PRODUCT_PRESETS))
 
-    initial_product_name = DEFAULT_PRODUCT_NAME
+    initial_starting_material_name = DEFAULT_STARTING_MATERIAL_NAME
 
-    initial_product_molar_mass = DEFAULT_PRODUCT_MOLAR_MASS
+    initial_starting_material_mw = DEFAULT_STARTING_MATERIAL_MOLAR_MASS
 
     initial_starting_mass = 0.0
+
+    initial_starting_stoich = DEFAULT_STOICH_MOL_GAS_PER_MOL_STARTING
+
+    initial_summary_compact = True
+    initial_summary_include_diagnostics = False
+    initial_summary_include_per_cycle_gas_mass = False
+    initial_summary_include_conversion_estimate = False
+
+    settings["starting_material_preset"] = initial_starting_material_preset
+    settings["starting_material_name"] = initial_starting_material_name
+    settings["starting_material_formula"] = DEFAULT_STARTING_MATERIAL_FORMULA
+    settings["starting_material_mw_g_mol"] = initial_starting_material_mw
+    settings["starting_material_mass_g"] = initial_starting_mass
+    settings["stoich_mol_gas_per_mol_starting"] = initial_starting_stoich
+
+    settings["summary_compact"] = initial_summary_compact
+    settings["summary_include_diagnostics"] = initial_summary_include_diagnostics
+    settings["summary_include_per_cycle_gas_mass"] = (
+        initial_summary_include_per_cycle_gas_mass
+    )
+    settings["summary_include_conversion_estimate"] = (
+        initial_summary_include_conversion_estimate
+    )
 
     # Peak/Trough detection (UI defaults)
 
@@ -17794,6 +17893,7 @@ def compute_reagent_metrics(
     product_formula,
     product_output_molar_mass,
 ):
+    # Deprecated for Cycle Analysis Summary; retained for backward compatibility.
     start_molar_value = _sanitize_non_negative(starting_molar_mass)
     if not math.isfinite(start_molar_value) or start_molar_value == 0.0:
         start_molar_value = float("nan")
@@ -17848,6 +17948,7 @@ def compute_reagent_metrics(
 
 
 def format_reagent_consumption_lines(metrics):
+    # Deprecated for Cycle Analysis Summary; retained for backward compatibility.
     lines = []
 
     name = metrics.get("product_name") or DEFAULT_PRODUCT_NAME
@@ -17923,6 +18024,545 @@ def format_reagent_consumption_lines(metrics):
         lines.append("Starting material mass: not provided")
 
     return lines
+
+
+@dataclass(frozen=True)
+class CycleSummaryOptions:
+    compact: bool = True
+    include_diagnostics: bool = False
+    include_per_cycle_gas_mass: bool = False
+    include_conversion_estimate: bool = False
+
+
+@dataclass(frozen=True)
+class ResolvedCycleSummaryInputs:
+    selection_mode: str
+    min_cycle_drop_psi: float
+    ignore_min_cycle_drop: bool
+    peak_prominence: Optional[float]
+    peak_distance: Optional[int]
+    peak_width: Optional[int]
+    temp_column_label: str
+    default_temp_value_c: float
+    default_temp_count: int
+    volume_l: float
+    vdw_a: float
+    vdw_b: float
+    vdw_gas_label: str
+    gas_molar_mass_g_mol: Optional[float]
+    mw_override_active: bool
+    ab_override_active: bool
+    scipy_available: bool
+    vdw_computed: bool
+    starting_material_name: str
+    starting_material_formula: str
+    starting_material_mass_g: Optional[float]
+    starting_material_mw_g_mol: Optional[float]
+    stoich_mol_gas_per_mol_starting: Optional[float]
+
+
+def resolve_cycle_summary_options(settings: Mapping[str, Any]) -> CycleSummaryOptions:
+    return CycleSummaryOptions(
+        compact=bool(settings.get("summary_compact", True)),
+        include_diagnostics=bool(settings.get("summary_include_diagnostics", False)),
+        include_per_cycle_gas_mass=bool(
+            settings.get("summary_include_per_cycle_gas_mass", False)
+        ),
+        include_conversion_estimate=bool(
+            settings.get("summary_include_conversion_estimate", False)
+        ),
+    )
+
+
+def resolve_cycle_summary_inputs(
+    settings: Mapping[str, Any],
+    *,
+    globals_fallback: Mapping[str, Any],
+    context: Optional[Dict[str, Any]] = None,
+) -> ResolvedCycleSummaryInputs:
+    ctx = context or {}
+
+    def _float_or_none(value):
+        try:
+            candidate = float(value)
+        except Exception:
+            return None
+        if not math.isfinite(candidate):
+            return None
+        return candidate
+
+    def _int_or_none(value):
+        try:
+            return int(value)
+        except Exception:
+            return None
+
+    selection_mode = str(ctx.get("selection_mode") or "Auto")
+    min_cycle_drop = _float_or_none(
+        ctx.get("min_cycle_drop_psi", ctx.get("min_cycle_drop", settings.get("min_cycle_drop")))
+    )
+    if min_cycle_drop is None:
+        min_cycle_drop = 0.0
+    ignore_min_cycle_drop = bool(ctx.get("ignore_min_drop", False))
+
+    peak_prominence = _float_or_none(
+        ctx.get("peak_prominence", settings.get("peak_prominence"))
+    )
+    peak_distance = _int_or_none(ctx.get("peak_distance", settings.get("peak_distance")))
+    peak_width = _int_or_none(ctx.get("peak_width", settings.get("peak_width")))
+
+    temp_column = ctx.get("temp_column_label", settings.get("cycle_temp_column"))
+    temp_column = temp_column or CYCLE_TEMP_DEFAULT_LABEL
+    per_cycle = ctx.get("per_cycle") or []
+    default_temp_count = 0
+    for row in per_cycle:
+        if row.get("used_default"):
+            default_temp_count += 1
+
+    volume_l = _float_or_none(
+        ctx.get("volume", ctx.get("volume_l", settings.get("vessel_volume")))
+    )
+    if volume_l is None:
+        volume_l = _float_or_none(globals_fallback.get("volume")) or 1.0
+
+    vdw_a = _float_or_none(ctx.get("a_const", settings.get("vdw_a")))
+    if vdw_a is None:
+        vdw_a = _float_or_none(globals_fallback.get("a_const")) or 1.39
+
+    vdw_b = _float_or_none(ctx.get("b_const", settings.get("vdw_b")))
+    if vdw_b is None:
+        vdw_b = _float_or_none(globals_fallback.get("b_const")) or 0.0391
+
+    vdw_gas_label = str(settings.get("vdw_gas") or "Custom")
+    preset = GAS_PRESETS.get(vdw_gas_label)
+    preset_a = preset.get("a") if isinstance(preset, dict) else None
+    preset_b = preset.get("b") if isinstance(preset, dict) else None
+    preset_mw = preset.get("molar_mass") if isinstance(preset, dict) else None
+    overrides = settings.get("gas_preset_overrides", {})
+    if not isinstance(overrides, dict):
+        overrides = {}
+    override_entry = overrides.get(vdw_gas_label) if isinstance(overrides, dict) else None
+    override_mw = None
+    if isinstance(override_entry, dict):
+        override_mw = override_entry.get("molar_mass")
+
+    gas_molar_mass = _float_or_none(
+        ctx.get("gas_molar_mass", settings.get("vdw_gas_molar_mass"))
+    )
+    if gas_molar_mass is None:
+        gas_molar_mass = _float_or_none(override_mw)
+    if gas_molar_mass is None:
+        gas_molar_mass = _float_or_none(preset_mw)
+
+    mw_override_active = False
+    if _float_or_none(override_mw) is not None:
+        mw_override_active = True
+    elif preset_mw is not None and gas_molar_mass is not None:
+        try:
+            mw_override_active = abs(float(gas_molar_mass) - float(preset_mw)) > 1e-6
+        except Exception:
+            mw_override_active = False
+    elif vdw_gas_label.lower() == "custom" and gas_molar_mass is not None:
+        mw_override_active = True
+
+    ab_override_active = False
+    if preset_a is not None and preset_b is not None:
+        try:
+            ab_override_active = (
+                abs(float(vdw_a) - float(preset_a)) > 1e-6
+                or abs(float(vdw_b) - float(preset_b)) > 1e-6
+            )
+        except Exception:
+            ab_override_active = False
+    elif vdw_gas_label.lower() == "custom":
+        ab_override_active = True
+
+    scipy_available = bool(ctx.get("scipy_available", fsolve is not None))
+    vdw_computed = bool(ctx.get("vdw_computed", ctx.get("vdw_used", False)))
+
+    starting_material_name = str(
+        settings.get("starting_material_name", settings.get("product_name", ""))
+        or ""
+    )
+    starting_material_formula = str(
+        settings.get(
+            "starting_material_formula",
+            settings.get("product_formula", DEFAULT_STARTING_MATERIAL_FORMULA),
+        )
+        or ""
+    )
+    starting_material_mass_g = _float_or_none(
+        settings.get(
+            "starting_material_mass_g",
+            settings.get("starting_mass", globals_fallback.get("starting_mass_g")),
+        )
+    )
+    starting_material_mw_g_mol = _float_or_none(
+        settings.get(
+            "starting_material_mw_g_mol",
+            settings.get("product_molar_mass", globals_fallback.get("product_molar_mass")),
+        )
+    )
+    stoich_mol_gas_per_mol_starting = _float_or_none(
+        settings.get("stoich_mol_gas_per_mol_starting")
+    )
+
+    return ResolvedCycleSummaryInputs(
+        selection_mode=selection_mode,
+        min_cycle_drop_psi=float(min_cycle_drop),
+        ignore_min_cycle_drop=bool(ignore_min_cycle_drop),
+        peak_prominence=peak_prominence,
+        peak_distance=peak_distance,
+        peak_width=peak_width,
+        temp_column_label=str(temp_column),
+        default_temp_value_c=25.0,
+        default_temp_count=int(default_temp_count),
+        volume_l=float(volume_l),
+        vdw_a=float(vdw_a),
+        vdw_b=float(vdw_b),
+        vdw_gas_label=str(vdw_gas_label),
+        gas_molar_mass_g_mol=gas_molar_mass,
+        mw_override_active=bool(mw_override_active),
+        ab_override_active=bool(ab_override_active),
+        scipy_available=bool(scipy_available),
+        vdw_computed=bool(vdw_computed),
+        starting_material_name=starting_material_name,
+        starting_material_formula=starting_material_formula,
+        starting_material_mass_g=starting_material_mass_g,
+        starting_material_mw_g_mol=starting_material_mw_g_mol,
+        stoich_mol_gas_per_mol_starting=stoich_mol_gas_per_mol_starting,
+    )
+
+
+def compute_gas_mass_from_moles(
+    n_moles: Optional[float], mw_g_mol: Optional[float]
+) -> Optional[float]:
+    try:
+        moles_val = float(n_moles)
+        mw_val = float(mw_g_mol)
+    except Exception:
+        return None
+    if not math.isfinite(moles_val) or not math.isfinite(mw_val):
+        return None
+    if mw_val <= 0.0:
+        return None
+    return moles_val * mw_val
+
+
+def compute_conversion_estimate(
+    n_gas: Optional[float],
+    starting_mass_g: Optional[float],
+    starting_mw_g_mol: Optional[float],
+    stoich_mol_gas_per_mol_starting: Optional[float],
+) -> Tuple[Optional[float], Optional[float]]:
+    starting_moles = calculate_moles_from_mass(
+        starting_mass_g, starting_mw_g_mol
+    )
+    stoich_val = _sanitize_non_negative(stoich_mol_gas_per_mol_starting)
+    if not math.isfinite(stoich_val) or stoich_val <= 0.0:
+        return None, None
+    if not math.isfinite(starting_moles) or starting_moles <= 0.0:
+        return None, None
+    theoretical_moles = starting_moles * stoich_val
+    if not math.isfinite(theoretical_moles) or theoretical_moles <= 0.0:
+        return None, None
+    actual = _sanitize_non_negative(n_gas)
+    if not math.isfinite(actual):
+        return theoretical_moles, None
+    return theoretical_moles, actual / theoretical_moles
+
+
+def build_cycle_analysis_summary(
+    cycles,
+    per_cycle,
+    total_drop_psi: Optional[float],
+    total_moles_ideal: Optional[float],
+    total_moles_vdw: Optional[float],
+    *,
+    vdw_used: bool,
+    scipy_available: bool,
+    resolved_inputs: ResolvedCycleSummaryInputs,
+    options: CycleSummaryOptions,
+) -> str:
+    cycles = list(cycles or [])
+    per_cycle_rows = list(per_cycle or [])
+    cycle_count = len(cycles) if cycles else len(per_cycle_rows)
+
+    def _fmt(value, fmt, na="N/A"):
+        try:
+            val = float(value)
+        except Exception:
+            return na
+        if not math.isfinite(val):
+            return na
+        return f"{val:{fmt}}"
+
+    def _fmt_pct(value, na="N/A"):
+        return _fmt(value, ".2f", na=na) + "%"
+
+    vdw_total_ok = math.isfinite(_safe_float(total_moles_vdw, float("nan")))
+    vdw_available = bool(vdw_used and scipy_available and vdw_total_ok)
+    gas_mw = resolved_inputs.gas_molar_mass_g_mol
+    has_gas_mw = gas_mw is not None and math.isfinite(gas_mw) and gas_mw > 0.0
+
+    lines: List[str] = []
+    if not options.compact:
+        lines.append("Cycle Analysis Summary")
+
+    def _section(title: str, *, leading_blank: bool = True) -> None:
+        if leading_blank:
+            lines.append("")
+        if options.compact:
+            lines.append(title)
+        else:
+            lines.append(f"=== {title} ===")
+
+    _section("Inputs used", leading_blank=bool(lines))
+    lines.append(f"Mode: {resolved_inputs.selection_mode}")
+    lines.append(f"Valid cycles: {cycle_count}")
+    lines.append(
+        f"Threshold: min dP = {_fmt(resolved_inputs.min_cycle_drop_psi, '.2f')} PSI"
+    )
+    if resolved_inputs.ignore_min_cycle_drop:
+        lines.append("Note: minimum dP threshold ignored for this analysis.")
+    lines.append(f"Total uptake: dP_total = {_fmt(total_drop_psi, '.2f')} PSI")
+
+    if resolved_inputs.peak_prominence is not None:
+        prom_text = _fmt(resolved_inputs.peak_prominence, ".2f")
+        dist_text = (
+            str(resolved_inputs.peak_distance)
+            if resolved_inputs.peak_distance is not None
+            else "N/A"
+        )
+        width_text = (
+            str(resolved_inputs.peak_width)
+            if resolved_inputs.peak_width is not None
+            else "N/A"
+        )
+        lines.append(
+            f"Peak detection: prominence={prom_text}, distance={dist_text}, width={width_text}"
+        )
+
+    temp_label = resolved_inputs.temp_column_label or CYCLE_TEMP_DEFAULT_LABEL
+    if cycle_count > 0:
+        default_count = resolved_inputs.default_temp_count
+        if temp_label == CYCLE_TEMP_DEFAULT_LABEL:
+            lines.append(
+                f"Temp basis: {temp_label} (used {default_count}/{cycle_count} cycles)"
+            )
+        else:
+            if default_count:
+                lines.append(
+                    "Temp basis: "
+                    f"{temp_label} (default 25 C used {default_count}/{cycle_count})"
+                )
+            else:
+                lines.append(f"Temp basis: {temp_label} (no defaults used)")
+    else:
+        lines.append(f"Temp basis: {temp_label}")
+
+    _section("Gas model inputs used")
+    lines.append(f"Preset: {resolved_inputs.vdw_gas_label}")
+    lines.append(f"Vessel volume: {_fmt(resolved_inputs.volume_l, '.3f')} L")
+    lines.append(
+        f"VDW a: {_fmt(resolved_inputs.vdw_a, '.4f')}, b: {_fmt(resolved_inputs.vdw_b, '.4f')}"
+    )
+
+    if has_gas_mw:
+        mw_note = " (override)" if resolved_inputs.mw_override_active else ""
+        if resolved_inputs.vdw_gas_label.lower() == "custom" and not mw_note:
+            mw_note = " (custom)"
+        lines.append(
+            f"Gas MW: {_fmt(resolved_inputs.gas_molar_mass_g_mol, '.4f')} g/mol{mw_note}"
+        )
+    else:
+        lines.append("Gas MW: N/A")
+
+    if resolved_inputs.ab_override_active:
+        lines.append("VDW preset override: a/b")
+
+    lines.append(f"SciPy available: {'Yes' if scipy_available else 'No'}")
+    vdw_text = "Yes" if vdw_used and scipy_available else "No"
+    if not scipy_available:
+        vdw_text = "No (SciPy unavailable)"
+    lines.append(f"VDW computed: {vdw_text}")
+
+    _section("Gas uptake totals")
+    lines.append(
+        f"Total moles (Ideal): {_fmt(total_moles_ideal, '.6f')} mol"
+    )
+    if vdw_available:
+        lines.append(f"Total moles (VDW): {_fmt(total_moles_vdw, '.6f')} mol")
+    elif not scipy_available:
+        lines.append("Total moles (VDW): N/A (SciPy not installed)")
+    else:
+        lines.append("Total moles (VDW): N/A")
+
+    if has_gas_mw:
+        mass_ideal = compute_gas_mass_from_moles(total_moles_ideal, gas_mw)
+        lines.append(
+            f"Total gas mass (Ideal): {_fmt(mass_ideal, '.4f')} g"
+        )
+        if vdw_available:
+            mass_vdw = compute_gas_mass_from_moles(total_moles_vdw, gas_mw)
+            lines.append(
+                f"Total gas mass (VDW): {_fmt(mass_vdw, '.4f')} g"
+            )
+        elif not scipy_available:
+            lines.append("Total gas mass (VDW): N/A (SciPy not installed)")
+        else:
+            lines.append("Total gas mass (VDW): N/A")
+    else:
+        lines.append("Total gas mass (Ideal): N/A (gas MW not set)")
+        if not scipy_available:
+            lines.append("Total gas mass (VDW): N/A (SciPy not installed)")
+        else:
+            lines.append("Total gas mass (VDW): N/A")
+
+    if vdw_available and math.isfinite(_safe_float(total_moles_ideal, float("nan"))):
+        if float(total_moles_ideal) != 0.0:
+            pct = abs(
+                100.0
+                * (float(total_moles_vdw) - float(total_moles_ideal))
+                / float(total_moles_ideal)
+            )
+            lines.append(f"VDW vs Ideal difference: {_fmt(pct, '.2f')}%")
+        else:
+            lines.append("VDW vs Ideal difference: N/A (no valid Ideal moles)")
+    elif not scipy_available:
+        lines.append("VDW vs Ideal difference: N/A (SciPy not installed)")
+
+    if cycle_count:
+        _section("Per-cycle uptake")
+        for idx, row in enumerate(per_cycle_rows, 1):
+            delta_psi = row.get("deltaP", float("nan"))
+            mean_temp = row.get("T_mean_C", float("nan"))
+            used_default = bool(row.get("used_default"))
+            ideal_moles = row.get("n_ideal", float("nan"))
+            vdw_moles = row.get("n_vdw", float("nan"))
+            delta_text = _fmt(delta_psi, ".2f")
+            temp_text = _fmt(mean_temp, ".2f")
+            ideal_text = _fmt(ideal_moles, ".6f")
+            vdw_text = _fmt(vdw_moles, ".6f")
+            suffix = " (default T)" if used_default else ""
+            line = (
+                f"Cycle {idx}: dP={delta_text} PSI, T_mean={temp_text} C{suffix}, "
+                f"n_ideal={ideal_text} mol"
+            )
+            if vdw_available:
+                line += f", n_vdw={vdw_text} mol"
+            elif math.isfinite(_safe_float(vdw_moles, float("nan"))):
+                line += f", n_vdw={vdw_text} mol"
+            else:
+                line += ", n_vdw=N/A"
+
+            if options.include_per_cycle_gas_mass and has_gas_mw:
+                mass_ideal = compute_gas_mass_from_moles(ideal_moles, gas_mw)
+                if mass_ideal is not None:
+                    line += f", m_ideal={_fmt(mass_ideal, '.4f')} g"
+                if vdw_available:
+                    mass_vdw = compute_gas_mass_from_moles(vdw_moles, gas_mw)
+                    if mass_vdw is not None:
+                        line += f", m_vdw={_fmt(mass_vdw, '.4f')} g"
+            lines.append(line)
+    else:
+        _section("Per-cycle uptake")
+        lines.append("No valid cycles.")
+
+    if options.include_diagnostics:
+        _section("Diagnostics")
+        if not cycle_count:
+            lines.append("No cycles available.")
+        else:
+            lines.append(
+                "Default temp usage: "
+                f"{resolved_inputs.default_temp_count}/{cycle_count} cycles "
+                f"at {resolved_inputs.default_temp_value_c:.0f} C"
+            )
+            for idx, row in enumerate(per_cycle_rows, 1):
+                peak_val = row.get("peak", float("nan"))
+                trough_val = row.get("trough", float("nan"))
+                used_default = bool(row.get("used_default"))
+                peak_text = _fmt(peak_val, ".2f")
+                trough_text = _fmt(trough_val, ".2f")
+                default_text = "Yes" if used_default else "No"
+                lines.append(
+                    f"Cycle {idx}: peak={peak_text} PSI, trough={trough_text} PSI, "
+                    f"default T used={default_text}"
+                )
+
+    missing_fields: List[str] = []
+    if (
+        resolved_inputs.starting_material_mass_g is None
+        or resolved_inputs.starting_material_mass_g <= 0.0
+    ):
+        missing_fields.append("starting_material_mass_g")
+    if (
+        resolved_inputs.starting_material_mw_g_mol is None
+        or resolved_inputs.starting_material_mw_g_mol <= 0.0
+    ):
+        missing_fields.append("starting_material_mw_g_mol")
+    if (
+        resolved_inputs.stoich_mol_gas_per_mol_starting is None
+        or resolved_inputs.stoich_mol_gas_per_mol_starting <= 0.0
+    ):
+        missing_fields.append("stoich_mol_gas_per_mol_starting")
+
+    if options.include_conversion_estimate and not missing_fields:
+        _section("Conversion estimate")
+        name = (resolved_inputs.starting_material_name or "").strip()
+        formula = (resolved_inputs.starting_material_formula or "").strip()
+        if name or formula:
+            label = name or "Starting material"
+            if name and formula:
+                label = f"{name} ({formula})"
+            elif formula and not name:
+                label = formula
+            lines.append(f"Starting material: {label}")
+        lines.append(
+            "Starting material mass: "
+            f"{_fmt(resolved_inputs.starting_material_mass_g, '.4f')} g"
+        )
+        lines.append(
+            "Starting material MW: "
+            f"{_fmt(resolved_inputs.starting_material_mw_g_mol, '.4f')} g/mol"
+        )
+        lines.append(
+            "Stoichiometry: "
+            f"{_fmt(resolved_inputs.stoich_mol_gas_per_mol_starting, '.4f')} mol gas/mol starting"
+        )
+
+        theoretical, completion_ideal = compute_conversion_estimate(
+            total_moles_ideal,
+            resolved_inputs.starting_material_mass_g,
+            resolved_inputs.starting_material_mw_g_mol,
+            resolved_inputs.stoich_mol_gas_per_mol_starting,
+        )
+        lines.append(f"Theoretical gas moles: {_fmt(theoretical, '.6f')} mol")
+        if completion_ideal is not None and math.isfinite(completion_ideal):
+            lines.append(f"Completion (Ideal): {_fmt_pct(completion_ideal * 100.0)}")
+        else:
+            lines.append("Completion (Ideal): N/A")
+
+        if vdw_available:
+            _, completion_vdw = compute_conversion_estimate(
+                total_moles_vdw,
+                resolved_inputs.starting_material_mass_g,
+                resolved_inputs.starting_material_mw_g_mol,
+                resolved_inputs.stoich_mol_gas_per_mol_starting,
+            )
+            if completion_vdw is not None and math.isfinite(completion_vdw):
+                lines.append(
+                    f"Completion (VDW): {_fmt_pct(completion_vdw * 100.0)}"
+                )
+            else:
+                lines.append("Completion (VDW): N/A")
+        elif not scipy_available:
+            lines.append("Completion (VDW): N/A (SciPy not installed)")
+        else:
+            lines.append("Completion (VDW): N/A")
+
+    return "\n".join([line for line in lines if line is not None])
 
 
 def _get_peak_finder():
@@ -18441,10 +19081,6 @@ def analyze_pressure_cycles(
 
         print(msg)
 
-    log(
-        f"Using {min_cycle_drop} PSI as minimum pressure drop for a cycle to be detected"
-    )
-
     # Detect cycles on PSI series
 
     try:
@@ -18469,16 +19105,6 @@ def analyze_pressure_cycles(
 
     tvals = np.asarray(temp_series, dtype=float) if temp_series is not None else None
 
-    log(
-        f"Peak detection params: prominence={peak_prominence}, distance={peak_distance}, width={peak_width}"
-    )
-
-    log(f"Number of valid cycles: {len(cycles)}")
-
-    log(f"Total PSI drop of valid cycles: {total_drop:.2f} PSI")
-
-    log("")
-
     (
         per_cycle_rows,
         total_moles_ideal,
@@ -18495,74 +19121,53 @@ def analyze_pressure_cycles(
         force_vdw=False,
     )
 
-    log("--- Cycle-by-Cycle Moles Calculation ---")
+    gas_molar_mass = globals().get(
+        "gas_molar_mass",
+        settings.get("vdw_gas_molar_mass", DEFAULT_GAS_MOLAR_MASS),
+    )
+    try:
+        gas_molar_mass = float(gas_molar_mass)
+        if not math.isfinite(gas_molar_mass) or gas_molar_mass <= 0:
+            raise ValueError
+    except Exception:
+        gas_molar_mass = DEFAULT_GAS_MOLAR_MASS
 
-    for i, row in enumerate(per_cycle_rows, 1):
+    summary_context = {
+        "selection_mode": "Auto",
+        "min_cycle_drop_psi": float(min_cycle_drop),
+        "ignore_min_drop": False,
+        "peak_prominence": float(peak_prominence),
+        "peak_distance": int(peak_distance),
+        "peak_width": int(peak_width),
+        "temp_column_label": settings.get(
+            "cycle_temp_column", CYCLE_TEMP_DEFAULT_LABEL
+        ),
+        "per_cycle": per_cycle_rows,
+        "volume_l": volume,
+        "a_const": a_const,
+        "b_const": b_const,
+        "gas_molar_mass": gas_molar_mass,
+        "scipy_available": scipy_available,
+        "vdw_used": vdw_used,
+    }
 
-        suffix = " (default)" if row["used_default"] else ""
-
-        if not scipy_available:
-
-            vdw_str = "N/A (SciPy not installed)"
-
-        else:
-
-            vdw_str = f"{row['n_vdw']:.6f} mol"
-
-        log(
-            f"Cycle {i}: Peak={row['peak']:.2f}, Trough={row['trough']:.2f}, "
-            f" ΔP={row['deltaP']:.2f} PSI, T_mean={row['T_mean_C']:.2f} °C{suffix}, "
-            f"n_ideal={row['n_ideal']:.6f} mol, n_vdw={vdw_str}"
-        )
-
-    log("---------------")
-
-    log("")
-
-    log("--- Total Moles from All Valid Cycles ---")
-
-    log(f"Total Uptake over {len(cycles)} cycles: {total_drop:.2f} PSI")
-
-    log(f"Total moles (Ideal Gas):      {total_moles_ideal:.6f} mol")
-
-    if vdw_used:
-
-        log(f"Total moles (Van der Waals):  {total_moles_vdw:.6f} mol")
-
-        if total_moles_ideal > 0:
-
-            pct = abs(100.0 * (total_moles_vdw - total_moles_ideal) / total_moles_ideal)
-
-            log(f"VDW vs Ideal difference: {pct:.2f}%")
-
-        else:
-
-            log("VDW vs Ideal difference: Not available (no valid Ideal moles).")
-
-    else:
-
-        log("Total moles (Van der Waals):  N/A (SciPy not installed)")
-
-        log("VDW vs Ideal difference: N/A (SciPy not installed)")
-
-    gas_molar_mass = globals().get("gas_molar_mass", DEFAULT_GAS_MOLAR_MASS)
-
-    reagent_metrics = compute_reagent_metrics(
+    resolved_inputs = resolve_cycle_summary_inputs(
+        settings, globals_fallback=globals(), context=summary_context
+    )
+    options = resolve_cycle_summary_options(settings)
+    summary = build_cycle_analysis_summary(
+        cycles,
+        per_cycle_rows,
+        total_drop,
         total_moles_ideal,
         total_moles_vdw,
-        vdw_available=vdw_used,
-        starting_mass_g=globals().get("starting_mass_g", 0.0),
-        starting_molar_mass=globals().get(
-            "product_molar_mass", DEFAULT_PRODUCT_MOLAR_MASS
-        ),
-        product_name=globals().get("product_name", DEFAULT_PRODUCT_NAME),
-        product_formula=globals().get("product_formula", DEFAULT_PRODUCT_FORMULA),
-        product_output_molar_mass=gas_molar_mass,
+        vdw_used=vdw_used,
+        scipy_available=scipy_available,
+        resolved_inputs=resolved_inputs,
+        options=options,
     )
 
-    log("")
-
-    for line in format_reagent_consumption_lines(reagent_metrics):
+    for line in summary.splitlines():
         log(line)
 
     # Build a figure with peaks/troughs annotated
@@ -23515,7 +24120,10 @@ class UnifiedApp(tk.Tk):
 
         self.v_b = tk.DoubleVar(value=settings.get("vdw_b", initial_b))
 
-        product_preset = settings.get("product_preset", initial_product_preset)
+        product_preset = settings.get(
+            "starting_material_preset",
+            settings.get("product_preset", initial_starting_material_preset),
+        )
 
         if product_preset not in PRODUCT_PRESETS:
 
@@ -23525,27 +24133,31 @@ class UnifiedApp(tk.Tk):
 
         preset_info = PRODUCT_PRESETS.get(product_preset) or {}
 
-        if "product_formula" not in settings:
-            settings["product_formula"] = DEFAULT_PRODUCT_FORMULA
+        if "starting_material_formula" not in settings:
+            settings["starting_material_formula"] = DEFAULT_STARTING_MATERIAL_FORMULA
 
         if preset_info:
 
-            default_product_name = preset_info.get("name", DEFAULT_PRODUCT_NAME)
+            default_product_name = preset_info.get(
+                "name", DEFAULT_STARTING_MATERIAL_NAME
+            )
 
             default_product_molar_mass = preset_info.get(
-                "molar_mass", DEFAULT_PRODUCT_MOLAR_MASS
+                "molar_mass", DEFAULT_STARTING_MATERIAL_MOLAR_MASS
             )
 
         else:
 
-            default_product_name = initial_product_name
+            default_product_name = initial_starting_material_name
 
-            default_product_molar_mass = initial_product_molar_mass
+            default_product_molar_mass = initial_starting_material_mw
 
-        stored_product_name = settings.get("product_name", initial_product_name)
+        stored_product_name = settings.get(
+            "starting_material_name", initial_starting_material_name
+        )
 
         stored_product_molar_mass = settings.get(
-            "product_molar_mass", initial_product_molar_mass
+            "starting_material_mw_g_mol", initial_starting_material_mw
         )
 
         self.v_product_name = tk.StringVar(
@@ -23559,7 +24171,13 @@ class UnifiedApp(tk.Tk):
         )
 
         self.v_starting_mass = tk.DoubleVar(
-            value=settings.get("starting_mass", initial_starting_mass)
+            value=settings.get("starting_material_mass_g", initial_starting_mass)
+        )
+
+        self.v_starting_stoich = tk.DoubleVar(
+            value=settings.get(
+                "stoich_mol_gas_per_mol_starting", initial_starting_stoich
+            )
         )
 
         self.v_gas_molar_mass = tk.DoubleVar(
@@ -23691,6 +24309,37 @@ class UnifiedApp(tk.Tk):
 
         self._cycle_temp_combo = None
         self._gas_combo = None
+
+        self.summary_compact = tk.BooleanVar()
+        self._bind_setting_var(
+            self.summary_compact,
+            "summary_compact",
+            default=initial_summary_compact,
+            on_change=self._on_cycle_summary_formatting_changed,
+        )
+        self.summary_include_diagnostics = tk.BooleanVar()
+        self._bind_setting_var(
+            self.summary_include_diagnostics,
+            "summary_include_diagnostics",
+            default=initial_summary_include_diagnostics,
+            on_change=self._on_cycle_summary_formatting_changed,
+        )
+        self.summary_include_per_cycle_gas_mass = tk.BooleanVar()
+        self._bind_setting_var(
+            self.summary_include_per_cycle_gas_mass,
+            "summary_include_per_cycle_gas_mass",
+            default=initial_summary_include_per_cycle_gas_mass,
+            on_change=self._on_cycle_summary_formatting_changed,
+        )
+        self.summary_include_conversion_estimate = tk.BooleanVar()
+        self._bind_setting_var(
+            self.summary_include_conversion_estimate,
+            "summary_include_conversion_estimate",
+            default=initial_summary_include_conversion_estimate,
+            on_change=self._on_cycle_summary_formatting_changed,
+        )
+        self._cycle_summary_conversion_status = tk.StringVar(value="")
+        self._summary_include_conversion_chk = None
 
         # When True, suppress automatic regeneration of Figure 3 from cycle recomputes
 
@@ -35143,6 +35792,19 @@ class UnifiedApp(tk.Tk):
 
         ent_start.bind("<Return>", self._apply_product_settings)
 
+        ttk.Label(
+            lf_reagent,
+            text="Stoichiometry (mol gas per mol starting)",
+        ).grid(row=2, column=0, sticky="w", padx=6, pady=4)
+
+        ent_stoich = ttk.Entry(lf_reagent, textvariable=self.v_starting_stoich)
+
+        ent_stoich.grid(row=2, column=1, sticky="ew", padx=6, pady=4)
+
+        ent_stoich.bind("<FocusOut>", self._apply_product_settings)
+
+        ent_stoich.bind("<Return>", self._apply_product_settings)
+
         # Peak & Trough Detection
 
         lf_peak = ttk.Labelframe(f, text="Peak & Trough Detection")
@@ -35892,9 +36554,55 @@ class UnifiedApp(tk.Tk):
             row=5, column=0, sticky="w", padx=2, pady=(0, 6)
         )
 
+        lf_summary_fmt = ttk.Labelframe(left, text="Summary Formatting")
+        lf_summary_fmt.grid(
+            row=6,
+            column=0,
+            sticky="ew",
+            padx=self._scale_length(4),
+            pady=(0, self._scale_length(8)),
+        )
+        lf_summary_fmt.grid_columnconfigure(0, weight=1)
+
+        ttk.Checkbutton(
+            lf_summary_fmt,
+            text="Compact summary",
+            variable=self.summary_compact,
+        ).grid(row=0, column=0, sticky="w", padx=6, pady=(4, 2))
+
+        ttk.Checkbutton(
+            lf_summary_fmt,
+            text="Include diagnostics",
+            variable=self.summary_include_diagnostics,
+        ).grid(row=1, column=0, sticky="w", padx=6, pady=2)
+
+        ttk.Checkbutton(
+            lf_summary_fmt,
+            text="Include per-cycle gas mass",
+            variable=self.summary_include_per_cycle_gas_mass,
+        ).grid(row=2, column=0, sticky="w", padx=6, pady=2)
+
+        self._summary_include_conversion_chk = ttk.Checkbutton(
+            lf_summary_fmt,
+            text="Include conversion estimate",
+            variable=self.summary_include_conversion_estimate,
+        )
+        self._summary_include_conversion_chk.grid(
+            row=3, column=0, sticky="w", padx=6, pady=2
+        )
+
+        ttk.Label(
+            lf_summary_fmt,
+            textvariable=self._cycle_summary_conversion_status,
+            wraplength=320,
+            justify="left",
+        ).grid(row=4, column=0, sticky="w", padx=6, pady=(2, 6))
+
+        self._update_cycle_summary_conversion_status()
+
         lf_sum = ttk.Labelframe(left, text="Cycle Analysis Summary (this tab)")
         lf_sum.grid(
-            row=6,
+            row=7,
             column=0,
             sticky="nsew",
             padx=self._scale_length(4),
@@ -35902,7 +36610,8 @@ class UnifiedApp(tk.Tk):
         )
 
         left.grid_rowconfigure(5, weight=0)
-        left.grid_rowconfigure(6, weight=1)
+        left.grid_rowconfigure(6, weight=0)
+        left.grid_rowconfigure(7, weight=1)
 
         summary_font = tkfont.nametofont("TkTextFont")
         self._cycle_summary_box = scrolledtext.ScrolledText(
@@ -37583,9 +38292,15 @@ class UnifiedApp(tk.Tk):
         z_all = np.asarray(z_arr, dtype=float) if z_arr is not None else None
 
         context = data_ctx or {}
-        V_L = context.get("volume", globals().get("volume", 1.0))
-        a_c = context.get("a_const", globals().get("a_const", 1.39))
-        b_c = context.get("b_const", globals().get("b_const", 0.0391))
+        V_L = context.get(
+            "volume", settings.get("vessel_volume", globals().get("volume", 1.0))
+        )
+        a_c = context.get(
+            "a_const", settings.get("vdw_a", globals().get("a_const", 1.39))
+        )
+        b_c = context.get(
+            "b_const", settings.get("vdw_b", globals().get("b_const", 0.0391))
+        )
 
         (
             per_cycle,
@@ -37604,7 +38319,11 @@ class UnifiedApp(tk.Tk):
         )
 
         gas_molar_mass = context.get(
-            "gas_molar_mass", globals().get("gas_molar_mass", DEFAULT_GAS_MOLAR_MASS)
+            "gas_molar_mass",
+            settings.get(
+                "vdw_gas_molar_mass",
+                globals().get("gas_molar_mass", DEFAULT_GAS_MOLAR_MASS),
+            ),
         )
         try:
             gas_molar_mass = float(gas_molar_mass)
@@ -37701,132 +38420,71 @@ class UnifiedApp(tk.Tk):
                     "cumulative_co2_mass_g": cumulative_co2_mass,
                 }
             )
+        has_manual_edits = bool(add_peaks or add_troughs or rm_peaks or rm_troughs)
+        if manual_only:
+            selection_mode = "Manual-only"
+        elif auto_detection_used and has_manual_edits:
+            selection_mode = "Mixed"
+        elif auto_detection_used:
+            selection_mode = "Auto"
+        else:
+            selection_mode = "Manual-only"
+
         cycle_context = {
             "volume_l": V_L,
+            "vdw_a": a_c,
+            "vdw_b": b_c,
             "pressure_units": "PSI",
-            "temperature_units": "°C",
+            "temperature_units": "C",
             "x_label": x_label,
             "min_cycle_drop_psi": float(min_cycle_drop),
+            "ignore_min_drop": bool(ignore_min_drop),
             "auto_detection_used": auto_detection_used,
+            "manual_only": manual_only,
+            "selection_mode": selection_mode,
+            "peak_prominence": float(prom),
+            "peak_distance": int(dist),
+            "peak_width": int(wid),
+            "cycle_temp_column": settings.get(
+                "cycle_temp_column", CYCLE_TEMP_DEFAULT_LABEL
+            ),
             "vdw_used": vdw_used,
             "gas_molar_mass": gas_molar_mass,
             "selection_size": int(mask_arr.sum()),
         }
 
-        lines = []
+        summary_context = {
+            "selection_mode": selection_mode,
+            "min_cycle_drop_psi": float(min_cycle_drop),
+            "ignore_min_drop": bool(ignore_min_drop),
+            "peak_prominence": float(prom),
+            "peak_distance": int(dist),
+            "peak_width": int(wid),
+            "temp_column_label": cycle_context["cycle_temp_column"],
+            "per_cycle": per_cycle,
+            "volume_l": V_L,
+            "a_const": a_c,
+            "b_const": b_c,
+            "gas_molar_mass": gas_molar_mass,
+            "scipy_available": scipy_available,
+            "vdw_used": vdw_used,
+        }
 
-        lines.append(
-            f"Peak detection params: prominence={prom}, distance={dist}, width={wid}"
+        resolved_inputs = resolve_cycle_summary_inputs(
+            settings, globals_fallback=globals(), context=summary_context
         )
-
-        lines.append(f"Number of valid cycles: {len(cycles)}")
-
-        lines.append(f"Total PSI drop of valid cycles: {total_drop:.2f} PSI")
-
-        if not auto_detection_used:
-            lines.append(
-                "Automatic peak/trough detection disabled; using existing markers."
-            )
-
-        lines.append("")
-
-        if ignore_min_drop:
-
-            lines.append("(Note: Minimum  ΔP threshold ignored for this analysis)")
-
-        lines.append("--- Cycle-by-Cycle Moles Calculation ---")
-
-        for i, row in enumerate(per_cycle, 1):
-
-            suffix = " (default)" if row.get("used_default") else ""
-
-            n_vdw = row.get("n_vdw")
-
-            if np.isnan(n_vdw):
-
-                vdw_display = "N/A (SciPy not installed)"
-
-            else:
-
-                vdw_display = f"{n_vdw:.6f} mol"
-
-            lines.append(
-                f"Cycle {i}: Peak={row['peak']:.2f}, Trough={row['trough']:.2f}, "
-                f" ΔP={row['deltaP']:.2f} PSI, Mean Temp={row['T_mean_C']:.2f} °C{suffix}, "
-                f"Ideal moles={row['n_ideal']:.6f} mol, VDW moles={vdw_display}"
-            )
-
-        lines.append("---------------")
-
-        using_fallback = auto_detection_used and peak_finder is _FALLBACK_FIND_PEAKS
-
-        if using_fallback:
-
-            lines.append(
-                "(Using simplified peak detection because SciPy is unavailable.)"
-            )
-
-        lines.append("")
-
-        lines.append("--- Total Moles from All Valid Cycles ---")
-
-        lines.append(f"Total Uptake over {len(cycles)} cycles: {total_drop:.2f} PSI")
-
-        lines.append(f"Total moles (Ideal Gas):      {total_moles_ideal:.6f} mol")
-
-        if vdw_used:
-
-            lines.append(f"Total moles (Van der Waals):  {total_moles_vdw:.6f} mol")
-
-            if total_moles_ideal > 0:
-
-                pct = abs(
-                    100.0 * (total_moles_vdw - total_moles_ideal) / total_moles_ideal
-                )
-
-                lines.append(f"VDW vs Ideal difference: {pct:.2f}%")
-
-            else:
-
-                lines.append(
-                    "VDW vs Ideal difference: Not available (no valid Ideal moles)."
-                )
-
-        else:
-
-            lines.append("Total moles (Van der Waals):  N/A (SciPy not installed)")
-
-            lines.append("VDW vs Ideal difference: N/A (SciPy not installed)")
-
-        product_name = context.get(
-            "product_name", globals().get("product_name", DEFAULT_PRODUCT_NAME)
-        )
-        product_molar_mass = context.get(
-            "product_molar_mass",
-            globals().get("product_molar_mass", DEFAULT_PRODUCT_MOLAR_MASS),
-        )
-        product_formula = context.get(
-            "product_formula", globals().get("product_formula", DEFAULT_PRODUCT_FORMULA)
-        )
-        starting_mass = context.get(
-            "starting_mass_g", globals().get("starting_mass_g", 0.0)
-        )
-
-        reagent_metrics = compute_reagent_metrics(
+        options = resolve_cycle_summary_options(settings)
+        summary = build_cycle_analysis_summary(
+            cycles,
+            per_cycle,
+            total_drop,
             total_moles_ideal,
             total_moles_vdw,
-            vdw_available=vdw_used,
-            starting_mass_g=starting_mass,
-            starting_molar_mass=product_molar_mass,
-            product_name=product_name,
-            product_formula=product_formula,
-            product_output_molar_mass=gas_molar_mass,
+            vdw_used=vdw_used,
+            scipy_available=scipy_available,
+            resolved_inputs=resolved_inputs,
+            options=options,
         )
-
-        lines.append("")
-        lines.extend(format_reagent_consumption_lines(reagent_metrics))
-
-        summary = "\n".join(lines)
 
         return dict(
             auto_peaks=auto_peaks,
@@ -37834,14 +38492,15 @@ class UnifiedApp(tk.Tk):
             plot_peaks=plot_peaks,
             plot_troughs=plot_troughs,
             cycles=cycles,
+            per_cycle=per_cycle,
             total_drop=total_drop,
             summary=summary,
             auto_detection_used=auto_detection_used,
-            reagent_summary=reagent_metrics,
             total_moles_ideal=total_moles_ideal,
             total_moles_vdw=total_moles_vdw,
             gas_molar_mass=gas_molar_mass,
             vdw_used=vdw_used,
+            scipy_available=scipy_available,
             cycle_transfer=cycle_transfer_rows,
             cycle_context=cycle_context,
         )
@@ -37955,6 +38614,9 @@ class UnifiedApp(tk.Tk):
         total_moles_vdw = result.get("total_moles_vdw")
         cycle_transfer = result.get("cycle_transfer") or []
         cycle_context = result.get("cycle_context") or {}
+        cycles = result.get("cycles") or []
+        per_cycle = result.get("per_cycle") or []
+        scipy_available = result.get("scipy_available")
         payload = None
         if (
             total_moles_ideal is not None
@@ -37964,6 +38626,8 @@ class UnifiedApp(tk.Tk):
             payload = {
                 "timestamp": datetime.now().isoformat(timespec="seconds"),
                 "summary": summary,
+                "cycles": cycles,
+                "per_cycle": per_cycle,
                 "total_moles_ideal": (
                     float(total_moles_ideal) if total_moles_ideal is not None else None
                 ),
@@ -37972,7 +38636,7 @@ class UnifiedApp(tk.Tk):
                 ),
                 "gas_molar_mass": result.get("gas_molar_mass"),
                 "vdw_used": result.get("vdw_used"),
-                "reagent_summary": result.get("reagent_summary"),
+                "scipy_available": scipy_available,
                 "cycle_transfer": cycle_transfer,
                 "cycle_context": cycle_context,
                 "total_drop_psi": result.get("total_drop"),
@@ -38282,11 +38946,11 @@ class UnifiedApp(tk.Tk):
 
         z_all = np.asarray(z, dtype=float) if z is not None else None
 
-        V_L = globals().get("volume", 1.0)
+        V_L = settings.get("vessel_volume", globals().get("volume", 1.0))
 
-        a_c = globals().get("a_const", 1.39)
+        a_c = settings.get("vdw_a", globals().get("a_const", 1.39))
 
-        b_c = globals().get("b_const", 0.0391)
+        b_c = settings.get("vdw_b", globals().get("b_const", 0.0391))
 
         (
             per_cycle,
@@ -38304,95 +38968,90 @@ class UnifiedApp(tk.Tk):
             force_vdw=True,
         )
 
-        # Summary text
-
-        lines = []
-
-        lines.append("Using manual markers only.")
-
-        lines.append(f"Number of valid cycles: {len(cycles)}")
-
-        lines.append(f"Total PSI drop of valid cycles: {total_drop:.2f} PSI")
-
-        lines.append("")
-
-        lines.append("--- Cycle-by-Cycle Moles Calculation (Manual) ---")
-
-        for i, row in enumerate(per_cycle, 1):
-
-            suffix = " (default)" if row["used_default"] else ""
-
-            if not scipy_available and not vdw_used:
-
-                vdw_display = "N/A (SciPy not installed)"
-
-            else:
-
-                vdw_display = f"{row['n_vdw']:.6f} mol"
-
-            lines.append(
-                f"Cycle {i}: Peak={row['peak']:.2f}, Trough={row['trough']:.2f}, "
-                f" ΔP={row['deltaP']:.2f} PSI, T_mean={row['T_mean_C']:.2f} °C{suffix}, "
-                f"n_ideal={row['n_ideal']:.6f} mol, n_vdw={vdw_display}"
-            )
-
-        lines.append("---------------")
-
-        lines.append("")
-
-        lines.append("--- Total Moles from All Valid Cycles (Manual) ---")
-
-        lines.append(f"Total Uptake over {len(cycles)} cycles: {total_drop:.2f} PSI")
-
-        lines.append(f"Total moles (Ideal Gas):      {total_moles_ideal:.6f} mol")
-
-        if not scipy_available and not vdw_used:
-
-            lines.append("Total moles (Van der Waals):  N/A (SciPy not installed)")
-
-        else:
-
-            lines.append(f"Total moles (Van der Waals):  {total_moles_vdw:.6f} mol")
-
-        if total_moles_ideal > 0:
-
-            pct = abs(100.0 * (total_moles_vdw - total_moles_ideal) / total_moles_ideal)
-
-            lines.append(f"VDW vs Ideal difference: {pct:.2f}%")
-
-        else:
-
-            lines.append(
-                "VDW vs Ideal difference: Not available (no valid Ideal moles)."
-            )
-
-        product_name = globals().get("product_name", DEFAULT_PRODUCT_NAME)
-        product_molar_mass = globals().get(
-            "product_molar_mass", DEFAULT_PRODUCT_MOLAR_MASS
+        gas_molar_mass = settings.get(
+            "vdw_gas_molar_mass",
+            globals().get("gas_molar_mass", DEFAULT_GAS_MOLAR_MASS),
         )
-        product_formula = globals().get("product_formula", DEFAULT_PRODUCT_FORMULA)
-        starting_mass = globals().get("starting_mass_g", 0.0)
+        try:
+            gas_molar_mass = float(gas_molar_mass)
+            if not math.isfinite(gas_molar_mass) or gas_molar_mass <= 0:
+                raise ValueError
+        except Exception:
+            gas_molar_mass = DEFAULT_GAS_MOLAR_MASS
 
-        gas_molar_mass = globals().get("gas_molar_mass", DEFAULT_GAS_MOLAR_MASS)
+        cycle_context = {
+            "volume_l": V_L,
+            "vdw_a": a_c,
+            "vdw_b": b_c,
+            "pressure_units": "PSI",
+            "temperature_units": "C",
+            "x_label": str(
+                globals().get("selected_columns", {}).get("x", "Elapsed Time (days)")
+            ).replace("_", " "),
+            "min_cycle_drop_psi": float(min_drop),
+            "ignore_min_drop": False,
+            "auto_detection_used": False,
+            "manual_only": True,
+            "selection_mode": "Manual-only",
+            "peak_prominence": float(self.pk_prominence.get()),
+            "peak_distance": int(self.pk_distance.get()),
+            "peak_width": int(self.pk_width.get()),
+            "cycle_temp_column": settings.get(
+                "cycle_temp_column", CYCLE_TEMP_DEFAULT_LABEL
+            ),
+            "vdw_used": vdw_used,
+            "gas_molar_mass": gas_molar_mass,
+            "selection_size": int(mask_arr.sum()),
+        }
 
-        reagent_metrics = compute_reagent_metrics(
+        summary_context = {
+            "selection_mode": "Manual-only",
+            "min_cycle_drop_psi": float(min_drop),
+            "ignore_min_drop": False,
+            "peak_prominence": float(self.pk_prominence.get()),
+            "peak_distance": int(self.pk_distance.get()),
+            "peak_width": int(self.pk_width.get()),
+            "temp_column_label": cycle_context["cycle_temp_column"],
+            "per_cycle": per_cycle,
+            "volume_l": V_L,
+            "a_const": a_c,
+            "b_const": b_c,
+            "gas_molar_mass": gas_molar_mass,
+            "scipy_available": scipy_available,
+            "vdw_used": vdw_used,
+        }
+
+        resolved_inputs = resolve_cycle_summary_inputs(
+            settings, globals_fallback=globals(), context=summary_context
+        )
+        options = resolve_cycle_summary_options(settings)
+        summary = build_cycle_analysis_summary(
+            cycles,
+            per_cycle,
+            total_drop,
             total_moles_ideal,
             total_moles_vdw,
-            vdw_available=vdw_used,
-            starting_mass_g=starting_mass,
-            starting_molar_mass=product_molar_mass,
-            product_name=product_name,
-            product_formula=product_formula,
-            product_output_molar_mass=gas_molar_mass,
+            vdw_used=vdw_used,
+            scipy_available=scipy_available,
+            resolved_inputs=resolved_inputs,
+            options=options,
         )
 
-        lines.append("")
-        lines.extend(format_reagent_consumption_lines(reagent_metrics))
-
-        summary = "\n".join(lines)
-
         self._set_cycle_summary(summary)
-
+        self._cycle_last_transfer_payload = {
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "summary": summary,
+            "cycles": cycles,
+            "per_cycle": per_cycle,
+            "total_moles_ideal": float(total_moles_ideal),
+            "total_moles_vdw": float(total_moles_vdw),
+            "gas_molar_mass": gas_molar_mass,
+            "vdw_used": vdw_used,
+            "scipy_available": scipy_available,
+            "cycle_transfer": [],
+            "cycle_context": cycle_context,
+            "total_drop_psi": total_drop,
+        }
         # Push the summary through the shared callback
 
         cb = globals().get("update_cycle_summary_callback")
@@ -41259,6 +41918,124 @@ class UnifiedApp(tk.Tk):
             except Exception as exc:
 
                 print(f"Cycle analysis refresh failed after temp selection: {exc}")
+
+    def _cycle_summary_missing_conversion_fields(self) -> List[str]:
+        missing: List[str] = []
+        mass_val = _safe_float(
+            getattr(self, "v_starting_mass", None).get()
+            if hasattr(self, "v_starting_mass")
+            else settings.get("starting_material_mass_g"),
+            None,
+        )
+        if mass_val is None or not math.isfinite(mass_val) or mass_val <= 0.0:
+            missing.append("starting_material_mass_g")
+
+        mw_val = _safe_float(
+            getattr(self, "v_product_molar_mass", None).get()
+            if hasattr(self, "v_product_molar_mass")
+            else settings.get("starting_material_mw_g_mol"),
+            None,
+        )
+        if mw_val is None or not math.isfinite(mw_val) or mw_val <= 0.0:
+            missing.append("starting_material_mw_g_mol")
+
+        stoich_val = _safe_float(
+            getattr(self, "v_starting_stoich", None).get()
+            if hasattr(self, "v_starting_stoich")
+            else settings.get("stoich_mol_gas_per_mol_starting"),
+            None,
+        )
+        if stoich_val is None or not math.isfinite(stoich_val) or stoich_val <= 0.0:
+            missing.append("stoich_mol_gas_per_mol_starting")
+        return missing
+
+    def _update_cycle_summary_conversion_status(self) -> None:
+        missing = self._cycle_summary_missing_conversion_fields()
+        ready = not missing
+        if ready:
+            status = "Conversion estimate ready: Yes"
+        else:
+            status = "Conversion estimate ready: No (missing: " + ", ".join(missing) + ")"
+        try:
+            self._cycle_summary_conversion_status.set(status)
+        except Exception:
+            pass
+
+        chk = getattr(self, "_summary_include_conversion_chk", None)
+        if chk is not None and chk.winfo_exists():
+            chk.configure(state="normal" if ready else "disabled")
+        if not ready and self.summary_include_conversion_estimate.get():
+            self.summary_include_conversion_estimate.set(False)
+
+    def _build_cycle_summary_from_snapshot(
+        self, snapshot: Optional[Dict[str, Any]]
+    ) -> Optional[str]:
+        if not isinstance(snapshot, dict):
+            return None
+        cycles = snapshot.get("cycles") or []
+        per_cycle = snapshot.get("per_cycle") or []
+        total_drop = snapshot.get("total_drop_psi", snapshot.get("total_drop"))
+        total_moles_ideal = snapshot.get("total_moles_ideal")
+        total_moles_vdw = snapshot.get("total_moles_vdw")
+        vdw_used = bool(snapshot.get("vdw_used"))
+        scipy_available = bool(snapshot.get("scipy_available", fsolve is not None))
+        cycle_context = snapshot.get("cycle_context") or {}
+        selection_mode = cycle_context.get("selection_mode")
+        if not selection_mode:
+            if cycle_context.get("manual_only"):
+                selection_mode = "Manual-only"
+            else:
+                selection_mode = "Auto"
+        summary_context = {
+            "selection_mode": selection_mode,
+            "min_cycle_drop_psi": cycle_context.get(
+                "min_cycle_drop_psi", cycle_context.get("min_cycle_drop")
+            ),
+            "ignore_min_drop": cycle_context.get("ignore_min_drop", False),
+            "peak_prominence": cycle_context.get("peak_prominence"),
+            "peak_distance": cycle_context.get("peak_distance"),
+            "peak_width": cycle_context.get("peak_width"),
+            "temp_column_label": cycle_context.get(
+                "cycle_temp_column",
+                settings.get("cycle_temp_column", CYCLE_TEMP_DEFAULT_LABEL),
+            ),
+            "per_cycle": per_cycle,
+            "volume_l": cycle_context.get("volume_l"),
+            "a_const": cycle_context.get("vdw_a"),
+            "b_const": cycle_context.get("vdw_b"),
+            "gas_molar_mass": snapshot.get("gas_molar_mass"),
+            "scipy_available": scipy_available,
+            "vdw_used": vdw_used,
+        }
+        resolved_inputs = resolve_cycle_summary_inputs(
+            settings, globals_fallback=globals(), context=summary_context
+        )
+        options = resolve_cycle_summary_options(settings)
+        return build_cycle_analysis_summary(
+            cycles,
+            per_cycle,
+            total_drop,
+            total_moles_ideal,
+            total_moles_vdw,
+            vdw_used=vdw_used,
+            scipy_available=scipy_available,
+            resolved_inputs=resolved_inputs,
+            options=options,
+        )
+
+    def _refresh_cycle_summary_from_snapshot(self) -> None:
+        snapshot = getattr(self, "_cycle_last_transfer_payload", None)
+        summary = self._build_cycle_summary_from_snapshot(snapshot)
+        if not summary:
+            return
+        self._set_cycle_summary(summary)
+        cb = globals().get("update_cycle_summary_callback")
+        if callable(cb):
+            cb(summary)
+
+    def _on_cycle_summary_formatting_changed(self, *_):
+        self._update_cycle_summary_conversion_status()
+        self._refresh_cycle_summary_from_snapshot()
 
     def _get_cycle_temp_series_by_name(self, column_name):
 
@@ -55930,7 +56707,10 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 pass
             self.v_product_molar_mass.set(
-                settings.get("product_molar_mass", DEFAULT_PRODUCT_MOLAR_MASS)
+                settings.get(
+                    "starting_material_mw_g_mol",
+                    settings.get("product_molar_mass", DEFAULT_STARTING_MATERIAL_MOLAR_MASS),
+                )
             )
             return
 
@@ -55942,7 +56722,10 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 pass
             self.v_product_molar_mass.set(
-                settings.get("product_molar_mass", DEFAULT_PRODUCT_MOLAR_MASS)
+                settings.get(
+                    "starting_material_mw_g_mol",
+                    settings.get("product_molar_mass", DEFAULT_STARTING_MATERIAL_MOLAR_MASS),
+                )
             )
             return
 
@@ -55955,7 +56738,11 @@ class UnifiedApp(tk.Tk):
                 )
             except Exception:
                 pass
-            self.v_starting_mass.set(settings.get("starting_mass", 0.0))
+            self.v_starting_mass.set(
+                settings.get(
+                    "starting_material_mass_g", settings.get("starting_mass", 0.0)
+                )
+            )
             return
 
         if starting_mass < 0.0:
@@ -55965,11 +56752,61 @@ class UnifiedApp(tk.Tk):
                 )
             except Exception:
                 pass
-            self.v_starting_mass.set(max(settings.get("starting_mass", 0.0), 0.0))
+            self.v_starting_mass.set(
+                max(
+                    settings.get(
+                        "starting_material_mass_g", settings.get("starting_mass", 0.0)
+                    ),
+                    0.0,
+                )
+            )
+            return
+
+        try:
+            stoich_val = float(self.v_starting_stoich.get())
+        except Exception:
+            try:
+                messagebox.showerror(
+                    "Invalid Input",
+                    "Please enter a valid stoichiometry value (mol gas per mol starting).",
+                )
+            except Exception:
+                pass
+            self.v_starting_stoich.set(
+                settings.get(
+                    "stoich_mol_gas_per_mol_starting",
+                    DEFAULT_STOICH_MOL_GAS_PER_MOL_STARTING,
+                )
+            )
+            return
+
+        if stoich_val < 0.0:
+            try:
+                messagebox.showerror(
+                    "Invalid Input", "Stoichiometry cannot be negative."
+                )
+            except Exception:
+                pass
+            self.v_starting_stoich.set(
+                max(
+                    settings.get(
+                        "stoich_mol_gas_per_mol_starting",
+                        DEFAULT_STOICH_MOL_GAS_PER_MOL_STARTING,
+                    ),
+                    0.0,
+                )
+            )
             return
 
         self.v_product_molar_mass.set(molar_mass)
         self.v_starting_mass.set(starting_mass)
+        self.v_starting_stoich.set(stoich_val)
+
+        settings["starting_material_preset"] = preset_key
+        settings["starting_material_name"] = name
+        settings["starting_material_mw_g_mol"] = molar_mass
+        settings["starting_material_mass_g"] = starting_mass
+        settings["stoich_mol_gas_per_mol_starting"] = stoich_val
 
         settings["product_preset"] = preset_key
         settings["product_name"] = name
@@ -55979,14 +56816,19 @@ class UnifiedApp(tk.Tk):
 
         product_formula = preset_info.get("formula")
         if not product_formula:
-            product_formula = settings.get("product_formula", DEFAULT_PRODUCT_FORMULA)
+            product_formula = settings.get(
+                "starting_material_formula", DEFAULT_STARTING_MATERIAL_FORMULA
+            )
+        settings["starting_material_formula"] = product_formula
         settings["product_formula"] = product_formula
 
         _save_settings_to_disk()
 
         self._prepare_series_globals()
+        self._update_cycle_summary_conversion_status()
+        self._refresh_cycle_summary_from_snapshot()
 
-        if self._cycle_ready():
+        if self._cycle_ready() and self._cycle_last_transfer_payload is None:
             try:
                 self._recompute_cycle_analysis(auto_detect=False, preserve_view=True)
             except Exception:
@@ -56031,6 +56873,8 @@ class UnifiedApp(tk.Tk):
 
         settings["vdw_gas"] = self.v_gas.get()
 
+        settings["starting_material_mass_g"] = self.v_starting_mass.get()
+
         settings["starting_mass"] = self.v_starting_mass.get()
 
         settings["naoh_mass"] = self.v_starting_mass.get()
@@ -56052,6 +56896,7 @@ class UnifiedApp(tk.Tk):
         globals()["a_const"] = self.v_a.get()
         globals()["b_const"] = self.v_b.get()
         globals()["starting_mass_g"] = self.v_starting_mass.get()
+        globals()["starting_material_mass_g"] = self.v_starting_mass.get()
         globals()["gas_molar_mass"] = gas_molar_mass
 
         if self._cycle_ready():
@@ -56067,6 +56912,7 @@ class UnifiedApp(tk.Tk):
                 self._show_cycle_ready_message()
 
         self._update_apply_vdw_indicator("success")
+        self._update_cycle_summary_conversion_status()
 
     def _save_custom_gas_preset(self):
         try:
@@ -56307,19 +57153,24 @@ class UnifiedApp(tk.Tk):
         globals()["b_const"] = self.v_b.get()
 
         globals()["starting_mass_g"] = self.v_starting_mass.get()
+        globals()["starting_material_mass_g"] = self.v_starting_mass.get()
 
-        globals()["product_name"] = (
-            self.v_product_name.get().strip() or DEFAULT_PRODUCT_NAME
-        )
+        starting_name = self.v_product_name.get().strip()
+        globals()["starting_material_name"] = starting_name
+        globals()["product_name"] = starting_name or DEFAULT_STARTING_MATERIAL_NAME
 
         preset_key = self.v_product_preset.get()
         preset_info = PRODUCT_PRESETS.get(preset_key) or {}
         formula = preset_info.get("formula") or settings.get(
-            "product_formula", DEFAULT_PRODUCT_FORMULA
+            "starting_material_formula", DEFAULT_STARTING_MATERIAL_FORMULA
         )
+        globals()["starting_material_formula"] = formula
         globals()["product_formula"] = formula
 
+        globals()["starting_material_mw_g_mol"] = self.v_product_molar_mass.get()
         globals()["product_molar_mass"] = self.v_product_molar_mass.get()
+
+        globals()["stoich_mol_gas_per_mol_starting"] = self.v_starting_stoich.get()
 
         globals()["gas_molar_mass"] = self.v_gas_molar_mass.get()
 
@@ -56385,16 +57236,20 @@ class UnifiedApp(tk.Tk):
         payload["a_const"] = self.v_a.get()
         payload["b_const"] = self.v_b.get()
         payload["starting_mass_g"] = self.v_starting_mass.get()
+        payload["starting_material_mass_g"] = self.v_starting_mass.get()
         payload["gas_molar_mass"] = self.v_gas_molar_mass.get()
-        payload["product_name"] = (
-            self.v_product_name.get().strip() or DEFAULT_PRODUCT_NAME
-        )
+        starting_name = self.v_product_name.get().strip()
+        payload["starting_material_name"] = starting_name
+        payload["product_name"] = starting_name or DEFAULT_STARTING_MATERIAL_NAME
         preset_key = self.v_product_preset.get()
         preset_info = PRODUCT_PRESETS.get(preset_key) or {}
-        payload["product_formula"] = preset_info.get("formula") or settings.get(
-            "product_formula", DEFAULT_PRODUCT_FORMULA
+        payload["starting_material_formula"] = preset_info.get("formula") or settings.get(
+            "starting_material_formula", DEFAULT_STARTING_MATERIAL_FORMULA
         )
+        payload["product_formula"] = payload["starting_material_formula"]
+        payload["starting_material_mw_g_mol"] = self.v_product_molar_mass.get()
         payload["product_molar_mass"] = self.v_product_molar_mass.get()
+        payload["stoich_mol_gas_per_mol_starting"] = self.v_starting_stoich.get()
 
         self._render_cache.set_prepared(fingerprint, payload)
         if apply_globals:
@@ -59151,17 +60006,23 @@ class UnifiedApp(tk.Tk):
 
         settings["vdw_b"] = self.v_b.get()
 
+        settings["starting_material_mass_g"] = self.v_starting_mass.get()
+
         settings["starting_mass"] = self.v_starting_mass.get()
 
         settings["naoh_mass"] = self.v_starting_mass.get()
 
+        settings["starting_material_preset"] = self.v_product_preset.get()
         settings["product_preset"] = self.v_product_preset.get()
 
-        settings["product_name"] = (
-            self.v_product_name.get().strip() or DEFAULT_PRODUCT_NAME
-        )
+        starting_name = self.v_product_name.get().strip()
+        settings["starting_material_name"] = starting_name
+        settings["product_name"] = starting_name or DEFAULT_STARTING_MATERIAL_NAME
 
+        settings["starting_material_mw_g_mol"] = self.v_product_molar_mass.get()
         settings["product_molar_mass"] = self.v_product_molar_mass.get()
+
+        settings["stoich_mol_gas_per_mol_starting"] = self.v_starting_stoich.get()
 
         settings["include_moles_legend"] = self.include_moles_legend.get()
         settings["show_cycle_markers_on_core_plots"] = bool(
@@ -59180,6 +60041,16 @@ class UnifiedApp(tk.Tk):
             self, "_sol_model_key", DEFAULT_SPEC_MODEL_KEY
         )
         settings["cycle_auto_detect_enabled"] = bool(self.auto_detect_cycles.get())
+        settings["summary_compact"] = bool(self.summary_compact.get())
+        settings["summary_include_diagnostics"] = bool(
+            self.summary_include_diagnostics.get()
+        )
+        settings["summary_include_per_cycle_gas_mass"] = bool(
+            self.summary_include_per_cycle_gas_mass.get()
+        )
+        settings["summary_include_conversion_estimate"] = bool(
+            self.summary_include_conversion_estimate.get()
+        )
         settings["ui_font_size"] = getattr(
             self, "_base_font_size", getattr(self, "_default_font_size", 10)
         )

@@ -1,9 +1,16 @@
-# GL-260 Data Analysis and Plotter (V1.8.6)
+# GL-260 Data Analysis and Plotter (V1.8.7)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data exported to Excel, mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.8.6`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.8.7`.
+
+## V1.8.7 Update Highlights
+- Cycle Analysis Summary is unified across auto/mixed/manual-only paths with a single builder.
+- Summary now verifies the exact gas model inputs used (preset label, V, a, b, MW, SciPy availability).
+- Gas uptake mass is always shown; conversion estimates only appear when starting material mass, MW, and stoichiometry are configured.
+- New Summary Formatting controls (compact, diagnostics, per-cycle gas mass, conversion estimate readiness) are persisted.
+- Starting material defaults are blank to avoid CO2/13CO2 wording unless explicitly configured.
 
 ## V1.8.6 Update Highlights
 - Added Auto Title support in Plot Settings -> Titles with render-time resolution for Preview/Refresh/Export.
@@ -206,7 +213,8 @@ Sections and key fields:
 - **Apply VDW** updates the constants used in cycle moles calculations, refreshes Cycle Analysis, and updates the Apply VDW indicator.
 
 **Starting Material Settings**
-- Starting material molar mass and mass (used in reaction completion summaries).
+- Starting material molar mass, mass, and stoichiometry (mol gas per mol starting).
+- These fields gate the optional conversion estimate in the Cycle Analysis Summary.
 
 **Peak & Trough Detection**
 - Prominence (PSI), minimum distance (samples), minimum delta-P for a valid cycle, and minimum width (samples).
@@ -300,9 +308,10 @@ Interactive marker controls (on the cycle plot):
 Other controls:
 - Automatic peak/trough detection toggle.
 - Cycle temperature column selector (used to compute mean temperature between peak and trough).
+- Summary Formatting controls (compact, diagnostics, per-cycle gas mass, conversion estimate readiness/status).
 
 Outputs:
-- Summary text (used by reports and PNG export).
+- Summary text (Inputs used + gas model inputs + gas uptake totals + per-cycle; conversion estimate only when configured).
 - Cycle statistics table (per-cycle metrics).
 - Cycle plot (Figure 3: Cycle Analysis).
 
@@ -526,9 +535,9 @@ Moles calculations:
 - Van der Waals moles use `a` and `b` constants and require SciPy's nonlinear solver.
 - Total uptake is reported for ideal and VDW (if available).
 
-Reagent metrics:
-- Starting material mass and molar mass are used to estimate theoretical moles.
-- Completion ratio and percent are reported for ideal and VDW totals.
+Gas uptake and conversion:
+- Gas uptake mass is reported for ideal and (when available) VDW totals.
+- Conversion estimates are shown only when starting material mass, MW, and stoichiometry are provided.
 
 ## Solubility and Speciation Engine (shared)
 The solubility system is used by both the legacy and advanced tabs.
@@ -670,7 +679,7 @@ The script includes internal change summaries:
   - Treeview selection recursion fix in annotations editor.
   - Layout fixes for the annotations Toplevel.
 
-Note: the UI title uses `APP_VERSION` set to `V1.8.6`.
+Note: the UI title uses `APP_VERSION` set to `V1.8.7`.
 
 ## Troubleshooting
 - **"No Data" or "Missing Columns" errors**: Load a sheet on the Data tab and set required columns on the Columns tab.
