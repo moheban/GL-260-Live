@@ -1,9 +1,14 @@
-# GL-260 Data Analysis and Plotter (V1.8.8)
+# GL-260 Data Analysis and Plotter (V1.8.9)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data exported to Excel, mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.8.8`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.8.9`.
+
+## V1.8.9 Update Highlights
+- Bottom action bar now supports selective plot generation with per-plot checkboxes and a single **Generate Plot** action (no forced full rebuild).
+- Cycle Analysis UI is reorganized into Manual Workflow + Advanced/Recompute, with undo/redo, marker import/export, summary copy, and per-cycle CSV export.
+- Final Report output fixes: captions render once, figure/table numbers are independent of page numbers, no cropping, and tables auto-fit within margins.
 
 ## V1.8.8 Update Highlights
 - Starting Material Settings now include a display name and optional note for the material reacting with the selected gas.
@@ -251,6 +256,21 @@ Sections and key fields:
 - Generate Figure 2 only.
 - Generate Combined Triple-Axis Plot.
 
+### Bottom Action Bar (Global)
+Purpose: quick plot generation without leaving the current tab.
+
+Key controls:
+- Plot selection checkboxes:
+  - Pressure & Temperature vs Time
+  - Pressure & First Derivative vs Time
+  - Combined Triple-Axis Plot
+- **Generate Plot**: builds only the selected plots and keeps any unrelated plot tabs open.
+- **Save Settings** and **Exit** remain on the right.
+
+Behavior:
+- If no boxes are checked, a warning is shown and nothing is generated.
+- If one or more boxes are checked, only those plots are generated (no full tab clear).
+
 ### Plot Tabs (Figures 1/2/3/Combined)
 After plotting, each figure appears as a new tab in the main notebook.
 
@@ -296,15 +316,20 @@ Export behavior:
 ### Cycle Analysis Tab
 Purpose: interactive cycle detection, manual correction, and moles summaries.
 
-Key actions:
-- **Send to Advanced Speciation & Equilibrium Engine**: sends the cycle payload into the advanced workflows.
+Key actions (Manual Workflow):
+- **Update / Generate Figure 3**: rebuild the Figure 3 tab using current markers.
+- **Undo Marker Edit / Redo Marker Edit**: step through manual marker changes.
+- **Clear All Markers**: remove all markers (auto and manual).
+- **Export Markers (JSON/CSV)** and **Import Markers**: round-trip selection + markers + thresholds.
+- **Export Cycle Results (CSV)**: save per-cycle metrics and moles.
+- **Copy Summary to Clipboard** and **Save Summary Image (PNG)**.
+
+Advanced / Recompute (collapsible):
 - **Analyze Selection**: analyze only a dragged selection range on the cycle chart.
 - **Analyze Full Range**: clear selection and analyze the whole dataset.
 - **Re-detect Peaks/Troughs**: rerun detection with current parameters (manual edits preserved).
-- **Clear All Markers**: removes all markers (auto and manual).
-- **Reset Manual Marks**: removes manual adds/removals and reverts to auto-detected set.
-- **Save Summary PNG**: exports the cycle summary text widget as PNG.
-- **Update/Generate Figure 3**: rebuilds the cycle analysis figure tab using current markers.
+- **Reset Manual Marks**: remove manual adds/removals and revert to auto-detected set.
+- **Send to Advanced Speciation & Equilibrium Engine**: send the cycle payload into advanced workflows.
 
 Interactive marker controls (on the cycle plot):
 - Shift + left-click: add a peak.
@@ -422,6 +447,8 @@ Report sections (examples):
 
 Export:
 - PDF/PNG with export DPI and output size profiles.
+- Captions are rendered once during page build; figure/table numbers are independent of page numbers.
+- Tables auto-fit within margins to prevent overlap or cropping.
 
 ### Menus, Preferences, and Tools
 **File**
@@ -685,7 +712,7 @@ The script includes internal change summaries:
   - Treeview selection recursion fix in annotations editor.
   - Layout fixes for the annotations Toplevel.
 
-Note: the UI title uses `APP_VERSION` set to `V1.8.8`.
+Note: the UI title uses `APP_VERSION` set to `V1.8.9`.
 
 ## Troubleshooting
 - **"No Data" or "Missing Columns" errors**: Load a sheet on the Data tab and set required columns on the Columns tab.

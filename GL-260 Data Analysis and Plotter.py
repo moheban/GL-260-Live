@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.8.8
-# Date: 2026-01-19
+# Version: V1.8.9
+# Date: 2026-01-20
 
 import os
 import sys
@@ -7250,7 +7250,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.8.8"
+APP_VERSION = "V1.8.9"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -23561,6 +23561,9 @@ class UnifiedApp(tk.Tk):
         self._sol_math_view_text = None
         self._init_solubility_styles()
         self._cycle_last_transfer_payload: Optional[Dict[str, Any]] = None
+        self._cycle_marker_undo_stack: List[Dict[str, Any]] = []
+        self._cycle_marker_redo_stack: List[Dict[str, Any]] = []
+        self._cycle_marker_undo_lock = False
         self._final_report_cycle_snapshot: Optional[Dict[str, Any]] = None
         self._sol_cycle_payloads: Dict[str, Optional[Dict[str, Any]]] = {}
         self._sol_cycle_results_map: Dict[str, Optional[Dict[str, Any]]] = {}
@@ -26628,37 +26631,54 @@ class UnifiedApp(tk.Tk):
             pady=self._scale_length(8),
         )
 
-        for col in range(6):
-            weight = 2 if col == 4 else 1
+        for col in range(4):
+            weight = 1 if col in (0, 2) else 0
             btns.grid_columnconfigure(col, weight=weight)
 
-        ttk.Button(btns, text="Regenerate Plots", command=self.update_plots).grid(
-            row=0, column=0, sticky="ew"
-        )
+        self._plot_select_fig1_var = tk.BooleanVar(value=True)
+        self._plot_select_fig2_var = tk.BooleanVar(value=True)
+        self._plot_select_combined_var = tk.BooleanVar(value=False)
+
+        plot_select = ttk.Frame(btns)
+        plot_select.grid(row=0, column=0, sticky="w")
+
+        ttk.Checkbutton(
+            plot_select,
+            text="Pressure & Temperature vs Time",
+            variable=self._plot_select_fig1_var,
+        ).grid(row=0, column=0, sticky="w")
+
+        ttk.Checkbutton(
+            plot_select,
+            text="Pressure & First Derivative vs Time",
+            variable=self._plot_select_fig2_var,
+        ).grid(row=0, column=1, sticky="w", padx=(self._scale_length(8), 0))
+
+        ttk.Checkbutton(
+            plot_select,
+            text="Combined Triple-Axis Plot",
+            variable=self._plot_select_combined_var,
+        ).grid(row=0, column=2, sticky="w", padx=(self._scale_length(8), 0))
+
+        ttk.Button(
+            plot_select,
+            text="Generate Plot",
+            command=self._generate_selected_plots,
+        ).grid(row=0, column=3, sticky="ew", padx=(self._scale_length(12), 0))
 
         ttk.Button(btns, text="Save Settings", command=self.save_settings).grid(
             row=0, column=1, sticky="ew", padx=(self._scale_length(8), 0)
         )
 
-        ttk.Button(btns, text="Close Plots", command=self.close_plots).grid(
-            row=0, column=2, sticky="ew", padx=(self._scale_length(8), 0)
-        )
+        # spacer in column 2 consumes extra width
 
-        ttk.Button(
-            btns,
-            text="Run Cycle Analysis",
-            command=self._open_cycle_analysis_from_button,
-        ).grid(row=0, column=3, sticky="ew", padx=(self._scale_length(8), 0))
-
-        # spacer in column 4 consumes extra width
-
-        ttk.Label(btns, text="").grid(row=0, column=4, sticky="ew")
+        ttk.Label(btns, text="").grid(row=0, column=2, sticky="ew")
 
         ttk.Button(
             btns,
             text="Exit",
             command=self.save_and_close,
-        ).grid(row=0, column=5, sticky="ew", padx=(0, 0))
+        ).grid(row=0, column=3, sticky="ew", padx=(0, 0))
 
     def _log_plot_tab_debug(self, message: str):
         """Optionally print debug info for plot tab lifecycle."""
@@ -30996,11 +31016,12 @@ class UnifiedApp(tk.Tk):
             pass
         _reposition()
 
-    def _render_figures_in_tabs(self, figs: dict):
+    def _render_figures_in_tabs(self, figs: dict, *, clear_existing: bool = True):
 
         # figs may contain 'fig1', 'fig2', 'fig_peaks'
 
-        self._clear_plot_tabs()
+        if clear_existing:
+            self._clear_plot_tabs()
 
         if not isinstance(figs, dict):
 
@@ -31009,30 +31030,30 @@ class UnifiedApp(tk.Tk):
             )
 
             return
+        def _replace_plot(title: str, fig, *, plot_key: str) -> None:
+            if not clear_existing:
+                self._remove_plot_tab_by_title(title)
+            self._add_plot_tab(title, fig, plot_key=plot_key)
 
         if figs.get("fig1"):
-
-            self._add_plot_tab(
+            _replace_plot(
                 "Figure 1: Pressure + Temperature", figs["fig1"], plot_key="fig1"
             )
 
         if figs.get("fig2"):
-
-            self._add_plot_tab(
+            _replace_plot(
                 "Figure 2: Pressure + Derivative", figs["fig2"], plot_key="fig2"
             )
 
         if figs.get("fig_combined"):
-
-            self._add_plot_tab(
+            _replace_plot(
                 "Figure 1+2: Combined Triple-Axis",
                 figs["fig_combined"],
                 plot_key="fig_combined",
             )
 
         if figs.get("fig_peaks"):
-
-            self._add_plot_tab(
+            _replace_plot(
                 "Figure 3: Cycle Analysis", figs["fig_peaks"], plot_key="fig_peaks"
             )
 
@@ -36368,14 +36389,177 @@ class UnifiedApp(tk.Tk):
         if left is None or right is None or make_button is None:
             return
 
-        # Consolidated Cycle buttons
-        btn_grid = ttk.Frame(left)
-        btn_grid.grid(row=1, column=0, sticky="ew", pady=(0, scale_len(10)))
+        manual_frame = ttk.Labelframe(left, text="Manual Workflow")
+        manual_frame.grid(row=1, column=0, sticky="ew", pady=(0, scale_len(10)))
         for col in range(2):
-            btn_grid.grid_columnconfigure(col, weight=1)
+            manual_frame.grid_columnconfigure(col, weight=1)
 
         make_button(
-            btn_grid,
+            manual_frame,
+            text="Update / Generate Figure 3",
+            command=self._update_fig3_from_current_markers,
+            grid_kwargs={
+                "row": 0,
+                "column": 0,
+                "columnspan": 2,
+                "sticky": "nsew",
+                "padx": scale_pad((0, 0)),
+                "pady": scale_pad((0, 6)),
+            },
+            tooltip=(
+                "Close and regenerate the 'Figure 3: Cycle Analysis' tab using the markers currently "
+                'shown in this interactive plot. This ignores the Minimum I"P threshold.'
+            ),
+            allow_wrap=False,
+        )
+
+        make_button(
+            manual_frame,
+            text="Undo Marker Edit",
+            command=self._undo_cycle_marker_edit,
+            grid_kwargs={
+                "row": 1,
+                "column": 0,
+                "sticky": "nsew",
+                "padx": scale_pad((0, 6)),
+                "pady": scale_pad((0, 6)),
+            },
+            tooltip="Undo the most recent marker edit.",
+        )
+
+        make_button(
+            manual_frame,
+            text="Redo Marker Edit",
+            command=self._redo_cycle_marker_edit,
+            grid_kwargs={
+                "row": 1,
+                "column": 1,
+                "sticky": "nsew",
+                "padx": scale_pad((6, 0)),
+                "pady": scale_pad((0, 6)),
+            },
+            tooltip="Redo the last undone marker edit.",
+        )
+
+        make_button(
+            manual_frame,
+            text="Clear All Markers",
+            command=self._clear_all_markers,
+            grid_kwargs={
+                "row": 2,
+                "column": 0,
+                "sticky": "nsew",
+                "padx": scale_pad((0, 6)),
+                "pady": scale_pad((0, 6)),
+            },
+            tooltip=(
+                "Remove ALL markers (auto + manual) and start with a blank slate.\n"
+                "Use SHIFT + Left-click = Peak, SHIFT + Right-click = Trough.\n"
+                "Right-click (no SHIFT) removes nearest marker."
+            ),
+        )
+
+        make_button(
+            manual_frame,
+            text="Save Summary Image (PNG)",
+            command=self._save_cycle_summary_png,
+            grid_kwargs={
+                "row": 2,
+                "column": 1,
+                "sticky": "nsew",
+                "padx": scale_pad((6, 0)),
+                "pady": scale_pad((0, 6)),
+            },
+            tooltip="Save the Cycle Analysis Summary text as a PNG image for sharing or records.",
+        )
+
+        make_button(
+            manual_frame,
+            text="Export Markers (JSON/CSV)",
+            command=self._export_cycle_markers,
+            grid_kwargs={
+                "row": 3,
+                "column": 0,
+                "sticky": "nsew",
+                "padx": scale_pad((0, 6)),
+                "pady": scale_pad((0, 6)),
+            },
+            tooltip="Export the current selection and marker sets to JSON or CSV.",
+        )
+
+        make_button(
+            manual_frame,
+            text="Import Markers",
+            command=self._import_cycle_markers,
+            grid_kwargs={
+                "row": 3,
+                "column": 1,
+                "sticky": "nsew",
+                "padx": scale_pad((6, 0)),
+                "pady": scale_pad((0, 6)),
+            },
+            tooltip="Import a saved marker set (selection range + thresholds included).",
+        )
+
+        make_button(
+            manual_frame,
+            text="Export Cycle Results (CSV)",
+            command=self._export_cycle_results_csv,
+            grid_kwargs={
+                "row": 4,
+                "column": 0,
+                "sticky": "nsew",
+                "padx": scale_pad((0, 6)),
+                "pady": scale_pad((0, 0)),
+            },
+            tooltip="Export per-cycle metrics and gas uptake results to CSV.",
+        )
+
+        make_button(
+            manual_frame,
+            text="Copy Summary to Clipboard",
+            command=self._copy_cycle_summary_to_clipboard,
+            grid_kwargs={
+                "row": 4,
+                "column": 1,
+                "sticky": "nsew",
+                "padx": scale_pad((6, 0)),
+                "pady": scale_pad((0, 0)),
+            },
+            tooltip="Copy the Cycle Analysis Summary text to the clipboard.",
+        )
+
+        advanced_container = ttk.Frame(left)
+        advanced_container.grid(row=2, column=0, sticky="ew", pady=(0, scale_len(8)))
+        advanced_container.grid_columnconfigure(0, weight=1)
+        advanced_visible = tk.BooleanVar(value=False)
+
+        def _toggle_advanced():
+            showing = bool(advanced_visible.get())
+            if showing:
+                advanced_body.grid_remove()
+                advanced_visible.set(False)
+                advanced_toggle.configure(text="Show Advanced / Recompute")
+            else:
+                advanced_body.grid()
+                advanced_visible.set(True)
+                advanced_toggle.configure(text="Hide Advanced / Recompute")
+
+        advanced_toggle = ttk.Button(
+            advanced_container,
+            text="Show Advanced / Recompute",
+            command=_toggle_advanced,
+        )
+        advanced_toggle.grid(row=0, column=0, sticky="ew")
+
+        advanced_body = ttk.Frame(advanced_container)
+        advanced_body.grid(row=1, column=0, sticky="ew", pady=(scale_len(6), 0))
+        for col in range(2):
+            advanced_body.grid_columnconfigure(col, weight=1)
+        advanced_body.grid_remove()
+
+        make_button(
+            advanced_body,
             text="Send to Advanced Speciation & Equilibrium Engine",
             command=self._send_cycles_to_speciation_engine,
             grid_kwargs={
@@ -36393,7 +36577,7 @@ class UnifiedApp(tk.Tk):
         )
 
         make_button(
-            btn_grid,
+            advanced_body,
             text="Analyze Selection",
             command=self._use_cycle_selection,
             grid_kwargs={
@@ -36410,7 +36594,7 @@ class UnifiedApp(tk.Tk):
         )
 
         make_button(
-            btn_grid,
+            advanced_body,
             text="Analyze Full Range",
             command=self._use_cycle_all,
             grid_kwargs={
@@ -36424,15 +36608,15 @@ class UnifiedApp(tk.Tk):
         )
 
         make_button(
-            btn_grid,
+            advanced_body,
             text="Re-detect Peaks/Troughs",
-            command=lambda: self._recompute_cycle_analysis(auto_detect=True),
+            command=self._redetect_cycle_peaks,
             grid_kwargs={
                 "row": 2,
                 "column": 0,
                 "sticky": "nsew",
                 "padx": scale_pad((0, 6)),
-                "pady": scale_pad((0, 6)),
+                "pady": scale_pad((0, 0)),
             },
             tooltip=(
                 "Re-run automatic peak/trough detection using the current settings "
@@ -36442,71 +36626,20 @@ class UnifiedApp(tk.Tk):
         )
 
         make_button(
-            btn_grid,
-            text="Clear All Markers",
-            command=self._clear_all_markers,
+            advanced_body,
+            text="Reset Manual Marks",
+            command=self._reset_manual_edits,
             grid_kwargs={
                 "row": 2,
                 "column": 1,
                 "sticky": "nsew",
                 "padx": scale_pad((6, 0)),
-                "pady": scale_pad((0, 6)),
-            },
-            tooltip=(
-                "Remove ALL markers (auto + manual) and start with a blank slate.\n"
-                "Use SHIFT + Left-click = Peak, SHIFT + Right-click = Trough.\n"
-                "Right-click (no SHIFT) removes nearest marker."
-            ),
-        )
-
-        make_button(
-            btn_grid,
-            text="Reset Manual Marks",
-            command=self._reset_manual_edits,
-            grid_kwargs={
-                "row": 3,
-                "column": 0,
-                "sticky": "nsew",
-                "padx": scale_pad((0, 6)),
-                "pady": scale_pad((0, 6)),
+                "pady": scale_pad((0, 0)),
             },
             tooltip=(
                 "Remove all manually added/removed peaks & troughs and revert to the current "
                 "auto-detected set."
             ),
-        )
-
-        make_button(
-            btn_grid,
-            text="Save Summary PNG",
-            command=self._save_cycle_summary_png,
-            grid_kwargs={
-                "row": 3,
-                "column": 1,
-                "sticky": "nsew",
-                "padx": scale_pad((6, 0)),
-                "pady": scale_pad((0, 6)),
-            },
-            tooltip="Save the Cycle Analysis Summary text as a PNG image for sharing or records.",
-        )
-
-        make_button(
-            btn_grid,
-            text="Update/Generate Figure 3",
-            command=self._update_fig3_from_current_markers,
-            grid_kwargs={
-                "row": 4,
-                "column": 0,
-                "columnspan": 2,
-                "sticky": "nsew",
-                "padx": scale_pad((0, 0)),
-                "pady": scale_pad((0, 0)),
-            },
-            tooltip=(
-                "Close and regenerate the 'Figure 3: Cycle Analysis' tab using the markers currently "
-                'shown in this interactive plot. This ignores the Minimum ΔP threshold.'
-            ),
-            allow_wrap=False,
         )
 
         self._auto_detect_chk = ttk.Checkbutton(
@@ -36516,7 +36649,7 @@ class UnifiedApp(tk.Tk):
             command=self._on_toggle_auto_detection,
         )
         self._auto_detect_chk.grid(
-            row=2,
+            row=3,
             column=0,
             sticky="w",
             padx=self._scale_length(2),
@@ -36533,7 +36666,7 @@ class UnifiedApp(tk.Tk):
 
         # Temperature selection
         temp_frame = ttk.Frame(left)
-        temp_frame.grid(row=3, column=0, sticky="ew", pady=(0, scale_len(8)))
+        temp_frame.grid(row=4, column=0, sticky="ew", pady=(0, scale_len(8)))
         temp_frame.grid_columnconfigure(1, weight=1)
 
         ttk.Label(temp_frame, text="Cycle temperature column").grid(
@@ -36587,7 +36720,7 @@ class UnifiedApp(tk.Tk):
             style="CycleHint.TLabel",
             wraplength=340,
             justify="left",
-        ).grid(row=4, column=0, sticky="w", pady=(0, scale_len(8)))
+        ).grid(row=5, column=0, sticky="w", pady=(0, scale_len(8)))
 
         if self._cycle_loading_label:
             self._cycle_loading_label.config(text="Preparing summary display…")
@@ -36611,12 +36744,12 @@ class UnifiedApp(tk.Tk):
             variable=self.include_moles_legend,
         )
         self.cb_include_moles_legend.grid(
-            row=5, column=0, sticky="w", padx=2, pady=(0, 6)
+            row=6, column=0, sticky="w", padx=2, pady=(0, 6)
         )
 
         lf_summary_fmt = ttk.Labelframe(left, text="Summary Formatting")
         lf_summary_fmt.grid(
-            row=6,
+            row=7,
             column=0,
             sticky="ew",
             padx=self._scale_length(4),
@@ -36662,16 +36795,16 @@ class UnifiedApp(tk.Tk):
 
         lf_sum = ttk.Labelframe(left, text="Cycle Analysis Summary (this tab)")
         lf_sum.grid(
-            row=7,
+            row=8,
             column=0,
             sticky="nsew",
             padx=self._scale_length(4),
             pady=(0, self._scale_length(8)),
         )
 
-        left.grid_rowconfigure(5, weight=0)
         left.grid_rowconfigure(6, weight=0)
-        left.grid_rowconfigure(7, weight=1)
+        left.grid_rowconfigure(7, weight=0)
+        left.grid_rowconfigure(8, weight=1)
 
         summary_font = tkfont.nametofont("TkTextFont")
         self._cycle_summary_box = scrolledtext.ScrolledText(
@@ -36988,6 +37121,431 @@ class UnifiedApp(tk.Tk):
 
             return
 
+    def _redetect_cycle_peaks(self) -> None:
+        if not self._cycle_ready():
+            return
+        self._push_cycle_marker_undo()
+        self._recompute_cycle_analysis(auto_detect=True, preserve_view=True)
+
+    def _cycle_marker_selection_payload(self) -> Dict[str, Any]:
+        payload = {"mode": "none", "range": None, "index_range": None}
+        pending_range = getattr(self, "_cycle_pending_range", None)
+        if pending_range:
+            try:
+                payload["mode"] = "pending"
+                payload["range"] = [float(pending_range[0]), float(pending_range[1])]
+            except Exception:
+                pass
+            return payload
+        mask = getattr(self, "_cycle_mask", None)
+        if mask is None:
+            return payload
+        try:
+            mask_arr = np.asarray(mask, dtype=bool)
+        except Exception:
+            return payload
+        if not mask_arr.size or not mask_arr.any():
+            return payload
+        x, y1, _ = self._get_xy()
+        base_mask = None
+        if x is not None and y1 is not None:
+            base_mask_raw = (~pd.isna(x)) & (~pd.isna(y1))
+            base_mask = (
+                base_mask_raw.values
+                if hasattr(base_mask_raw, "values")
+                else np.asarray(base_mask_raw, dtype=bool)
+            )
+        if (
+            base_mask is not None
+            and base_mask.size == mask_arr.size
+            and np.array_equal(mask_arr, base_mask)
+        ):
+            payload["mode"] = "all"
+            return payload
+        idx = np.where(mask_arr)[0]
+        if idx.size:
+            payload["index_range"] = [int(idx.min()), int(idx.max())]
+            if x is not None:
+                try:
+                    xv = np.asarray(x, dtype=float)
+                except Exception:
+                    xv = None
+                if xv is not None and idx.max() < xv.size:
+                    segment = xv[idx]
+                    finite_segment = segment[np.isfinite(segment)]
+                    if finite_segment.size:
+                        payload["mode"] = "range"
+                        payload["range"] = [
+                            float(finite_segment.min()),
+                            float(finite_segment.max()),
+                        ]
+                        return payload
+        payload["mode"] = "custom"
+        return payload
+
+    def _cycle_marker_export_payload(self) -> Dict[str, Any]:
+        thresholds = {}
+        for key, var, cast in (
+            ("min_cycle_drop", getattr(self, "min_cycle_drop", None), float),
+            ("pk_prominence", getattr(self, "pk_prominence", None), float),
+            ("pk_distance", getattr(self, "pk_distance", None), int),
+            ("pk_width", getattr(self, "pk_width", None), int),
+        ):
+            if var is None:
+                continue
+            try:
+                thresholds[key] = cast(var.get())
+            except Exception:
+                continue
+        cycle_temp = None
+        cycle_temp_var = getattr(self, "cycle_temp_column", None)
+        if cycle_temp_var is not None:
+            try:
+                cycle_temp = cycle_temp_var.get()
+            except Exception:
+                cycle_temp = None
+        auto_detect_var = getattr(self, "auto_detect_cycles", None)
+        auto_detect_enabled = (
+            bool(auto_detect_var.get()) if auto_detect_var is not None else False
+        )
+        payload = {
+            "schema_version": 1,
+            "created": datetime.now().isoformat(timespec="seconds"),
+            "selection": self._cycle_marker_selection_payload(),
+            "auto_peaks": sorted(getattr(self, "_auto_peaks", set())),
+            "auto_troughs": sorted(getattr(self, "_auto_troughs", set())),
+            "add_peaks": sorted(getattr(self, "_add_peaks", set())),
+            "add_troughs": sorted(getattr(self, "_add_troughs", set())),
+            "rm_peaks": sorted(getattr(self, "_rm_peaks", set())),
+            "rm_troughs": sorted(getattr(self, "_rm_troughs", set())),
+            "thresholds": thresholds,
+            "auto_detect_enabled": auto_detect_enabled,
+            "cycle_temp_column": cycle_temp,
+        }
+        return payload
+
+    def _apply_cycle_selection_payload(self, selection: Dict[str, Any]) -> None:
+        if not selection:
+            self._cycle_mask = None
+            self._cycle_pending_range = None
+            self._shade_selection(None)
+            self._refresh_cycle_selection_text()
+            return
+        mode = selection.get("mode") or "none"
+        rng = selection.get("range")
+        if mode == "pending" and rng:
+            try:
+                xmin = float(rng[0])
+                xmax = float(rng[1])
+            except Exception:
+                xmin = xmax = None
+            if xmin is not None and xmax is not None:
+                self._cycle_pending_range = (min(xmin, xmax), max(xmin, xmax))
+                self._cycle_mask = None
+                self._shade_selection(self._cycle_pending_range)
+                self._refresh_cycle_selection_text()
+                return
+        if mode == "none":
+            self._cycle_mask = None
+            self._cycle_pending_range = None
+            self._shade_selection(None)
+            self._refresh_cycle_selection_text()
+            return
+        x, y1, _ = self._get_xy()
+        if x is None or y1 is None:
+            return
+        base = (~pd.isna(x)) & (~pd.isna(y1))
+        base_mask = (
+            base.values if hasattr(base, "values") else np.asarray(base, dtype=bool)
+        )
+        if mode == "all":
+            self._cycle_mask = base_mask
+            self._cycle_pending_range = None
+            self._shade_selection(None)
+            self._refresh_cycle_selection_text()
+            return
+        range_applied = False
+        if rng:
+            try:
+                xmin = float(rng[0])
+                xmax = float(rng[1])
+            except Exception:
+                xmin = xmax = None
+            if xmin is not None and xmax is not None:
+                try:
+                    xv = np.asarray(x, dtype=float)
+                except Exception:
+                    xv = None
+                if xv is not None:
+                    sel = (xv >= min(xmin, xmax)) & (xv <= max(xmin, xmax))
+                    mask = base_mask & sel
+                    self._cycle_mask = mask
+                    self._cycle_pending_range = None
+                    self._shade_selection((min(xmin, xmax), max(xmin, xmax)))
+                    range_applied = True
+        if not range_applied:
+            idx_range = selection.get("index_range")
+            if idx_range:
+                try:
+                    idx_min = int(idx_range[0])
+                    idx_max = int(idx_range[1])
+                except Exception:
+                    idx_min = idx_max = None
+                if idx_min is not None and idx_max is not None:
+                    idx_min = max(0, min(idx_min, base_mask.size - 1))
+                    idx_max = max(0, min(idx_max, base_mask.size - 1))
+                    selection_mask = np.zeros_like(base_mask, dtype=bool)
+                    selection_mask[idx_min : idx_max + 1] = True
+                    self._cycle_mask = base_mask & selection_mask
+                    self._cycle_pending_range = None
+                    self._shade_selection(None)
+                    range_applied = True
+        if not range_applied:
+            self._cycle_mask = None
+            self._cycle_pending_range = None
+            self._shade_selection(None)
+        self._refresh_cycle_selection_text()
+
+    def _copy_cycle_summary_to_clipboard(self) -> None:
+        text = self._final_report_get_cycle_summary_text()
+        if not text or not text.strip():
+            try:
+                messagebox.showwarning(
+                    "Cycle Analysis", "The Cycle Analysis Summary is empty."
+                )
+            except Exception:
+                pass
+            return
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text.strip())
+            messagebox.showinfo("Cycle Analysis", "Summary copied to clipboard.")
+        except Exception as exc:
+            try:
+                messagebox.showerror(
+                    "Cycle Analysis", f"Failed to copy summary: {exc}"
+                )
+            except Exception:
+                pass
+
+    def _export_cycle_markers(self) -> None:
+        if not self._cycle_ready():
+            return
+        payload = self._cycle_marker_export_payload()
+        path = filedialog.asksaveasfilename(
+            title="Export Cycle Markers",
+            defaultextension=".json",
+            filetypes=[("JSON File", "*.json"), ("CSV File", "*.csv")],
+            initialfile="cycle_markers.json",
+        )
+        if not path:
+            return
+        ext = os.path.splitext(path)[1].lower()
+        try:
+            if ext == ".csv":
+                with open(path, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["field", "value"])
+                    for key, value in payload.items():
+                        if isinstance(value, (dict, list)):
+                            encoded = json.dumps(value, ensure_ascii=True)
+                        else:
+                            encoded = "" if value is None else str(value)
+                        writer.writerow([key, encoded])
+            else:
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2, sort_keys=True, ensure_ascii=True)
+            messagebox.showinfo("Cycle Analysis", f"Markers exported to {path}")
+        except Exception as exc:
+            try:
+                messagebox.showerror(
+                    "Cycle Analysis", f"Failed to export markers: {exc}"
+                )
+            except Exception:
+                pass
+
+    def _import_cycle_markers(self) -> None:
+        if not self._cycle_ready():
+            return
+        path = filedialog.askopenfilename(
+            title="Import Cycle Markers",
+            filetypes=[("JSON File", "*.json"), ("CSV File", "*.csv")],
+        )
+        if not path:
+            return
+        ext = os.path.splitext(path)[1].lower()
+        payload: Dict[str, Any] = {}
+        try:
+            if ext == ".csv":
+                with open(path, "r", encoding="utf-8") as f:
+                    reader = csv.reader(f)
+                    headers = next(reader, [])
+                    if len(headers) >= 2 and headers[0].lower() != "field":
+                        f.seek(0)
+                        reader = csv.reader(f)
+                    for row in reader:
+                        if not row or len(row) < 2:
+                            continue
+                        key = str(row[0]).strip()
+                        value = row[1]
+                        if not key:
+                            continue
+                        try:
+                            payload[key] = json.loads(value)
+                        except Exception:
+                            payload[key] = value
+            else:
+                with open(path, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+        except Exception as exc:
+            try:
+                messagebox.showerror(
+                    "Cycle Analysis", f"Failed to import markers: {exc}"
+                )
+            except Exception:
+                pass
+            return
+        if not isinstance(payload, dict):
+            try:
+                messagebox.showerror(
+                    "Cycle Analysis", "Marker file is not a valid export payload."
+                )
+            except Exception:
+                pass
+            return
+        self._push_cycle_marker_undo()
+        thresholds = payload.get("thresholds", {}) or {}
+        if "min_cycle_drop" in thresholds:
+            try:
+                self.min_cycle_drop.set(float(thresholds["min_cycle_drop"]))
+            except Exception:
+                pass
+        if "pk_prominence" in thresholds:
+            try:
+                self.pk_prominence.set(float(thresholds["pk_prominence"]))
+            except Exception:
+                pass
+        if "pk_distance" in thresholds:
+            try:
+                self.pk_distance.set(int(thresholds["pk_distance"]))
+            except Exception:
+                pass
+        if "pk_width" in thresholds:
+            try:
+                self.pk_width.set(int(thresholds["pk_width"]))
+            except Exception:
+                pass
+        auto_detect_var = getattr(self, "auto_detect_cycles", None)
+        auto_detect_setting = payload.get("auto_detect_enabled")
+        if auto_detect_setting is not None:
+            try:
+                if auto_detect_var is not None:
+                    auto_detect_var.set(bool(auto_detect_setting))
+            except Exception:
+                pass
+        elif auto_detect_var is not None:
+            try:
+                auto_detect_setting = bool(auto_detect_var.get())
+            except Exception:
+                auto_detect_setting = None
+        temp_column = payload.get("cycle_temp_column")
+        if temp_column:
+            try:
+                self.cycle_temp_column.set(temp_column)
+            except Exception:
+                pass
+        self._apply_cycle_selection_payload(payload.get("selection") or {})
+        self._auto_peaks = set(payload.get("auto_peaks", []))
+        self._auto_troughs = set(payload.get("auto_troughs", []))
+        self._add_peaks = set(payload.get("add_peaks", []))
+        self._add_troughs = set(payload.get("add_troughs", []))
+        self._rm_peaks = set(payload.get("rm_peaks", []))
+        self._rm_troughs = set(payload.get("rm_troughs", []))
+        try:
+            if temp_column:
+                self._on_cycle_temp_selected()
+        except Exception:
+            pass
+        try:
+            self._recompute_cycle_analysis(
+                auto_detect=bool(auto_detect_setting), preserve_view=True
+            )
+            messagebox.showinfo("Cycle Analysis", "Markers imported successfully.")
+        except Exception as exc:
+            try:
+                messagebox.showerror(
+                    "Cycle Analysis", f"Failed to apply markers: {exc}"
+                )
+            except Exception:
+                pass
+
+    def _export_cycle_results_csv(self) -> None:
+        if not self._cycle_ready():
+            return
+        payload = getattr(self, "_cycle_last_transfer_payload", None)
+        cycles = list(payload.get("cycles", [])) if payload else []
+        per_cycle = list(payload.get("per_cycle", [])) if payload else []
+        if not cycles and not per_cycle:
+            try:
+                messagebox.showwarning(
+                    "Cycle Analysis",
+                    "Run Cycle Analysis before exporting cycle results.",
+                )
+            except Exception:
+                pass
+            return
+        path = filedialog.asksaveasfilename(
+            title="Export Cycle Results (CSV)",
+            defaultextension=".csv",
+            filetypes=[("CSV File", "*.csv")],
+            initialfile="cycle_results.csv",
+        )
+        if not path:
+            return
+        columns = [
+            "cycle_index",
+            "peak_idx",
+            "trough_idx",
+            "peak_pressure",
+            "trough_pressure",
+            "delta_pressure",
+            "mean_temp_C",
+            "used_default_temp",
+            "moles_ideal",
+            "moles_vdw",
+        ]
+        max_len = max(len(cycles), len(per_cycle))
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=columns)
+                writer.writeheader()
+                for idx in range(max_len):
+                    cycle = cycles[idx] if idx < len(cycles) else {}
+                    stats = per_cycle[idx] if idx < len(per_cycle) else {}
+                    delta = stats.get("deltaP", cycle.get("delta_P"))
+                    writer.writerow(
+                        {
+                            "cycle_index": idx + 1,
+                            "peak_idx": cycle.get("peak_idx", ""),
+                            "trough_idx": cycle.get("trough_idx", ""),
+                            "peak_pressure": cycle.get("peak", ""),
+                            "trough_pressure": cycle.get("trough", ""),
+                            "delta_pressure": delta if delta is not None else "",
+                            "mean_temp_C": stats.get("T_mean_C", ""),
+                            "used_default_temp": stats.get("used_default", ""),
+                            "moles_ideal": stats.get("n_ideal", ""),
+                            "moles_vdw": stats.get("n_vdw", ""),
+                        }
+                    )
+            messagebox.showinfo("Cycle Analysis", f"Cycle results exported to {path}")
+        except Exception as exc:
+            try:
+                messagebox.showerror(
+                    "Cycle Analysis", f"Failed to export cycle results: {exc}"
+                )
+            except Exception:
+                pass
+
     def _reset_manual_edits(self):
 
         if not self._cycle_ready():
@@ -36997,6 +37555,9 @@ class UnifiedApp(tk.Tk):
         changed = bool(
             self._add_peaks or self._add_troughs or self._rm_peaks or self._rm_troughs
         )
+
+        if changed:
+            self._push_cycle_marker_undo()
 
         self._add_peaks.clear()
 
@@ -37026,6 +37587,9 @@ class UnifiedApp(tk.Tk):
             or self._rm_peaks
             or self._rm_troughs
         )
+
+        if changed:
+            self._push_cycle_marker_undo()
 
         # auto-detected sets
 
@@ -37436,6 +38000,96 @@ class UnifiedApp(tk.Tk):
 
             pass
 
+    def _cycle_marker_snapshot(self) -> Dict[str, set]:
+        return {
+            "auto_peaks": set(getattr(self, "_auto_peaks", set())),
+            "auto_troughs": set(getattr(self, "_auto_troughs", set())),
+            "add_peaks": set(getattr(self, "_add_peaks", set())),
+            "add_troughs": set(getattr(self, "_add_troughs", set())),
+            "rm_peaks": set(getattr(self, "_rm_peaks", set())),
+            "rm_troughs": set(getattr(self, "_rm_troughs", set())),
+        }
+
+    @staticmethod
+    def _cycle_marker_snapshots_equal(
+        left: Dict[str, set], right: Dict[str, set]
+    ) -> bool:
+        keys = (
+            "auto_peaks",
+            "auto_troughs",
+            "add_peaks",
+            "add_troughs",
+            "rm_peaks",
+            "rm_troughs",
+        )
+        for key in keys:
+            if set(left.get(key, set())) != set(right.get(key, set())):
+                return False
+        return True
+
+    def _push_cycle_marker_undo(self) -> None:
+        if getattr(self, "_cycle_marker_undo_lock", False):
+            return
+        snapshot = self._cycle_marker_snapshot()
+        stack = getattr(self, "_cycle_marker_undo_stack", [])
+        if stack and self._cycle_marker_snapshots_equal(stack[-1], snapshot):
+            return
+        stack.append(snapshot)
+        if len(stack) > 50:
+            stack.pop(0)
+        self._cycle_marker_undo_stack = stack
+        self._cycle_marker_redo_stack = []
+
+    def _apply_cycle_marker_snapshot(self, snapshot: Dict[str, set]) -> None:
+        self._auto_peaks = set(snapshot.get("auto_peaks", set()))
+        self._auto_troughs = set(snapshot.get("auto_troughs", set()))
+        self._add_peaks = set(snapshot.get("add_peaks", set()))
+        self._add_troughs = set(snapshot.get("add_troughs", set()))
+        self._rm_peaks = set(snapshot.get("rm_peaks", set()))
+        self._rm_troughs = set(snapshot.get("rm_troughs", set()))
+
+    def _undo_cycle_marker_edit(self) -> None:
+        if not self._cycle_ready():
+            return
+        stack = getattr(self, "_cycle_marker_undo_stack", [])
+        if not stack:
+            try:
+                messagebox.showinfo("Cycle Analysis", "No marker edits to undo.")
+            except Exception:
+                pass
+            return
+        current = self._cycle_marker_snapshot()
+        snapshot = stack.pop()
+        self._cycle_marker_redo_stack.append(current)
+        self._cycle_marker_undo_lock = True
+        try:
+            self._apply_cycle_marker_snapshot(snapshot)
+        finally:
+            self._cycle_marker_undo_lock = False
+        self._bump_manual_marker_revision()
+        self._recompute_cycle_analysis(auto_detect=False, preserve_view=True)
+
+    def _redo_cycle_marker_edit(self) -> None:
+        if not self._cycle_ready():
+            return
+        redo_stack = getattr(self, "_cycle_marker_redo_stack", [])
+        if not redo_stack:
+            try:
+                messagebox.showinfo("Cycle Analysis", "No marker edits to redo.")
+            except Exception:
+                pass
+            return
+        current = self._cycle_marker_snapshot()
+        snapshot = redo_stack.pop()
+        self._cycle_marker_undo_stack.append(current)
+        self._cycle_marker_undo_lock = True
+        try:
+            self._apply_cycle_marker_snapshot(snapshot)
+        finally:
+            self._cycle_marker_undo_lock = False
+        self._bump_manual_marker_revision()
+        self._recompute_cycle_analysis(auto_detect=False, preserve_view=True)
+
     def _bump_manual_marker_revision(self) -> None:
         try:
             self._cycle_manual_revision += 1
@@ -37446,6 +38100,8 @@ class UnifiedApp(tk.Tk):
     def _ensure_manual_peak(self, idx):
 
         idx = int(idx)
+
+        self._push_cycle_marker_undo()
 
         if idx in self._add_peaks:
 
@@ -37478,6 +38134,8 @@ class UnifiedApp(tk.Tk):
     def _ensure_manual_trough(self, idx):
 
         idx = int(idx)
+
+        self._push_cycle_marker_undo()
 
         if idx in self._add_troughs:
 
@@ -37568,6 +38226,8 @@ class UnifiedApp(tk.Tk):
 
             # remove peak
 
+            self._push_cycle_marker_undo()
+
             if px in self._add_peaks:
 
                 self._add_peaks.remove(px)
@@ -37581,6 +38241,8 @@ class UnifiedApp(tk.Tk):
         else:
 
             # remove trough
+
+            self._push_cycle_marker_undo()
 
             if tx in self._add_troughs:
 
@@ -52746,6 +53408,7 @@ class UnifiedApp(tk.Tk):
             cellLoc="center",
         )
         table_font_size = max(7.5, 8.5 * state.get("font_scale", 1.0))
+        min_font_size = max(6.0, 7.0 * state.get("font_scale", 1.0))
         tbl.auto_set_font_size(False)
         tbl.set_fontsize(table_font_size)
         font_family = (settings.get("font_family") or "").strip()
@@ -52755,8 +53418,39 @@ class UnifiedApp(tk.Tk):
                     cell.get_text().set_fontfamily(font_family)
                 except Exception:
                     continue
-        scale_factor = max(1.0, len(rows) / 8.0)
-        tbl.scale(1.0, scale_factor)
+        canvas = FigureCanvasAgg(fig)
+        fig.set_canvas(canvas)
+
+        def _fit_table_to_axes() -> None:
+            font_size = table_font_size
+            for _ in range(12):
+                canvas.draw()
+                renderer = canvas.get_renderer()
+                bbox = tbl.get_window_extent(renderer=renderer)
+                ax_bbox = ax.get_window_extent(renderer=renderer)
+                if bbox.width <= ax_bbox.width and bbox.height <= ax_bbox.height:
+                    return
+                scale_w = ax_bbox.width / bbox.width if bbox.width else 1.0
+                scale_h = ax_bbox.height / bbox.height if bbox.height else 1.0
+                scale = min(scale_w, scale_h, 1.0) * 0.98
+                if scale >= 0.99:
+                    return
+                font_size = max(min_font_size, font_size * scale)
+                tbl.set_fontsize(font_size)
+                tbl.scale(scale, scale)
+            canvas.draw()
+            renderer = canvas.get_renderer()
+            bbox = tbl.get_window_extent(renderer=renderer)
+            ax_bbox = ax.get_window_extent(renderer=renderer)
+            if bbox.width > ax_bbox.width or bbox.height > ax_bbox.height:
+                scale_w = ax_bbox.width / bbox.width if bbox.width else 1.0
+                scale_h = ax_bbox.height / bbox.height if bbox.height else 1.0
+                scale = min(scale_w, scale_h, 1.0) * 0.98
+                if scale < 1.0:
+                    tbl.scale(scale, scale)
+                    canvas.draw()
+
+        _fit_table_to_axes()
         return fig
 
     def _final_report_build_text_page(
@@ -53525,6 +54219,8 @@ class UnifiedApp(tk.Tk):
             return results
         title_text = state.get("title", FINAL_REPORT_DEFAULT_STATE["title"])
         page_number = 0
+        figure_number = 0
+        table_number = 0
         last_group: Optional[str] = None
         for entry in sequence:
             page_type = entry.get("page_type", "text")
@@ -53625,7 +54321,6 @@ class UnifiedApp(tk.Tk):
                             "Section omitted – no data available for this run.",
                             page_size,
                         )
-                    has_caption = False
             elif page_type == "table":
                 rows, columns = [], []
                 if section_id == "cycle_stats_table":
@@ -53656,6 +54351,14 @@ class UnifiedApp(tk.Tk):
             if fig is None:
                 continue
             page_number += 1
+            figure_index = None
+            table_index = None
+            if has_caption:
+                figure_number += 1
+                figure_index = figure_number
+            elif page_type == "table" and table_rendered:
+                table_number += 1
+                table_index = table_number
             self._final_report_finalize_figure_layout(
                 fig, state, page_size, has_caption
             )
@@ -53664,30 +54367,35 @@ class UnifiedApp(tk.Tk):
                 last_group = group_label
             if page_type != "title":
                 self._final_report_draw_section_header(fig, metadata, page_size, state)
-            if has_caption:
+            if has_caption and figure_index is not None:
                 self._final_report_draw_figure_caption(
                     fig,
                     figure_caption_text,
-                    page_number,
+                    figure_index,
                     page_size,
                     state,
                 )
-            elif page_type == "table" and table_rendered:
+            elif page_type == "table" and table_rendered and table_index is not None:
                 self._final_report_draw_table_caption(
                     fig,
-                    page_number,
+                    table_index,
                     table_caption_text,
                     page_size,
                     state,
                 )
             if state.get("show_page_numbers"):
                 self._final_report_draw_page_footer(fig, page_number, page_size, state)
-            display_caption = (
-                figure_caption_text
-                or (table_caption_text if table_rendered else "")
-                or metadata.get("label", "")
-                or ""
-            )
+            if figure_index is not None:
+                display_caption = f"Figure {figure_index}. {figure_caption_text}"
+            elif table_index is not None:
+                display_caption = f"Table {table_index}. {table_caption_text}"
+            else:
+                display_caption = (
+                    figure_caption_text
+                    or (table_caption_text if table_rendered else "")
+                    or metadata.get("label", "")
+                    or ""
+                )
             results.append(
                 {
                     "figure": fig,
@@ -53695,6 +54403,8 @@ class UnifiedApp(tk.Tk):
                     "section_id": section_id,
                     "group_label": group_label,
                     "page_number": page_number,
+                    "figure_number": figure_index,
+                    "table_number": table_index,
                     "orientation": orientation,
                     "page_size": page_size,
                     "caption_text": figure_caption_text,
@@ -53796,7 +54506,7 @@ class UnifiedApp(tk.Tk):
         )
         dpi = self._get_export_dpi()
         try:
-            fig.savefig(path, dpi=dpi, bbox_inches="tight", pad_inches=0.1)
+            fig.savefig(path, dpi=dpi)
         finally:
             plt.close(fig)
         try:
@@ -53844,33 +54554,12 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 pass
             return
-        figure_index = 0
-        table_index = 0
         self._final_report_current_state = state
         try:
             with PdfPages(path) as pdf:
                 for page_info in page_figures:
                     fig = page_info["figure"]
-                    page_type = page_info.get("page_type", "text")
-                    if page_type == "figure":
-                        figure_index += 1
-                        fig.text(
-                            0.5,
-                            0.04,
-                            f"Figure {figure_index}. {page_info.get('caption_text','')}",
-                            ha="center",
-                            fontsize=10,
-                        )
-                    elif page_type == "table" and page_info.get("table_rendered"):
-                        table_index += 1
-                        fig.text(
-                            0.5,
-                            0.96,
-                            f"Table {table_index}. {page_info.get('table_caption','')}",
-                            ha="center",
-                            fontsize=10,
-                        )
-                    pdf.savefig(fig, dpi=self._get_export_dpi(), bbox_inches="tight")
+                    pdf.savefig(fig, dpi=self._get_export_dpi())
                     plt.close(fig)
         except Exception as exc:
             try:
@@ -53942,7 +54631,7 @@ class UnifiedApp(tk.Tk):
         zoom_factor = self._final_report_preview_zoom_value / 100.0
         dpi = max(1.0, self._get_export_dpi() * zoom_factor)
         try:
-            fig.savefig(buffer, format="png", dpi=dpi, bbox_inches="tight")
+            fig.savefig(buffer, format="png", dpi=dpi)
         except Exception:
             return
         buffer.seek(0)
@@ -54033,9 +54722,7 @@ class UnifiedApp(tk.Tk):
         if fmt not in ("png", "pdf", "svg"):
             fmt = "png"
         try:
-            fig.savefig(
-                path, dpi=self._get_export_dpi(), bbox_inches="tight", format=fmt
-            )
+            fig.savefig(path, dpi=self._get_export_dpi(), format=fmt)
             messagebox.showinfo("Preview Save", f"Preview saved to {path}")
         except Exception as exc:
             try:
@@ -58230,6 +58917,73 @@ class UnifiedApp(tk.Tk):
 
         return None
 
+    def _generate_selected_plots(self) -> None:
+
+        fig1_var = getattr(self, "_plot_select_fig1_var", None)
+        fig2_var = getattr(self, "_plot_select_fig2_var", None)
+        combined_var = getattr(self, "_plot_select_combined_var", None)
+        selections = {
+            "fig1": bool(fig1_var.get()) if fig1_var is not None else False,
+            "fig2": bool(fig2_var.get()) if fig2_var is not None else False,
+            "fig_combined": bool(combined_var.get())
+            if combined_var is not None
+            else False,
+        }
+
+        if not any(selections.values()):
+            try:
+                messagebox.showwarning(
+                    "Plot Selection",
+                    "Select at least one plot to generate before clicking Generate Plot.",
+                )
+            except Exception:
+                pass
+            return
+
+        if self.df is None:
+            messagebox.showerror("No Data", "Load a file and sheet first (Data tab).")
+            return
+
+        if (
+            not self.columns
+            or self.columns.get("x") in (None, "None")
+            or self.columns.get("y1") in (None, "None")
+        ):
+            messagebox.showerror(
+                "Missing Columns", "Select at least X and y1 on the Columns tab."
+            )
+            return
+
+        figs_to_render: Dict[str, Any] = {}
+        if selections["fig1"] or selections["fig2"]:
+            figs = self.render_plot("core", target="display")
+            if isinstance(figs, dict):
+                if selections["fig1"] and figs.get("fig1") is not None:
+                    figs_to_render["fig1"] = figs["fig1"]
+                if selections["fig2"] and figs.get("fig2") is not None:
+                    figs_to_render["fig2"] = figs["fig2"]
+
+        if selections["fig_combined"]:
+            fig_size = self._compute_target_figsize_inches()
+            fig = self.render_plot(
+                "fig_combined",
+                target="display",
+                plot_id="fig_combined_triple_axis",
+                fig_size=fig_size,
+            )
+            if fig is not None:
+                figs_to_render["fig_combined"] = fig
+
+        if figs_to_render:
+            self._render_figures_in_tabs(figs_to_render, clear_existing=False)
+        else:
+            try:
+                messagebox.showwarning(
+                    "Plot Selection", "No plots were generated for the current data."
+                )
+            except Exception:
+                pass
+
     def update_plots(self, *, include_cycle: bool = True):
 
         if self.df is None:
@@ -58253,10 +59007,6 @@ class UnifiedApp(tk.Tk):
         args = self._collect_plot_args()
 
         self._save_settings_dict(args)
-
-        # clear existing figure tabs before plotting to avoid closing live figs
-
-        self._clear_plot_tabs()
 
         figs = self.render_plot("core", target="display")
 
@@ -58308,7 +59058,7 @@ class UnifiedApp(tk.Tk):
 
         if isinstance(figs, dict) and figs.get("fig1"):
 
-            self._render_figures_in_tabs({"fig1": figs["fig1"]})
+            self._render_figures_in_tabs({"fig1": figs["fig1"]}, clear_existing=False)
 
     def generate_fig2_only(self):
 
@@ -58338,7 +59088,7 @@ class UnifiedApp(tk.Tk):
 
         if isinstance(figs, dict) and figs.get("fig2"):
 
-            self._render_figures_in_tabs({"fig2": figs["fig2"]})
+            self._render_figures_in_tabs({"fig2": figs["fig2"]}, clear_existing=False)
 
     def generate_combined_plot(self):
 
@@ -58370,7 +59120,9 @@ class UnifiedApp(tk.Tk):
 
         if fig is not None:
 
-            self._render_figures_in_tabs({"fig_combined": fig})
+            self._render_figures_in_tabs(
+                {"fig_combined": fig}, clear_existing=False
+            )
 
     def _combined_plot_config(
         self, args: Tuple[Any, ...], mode: str
