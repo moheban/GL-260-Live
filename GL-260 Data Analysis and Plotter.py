@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.0.2
+# Version: V2.0.3
 # Date: 2026-01-20
 
 import os
@@ -7250,7 +7250,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.0.2"
+APP_VERSION = "V2.0.3"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -7395,7 +7395,37 @@ def _apply_csv_import_settings_defaults(settings_dict: Dict[str, Any]) -> None:
         window_value = CSV_IMPORT_DEFAULT_MOVING_AVG_WINDOW
     settings_dict["csv_import_moving_average_window"] = window_value
 
-_FINAL_REPORT_FONT_FAMILY = _preferred_plot_font_stack()[0]
+_FINAL_REPORT_FONT_FAMILY = _preferred_plot_font_stack()
+_FINAL_REPORT_SUBSCRIPT_MAP = {
+    "\u2080": "0",
+    "\u2081": "1",
+    "\u2082": "2",
+    "\u2083": "3",
+    "\u2084": "4",
+    "\u2085": "5",
+    "\u2086": "6",
+    "\u2087": "7",
+    "\u2088": "8",
+    "\u2089": "9",
+}
+_FINAL_REPORT_SUPERSCRIPT_MAP = {
+    "\u2070": "0",
+    "\u00b9": "1",
+    "\u00b2": "2",
+    "\u00b3": "3",
+    "\u2074": "4",
+    "\u2075": "5",
+    "\u2076": "6",
+    "\u2077": "7",
+    "\u2078": "8",
+    "\u2079": "9",
+    "\u207a": "+",
+    "\u207b": "-",
+}
+_FINAL_REPORT_SUBSCRIPT_RE = re.compile(r"[\u2080-\u2089]+")
+_FINAL_REPORT_SUPERSCRIPT_RE = re.compile(
+    r"[\u2070\u00b9\u00b2\u00b3\u2074-\u2079\u207a\u207b]+"
+)
 
 OUTPUT_PROFILE_MODES = ("auto", "fixed", "aspect")
 OUTPUT_PROFILE_UNITS = ("in", "px")
@@ -54369,9 +54399,12 @@ class UnifiedApp(tk.Tk):
     def _final_report_resolved_orientation(
         self, section_id: str, state: Dict[str, Any]
     ) -> str:
+        state = self._final_report_safe_state(state)
         orientation = state.get("section_orientation", {}).get(section_id, "inherit")
         if orientation in ("portrait", "landscape"):
             return orientation
+        if section_id == "combined_plot":
+            return "landscape"
         layout_mode = state.get("global_layout_mode", "mixed_pages")
         if layout_mode == "single_page_portrait":
             return "portrait"
@@ -54382,6 +54415,28 @@ class UnifiedApp(tk.Tk):
         ):
             return "landscape"
         return "portrait"
+
+    def _final_report_safe_state(
+        self, state: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        if isinstance(state, dict):
+            return state
+        return FINAL_REPORT_DEFAULT_STATE
+
+    def _final_report_sanitize_text(self, text: str) -> str:
+        if not text:
+            return text
+
+        def _sub_replace(match: re.Match[str]) -> str:
+            digits = "".join(_FINAL_REPORT_SUBSCRIPT_MAP.get(ch, "") for ch in match.group(0))
+            return f"$_{digits}$" if digits else match.group(0)
+
+        def _sup_replace(match: re.Match[str]) -> str:
+            digits = "".join(_FINAL_REPORT_SUPERSCRIPT_MAP.get(ch, "") for ch in match.group(0))
+            return f"$^{digits}$" if digits else match.group(0)
+
+        value = _FINAL_REPORT_SUBSCRIPT_RE.sub(_sub_replace, text)
+        return _FINAL_REPORT_SUPERSCRIPT_RE.sub(_sup_replace, value)
 
     def _final_report_build_cycle_plot_figure(
         self, page_size: Tuple[float, float]
@@ -54409,25 +54464,131 @@ class UnifiedApp(tk.Tk):
         fig.subplots_adjust(left=0.08, right=0.97, top=0.92, bottom=0.08)
         return fig
 
+    def _build_export_figure_for_final_report(
+        self,
+        plot_kind: str,
+        plot_id: Optional[str],
+        page_size: Tuple[float, float],
+    ) -> Optional[Figure]:
+        fig = self.render_plot(
+            plot_kind or "",
+            target="export",
+            mode="export",
+            plot_id=plot_id,
+            fig_size=page_size,
+        )
+        if fig is None:
+            return None
+        if plot_kind != "fig_combined" and plot_id:
+            try:
+                _apply_layout_profile_to_figure(fig, plot_id, "export")
+            except Exception:
+                pass
+            try:
+                self._apply_plot_elements(fig, plot_id)
+            except Exception:
+                pass
+        try:
+            self._apply_gl260_legend_sizing(fig, plot_id=plot_id, plot_key=plot_kind)
+        except Exception:
+            pass
+        try:
+            from matplotlib.backends.backend_agg import FigureCanvasAgg
+        except Exception:
+            FigureCanvasAgg = None
+        export_canvas = None
+        try:
+            export_canvas = fig.canvas
+        except Exception:
+            export_canvas = None
+        if FigureCanvasAgg is not None and (
+            export_canvas is None or not isinstance(export_canvas, FigureCanvasAgg)
+        ):
+            try:
+                export_canvas = FigureCanvasAgg(fig)
+            except Exception:
+                export_canvas = getattr(fig, "canvas", None)
+        if export_canvas is None:
+            return fig
+        try:
+            fig.set_canvas(export_canvas)
+        except Exception:
+            pass
+        try:
+            self._finalize_matplotlib_canvas_layout(
+                canvas=export_canvas,
+                fig=fig,
+                tk_widget=None,
+                keep_export_size=True,
+                trigger_resize_event=False,
+                force_draw=True,
+            )
+        except Exception:
+            pass
+        try:
+            export_canvas.draw()
+        except Exception:
+            pass
+        return fig
+
+    def _final_report_combined_preflight(self) -> Tuple[bool, str]:
+        if self.df is None:
+            return False, "Load data before generating the combined plot section."
+        if not self.columns:
+            return False, "Select columns on the Columns tab before generating the report."
+        try:
+            _, data_ctx = self._resolve_prepared_data_context(apply_globals=True)
+        except Exception:
+            data_ctx = {}
+        series_map = data_ctx.get("series") or {}
+        selected_columns = data_ctx.get("selected_columns") or globals().get(
+            "selected_columns", {}
+        )
+        x_values = series_map.get("x", globals().get("x"))
+        y1_values = series_map.get("y1", globals().get("y1"))
+        missing_basic = []
+        if x_values is None:
+            missing_basic.append("X-axis")
+        if y1_values is None:
+            missing_basic.append("Primary Y")
+        if missing_basic:
+            return (
+                False,
+                "Combined plot requires the following selections: "
+                + ", ".join(missing_basic)
+                + ".",
+            )
+        required_series = {
+            "y1": series_map.get("y1", globals().get("y1")),
+            "y3": series_map.get("y3", globals().get("y3")),
+            "y2": series_map.get("y2", globals().get("y2")),
+            "z": series_map.get("z", globals().get("z")),
+            "z2": series_map.get("z2", globals().get("z2")),
+        }
+        missing_required = [
+            self._combined_dataset_label(key)
+            for key, series in required_series.items()
+            if series is None and _is_selected(selected_columns.get(key, key))
+        ]
+        if missing_required:
+            return (
+                False,
+                "Combined plot requires the following datasets: "
+                + ", ".join(missing_required)
+                + ".",
+            )
+        return True, ""
+
     def _final_report_build_standard_plot(
         self, section_id: str, page_size: Tuple[float, float]
     ) -> Optional[Figure]:
         if self.df is None:
             return None
-        fig = self.render_plot(
+        return self._build_export_figure_for_final_report(
             section_id,
-            target="export",
-            mode="export",
-            plot_id=self._plot_key_to_plot_id(section_id),
-            fig_size=page_size,
+            self._plot_key_to_plot_id(section_id),
+            page_size,
         )
-        if fig is None:
-            return None
-        try:
-            fig.set_size_inches(*page_size, forward=False)
-        except Exception:
-            pass
-        return fig
 
     def _final_report_build_cycle_timeline_figure(
         self, page_size: Tuple[float, float]
@@ -54525,13 +54686,14 @@ class UnifiedApp(tk.Tk):
         rows: List[Dict[str, Any]],
         columns: List[str],
         page_size: Tuple[float, float],
+        state: Dict[str, Any],
     ) -> Optional[Figure]:
         if not rows or not columns:
             return None
         fig = Figure(figsize=page_size)
         ax = fig.add_subplot(111)
         ax.axis("off")
-        state = getattr(self, "_final_report_current_state", FINAL_REPORT_DEFAULT_STATE)
+        state = self._final_report_safe_state(state)
         margins = self._final_report_page_margins(state, page_size)
         content_left = margins["left"]
         content_right = 1 - margins["right"]
@@ -54548,10 +54710,22 @@ class UnifiedApp(tk.Tk):
                 max(0.1, content_top - content_bottom),
             )
         )
-        table_data = [[row.get(col, "") for col in columns] for row in rows]
+        column_keys = list(columns)
+        column_labels = [
+            self._final_report_sanitize_text(str(col)) for col in column_keys
+        ]
+        table_data = [
+            [
+                self._final_report_sanitize_text(str(row.get(col, "")))
+                if row.get(col, "") is not None
+                else ""
+                for col in column_keys
+            ]
+            for row in rows
+        ]
         tbl = ax.table(
             cellText=table_data,
-            colLabels=columns,
+            colLabels=column_labels,
             loc="center",
             cellLoc="center",
         )
@@ -54559,11 +54733,11 @@ class UnifiedApp(tk.Tk):
         min_font_size = max(6.0, 7.0 * state.get("font_scale", 1.0))
         tbl.auto_set_font_size(False)
         tbl.set_fontsize(table_font_size)
-        font_family = (settings.get("font_family") or "").strip()
-        if font_family:
+        table_font_family = self._final_report_font_family()
+        if table_font_family:
             for cell in tbl.get_celld().values():
                 try:
-                    cell.get_text().set_fontfamily(font_family)
+                    cell.get_text().set_fontfamily(table_font_family)
                 except Exception:
                     continue
         canvas = FigureCanvasAgg(fig)
@@ -54602,14 +54776,15 @@ class UnifiedApp(tk.Tk):
         return fig
 
     def _final_report_build_text_page(
-        self, title: str, body: str, page_size: Tuple[float, float]
+        self, title: str, body: str, page_size: Tuple[float, float], state: Dict[str, Any]
     ) -> Figure:
         fig = Figure(figsize=page_size)
-        state = getattr(self, "_final_report_current_state", FINAL_REPORT_DEFAULT_STATE)
+        state = self._final_report_safe_state(state)
         margins = self._final_report_page_margins(state, page_size)
         ax = fig.add_subplot(111)
         ax.axis("off")
         title_font_size = max(14.0, 15.0 * state.get("font_scale", 1.0))
+        title = self._final_report_sanitize_text(title or "")
         title_props = self._final_report_font_properties(title_font_size, weight="bold")
         fig.text(
             margins["left"],
@@ -54619,7 +54794,9 @@ class UnifiedApp(tk.Tk):
             va="top",
             fontproperties=title_props,
         )
-        body_text = body.strip() or "No content available for this section."
+        body_text = body.strip() if body else ""
+        body_text = body_text or "No content available for this section."
+        body_text = self._final_report_sanitize_text(body_text)
         body_font_size = max(10.0, 11.0 * state.get("font_scale", 1.0))
         body_props = self._final_report_font_properties(body_font_size)
         start_y = 1 - margins["top"] - 0.04
@@ -54648,15 +54825,29 @@ class UnifiedApp(tk.Tk):
         style: Optional[str] = None,
     ) -> font_manager.FontProperties:
         return font_manager.FontProperties(
-            family=_FINAL_REPORT_FONT_FAMILY,
+            family=self._final_report_font_family(),
             size=size,
             weight=weight or "regular",
             style=style or "normal",
         )
 
+    def _final_report_font_family(self) -> List[str]:
+        stack: List[str] = []
+        family_value = (settings.get("font_family") or "").strip()
+        if isinstance(_FINAL_REPORT_FONT_FAMILY, (list, tuple)):
+            stack = list(_FINAL_REPORT_FONT_FAMILY)
+        elif _FINAL_REPORT_FONT_FAMILY:
+            stack = [str(_FINAL_REPORT_FONT_FAMILY)]
+        if family_value:
+            if family_value in stack:
+                stack.remove(family_value)
+            stack.insert(0, family_value)
+        return stack
+
     def _final_report_page_margins(
         self, state: Dict[str, Any], page_size: Tuple[float, float]
     ) -> Dict[str, float]:
+        state = self._final_report_safe_state(state)
         page_width, page_height = page_size
         requested_margin = state.get(
             "margin_in", FINAL_REPORT_DEFAULT_STATE["margin_in"]
@@ -54818,6 +55009,7 @@ class UnifiedApp(tk.Tk):
     def _final_report_compute_layout_sequence(
         self, state: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
+        state = self._final_report_safe_state(state)
         selected = set(state.get("selected_sections") or [])
         ordered = [
             section_id
@@ -54835,11 +55027,16 @@ class UnifiedApp(tk.Tk):
                 if metadata.get("type") == "figure":
                     major_section = section_id
                     break
+            orientation = (
+                self._final_report_resolved_orientation(major_section, state)
+                if major_section
+                else "portrait"
+            )
             sequence.append(
                 {
                     "page_type": "title",
                     "section_id": major_section,
-                    "orientation": "portrait",
+                    "orientation": orientation,
                     "metadata": FINAL_REPORT_SECTION_METADATA.get(major_section),
                     "group": FINAL_REPORT_SECTION_METADATA.get(major_section, {}).get(
                         "group", "Final Report"
@@ -54894,6 +55091,7 @@ class UnifiedApp(tk.Tk):
         state: Dict[str, Any],
         major_section_id: Optional[str],
     ) -> Tuple[Figure, bool]:
+        state = self._final_report_safe_state(state)
         title = state.get("title", FINAL_REPORT_DEFAULT_STATE["title"])
         fig = (
             self._final_report_create_section_figure(major_section_id, page_size)
@@ -54903,10 +55101,14 @@ class UnifiedApp(tk.Tk):
         if fig is None:
             narrative = state.get("narrative", "")
             body = narrative or "Narrative is not available."
-            return self._final_report_build_text_page(title, body, page_size), False
+            return (
+                self._final_report_build_text_page(title, body, page_size, state),
+                False,
+            )
         margins = self._final_report_page_margins(state, page_size)
         font_scale = state.get("font_scale", 1.0)
         title_font_size = max(20.0, 22.0 * font_scale)
+        title = self._final_report_sanitize_text(title or "")
         fig.text(
             0.5,
             1 - margins["top"] + 0.01,
@@ -54944,6 +55146,7 @@ class UnifiedApp(tk.Tk):
         narrative_text = (
             state.get("narrative", "").strip() or "Narrative is not available."
         )
+        narrative_text = self._final_report_sanitize_text(narrative_text)
         narrative_font_size = max(10.0, 11.0 * font_scale)
         narrative_x = margins["left"] + body_width + 0.04
         self._final_report_render_justified_text(
@@ -54961,7 +55164,9 @@ class UnifiedApp(tk.Tk):
         )
         metrics_text = self._final_report_collect_key_metrics_text()
         metrics_font_size = max(9.0, 10.0 * font_scale)
-        metric_block = "Key metrics:\n" + metrics_text
+        metric_block = self._final_report_sanitize_text(
+            "Key metrics:\n" + metrics_text
+        )
         self._final_report_render_justified_text(
             fig,
             page_size,
@@ -54984,6 +55189,7 @@ class UnifiedApp(tk.Tk):
         page_size: Tuple[float, float],
         has_caption: bool,
     ) -> Dict[str, float]:
+        state = self._final_report_safe_state(state)
         margins = self._final_report_page_margins(state, page_size)
         caption_space = margins["caption"] if has_caption else 0.0
         rect = (
@@ -55012,11 +55218,14 @@ class UnifiedApp(tk.Tk):
         page_size: Tuple[float, float],
         state: Dict[str, Any],
     ) -> None:
+        state = self._final_report_safe_state(state)
         if not caption:
             return
         margins = self._final_report_page_margins(state, page_size)
         caption_font_size = max(8.5, 9.0 * state.get("font_scale", 1.0))
-        caption_text = f"Figure {figure_index}. {caption}"
+        caption_text = self._final_report_sanitize_text(
+            f"Figure {figure_index}. {caption}"
+        )
         start_y = margins["bottom"] + margins["footer"] + margins["caption"] - 0.01
         self._final_report_render_justified_text(
             fig,
@@ -55040,11 +55249,12 @@ class UnifiedApp(tk.Tk):
         page_size: Tuple[float, float],
         state: Dict[str, Any],
     ) -> None:
+        state = self._final_report_safe_state(state)
         if not caption:
             return
         margins = self._final_report_page_margins(state, page_size)
         caption_font_size = max(9.0, 10.0 * state.get("font_scale", 1.0))
-        text = f"Table {table_index}. {caption}"
+        text = self._final_report_sanitize_text(f"Table {table_index}. {caption}")
         self._final_report_render_justified_text(
             fig,
             page_size,
@@ -55066,6 +55276,7 @@ class UnifiedApp(tk.Tk):
         page_size: Tuple[float, float],
         state: Dict[str, Any],
     ) -> None:
+        state = self._final_report_safe_state(state)
         margins = self._final_report_page_margins(state, page_size)
         font_size = max(8.0, 9.5 * state.get("font_scale", 1.0))
         footer_y = max(0.02, margins["bottom"] * 0.5)
@@ -55098,11 +55309,13 @@ class UnifiedApp(tk.Tk):
         page_size: Tuple[float, float],
         state: Dict[str, Any],
     ) -> None:
+        state = self._final_report_safe_state(state)
         if not group_label:
             return
         margins = self._final_report_page_margins(state, page_size)
         font_size = max(10.0, 11.0 * state.get("font_scale", 1.0))
         y = min(0.98, 1 - margins["top"] + 0.02)
+        group_label = self._final_report_sanitize_text(group_label)
         fig.text(
             margins["left"],
             y,
@@ -55123,11 +55336,12 @@ class UnifiedApp(tk.Tk):
         page_size: Tuple[float, float],
         state: Dict[str, Any],
     ) -> None:
+        state = self._final_report_safe_state(state)
         if not metadata or not state.get("show_section_headers"):
             return
         margins = self._final_report_page_margins(state, page_size)
         font_size = max(13.0, 14.0 * state.get("font_scale", 1.0))
-        label = metadata.get("label", "")
+        label = self._final_report_sanitize_text(metadata.get("label", ""))
         y = 1 - margins["top"] - 0.02
         fig.text(
             margins["left"],
@@ -55361,6 +55575,7 @@ class UnifiedApp(tk.Tk):
     def _final_report_build_page_figures(
         self, state: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
+        state = self._final_report_safe_state(state)
         sequence = self._final_report_compute_layout_sequence(state)
         results: List[Dict[str, Any]] = []
         if not sequence:
@@ -55391,68 +55606,80 @@ class UnifiedApp(tk.Tk):
                     figure_caption_text = self._final_report_figure_caption(section_id)
             elif page_type == "figure":
                 if section_id == "combined_plot":
-                    fig = self.render_plot(
-                        "fig_combined",
-                        target="export",
-                        mode="export",
-                        plot_id="fig_combined_triple_axis",
-                        fig_size=page_size,
-                    )
-                    if fig is not None:
-                        has_caption = True
-                        figure_caption_text = self._final_report_figure_caption(
-                            section_id
-                        )
-                        override = _svg_safe_text(
-                            state.get("combined_plot_title_override", "").strip()
-                        )
-                        if override:
-                            try:
-                                axes = fig.get_axes()
-                                if axes:
-                                    title_state = (
-                                        getattr(fig, "_gl260_title_state", {}) or {}
-                                    )
-                                    primary_axis = None
-                                    for axis in axes:
-                                        if (
-                                            getattr(axis, "_gl260_axis_role", None)
-                                            == "primary"
-                                        ):
-                                            primary_axis = axis
-                                            break
-                                    if primary_axis is None:
-                                        primary_axis = axes[0]
-                                    primary_axis.set_title(
-                                        override,
-                                        fontsize=title_state.get(
-                                            "title_fs", DEFAULT_COMBINED_TITLE_FONTSIZE
-                                        ),
-                                        fontfamily=title_state.get(
-                                            "font_family",
-                                            (settings.get("font_family") or "").strip(),
-                                        ),
-                                        pad=title_state.get(
-                                            "title_pad_pts",
-                                            DEFAULT_COMBINED_TITLE_PAD_PTS,
-                                        ),
-                                    )
-                                    layout_mgr = getattr(
-                                        fig, "_gl260_layout_manager", None
-                                    )
-                                    if layout_mgr is not None:
-                                        layout_mgr.solve()
-                                        if fig.canvas is not None:
-                                            fig.canvas.draw()
-                            except Exception:
-                                pass
-                    else:
+                    ok, message = self._final_report_combined_preflight()
+                    if not ok:
                         page_type = "text"
                         fig = self._final_report_build_text_page(
                             metadata.get("label", section_id) or title_text,
-                            "Combined plot could not be generated for this run.",
+                            message,
+                            page_size,
+                            state,
+                        )
+                    else:
+                        fig = self._build_export_figure_for_final_report(
+                            "fig_combined",
+                            "fig_combined_triple_axis",
                             page_size,
                         )
+                        if fig is not None:
+                            has_caption = True
+                            figure_caption_text = self._final_report_figure_caption(
+                                section_id
+                            )
+                            override = self._final_report_sanitize_text(
+                                state.get("combined_plot_title_override", "").strip()
+                            )
+                            override = _svg_safe_text(override)
+                            if override:
+                                try:
+                                    axes = fig.get_axes()
+                                    if axes:
+                                        title_state = (
+                                            getattr(fig, "_gl260_title_state", {}) or {}
+                                        )
+                                        primary_axis = None
+                                        for axis in axes:
+                                            if (
+                                                getattr(axis, "_gl260_axis_role", None)
+                                                == "primary"
+                                            ):
+                                                primary_axis = axis
+                                                break
+                                        if primary_axis is None:
+                                            primary_axis = axes[0]
+                                        primary_axis.set_title(
+                                            override,
+                                            fontsize=title_state.get(
+                                                "title_fs",
+                                                DEFAULT_COMBINED_TITLE_FONTSIZE,
+                                            ),
+                                            fontfamily=title_state.get(
+                                                "font_family",
+                                                (settings.get("font_family") or "")
+                                                .strip(),
+                                            ),
+                                            pad=title_state.get(
+                                                "title_pad_pts",
+                                                DEFAULT_COMBINED_TITLE_PAD_PTS,
+                                            ),
+                                        )
+                                        layout_mgr = getattr(
+                                            fig, "_gl260_layout_manager", None
+                                        )
+                                        if layout_mgr is not None:
+                                            layout_mgr.solve()
+                                            if fig.canvas is not None:
+                                                fig.canvas.draw()
+                                except Exception:
+                                    pass
+                        else:
+                            page_type = "text"
+                            fig = self._final_report_build_text_page(
+                                metadata.get("label", section_id) or title_text,
+                                "Combined plot could not be generated for this run.",
+                                page_size,
+                                state,
+                            )
                 else:
                     fig = self._final_report_create_section_figure(
                         section_id, page_size
@@ -55468,6 +55695,7 @@ class UnifiedApp(tk.Tk):
                             metadata.get("label", section_id) or title_text,
                             "Section omitted – no data available for this run.",
                             page_size,
+                            state,
                         )
             elif page_type == "table":
                 rows, columns = [], []
@@ -55478,7 +55706,9 @@ class UnifiedApp(tk.Tk):
                 elif section_id == "key_metrics":
                     rows, columns = self._final_report_get_key_metrics_rows()
                 table_caption_text = self._final_report_table_caption(section_id)
-                fig = self._final_report_build_table_figure(rows, columns, page_size)
+                fig = self._final_report_build_table_figure(
+                    rows, columns, page_size, state
+                )
                 if fig is not None:
                     table_rendered = True
                 else:
@@ -55487,6 +55717,7 @@ class UnifiedApp(tk.Tk):
                         table_caption_text,
                         "Table data is not available for this section.",
                         page_size,
+                        state,
                     )
                     table_rendered = False
             else:
@@ -55495,6 +55726,7 @@ class UnifiedApp(tk.Tk):
                     metadata.get("label", section_id) or title_text,
                     body,
                     page_size,
+                    state,
                 )
             if fig is None:
                 continue
@@ -55692,18 +55924,19 @@ class UnifiedApp(tk.Tk):
         )
         if not path:
             return
-        page_figures = self._final_report_build_page_figures(state)
-        if not page_figures:
-            try:
-                messagebox.showwarning(
-                    "Final Report PDF",
-                    "No recognizable sections were selected for this layout.",
-                )
-            except Exception:
-                pass
-            return
+        state = self._final_report_safe_state(state)
         self._final_report_current_state = state
         try:
+            page_figures = self._final_report_build_page_figures(state)
+            if not page_figures:
+                try:
+                    messagebox.showwarning(
+                        "Final Report PDF",
+                        "No recognizable sections were selected for this layout.",
+                    )
+                except Exception:
+                    pass
+                return
             with PdfPages(path) as pdf:
                 for page_info in page_figures:
                     fig = page_info["figure"]

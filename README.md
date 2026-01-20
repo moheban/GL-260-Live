@@ -1,11 +1,16 @@
-# GL-260 Data Analysis and Plotter (v2.0.2)
+# GL-260 Data Analysis and Plotter (V2.0.3)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `v2.0.2`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V2.0.3`.
 
-## v2.0.2 Update Highlights
+## V2.0.3 Update Highlights
+- Final Report plots now use the export-grade pipeline (layout profiles, legend sizing, Agg finalization) for visual parity with manual exports.
+- Combined Triple-Axis report pages default to landscape (11x8.5) with preflight validation and descriptive fallback text when data is missing.
+- Final Report generation is hardened against invalid state and report text normalizes CO2 subscripts to mathtext to avoid glyph warnings.
+
+## V2.0.2 Update Highlights
 - Plot selection defaults to **Combined Triple-Axis Plot** only on first launch (no saved settings).
 - Plot selection checkbox states persist across restarts.
 
@@ -488,6 +493,8 @@ Report sections (examples):
 
 Export:
 - PDF/PNG with export DPI and output size profiles.
+- Final Report plots use the same export pipeline as manual plot exports (layout profiles, legend sizing, Agg finalization).
+- Combined Triple-Axis pages default to landscape (11x8.5) unless explicitly overridden; missing data yields a descriptive text page.
 - Captions are rendered once during page build; figure/table numbers are independent of page numbers.
 - Tables auto-fit within margins to prevent overlap or cropping.
 
@@ -753,7 +760,7 @@ The script includes internal change summaries:
   - Treeview selection recursion fix in annotations editor.
   - Layout fixes for the annotations Toplevel.
 
-Note: the UI title uses `APP_VERSION` set to `v2.0.2`.
+Note: the UI title uses `APP_VERSION` set to `V2.0.3`.
 
 ## Troubleshooting
 - **"No Data" or "Missing Columns" errors**: Load a sheet on the Data tab and set required columns on the Columns tab.
