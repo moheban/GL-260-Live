@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: V1.8.9
+# Version: v2.0.0
 # Date: 2026-01-20
 
 import os
@@ -7250,7 +7250,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V1.8.9"
+APP_VERSION = "v2.0.0"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -7286,6 +7286,114 @@ ELAPSED_UNIT_SECONDS = {
     "minutes": 60.0,
     "seconds": 1.0,
 }
+
+CSV_IMPORT_DERIVATIVE_SOURCES = ("reactor", "manifold")
+CSV_IMPORT_SHEET_EXISTS_MODES = ("error", "overwrite", "autosuffix")
+CSV_IMPORT_DEFAULT_DERIVATIVE_SOURCE = "reactor"
+CSV_IMPORT_DEFAULT_SHEET_EXISTS_MODE = "error"
+CSV_IMPORT_DEFAULT_DAMPENING = 0.98
+CSV_IMPORT_DEFAULT_MOVING_AVG_WINDOW = 100
+CSV_IMPORT_MAPPING_FIELDS = OrderedDict(
+    [
+        ("reactor_pressure", "Reactor Pressure (PSI)"),
+        ("manifold_pressure", "Manifold Pressure (PSI)"),
+        ("external_temp", "External Reactor Temperature"),
+        ("internal_temp", "Internal Reactor Temperature"),
+    ]
+)
+CSV_IMPORT_OUTPUT_COLUMNS = [
+    "Date & Time",
+    "Elapsed Time (days)",
+    "Elapsed Time (hours)",
+    "Elapsed Time (minutes)",
+    "Elapsed Time (seconds)",
+    "Reactor Pressure (PSI)",
+    "Manifold Pressure (PSI)",
+    "External Reactor Temperature",
+    "Internal Reactor Temperature",
+    "First Derivative (ΔPSI/Δhour)",
+    "Smoothed First Derivative",
+    "First Derivative Moving Average",
+]
+CSV_IMPORT_DERIVATIVE_SOURCE_LABELS = {
+    "reactor": "Reactor Pressure (PSI)",
+    "manifold": "Manifold Pressure (PSI)",
+}
+CSV_IMPORT_SHEET_MODE_LABELS = {
+    "error": "Error if sheet exists",
+    "overwrite": "Overwrite existing sheet",
+    "autosuffix": "Auto-suffix (_1, _2, ...)",
+}
+
+
+def _apply_csv_import_settings_defaults(settings_dict: Dict[str, Any]) -> None:
+    if not isinstance(settings_dict, dict):
+        return
+    mapping = settings_dict.get("csv_import_mapping")
+    if not isinstance(mapping, dict):
+        mapping = {}
+    normalized_mapping = {}
+    for key in CSV_IMPORT_MAPPING_FIELDS.keys():
+        value = mapping.get(key, "")
+        if value is None:
+            value = ""
+        if not isinstance(value, str):
+            value = str(value)
+        normalized_mapping[key] = value
+    settings_dict["csv_import_mapping"] = normalized_mapping
+
+    for key in ("csv_import_last_csv_path", "csv_import_last_workbook_path"):
+        value = settings_dict.get(key, "")
+        if value is None:
+            value = ""
+        if not isinstance(value, str):
+            value = str(value)
+        settings_dict[key] = value
+
+    sheet_name = settings_dict.get("csv_import_last_sheet_name", "")
+    if sheet_name is None:
+        sheet_name = ""
+    if not isinstance(sheet_name, str):
+        sheet_name = str(sheet_name)
+    settings_dict["csv_import_last_sheet_name"] = sheet_name
+
+    mode = str(
+        settings_dict.get("csv_import_sheet_exists_mode", CSV_IMPORT_DEFAULT_SHEET_EXISTS_MODE)
+    ).strip().lower()
+    if mode not in CSV_IMPORT_SHEET_EXISTS_MODES:
+        mode = CSV_IMPORT_DEFAULT_SHEET_EXISTS_MODE
+    settings_dict["csv_import_sheet_exists_mode"] = mode
+
+    source = str(
+        settings_dict.get(
+            "csv_import_derivative_source", CSV_IMPORT_DEFAULT_DERIVATIVE_SOURCE
+        )
+    ).strip().lower()
+    if source not in CSV_IMPORT_DERIVATIVE_SOURCES:
+        source = CSV_IMPORT_DEFAULT_DERIVATIVE_SOURCE
+    settings_dict["csv_import_derivative_source"] = source
+
+    dampening = settings_dict.get(
+        "csv_import_smoothing_factor", CSV_IMPORT_DEFAULT_DAMPENING
+    )
+    try:
+        dampening_value = float(dampening)
+    except (TypeError, ValueError):
+        dampening_value = CSV_IMPORT_DEFAULT_DAMPENING
+    if not math.isfinite(dampening_value) or not (0.0 <= dampening_value < 1.0):
+        dampening_value = CSV_IMPORT_DEFAULT_DAMPENING
+    settings_dict["csv_import_smoothing_factor"] = dampening_value
+
+    window = settings_dict.get(
+        "csv_import_moving_average_window", CSV_IMPORT_DEFAULT_MOVING_AVG_WINDOW
+    )
+    try:
+        window_value = int(window)
+    except (TypeError, ValueError):
+        window_value = CSV_IMPORT_DEFAULT_MOVING_AVG_WINDOW
+    if window_value < 1:
+        window_value = CSV_IMPORT_DEFAULT_MOVING_AVG_WINDOW
+    settings_dict["csv_import_moving_average_window"] = window_value
 
 _FINAL_REPORT_FONT_FAMILY = _preferred_plot_font_stack()[0]
 
@@ -17450,6 +17558,8 @@ else:
     initial_peak_width = 1  # samples
 
 
+_apply_csv_import_settings_defaults(settings)
+
 settings["plot_elements"] = _normalize_plot_elements(settings.get("plot_elements"))
 settings["annotations_ui"] = _normalize_annotations_ui(settings.get("annotations_ui"))
 settings["layout_profiles"] = _normalize_layout_profiles(
@@ -19037,6 +19147,288 @@ def _read_excel_dataframe(path, sheet_name):
     """Return the DataFrame for the given Excel sheet."""
 
     return pd.read_excel(path, sheet_name=sheet_name, engine="openpyxl")
+
+
+def _sanitize_excel_sheet_name(name: str, fallback: str = "GL260 Import") -> str:
+    if name is None:
+        name = ""
+    name = str(name).strip()
+    if not name:
+        name = fallback
+    cleaned = re.sub(r"[:\\/?*\\[\\]]", "_", name)
+    cleaned = re.sub(r"\\s+", " ", cleaned).strip()
+    if not cleaned:
+        cleaned = fallback
+    return cleaned[:31]
+
+
+def _gl260_row_has_values(row: Sequence[Any]) -> bool:
+    return any(str(cell).strip() for cell in row)
+
+
+def _gl260_row_is_data_marker(row: Sequence[Any]) -> bool:
+    for cell in row:
+        if str(cell).strip().lower() == "data":
+            return True
+    return False
+
+
+def _normalize_gl260_header(row: Sequence[Any]) -> List[str]:
+    names: List[str] = []
+    seen: Dict[str, int] = {}
+    for idx, cell in enumerate(row):
+        raw = str(cell).strip()
+        name = raw if raw else f"Column {idx + 1}"
+        count = seen.get(name, 0) + 1
+        seen[name] = count
+        if count > 1:
+            name = f"{name} ({count})"
+        names.append(name)
+    return names
+
+
+def _parse_gl260_csv_table(
+    path: str, *, max_rows: Optional[int] = None
+) -> Tuple[List[str], List[List[str]]]:
+    encodings = ("utf-8-sig", "utf-8", "cp1252", "latin-1")
+    last_exc: Optional[Exception] = None
+    for encoding in encodings:
+        try:
+            with open(path, "r", encoding=encoding, newline="") as handle:
+                reader = csv.reader(handle)
+                return _extract_gl260_csv_table(reader, max_rows=max_rows)
+        except UnicodeDecodeError as exc:
+            last_exc = exc
+            continue
+    raise ValueError("Unable to decode CSV file.") from last_exc
+
+
+def _extract_gl260_csv_table(
+    reader: Iterable[Sequence[Any]], *, max_rows: Optional[int] = None
+) -> Tuple[List[str], List[List[str]]]:
+    header: Optional[List[str]] = None
+    data_rows: List[List[str]] = []
+    data_marker_found = False
+    units_skipped = False
+    for row in reader:
+        if not data_marker_found:
+            if _gl260_row_is_data_marker(row):
+                data_marker_found = True
+            continue
+        if header is None:
+            if _gl260_row_has_values(row):
+                header = _normalize_gl260_header(row)
+            continue
+        if not units_skipped:
+            if _gl260_row_has_values(row):
+                units_skipped = True
+            continue
+        if not _gl260_row_has_values(row):
+            continue
+        normalized = [str(cell).strip() for cell in row]
+        if len(normalized) < len(header):
+            normalized.extend([""] * (len(header) - len(normalized)))
+        elif len(normalized) > len(header):
+            normalized = normalized[: len(header)]
+        data_rows.append(normalized)
+        if max_rows is not None and len(data_rows) >= max_rows:
+            break
+    if header is None:
+        raise ValueError("Could not locate the data header row in the CSV file.")
+    return header, data_rows
+
+
+def _detect_gl260_datetime_column(columns: Sequence[str]) -> Optional[str]:
+    for name in columns:
+        normalized = name.strip().lower().replace(" ", "")
+        if "date" in normalized and "time" in normalized:
+            return name
+        if normalized in ("datetime", "date&time", "date/time"):
+            return name
+    return None
+
+
+def _detect_gl260_channel_columns(
+    columns: Sequence[str], dt_column: Optional[str]
+) -> List[str]:
+    blocked = {"no", "no.", "#", "index"}
+    if dt_column:
+        blocked.add(dt_column.strip().lower())
+    candidates = []
+    for name in columns:
+        if not name:
+            continue
+        lowered = name.strip().lower()
+        if lowered in blocked:
+            continue
+        candidates.append(name)
+    channel_cols = [
+        name
+        for name in candidates
+        if re.match(r"(?i)^ch\\d+", name.strip()) is not None
+    ]
+    return channel_cols if channel_cols else candidates
+
+
+def _sanitize_csv_numeric(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return None
+        return numeric if math.isfinite(numeric) else None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.startswith("+"):
+        text = text[1:].strip()
+    if text in ("+", "-"):
+        return None
+    try:
+        numeric = float(text)
+    except (TypeError, ValueError):
+        return None
+    return numeric if math.isfinite(numeric) else None
+
+
+def _numeric_series_from_column(
+    frame: pd.DataFrame, column_name: Optional[str]
+) -> pd.Series:
+    if not column_name or column_name not in frame.columns:
+        return pd.Series([np.nan] * len(frame), dtype=float)
+    series = frame[column_name].apply(_sanitize_csv_numeric)
+    return pd.Series(series, dtype=float)
+
+
+def _build_gl260_output_dataframe(
+    frame: pd.DataFrame,
+    dt_column: str,
+    mapping: Dict[str, str],
+    derivative_source: str,
+    dampening: float,
+    window: int,
+) -> pd.DataFrame:
+    if dt_column not in frame.columns:
+        raise ValueError("Date & Time column not found in CSV data.")
+    dt_series = pd.to_datetime(frame[dt_column], errors="coerce")
+    valid_dt = dt_series.dropna()
+    if valid_dt.empty:
+        raise ValueError("No valid Date & Time values found in the CSV data.")
+    t0 = valid_dt.iloc[0]
+    elapsed_seconds = (dt_series - t0).dt.total_seconds()
+    elapsed_days = elapsed_seconds / 86400.0
+    elapsed_hours = elapsed_seconds / 3600.0
+    elapsed_minutes = elapsed_seconds / 60.0
+
+    reactor_series = _numeric_series_from_column(
+        frame, mapping.get("reactor_pressure")
+    )
+    manifold_series = _numeric_series_from_column(
+        frame, mapping.get("manifold_pressure")
+    )
+    external_temp_series = _numeric_series_from_column(
+        frame, mapping.get("external_temp")
+    )
+    internal_temp_series = _numeric_series_from_column(
+        frame, mapping.get("internal_temp")
+    )
+
+    pressure_source = (
+        reactor_series if derivative_source == "reactor" else manifold_series
+    )
+    elapsed_hours_values = np.asarray(elapsed_hours, dtype=float)
+    pressure_values = np.asarray(pressure_source, dtype=float)
+    deriv = np.zeros(len(frame), dtype=float)
+    for idx in range(1, len(frame)):
+        dt_hours = elapsed_hours_values[idx] - elapsed_hours_values[idx - 1]
+        if not math.isfinite(dt_hours) or dt_hours <= 0.0:
+            deriv[idx] = 0.0
+            continue
+        prev_val = pressure_values[idx - 1]
+        curr_val = pressure_values[idx]
+        if not math.isfinite(prev_val) or not math.isfinite(curr_val):
+            deriv[idx] = 0.0
+            continue
+        deriv[idx] = (curr_val - prev_val) / dt_hours
+
+    dampening = max(0.0, min(float(dampening), 0.999999))
+    alpha = 1.0 - dampening
+    smooth = np.zeros(len(frame), dtype=float)
+    if len(frame) > 0:
+        smooth[0] = deriv[0]
+    if len(frame) > 1:
+        smooth[1] = deriv[0]
+    for idx in range(2, len(frame)):
+        smooth[idx] = alpha * deriv[idx - 1] + dampening * smooth[idx - 1]
+
+    window = max(1, int(window))
+    smooth_series = pd.Series(smooth, dtype=float)
+    moving_avg = smooth_series.rolling(window=window, min_periods=window).mean()
+
+    output = pd.DataFrame(
+        {
+            "Date & Time": dt_series,
+            "Elapsed Time (days)": elapsed_days,
+            "Elapsed Time (hours)": elapsed_hours,
+            "Elapsed Time (minutes)": elapsed_minutes,
+            "Elapsed Time (seconds)": elapsed_seconds,
+            "Reactor Pressure (PSI)": reactor_series,
+            "Manifold Pressure (PSI)": manifold_series,
+            "External Reactor Temperature": external_temp_series,
+            "Internal Reactor Temperature": internal_temp_series,
+            "First Derivative (ΔPSI/Δhour)": pd.Series(deriv, dtype=float),
+            "Smoothed First Derivative": smooth_series,
+            "First Derivative Moving Average": moving_avg,
+        }
+    )
+    return output[CSV_IMPORT_OUTPUT_COLUMNS]
+
+
+def _write_gl260_output_sheet(
+    workbook_path: str, sheet_name: str, output: pd.DataFrame, exists_mode: str
+) -> str:
+    try:
+        import openpyxl  # type: ignore
+        from openpyxl.utils.dataframe import dataframe_to_rows  # type: ignore
+    except Exception as exc:
+        raise RuntimeError("openpyxl is required for CSV import.") from exc
+
+    workbook = openpyxl.load_workbook(workbook_path)
+    resolved_name = _sanitize_excel_sheet_name(sheet_name or "GL260 Import")
+    existing = set(workbook.sheetnames)
+
+    mode = (exists_mode or CSV_IMPORT_DEFAULT_SHEET_EXISTS_MODE).strip().lower()
+    if mode not in CSV_IMPORT_SHEET_EXISTS_MODES:
+        mode = CSV_IMPORT_DEFAULT_SHEET_EXISTS_MODE
+
+    if resolved_name in existing:
+        if mode == "error":
+            raise ValueError(
+                f"Sheet '{resolved_name}' already exists in the workbook."
+            )
+        if mode == "overwrite":
+            workbook.remove(workbook[resolved_name])
+            existing.discard(resolved_name)
+        if mode == "autosuffix":
+            base = resolved_name
+            counter = 1
+            while resolved_name in existing:
+                suffix = f"_{counter}"
+                trimmed = base
+                if len(base) + len(suffix) > 31:
+                    trimmed = base[: 31 - len(suffix)]
+                resolved_name = f"{trimmed}{suffix}"
+                counter += 1
+
+    worksheet = workbook.create_sheet(title=resolved_name)
+    for row in dataframe_to_rows(output, index=False, header=True):
+        worksheet.append(row)
+    worksheet.freeze_panes = "A2"
+    workbook.save(workbook_path)
+    workbook.close()
+    return resolved_name
 
 
 def analyze_pressure_cycles(
@@ -23496,6 +23888,642 @@ def _safe_color_dialog(initial="#1f77b4"):
         return initial
 
 
+class CsvImportDialog:
+    def __init__(
+        self, app: tk.Tk, *, on_close: Optional[Callable[[], None]] = None
+    ) -> None:
+        self.app = app
+        self._on_close = on_close
+        self._preview_task_id: Optional[int] = None
+        self._import_task_id: Optional[int] = None
+        self._detected_columns: List[str] = []
+        self._datetime_column: Optional[str] = None
+        self._ignored_columns: Set[str] = set()
+        self._last_suggested_sheet = ""
+
+        settings_dict = settings
+        csv_path = settings_dict.get("csv_import_last_csv_path", "")
+        if not isinstance(csv_path, str):
+            csv_path = ""
+        workbook_path = settings_dict.get("csv_import_last_workbook_path", "")
+        if not isinstance(workbook_path, str):
+            workbook_path = ""
+        if not workbook_path:
+            workbook_path = getattr(app, "file_path", "") or settings_dict.get(
+                "last_file_path", ""
+            )
+        sheet_name = settings_dict.get("csv_import_last_sheet_name", "")
+        if not isinstance(sheet_name, str):
+            sheet_name = ""
+
+        self._csv_path_var = tk.StringVar(value=csv_path)
+        self._workbook_path_var = tk.StringVar(value=workbook_path)
+        self._sheet_name_var = tk.StringVar(value=sheet_name)
+        self._status_var = tk.StringVar(value="Select a CSV file to begin.")
+        self._detected_columns_var = tk.StringVar(value="Detected columns: none")
+        self._datetime_column_var = tk.StringVar(value="Date & Time column: n/a")
+
+        self._mapping_vars: Dict[str, tk.StringVar] = {}
+        saved_mapping = settings_dict.get("csv_import_mapping", {})
+        for key in CSV_IMPORT_MAPPING_FIELDS.keys():
+            value = saved_mapping.get(key, "") if isinstance(saved_mapping, dict) else ""
+            if not isinstance(value, str):
+                value = ""
+            self._mapping_vars[key] = tk.StringVar(value=value)
+
+        source_key = settings_dict.get(
+            "csv_import_derivative_source", CSV_IMPORT_DEFAULT_DERIVATIVE_SOURCE
+        )
+        source_label = CSV_IMPORT_DERIVATIVE_SOURCE_LABELS.get(
+            source_key,
+            CSV_IMPORT_DERIVATIVE_SOURCE_LABELS[CSV_IMPORT_DEFAULT_DERIVATIVE_SOURCE],
+        )
+        self._derivative_source_display_map = {
+            label: key for key, label in CSV_IMPORT_DERIVATIVE_SOURCE_LABELS.items()
+        }
+        self._derivative_source_var = tk.StringVar(value=source_label)
+
+        sheet_mode_key = settings_dict.get(
+            "csv_import_sheet_exists_mode", CSV_IMPORT_DEFAULT_SHEET_EXISTS_MODE
+        )
+        sheet_mode_label = CSV_IMPORT_SHEET_MODE_LABELS.get(
+            sheet_mode_key,
+            CSV_IMPORT_SHEET_MODE_LABELS[CSV_IMPORT_DEFAULT_SHEET_EXISTS_MODE],
+        )
+        self._sheet_mode_display_map = {
+            label: key for key, label in CSV_IMPORT_SHEET_MODE_LABELS.items()
+        }
+        self._sheet_mode_var = tk.StringVar(value=sheet_mode_label)
+
+        dampening = settings_dict.get(
+            "csv_import_smoothing_factor", CSV_IMPORT_DEFAULT_DAMPENING
+        )
+        if not isinstance(dampening, (int, float)):
+            dampening = CSV_IMPORT_DEFAULT_DAMPENING
+        self._dampening_var = tk.StringVar(value=f"{float(dampening):.3f}")
+
+        window = settings_dict.get(
+            "csv_import_moving_average_window", CSV_IMPORT_DEFAULT_MOVING_AVG_WINDOW
+        )
+        if not isinstance(window, int):
+            try:
+                window = int(window)
+            except (TypeError, ValueError):
+                window = CSV_IMPORT_DEFAULT_MOVING_AVG_WINDOW
+        self._window_var = tk.StringVar(value=str(window))
+
+        self.window = tk.Toplevel(app)
+        self.window.title("Import GL-260 CSV")
+        self.window.transient(app)
+        self.window.resizable(True, True)
+        self.window.protocol("WM_DELETE_WINDOW", self._close)
+        self.window.bind("<Escape>", lambda _event: self._close())
+        self.window.grab_set()
+
+        self._mapping_combos: Dict[str, ttk.Combobox] = {}
+        self._ignore_listbox: Optional[tk.Listbox] = None
+        self._preview_text: Optional[scrolledtext.ScrolledText] = None
+        self._import_button: Optional[ttk.Button] = None
+        self._close_button: Optional[ttk.Button] = None
+
+        self._build_ui()
+        self._suggest_sheet_name(force=not bool(sheet_name))
+        if csv_path and os.path.exists(csv_path):
+            self._refresh_preview()
+
+    def _scale_length(self, value: int) -> int:
+        scaler = getattr(self.app, "_scale_length", None)
+        if callable(scaler):
+            try:
+                return int(scaler(value))
+            except Exception:
+                return int(value)
+        return int(value)
+
+    def _build_ui(self) -> None:
+        container = ttk.Frame(self.window, padding=12)
+        container.grid(row=0, column=0, sticky="nsew")
+        self.window.grid_rowconfigure(0, weight=1)
+        self.window.grid_columnconfigure(0, weight=1)
+        container.grid_columnconfigure(0, weight=1)
+
+        input_frame = ttk.Labelframe(container, text="Input / Output")
+        input_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        input_frame.grid_columnconfigure(1, weight=1)
+
+        ttk.Label(input_frame, text="CSV file").grid(
+            row=0, column=0, sticky="w", padx=6, pady=4
+        )
+        ttk.Entry(input_frame, textvariable=self._csv_path_var).grid(
+            row=0, column=1, sticky="ew", padx=6, pady=4
+        )
+        ttk.Button(input_frame, text="Browse...", command=self._browse_csv).grid(
+            row=0, column=2, padx=6, pady=4
+        )
+        ttk.Button(input_frame, text="Preview", command=self._refresh_preview).grid(
+            row=0, column=3, padx=6, pady=4
+        )
+
+        ttk.Label(input_frame, text="Excel workbook").grid(
+            row=1, column=0, sticky="w", padx=6, pady=4
+        )
+        ttk.Entry(input_frame, textvariable=self._workbook_path_var).grid(
+            row=1, column=1, sticky="ew", padx=6, pady=4
+        )
+        ttk.Button(input_frame, text="Browse...", command=self._browse_workbook).grid(
+            row=1, column=2, padx=6, pady=4
+        )
+
+        ttk.Label(input_frame, text="New sheet name").grid(
+            row=2, column=0, sticky="w", padx=6, pady=4
+        )
+        ttk.Entry(input_frame, textvariable=self._sheet_name_var).grid(
+            row=2, column=1, sticky="ew", padx=6, pady=4
+        )
+
+        ttk.Label(input_frame, text="If sheet exists").grid(
+            row=3, column=0, sticky="w", padx=6, pady=4
+        )
+        ttk.Combobox(
+            input_frame,
+            textvariable=self._sheet_mode_var,
+            values=list(CSV_IMPORT_SHEET_MODE_LABELS.values()),
+            state="readonly",
+        ).grid(row=3, column=1, sticky="w", padx=6, pady=4)
+
+        preview_frame = ttk.Labelframe(container, text="CSV Parsing")
+        preview_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 10))
+        preview_frame.grid_columnconfigure(0, weight=1)
+
+        ttk.Label(
+            preview_frame,
+            textvariable=self._detected_columns_var,
+            wraplength=self._scale_length(720),
+        ).grid(row=0, column=0, sticky="w", padx=6, pady=(4, 2))
+        ttk.Label(
+            preview_frame,
+            textvariable=self._datetime_column_var,
+        ).grid(row=1, column=0, sticky="w", padx=6, pady=(0, 4))
+
+        preview_text = scrolledtext.ScrolledText(
+            preview_frame, height=6, wrap="none"
+        )
+        preview_text.grid(row=2, column=0, sticky="nsew", padx=6, pady=(0, 6))
+        preview_text.configure(state="disabled")
+        self._preview_text = preview_text
+
+        mapping_frame = ttk.Labelframe(container, text="Channel Mapping")
+        mapping_frame.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+        mapping_frame.grid_columnconfigure(1, weight=1)
+
+        row = 0
+        for key, label in CSV_IMPORT_MAPPING_FIELDS.items():
+            ttk.Label(mapping_frame, text=label).grid(
+                row=row, column=0, sticky="w", padx=6, pady=3
+            )
+            combo = ttk.Combobox(
+                mapping_frame, textvariable=self._mapping_vars[key], state="readonly"
+            )
+            combo.grid(row=row, column=1, sticky="ew", padx=6, pady=3)
+            self._mapping_combos[key] = combo
+            row += 1
+
+        ttk.Label(mapping_frame, text="Ignore columns (optional)").grid(
+            row=row, column=0, sticky="nw", padx=6, pady=(6, 4)
+        )
+        ignore_frame = ttk.Frame(mapping_frame)
+        ignore_frame.grid(row=row, column=1, sticky="ew", padx=6, pady=(6, 4))
+        ignore_frame.grid_columnconfigure(0, weight=1)
+        listbox = tk.Listbox(
+            ignore_frame,
+            selectmode="multiple",
+            height=5,
+            exportselection=False,
+        )
+        listbox.grid(row=0, column=0, sticky="ew")
+        scroll = ttk.Scrollbar(ignore_frame, orient="vertical", command=listbox.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        listbox.configure(yscrollcommand=scroll.set)
+        listbox.bind("<<ListboxSelect>>", lambda _e: self._on_ignore_change())
+        self._ignore_listbox = listbox
+
+        calc_frame = ttk.Labelframe(container, text="Calculation Settings")
+        calc_frame.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        calc_frame.grid_columnconfigure(1, weight=1)
+
+        ttk.Label(calc_frame, text="Derivative source").grid(
+            row=0, column=0, sticky="w", padx=6, pady=4
+        )
+        ttk.Combobox(
+            calc_frame,
+            textvariable=self._derivative_source_var,
+            values=list(CSV_IMPORT_DERIVATIVE_SOURCE_LABELS.values()),
+            state="readonly",
+        ).grid(row=0, column=1, sticky="w", padx=6, pady=4)
+
+        ttk.Label(calc_frame, text="Smoothing dampening factor").grid(
+            row=1, column=0, sticky="w", padx=6, pady=4
+        )
+        ttk.Entry(calc_frame, textvariable=self._dampening_var, width=12).grid(
+            row=1, column=1, sticky="w", padx=6, pady=4
+        )
+
+        ttk.Label(calc_frame, text="Moving average window (points)").grid(
+            row=2, column=0, sticky="w", padx=6, pady=4
+        )
+        ttk.Entry(calc_frame, textvariable=self._window_var, width=12).grid(
+            row=2, column=1, sticky="w", padx=6, pady=4
+        )
+
+        output_frame = ttk.Labelframe(container, text="Output Schema")
+        output_frame.grid(row=4, column=0, sticky="ew", pady=(0, 10))
+        output_frame.grid_columnconfigure(0, weight=1)
+        ttk.Label(output_frame, text="Fixed column names (default):").grid(
+            row=0, column=0, sticky="w", padx=6, pady=(4, 2)
+        )
+        ttk.Label(
+            output_frame,
+            text="\n".join(CSV_IMPORT_OUTPUT_COLUMNS),
+            justify="left",
+        ).grid(row=1, column=0, sticky="w", padx=6, pady=(0, 6))
+
+        ttk.Label(container, textvariable=self._status_var).grid(
+            row=5, column=0, sticky="w", padx=6, pady=(0, 6)
+        )
+
+        button_frame = ttk.Frame(container)
+        button_frame.grid(row=6, column=0, sticky="e", pady=(0, 6))
+        import_button = ttk.Button(
+            button_frame, text="Import", command=self._start_import
+        )
+        import_button.pack(side="right")
+        close_button = ttk.Button(button_frame, text="Close", command=self._close)
+        close_button.pack(side="right", padx=(0, 8))
+        self._import_button = import_button
+        self._close_button = close_button
+
+    def _set_status(self, message: str) -> None:
+        self._status_var.set(message)
+
+    def _set_busy(self, busy: bool) -> None:
+        state = "disabled" if busy else "normal"
+        if self._import_button is not None:
+            self._import_button.configure(state=state)
+        if self._close_button is not None:
+            self._close_button.configure(state=("disabled" if busy else "normal"))
+
+    def _browse_csv(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Select GL-260 CSV",
+            filetypes=[("CSV File", "*.csv")],
+        )
+        if not path:
+            return
+        self._csv_path_var.set(path)
+        self._suggest_sheet_name(force=False)
+        self._refresh_preview()
+
+    def _browse_workbook(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Select Excel File", filetypes=[("Excel Files", "*.xlsx *.xls")]
+        )
+        if not path:
+            return
+        self._workbook_path_var.set(path)
+
+    def _suggest_sheet_name(self, *, force: bool) -> None:
+        current = self._sheet_name_var.get().strip()
+        if current and not force and current != self._last_suggested_sheet:
+            return
+        path = self._csv_path_var.get().strip()
+        if path:
+            suggestion = _sanitize_excel_sheet_name(Path(path).stem)
+        else:
+            suggestion = _sanitize_excel_sheet_name(current or "GL260 Import")
+        self._last_suggested_sheet = suggestion
+        if force or not current:
+            self._sheet_name_var.set(suggestion)
+
+    def _refresh_preview(self) -> None:
+        path = self._csv_path_var.get().strip()
+        if not path or not os.path.exists(path):
+            self._set_status("Select a valid CSV file to preview.")
+            return
+        self._set_status("Scanning CSV preview...")
+
+        def _worker() -> Tuple[List[str], List[List[str]]]:
+            return _parse_gl260_csv_table(path, max_rows=8)
+
+        def _on_ok(result: Tuple[List[str], List[List[str]]]) -> None:
+            columns, rows = result
+            self._detected_columns = columns
+            self._datetime_column = _detect_gl260_datetime_column(columns)
+            self._populate_ignore_columns(columns)
+            self._update_mapping_choices()
+            self._apply_saved_mapping()
+            self._update_preview_text(columns, rows)
+            dt_label = self._datetime_column or "Not detected"
+            self._datetime_column_var.set(f"Date & Time column: {dt_label}")
+            preview_hint = ", ".join(columns[:8])
+            if len(columns) > 8:
+                preview_hint += ", ..."
+            self._detected_columns_var.set(
+                f"Detected columns ({len(columns)}): {preview_hint}"
+            )
+            self._set_status("Preview loaded.")
+
+        def _on_err(exc: BaseException) -> None:
+            self._set_status(f"Preview failed: {exc}")
+            messagebox.showerror("CSV Preview Error", f"Could not read CSV:\n{exc}")
+
+        self._preview_task_id = self.app._task_runner.submit(
+            "csv_import_preview", _worker, _on_ok, _on_err
+        )
+
+    def _populate_ignore_columns(self, columns: Sequence[str]) -> None:
+        listbox = self._ignore_listbox
+        if listbox is None:
+            return
+        listbox.delete(0, tk.END)
+        for name in columns:
+            listbox.insert(tk.END, name)
+        self._ignored_columns = set()
+
+    def _update_preview_text(self, columns: Sequence[str], rows: Sequence[Sequence[str]]):
+        preview = self._preview_text
+        if preview is None:
+            return
+        preview.configure(state="normal")
+        preview.delete("1.0", "end")
+        preview.insert("end", " | ".join(columns) + "\n")
+        for row in rows[:5]:
+            preview.insert("end", " | ".join(row) + "\n")
+        preview.configure(state="disabled")
+
+    def _on_ignore_change(self) -> None:
+        listbox = self._ignore_listbox
+        if listbox is None:
+            return
+        selections = listbox.curselection()
+        self._ignored_columns = {listbox.get(idx) for idx in selections}
+        self._update_mapping_choices()
+
+    def _available_mapping_columns(self) -> List[str]:
+        if not self._detected_columns:
+            return []
+        channel_cols = _detect_gl260_channel_columns(
+            self._detected_columns, self._datetime_column
+        )
+        return [col for col in channel_cols if col not in self._ignored_columns]
+
+    def _update_mapping_choices(self) -> None:
+        available = self._available_mapping_columns()
+        for key, combo in self._mapping_combos.items():
+            values = list(available)
+            if key != "reactor_pressure":
+                values = ["(None)"] + values
+            combo.configure(values=values)
+            current = self._mapping_vars[key].get()
+            if current not in values:
+                self._mapping_vars[key].set("")
+
+    def _apply_saved_mapping(self) -> None:
+        available = set(self._available_mapping_columns())
+        saved_mapping = settings.get("csv_import_mapping", {})
+        for key, var in self._mapping_vars.items():
+            if var.get().strip():
+                continue
+            candidate = ""
+            if isinstance(saved_mapping, dict):
+                saved_value = saved_mapping.get(key, "")
+                if isinstance(saved_value, str) and saved_value in available:
+                    candidate = saved_value
+            if not candidate:
+                candidate = self._auto_match_column(key, available)
+            if candidate:
+                var.set(candidate)
+
+    def _auto_match_column(self, key: str, columns: Set[str]) -> str:
+        for name in columns:
+            lowered = name.lower()
+            if key == "reactor_pressure":
+                if "reactor" in lowered and ("press" in lowered or "psi" in lowered):
+                    return name
+            elif key == "manifold_pressure":
+                if "manifold" in lowered and ("press" in lowered or "psi" in lowered):
+                    return name
+            elif key == "external_temp":
+                if "external" in lowered and ("temp" in lowered or "temperature" in lowered):
+                    return name
+            elif key == "internal_temp":
+                if "internal" in lowered and ("temp" in lowered or "temperature" in lowered):
+                    return name
+        return ""
+
+    def _gather_mapping(self) -> Dict[str, str]:
+        mapping = {}
+        for key, var in self._mapping_vars.items():
+            value = (var.get() or "").strip()
+            if value == "(None)":
+                value = ""
+            mapping[key] = value
+        return mapping
+
+    def _start_import(self) -> None:
+        if self._import_task_id is not None:
+            self._set_status("Import already in progress...")
+            return
+        csv_path = self._csv_path_var.get().strip()
+        if not csv_path or not os.path.exists(csv_path):
+            messagebox.showerror("Missing CSV", "Select a valid CSV file to import.")
+            return
+        workbook_path = self._workbook_path_var.get().strip()
+        if not workbook_path or not os.path.exists(workbook_path):
+            messagebox.showerror(
+                "Missing Workbook", "Select an existing Excel workbook."
+            )
+            return
+        sheet_name_input = self._sheet_name_var.get().strip()
+        if not sheet_name_input:
+            messagebox.showerror("Missing Sheet Name", "Enter a sheet name.")
+            return
+        mapping = self._gather_mapping()
+        if not mapping.get("reactor_pressure"):
+            messagebox.showerror(
+                "Missing Mapping", "Select a Reactor Pressure column."
+            )
+            return
+        derivative_label = self._derivative_source_var.get()
+        derivative_source = self._derivative_source_display_map.get(
+            derivative_label, CSV_IMPORT_DEFAULT_DERIVATIVE_SOURCE
+        )
+        if (
+            derivative_source == "manifold"
+            and not mapping.get("manifold_pressure")
+        ):
+            messagebox.showerror(
+                "Missing Mapping",
+                "Select a Manifold Pressure column for the derivative source.",
+            )
+            return
+        try:
+            dampening_value = float(self._dampening_var.get())
+        except (TypeError, ValueError):
+            messagebox.showerror(
+                "Invalid Value", "Enter a numeric dampening factor."
+            )
+            return
+        if not (0.0 <= dampening_value < 1.0):
+            messagebox.showerror(
+                "Invalid Value",
+                "Dampening factor must be between 0 and 1 (non-inclusive).",
+            )
+            return
+        try:
+            window_value = int(self._window_var.get())
+        except (TypeError, ValueError):
+            messagebox.showerror("Invalid Value", "Enter an integer window size.")
+            return
+        if window_value < 1:
+            messagebox.showerror("Invalid Value", "Window size must be at least 1.")
+            return
+
+        sheet_mode_label = self._sheet_mode_var.get()
+        sheet_mode = self._sheet_mode_display_map.get(
+            sheet_mode_label, CSV_IMPORT_DEFAULT_SHEET_EXISTS_MODE
+        )
+        self._set_status("Importing CSV...")
+        self._set_busy(True)
+
+        mapping_snapshot = dict(mapping)
+        dampening_snapshot = float(dampening_value)
+        window_snapshot = int(window_value)
+        derivative_snapshot = derivative_source
+        sheet_name_snapshot = sheet_name_input
+        sheet_mode_snapshot = sheet_mode
+
+        def _worker() -> Dict[str, Any]:
+            columns, rows = _parse_gl260_csv_table(csv_path)
+            dt_column = _detect_gl260_datetime_column(columns)
+            if not dt_column:
+                raise ValueError("Date & Time column not detected in CSV.")
+            frame = pd.DataFrame(rows, columns=columns)
+            output = _build_gl260_output_dataframe(
+                frame,
+                dt_column,
+                mapping_snapshot,
+                derivative_snapshot,
+                dampening_snapshot,
+                window_snapshot,
+            )
+            resolved_name = _write_gl260_output_sheet(
+                workbook_path, sheet_name_snapshot, output, sheet_mode_snapshot
+            )
+            return {
+                "sheet_name": resolved_name,
+                "workbook_path": workbook_path,
+                "row_count": len(output),
+            }
+
+        def _on_ok(result: Dict[str, Any]) -> None:
+            self._import_task_id = None
+            self._set_busy(False)
+            sheet_name = result.get("sheet_name", "")
+            row_count = result.get("row_count", 0)
+            self._set_status(f"Import complete: {sheet_name} ({row_count} rows).")
+            self._persist_settings(
+                csv_path,
+                workbook_path,
+                sheet_name,
+                mapping_snapshot,
+                derivative_snapshot,
+                dampening_snapshot,
+                window_snapshot,
+                sheet_mode_snapshot,
+            )
+            self._update_app_after_import(workbook_path, sheet_name)
+
+        def _on_err(exc: BaseException) -> None:
+            self._import_task_id = None
+            self._set_busy(False)
+            self._set_status(f"Import failed: {exc}")
+            messagebox.showerror("CSV Import Error", f"Import failed:\n{exc}")
+
+        self._import_task_id = self.app._task_runner.submit(
+            "csv_import", _worker, _on_ok, _on_err
+        )
+
+    def _persist_settings(
+        self,
+        csv_path: str,
+        workbook_path: str,
+        sheet_name: str,
+        mapping: Dict[str, str],
+        derivative_source: str,
+        dampening: float,
+        window: int,
+        sheet_mode: str,
+    ) -> None:
+        settings["csv_import_last_csv_path"] = csv_path
+        settings["csv_import_last_workbook_path"] = workbook_path
+        settings["csv_import_last_sheet_name"] = sheet_name
+        settings["csv_import_mapping"] = dict(mapping)
+        settings["csv_import_derivative_source"] = derivative_source
+        settings["csv_import_smoothing_factor"] = dampening
+        settings["csv_import_moving_average_window"] = window
+        settings["csv_import_sheet_exists_mode"] = sheet_mode
+        try:
+            _save_settings_to_disk()
+        except Exception:
+            pass
+
+    def _update_app_after_import(self, workbook_path: str, sheet_name: str) -> None:
+        try:
+            self.app.file_path = workbook_path
+        except Exception:
+            return
+        entry = getattr(self.app, "e_file", None)
+        if entry is not None:
+            try:
+                entry.delete(0, tk.END)
+                entry.insert(0, workbook_path)
+            except Exception:
+                pass
+        settings["last_file_path"] = workbook_path
+        try:
+            _save_settings_to_disk()
+        except Exception:
+            pass
+        try:
+            self.app._load_sheet_names()
+        except Exception:
+            return
+        try:
+            self.app.selected_sheet.set(sheet_name)
+        except Exception:
+            pass
+
+    def _close(self) -> None:
+        if self._import_task_id is not None:
+            messagebox.showinfo(
+                "Import Running", "Please wait for the import to finish."
+            )
+            return
+        try:
+            self.window.grab_release()
+        except Exception:
+            pass
+        try:
+            self.window.destroy()
+        except Exception:
+            pass
+        if self._on_close is not None:
+            try:
+                self._on_close()
+            except Exception:
+                pass
+
+
 # ----------------------------------------
 
 # Unified Window (one UI to rule them all)
@@ -23913,12 +24941,16 @@ class UnifiedApp(tk.Tk):
         self._plot_settings_target_id: Optional[str] = None
         self._axis_range_pref_window: Optional[tk.Toplevel] = None
         self._font_family_window: Optional[tk.Toplevel] = None
+        self._csv_import_dialog: Optional[CsvImportDialog] = None
 
         self._menubar = self._register_menu(tk.Menu(self))
         file_menu = self._register_menu(tk.Menu(self._menubar, tearoff=0))
         file_menu.add_command(label="Open Excel...", command=self._browse_file)
         file_menu.add_command(
             label="Rescan File", command=self._load_sheets_from_current_path
+        )
+        file_menu.add_command(
+            label="Import GL-260 CSV...", command=self._open_csv_import_dialog
         )
         file_menu.add_separator()
         file_menu.add_command(label="Save Settings", command=self.save_settings)
@@ -34247,6 +35279,24 @@ class UnifiedApp(tk.Tk):
         ttk.Button(button_frame, text="Cancel", command=_close_window).grid(
             row=0, column=2
         )
+
+    def _open_csv_import_dialog(self) -> None:
+        existing = getattr(self, "_csv_import_dialog", None)
+        window = getattr(existing, "window", None) if existing is not None else None
+        if window is not None and window.winfo_exists():
+            try:
+                window.deiconify()
+                window.lift()
+                window.focus_force()
+            except Exception:
+                pass
+            return
+
+        def _clear_dialog() -> None:
+            self._csv_import_dialog = None
+
+        dialog = CsvImportDialog(self, on_close=_clear_dialog)
+        self._csv_import_dialog = dialog
 
     def _refresh_font_family_previews(self) -> None:
         for frame, canvas in zip(

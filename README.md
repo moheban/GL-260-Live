@@ -1,9 +1,15 @@
-# GL-260 Data Analysis and Plotter (V1.8.9)
+# GL-260 Data Analysis and Plotter (V2.0.0)
 
 ## Overview
-GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data exported to Excel, mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
+GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V1.8.9`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V2.0.0`.
+
+## V2.0.0 Update Highlights
+- Added **File -> Import GL-260 CSV...** for direct ingestion of raw Graphtec CSV exports into a new Excel sheet.
+- New modal CSV import dialog provides channel mapping, sheet naming/handling, and preprocessing controls.
+- Derived columns (elapsed time, first derivative, smoothed derivative, moving average) are computed in Python and written as values.
+- Generated sheets match the existing schema and are immediately usable by Columns, plotting, and cycle analysis.
 
 ## V1.8.9 Update Highlights
 - Bottom action bar now supports selective plot generation with per-plot checkboxes and a single **Generate Plot** action (no forced full rebuild).
@@ -148,6 +154,35 @@ Key controls:
 Runtime behavior:
 - Sheet names are read via `openpyxl` (read-only) with a pandas fallback.
 - The selected file path and last sheet are persisted to `settings.json`.
+
+### GL-260 CSV Import (File -> Import GL-260 CSV...)
+Purpose: convert raw Graphtec GL-260 CSV exports into a new Excel sheet that matches the app's expected schema.
+
+Workflow:
+- Choose a raw GL-260 CSV file and a target Excel workbook.
+- Provide a new sheet name and choose how to handle name conflicts (error, overwrite, or auto-suffix).
+- Preview detected columns and map the GL-260 channels to Reactor/Manifold pressure and Internal/External temperature.
+- Configure calculation settings:
+  - Derivative source (default: Reactor Pressure).
+  - Exponential smoothing dampening factor (default: 0.98).
+  - Moving average window (default: 100 points).
+- Import writes numeric values only (no Excel formulas) and freezes the header row.
+
+Output schema (fixed):
+- Date & Time
+- Elapsed Time (days / hours / minutes / seconds)
+- Reactor Pressure (PSI)
+- Manifold Pressure (PSI)
+- External Reactor Temperature
+- Internal Reactor Temperature
+- First Derivative (ΔPSI/Δhour)
+- Smoothed First Derivative
+- First Derivative Moving Average
+
+Settings persisted:
+- Last CSV path and workbook path.
+- Last sheet name and sheet conflict handling choice.
+- Channel mapping and calculation defaults.
 
 ### Multi-Sheet Stitching (Data + Columns)
 When multi-sheet mode is enabled:
@@ -452,7 +487,7 @@ Export:
 
 ### Menus, Preferences, and Tools
 **File**
-- Open Excel, Rescan File, Save Settings, Font Family..., Exit.
+- Open Excel, Rescan File, Import GL-260 CSV, Save Settings, Font Family..., Exit.
 
 **File -> Preferences**
 - Show/hide optional tabs.
@@ -667,7 +702,7 @@ Default output profiles include (keys shown as stored in `settings.json`):
 - `contamination_summary_png`: Contamination Summary PNG
 
 ## Known Limitations and Tradeoffs
-- Excel workbooks are the only supported data source.
+- Excel workbooks remain the canonical data source; raw Graphtec GL-260 CSV imports are supported via the dedicated import dialog only.
 - Multi-sheet stitching inserts NaN separator rows, which can affect downstream calculations if not accounted for.
 - Cycle detection quality depends on user-defined prominence/distance/width parameters.
 - Van der Waals moles require SciPy; without it, only ideal gas totals are computed.
@@ -712,7 +747,7 @@ The script includes internal change summaries:
   - Treeview selection recursion fix in annotations editor.
   - Layout fixes for the annotations Toplevel.
 
-Note: the UI title uses `APP_VERSION` set to `V1.8.9`.
+Note: the UI title uses `APP_VERSION` set to `V2.0.0`.
 
 ## Troubleshooting
 - **"No Data" or "Missing Columns" errors**: Load a sheet on the Data tab and set required columns on the Columns tab.
