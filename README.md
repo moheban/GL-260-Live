@@ -305,6 +305,7 @@ Key controls:
 Behavior:
 - If no boxes are checked, a warning is shown and nothing is generated.
 - If one or more boxes are checked, only those plots are generated (no full tab clear).
+- Plot selection choices persist after using **Generate Plot** and are restored on restart.
 
 ### Plot Tabs (Figures 1/2/3/Combined)
 After plotting, each figure appears as a new tab in the main notebook.
@@ -459,6 +460,7 @@ Key controls:
 - Final report title.
 - Combined plot title override (report-only).
 - Template management (Save As Template, Update Template, Delete Template).
+- **Generate Final Report...** (always visible) prompts for PDF/PNG/Both and uses the existing report generators.
 - Layout mode:
   - `single_page_portrait`
   - `mixed_pages`

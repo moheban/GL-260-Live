@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.0.0
+# Version: v2.0.1
 # Date: 2026-01-20
 
 import os
@@ -7250,7 +7250,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.0.0"
+APP_VERSION = "v2.0.1"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -17633,6 +17633,14 @@ for section_id, orientation_value in FINAL_REPORT_DEFAULT_STATE[
 ].items():
     orientation_state.setdefault(section_id, orientation_value)
 
+_plot_selection_state = settings.get("plot_generation_selection")
+if not isinstance(_plot_selection_state, dict):
+    _plot_selection_state = {}
+    settings["plot_generation_selection"] = _plot_selection_state
+_plot_selection_state.setdefault("fig1", True)
+_plot_selection_state.setdefault("fig2", True)
+_plot_selection_state.setdefault("fig_combined", False)
+
 
 CYCLE_TEMP_DEFAULT_LABEL = "Default (25 C)"
 
@@ -27667,9 +27675,16 @@ class UnifiedApp(tk.Tk):
             weight = 1 if col in (0, 2) else 0
             btns.grid_columnconfigure(col, weight=weight)
 
-        self._plot_select_fig1_var = tk.BooleanVar(value=True)
-        self._plot_select_fig2_var = tk.BooleanVar(value=True)
-        self._plot_select_combined_var = tk.BooleanVar(value=False)
+        plot_selection_state = settings.get("plot_generation_selection", {})
+        if not isinstance(plot_selection_state, dict):
+            plot_selection_state = {}
+        fig1_default = bool(plot_selection_state.get("fig1", True))
+        fig2_default = bool(plot_selection_state.get("fig2", True))
+        combined_default = bool(plot_selection_state.get("fig_combined", False))
+
+        self._plot_select_fig1_var = tk.BooleanVar(value=fig1_default)
+        self._plot_select_fig2_var = tk.BooleanVar(value=fig2_default)
+        self._plot_select_combined_var = tk.BooleanVar(value=combined_default)
 
         plot_select = ttk.Frame(btns)
         plot_select.grid(row=0, column=0, sticky="w")
@@ -53624,6 +53639,15 @@ class UnifiedApp(tk.Tk):
             pady=(4, 8),
         )
 
+        action_frame = ttk.Frame(container)
+        action_frame.pack(fill="x", padx=8, pady=(0, 8))
+        ttk.Button(
+            action_frame,
+            text="Generate Final Report...",
+            command=self._prompt_final_report_generation,
+            padding=(12, 4),
+        ).pack(side="right")
+
         def _report_preview_trigger(*_):
             self._schedule_final_report_preview_refresh()
 
@@ -53777,16 +53801,6 @@ class UnifiedApp(tk.Tk):
             text="Update Layout Preview",
             command=self._refresh_final_report_preview,
         ).pack(side="left")
-        ttk.Button(
-            preview_buttons,
-            text="Generate Report PNG",
-            command=self._generate_final_report_png,
-        ).pack(side="right", padx=(4, 0))
-        ttk.Button(
-            preview_buttons,
-            text="Generate Report PDF",
-            command=self._generate_final_report_pdf,
-        ).pack(side="right")
 
         self._final_report_template_combo.bind(
             "<<ComboboxSelected>>", self._final_report_template_selected
@@ -53794,6 +53808,74 @@ class UnifiedApp(tk.Tk):
         self._apply_final_report_state_to_ui(final_state)
         self._refresh_final_report_template_list()
         self._refresh_final_report_preview()
+
+    def _prompt_final_report_generation(self) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title("Generate Final Report")
+        dialog.transient(self)
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        pad_x = self._scale_length(20)
+        pad_y = self._scale_length(10)
+
+        ttk.Label(dialog, text="Choose output format:").pack(
+            padx=pad_x, pady=(pad_y, self._scale_length(6))
+        )
+
+        choice_var = tk.StringVar(value="pdf")
+        options_frame = ttk.Frame(dialog)
+        options_frame.pack(fill="x", padx=pad_x)
+        ttk.Radiobutton(
+            options_frame, text="PDF", variable=choice_var, value="pdf"
+        ).pack(anchor="w")
+        ttk.Radiobutton(
+            options_frame, text="PNG", variable=choice_var, value="png"
+        ).pack(anchor="w")
+        ttk.Radiobutton(
+            options_frame, text="PDF + PNG", variable=choice_var, value="both"
+        ).pack(anchor="w")
+
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(fill="x", padx=pad_x, pady=(self._scale_length(8), pad_y))
+
+        def _close_dialog() -> None:
+            try:
+                dialog.grab_release()
+            except Exception:
+                pass
+            dialog.destroy()
+
+        def _generate() -> None:
+            choice = (choice_var.get() or "").strip().lower()
+            _close_dialog()
+            if choice == "png":
+                self._generate_final_report_png()
+            elif choice == "both":
+                self._generate_final_report_pdf()
+                self._generate_final_report_png()
+            else:
+                self._generate_final_report_pdf()
+
+        def _cancel() -> None:
+            _close_dialog()
+
+        generate_btn = ttk.Button(button_frame, text="Generate", command=_generate)
+        generate_btn.pack(side="right")
+        ttk.Button(button_frame, text="Cancel", command=_cancel).pack(
+            side="right", padx=(0, 8)
+        )
+
+        dialog.bind("<Return>", lambda _event: _generate())
+        dialog.bind("<Escape>", lambda _event: _cancel())
+        dialog.protocol("WM_DELETE_WINDOW", _cancel)
+
+        try:
+            generate_btn.focus_set()
+        except Exception:
+            pass
+
+        dialog.wait_window(dialog)
 
     def _apply_final_report_state_to_ui(self, state: Dict[str, Any]) -> None:
         if not state:
@@ -59979,6 +60061,16 @@ class UnifiedApp(tk.Tk):
             if combined_var is not None
             else False,
         }
+
+        selection_state = settings.get("plot_generation_selection")
+        if not isinstance(selection_state, dict):
+            selection_state = {}
+            settings["plot_generation_selection"] = selection_state
+        selection_state.update(selections)
+        try:
+            self._schedule_save_settings()
+        except Exception:
+            pass
 
         if not any(selections.values()):
             try:
