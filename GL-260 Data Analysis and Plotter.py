@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.0.1
+# Version: v2.0.2
 # Date: 2026-01-20
 
 import os
@@ -7250,7 +7250,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.0.1"
+APP_VERSION = "v2.0.2"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -17637,9 +17637,9 @@ _plot_selection_state = settings.get("plot_generation_selection")
 if not isinstance(_plot_selection_state, dict):
     _plot_selection_state = {}
     settings["plot_generation_selection"] = _plot_selection_state
-_plot_selection_state.setdefault("fig1", True)
-_plot_selection_state.setdefault("fig2", True)
-_plot_selection_state.setdefault("fig_combined", False)
+_plot_selection_state.setdefault("fig1", False)
+_plot_selection_state.setdefault("fig2", False)
+_plot_selection_state.setdefault("fig_combined", True)
 
 
 CYCLE_TEMP_DEFAULT_LABEL = "Default (25 C)"
@@ -27675,16 +27675,32 @@ class UnifiedApp(tk.Tk):
             weight = 1 if col in (0, 2) else 0
             btns.grid_columnconfigure(col, weight=weight)
 
-        plot_selection_state = settings.get("plot_generation_selection", {})
-        if not isinstance(plot_selection_state, dict):
-            plot_selection_state = {}
-        fig1_default = bool(plot_selection_state.get("fig1", True))
-        fig2_default = bool(plot_selection_state.get("fig2", True))
-        combined_default = bool(plot_selection_state.get("fig_combined", False))
+        self._plot_select_fig1_var = tk.BooleanVar()
+        self._bind_setting_var(
+            self._plot_select_fig1_var,
+            ("plot_generation_selection", "fig1"),
+            default=False,
+            to_setting=bool,
+            from_setting=bool,
+        )
 
-        self._plot_select_fig1_var = tk.BooleanVar(value=fig1_default)
-        self._plot_select_fig2_var = tk.BooleanVar(value=fig2_default)
-        self._plot_select_combined_var = tk.BooleanVar(value=combined_default)
+        self._plot_select_fig2_var = tk.BooleanVar()
+        self._bind_setting_var(
+            self._plot_select_fig2_var,
+            ("plot_generation_selection", "fig2"),
+            default=False,
+            to_setting=bool,
+            from_setting=bool,
+        )
+
+        self._plot_select_combined_var = tk.BooleanVar()
+        self._bind_setting_var(
+            self._plot_select_combined_var,
+            ("plot_generation_selection", "fig_combined"),
+            default=True,
+            to_setting=bool,
+            from_setting=bool,
+        )
 
         plot_select = ttk.Frame(btns)
         plot_select.grid(row=0, column=0, sticky="w")

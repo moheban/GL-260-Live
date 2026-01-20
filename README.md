@@ -1,77 +1,81 @@
-# GL-260 Data Analysis and Plotter (V2.0.1)
+# GL-260 Data Analysis and Plotter (v2.0.2)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V2.0.1`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `v2.0.2`.
 
-## V2.0.1 Update Highlights
+## v2.0.2 Update Highlights
+- Plot selection defaults to **Combined Triple-Axis Plot** only on first launch (no saved settings).
+- Plot selection checkbox states persist across restarts.
+
+## v2.0.1 Update Highlights
 - Added **File -> Import GL-260 CSV...** for direct ingestion of raw Graphtec CSV exports into a new Excel sheet.
 - New modal CSV import dialog provides channel mapping, sheet naming/handling, and preprocessing controls.
 - Derived columns (elapsed time, first derivative, smoothed derivative, moving average) are computed in Python and written as values.
 - Generated sheets match the existing schema and are immediately usable by Columns, plotting, and cycle analysis.
 
-## V1.8.9 Update Highlights
+## v1.8.9 Update Highlights
 - Bottom action bar now supports selective plot generation with per-plot checkboxes and a single **Generate Plot** action (no forced full rebuild).
 - Cycle Analysis UI is reorganized into Manual Workflow + Advanced/Recompute, with undo/redo, marker import/export, summary copy, and per-cycle CSV export.
 - Final Report output fixes: captions render once, figure/table numbers are independent of page numbers, no cropping, and tables auto-fit within margins.
 
-## V1.8.8 Update Highlights
+## v1.8.8 Update Highlights
 - Starting Material Settings now include a display name and optional note for the material reacting with the selected gas.
 - CO2/13CO2 has been removed from starting-material presets; gas identity lives only in the VDW Gas Model selection.
 - Conversion estimates now explicitly report the gas used for uptake and the starting material label from the new field.
 
-## V1.8.7 Update Highlights
+## v1.8.7 Update Highlights
 - Cycle Analysis Summary is unified across auto/mixed/manual-only paths with a single builder.
 - Summary now verifies the exact gas model inputs used (preset label, V, a, b, MW, SciPy availability).
 - Gas uptake mass is always shown; conversion estimates only appear when starting material mass, MW, and stoichiometry are configured.
 - New Summary Formatting controls (compact, diagnostics, per-cycle gas mass, conversion estimate readiness) are persisted.
 - Starting material defaults are blank to avoid CO2/13CO2 wording unless explicitly configured.
 
-## V1.8.6 Update Highlights
+## v1.8.6 Update Highlights
 - Added Auto Title support in Plot Settings -> Titles with render-time resolution for Preview/Refresh/Export.
 - Introduced managed Data Type lists (combobox + Manage Types dialog with add/rename/delete/reorder).
 - Added template editor with placeholder validation and a day-count mode selector (date diff vs inclusive).
 - Auto Title sources include full dataset or current view range, with deterministic fallback to full dataset when mapping is not possible.
 
-## V1.8.5 Update Highlights
+## v1.8.5 Update Highlights
 - Combined cycle legend drag placement now persists from the embedded plot or Plot Preview into exports (PNG/SVG/PDF).
 - Peak/trough marker size changes propagate to the embedded plot, Plot Preview, and exports without stale cache reuse.
 - Main and cycle legend size adjustments now persist in settings across preview open/close and export cycles.
 
-## V1.8.4 Update Highlights
+## v1.8.4 Update Highlights
 - Plot Settings closes without a redraw when no values change.
 - Combined plot layout tuning is accessed via Plot Settings -> Combined Plot Layout Tuner.
 - Save As stays visible in narrow plot tabs by keeping it separate from export checkboxes.
 - Main legend anchor/loc is re-applied after sizing for stable placement on refresh/export.
 - Refresh button label shortened to **Refresh**.
 
-## V1.8.1 Update Highlights
+## v1.8.1 Update Highlights
 - Added a Cycle Analysis Plot Settings control for **Peak / Trough Marker Size (pt²)** to adjust marker area.
 
-## V1.8.0 Update Highlights
+## v1.8.0 Update Highlights
 - Unified render pipeline for initial render, Refresh, Plot Preview, and export (no split paths).
 - Refresh always builds a new figure while reusing cached prepared data and cycle metrics when the dataset is unchanged.
 - Deterministic overlay gating for markers, cycle legend, and moles summary; moles summary appends to the main legend when the cycle legend is off.
 - Manual vs auto marker sourcing is enforced (auto off uses manual-only markers; auto on supports manual add/remove overrides).
 - Plot Elements controllers are fully rebound on figure swaps so add/select/drag stays reliable after refresh and layout edits.
 
-## V1.7.4 Update Highlights
+## v1.7.4 Update Highlights
 - Columns set to None are omitted from plots and legends (combined, core, export).
 - Main vs cycle legend sizing is now independent, with plot-aware controls.
 - Peak and trough marker shapes are configurable alongside size/color.
 - Cycle Analysis reserves top margin to avoid title overlap on refresh/resize.
 - Apply VDW now refreshes Cycle Analysis and shows a dirty/applied indicator.
 
-## V1.7.1 Update Highlights
+## v1.7.1 Update Highlights
 - Plot elements remain interactive after Refresh on the combined triple-axis tab (placement + drag stay armed).
 - Refresh now retargets plot annotations after a deterministic install/draw/finalize pipeline.
 
-## V1.7.0 Update Highlights
+## v1.7.0 Update Highlights
 - Plot Elements workflow updated with explicit placement arming and clearer add-status feedback.
 - Plot Elements editor keeps add defaults and provides a tighter edit/apply/revert loop.
 
-## V1.6.8 Update Highlights
+## v1.6.8 Update Highlights
 - Combined triple-axis plots keep clean breaks between stitched sheets in the display window.
 - Plot element placement works across all element types in the combined plot view.
 - Span + Label selections respect the configured appearance color immediately and the textbox is draggable.
@@ -330,7 +334,7 @@ Export behavior:
 - Export DPI is controlled via **Preferences -> Saved Output Options...**.
 - Export size can be controlled per output profile (see "Output Size Profiles").
 
-### Unified Render Pipeline and Refresh Semantics (V1.8.0)
+### Unified Render Pipeline and Refresh Semantics (v1.8.0)
 - All display, preview, export, and report renders go through one canonical pipeline (`render_plot`).
 - **Refresh** always rebuilds a fresh figure for interactivity, but reuses cached prepared data and cached cycle metrics when the dataset is unchanged.
 - Cache invalidation rules:
@@ -577,12 +581,12 @@ Persistence:
 - `settings["plot_elements"]` stores element lists per plot ID.
 - `settings["annotations_ui"]` stores per-plot UI state (collapsed state, last mode, add defaults, live update).
 
-### Plot Elements Updates (V1.7.0)
+### Plot Elements Updates (v1.7.0)
 - Placement is explicitly armed via "Place on Plot", with status guidance and Esc-to-cancel.
 - Add defaults (type, axis, coord space, alpha, label text) are persisted per plot.
 - Live update and apply/revert controls tighten the edit workflow without changing settings keys.
 
-### Plot Elements Updates (V1.6.8)
+### Plot Elements Updates (v1.6.8)
 - Span selection highlights respect the configured appearance color immediately.
 - Span + Label textboxes drag from the label body with persistent placement.
 - Span fills render behind data traces while labels stay above for readability.
@@ -711,45 +715,45 @@ Default output profiles include (keys shown as stored in `settings.json`):
 - The NaOH-CO2 Pitzer model is optional and requires a valid `pitzer.dat`.
 - Large datasets are loaded fully into memory.
 
-## Versioning and Change Highlights (V1.7.x and earlier)
+## Versioning and Change Highlights (v1.7.x and earlier)
 The script includes internal change summaries:
 
-- **V1.7.1**:
+- **v1.7.1**:
   - Refresh retargets plot annotations after final draw so post-refresh interactions stay reliable.
   - Hit-test and drag caches are cleared on retarget to avoid stale geometry.
 
-- **V1.7.0**:
+- **v1.7.0**:
   - Plot Elements workflow updates (explicit placement arming and tighter editor flow).
 
-- **V1.6.3**:
+- **v1.6.3**:
   - Plot Preview/export now reflects manual Cycle Analysis edits correctly.
 
-- **V1.6.2**:
+- **v1.6.2**:
   - Fixed combined plot xlabel spacing.
   - Fixed cycle legend dragged position persistence across refresh/preview.
 
-- **V1.6.0**:
+- **v1.6.0**:
   - Added a Layout Editor for per-plot layout adjustments (title/suptitle positions, legend anchors/loc, axis label padding, detached axis offsets).
   - Added persisted layout profiles (`settings["layout_profiles"]`) for per-plot display/export layout state, including margins and legend anchors.
   - Expanded combined plot layout controls with per-mode margins and legend anchor offsets.
 
-- **V1.5.0.4**:
+- **v1.5.0.4**:
   - Plot Elements placement and live update fixes.
   - Restored drag placement for spans and axes routing refresh after plot rebuilds.
 
-- **V1.5.0.0**:
+- **v1.5.0.0**:
   - Free-threading readiness helpers and Developer Tools GIL controls.
   - Unified `TkTaskRunner` for background tasks.
   - Dependency audit tooling and session warning.
   - VS Code interpreter prompts for GIL-disabled requests.
 
-- **V1.4.0.8**:
+- **v1.4.0.8**:
   - Persisted multi-sheet selected sheets to `settings.json`.
   - Plot Elements opens a dedicated annotations Toplevel per plot.
   - Treeview selection recursion fix in annotations editor.
   - Layout fixes for the annotations Toplevel.
 
-Note: the UI title uses `APP_VERSION` set to `V2.0.1`.
+Note: the UI title uses `APP_VERSION` set to `v2.0.2`.
 
 ## Troubleshooting
 - **"No Data" or "Missing Columns" errors**: Load a sheet on the Data tab and set required columns on the Columns tab.
