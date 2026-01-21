@@ -1,9 +1,15 @@
-# GL-260 Data Analysis and Plotter (V2.0.3)
+# GL-260 Data Analysis and Plotter (V2.0.4)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V2.0.3`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `V2.0.4`.
+
+## V2.0.4 Update Highlights
+- Final Report plot pages are built from the export pipeline (same layout rules, legend sizing, and full-page sizing as manual exports).
+- Combined Triple-Axis Plot is included in the default report section order and selected by default.
+- Older Final Report settings auto-migrate `selected_sections` to insert `combined_plot` after Figure 2.
+- Final Report Preview thumbnails are derived from export-grade figures so preview and output match.
 
 ## V2.0.3 Update Highlights
 - Final Report plots now use the export-grade pipeline (layout profiles, legend sizing, Agg finalization) for visual parity with manual exports.
@@ -491,9 +497,11 @@ Report sections (examples):
 - Solubility Summary
 - Math Details
 
+Combined Triple-Axis Plot is included by default; older settings are auto-migrated to include it in selected sections.
+
 Export:
 - PDF/PNG with export DPI and output size profiles.
-- Final Report plots use the same export pipeline as manual plot exports (layout profiles, legend sizing, Agg finalization).
+- Final Report plots and previews use the same export pipeline as manual plot exports (layout profiles, legend sizing, Agg finalization).
 - Combined Triple-Axis pages default to landscape (11x8.5) unless explicitly overridden; missing data yields a descriptive text page.
 - Captions are rendered once during page build; figure/table numbers are independent of page numbers.
 - Tables auto-fit within margins to prevent overlap or cropping.
@@ -760,7 +768,7 @@ The script includes internal change summaries:
   - Treeview selection recursion fix in annotations editor.
   - Layout fixes for the annotations Toplevel.
 
-Note: the UI title uses `APP_VERSION` set to `V2.0.3`.
+Note: the UI title uses `APP_VERSION` set to `V2.0.4`.
 
 ## Troubleshooting
 - **"No Data" or "Missing Columns" errors**: Load a sheet on the Data tab and set required columns on the Columns tab.

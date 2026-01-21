@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: V2.0.3
-# Date: 2026-01-20
+# Version: v2.0.4
+# Date: 2026-01-21
 
 import os
 import sys
@@ -7250,7 +7250,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "V2.0.3"
+APP_VERSION = "v2.0.4"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -7722,6 +7722,7 @@ FINAL_REPORT_DEFAULT_SECTION_ORDER = [
     "cycle_plot",
     "fig1",
     "fig2",
+    "combined_plot",
     "cycle_summary",
     "cycle_stats_table",
     "cycle_timeline_plot",
@@ -7733,6 +7734,29 @@ FINAL_REPORT_DEFAULT_SECTION_ORDER = [
     "sol_summary",
     "math_preview",
 ]
+
+def _normalize_final_report_section_order(
+    section_order: Optional[Sequence[str]],
+) -> List[str]:
+    normalized: List[str] = []
+    if isinstance(section_order, (list, tuple)):
+        for section_id in section_order:
+            if isinstance(section_id, str) and section_id not in normalized:
+                normalized.append(section_id)
+    metadata_keys = list(FINAL_REPORT_SECTION_METADATA.keys())
+    missing = [key for key in metadata_keys if key not in normalized]
+    if missing:
+        normalized.extend(missing)
+        print(
+            "Warning: Final Report section order missing keys; appended: "
+            + ", ".join(missing)
+        )
+    return normalized
+
+
+FINAL_REPORT_DEFAULT_SECTION_ORDER = _normalize_final_report_section_order(
+    FINAL_REPORT_DEFAULT_SECTION_ORDER
+)
 
 FINAL_REPORT_DEFAULT_STATE = {
     "title": "GL-260 Final Report",
@@ -17637,10 +17661,35 @@ if not isinstance(_final_report_state, dict):
     _final_report_state = {}
     settings["final_report"] = _final_report_state
 
-_default_sections = FINAL_REPORT_DEFAULT_STATE.get("selected_sections", [])
+_default_sections = _normalize_final_report_section_order(
+    FINAL_REPORT_DEFAULT_STATE.get("selected_sections", [])
+)
 _current_sections = _final_report_state.get("selected_sections")
-if not isinstance(_current_sections, list):
-    _final_report_state["selected_sections"] = list(_default_sections)
+if isinstance(_current_sections, list):
+    _normalized_sections = []
+    for section_id in _current_sections:
+        if isinstance(section_id, str) and section_id not in _normalized_sections:
+            _normalized_sections.append(section_id)
+else:
+    _normalized_sections = list(_default_sections)
+
+# One-time migration: combined_plot was omitted from the default order list in
+# older settings, so older selected_sections never included it.
+_combined_plot_migrated = bool(
+    _final_report_state.get("combined_plot_migrated_v2_0_4")
+)
+if not _combined_plot_migrated and "combined_plot" in FINAL_REPORT_SECTION_METADATA:
+    if "combined_plot" not in _normalized_sections:
+        if "fig2" in _normalized_sections:
+            insert_at = _normalized_sections.index("fig2") + 1
+            _normalized_sections.insert(insert_at, "combined_plot")
+        else:
+            _normalized_sections.append("combined_plot")
+    _combined_plot_migrated = True
+
+_final_report_state["selected_sections"] = _normalized_sections
+if _combined_plot_migrated:
+    _final_report_state["combined_plot_migrated_v2_0_4"] = True
 
 _final_report_state.setdefault("title", FINAL_REPORT_DEFAULT_STATE["title"])
 _final_report_state.setdefault(
@@ -49108,8 +49157,8 @@ class UnifiedApp(tk.Tk):
             pass
 
     def _export_cycle_timeline_plot(self) -> None:
-        canvas = getattr(self, "_sol_cycle_spec_canvas", None)
-        if canvas is None:
+        fig = self._build_cycle_timeline_export_figure((11.0, 8.5))
+        if fig is None:
             try:
                 messagebox.showinfo(
                     "Cycle Speciation Timeline",
@@ -49118,8 +49167,6 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 pass
             return
-        prefs = self._get_cycle_plot_prefs()
-        title_text = (prefs.get("export_title") or "").strip()
         path = filedialog.asksaveasfilename(
             title="Export Cycle Timeline Plot",
             defaultextension=".png",
@@ -49127,45 +49174,12 @@ class UnifiedApp(tk.Tk):
             initialfile="cycle_speciation_timeline.png",
         )
         if not path:
+            try:
+                plt.close(fig)
+            except Exception:
+                pass
             return
         try:
-            fig = canvas.figure
-            prev_title = getattr(fig, "_suptitle", None)
-            prev_title_text = prev_title.get_text() if prev_title is not None else None
-            prev_title_state = getattr(fig, "_gl260_title_state", None)
-            prev_size = fig.get_size_inches()
-            prev_dpi = fig.dpi
-            prev_labelpads: List[Optional[float]] = []
-            prev_label_coords: List[Optional[Tuple[float, float]]] = []
-            for axis in fig.axes:
-                label = axis.yaxis.get_label()
-                prev_labelpads.append(getattr(label, "get_labelpad", lambda: None)())
-                try:
-                    prev_label_coords.append(label.get_position())
-                except Exception:
-                    prev_label_coords.append(None)
-            if title_text:
-                font_family = (settings.get("font_family") or "").strip()
-                _center_titles_to_axes_union(
-                    fig,
-                    list(fig.axes),
-                    None,
-                    title_text,
-                    None,
-                    13,
-                    font_family,
-                    0.0,
-                    0.0,
-                    suptitle_y=0.99,
-                )
-            # Nudge the secondary y-label further out for exports to avoid overlap with tick labels.
-            for idx, axis in enumerate(fig.axes[1:], start=1):
-                try:
-                    axis.yaxis.get_label().set_labelpad(18 + 4 * idx)
-                    axis.yaxis.set_label_coords(1.02 + 0.1 * idx, 0.5)
-                except Exception:
-                    continue
-            fig.set_size_inches(11.0, 8.5, forward=False)
             if path.lower().endswith(".pdf"):
                 fig.savefig(path, format="pdf", bbox_inches="tight")
             elif path.lower().endswith(".svg"):
@@ -49183,56 +49197,7 @@ class UnifiedApp(tk.Tk):
             return
         finally:
             try:
-                if title_text:
-                    if prev_title_state:
-                        _center_titles_to_axes_union(
-                            fig,
-                            list(fig.axes),
-                            prev_title_state.get("title"),
-                            prev_title_state.get("suptitle"),
-                            prev_title_state.get("title_fs"),
-                            prev_title_state.get("suptitle_fs"),
-                            prev_title_state.get("font_family", ""),
-                            prev_title_state.get("title_pad_pts", 0.0),
-                            prev_title_state.get("suptitle_pad_pts", 0.0),
-                            suptitle_y=prev_title_state.get("suptitle_y"),
-                        )
-                    else:
-                        for attr in ("_gl260_title_text", "_gl260_suptitle_text"):
-                            artist = getattr(fig, attr, None)
-                            if artist is not None:
-                                try:
-                                    artist.remove()
-                                except Exception:
-                                    pass
-                            setattr(fig, attr, None)
-                        if prev_title is None:
-                            current_title = getattr(fig, "_suptitle", None)
-                            if current_title is not None:
-                                try:
-                                    current_title.remove()
-                                except Exception:
-                                    pass
-                                fig._suptitle = None
-                        else:
-                            prev_title.set_text(prev_title_text or "")
-                            fig._suptitle = prev_title
-                for axis, pad in zip(fig.axes, prev_labelpads):
-                    if pad is None:
-                        continue
-                    try:
-                        axis.yaxis.get_label().set_labelpad(pad)
-                    except Exception:
-                        pass
-                for axis, coords in zip(fig.axes, prev_label_coords):
-                    if coords is None:
-                        continue
-                    try:
-                        axis.yaxis.set_label_coords(*coords)
-                    except Exception:
-                        pass
-                fig.set_size_inches(prev_size, forward=False)
-                fig.set_dpi(prev_dpi)
+                plt.close(fig)
             except Exception:
                 pass
         try:
@@ -54441,27 +54406,288 @@ class UnifiedApp(tk.Tk):
     def _final_report_build_cycle_plot_figure(
         self, page_size: Tuple[float, float]
     ) -> Optional[Figure]:
-        try:
-            ignore_min_drop = bool(getattr(self, "_cycle_last_ignore_min_drop", True))
-            self._refresh_final_report_cycle_snapshot(ignore_min_drop=ignore_min_drop)
-        except Exception:
-            pass
-        snapshot = getattr(self, "_final_report_cycle_snapshot", None)
-        if not snapshot:
+        if self.df is None:
             return None
-        fig = self._build_static_cycle_overview_figure(
-            snapshot["x"],
-            snapshot["y"],
-            snapshot["mask"],
-            snapshot["peaks"],
-            snapshot["troughs"],
-            snapshot["cycles"],
-            snapshot["total_drop"],
+        return self._build_export_figure_for_final_report(
+            "fig_peaks",
+            self._plot_key_to_plot_id("fig_peaks"),
+            page_size,
         )
-        if fig is None:
+
+    def _build_cycle_timeline_export_figure(
+        self,
+        page_size: Tuple[float, float],
+        *,
+        workflow_key: Optional[str] = None,
+    ) -> Optional[Figure]:
+        timeline = []
+        structured = getattr(self, "_sol_last_structured", None)
+        if structured is not None:
+            timeline = getattr(structured, "cycle_timeline", None) or []
+        workflow = workflow_key or self._current_solubility_workflow()
+        if not timeline:
+            result = self._get_cycle_result_for_workflow(workflow)
+            timeline = (result or {}).get("timeline", []) or []
+        reaction_guidance = getattr(self, "_sol_reaction_guidance", {}) or {}
+        timeline = list(timeline or [])
+        if workflow == "Reprocessing" and not timeline:
+            reproc = reaction_guidance.get("reprocessing_workflow") or {}
+            baseline_spec = reproc.get("baseline_spec")
+            target_spec = reproc.get("target_spec")
+            recommended_co2 = reproc.get("recommended_co2_g")
+            target_ph_hint = reproc.get("target_ph")
+            fail_ph = reproc.get("failing_ph")
+
+            def _spec_value(spec: Any, key: str, default: Any = None) -> Any:
+                if spec is None:
+                    return default
+                if isinstance(spec, Mapping):
+                    return spec.get(key, default)
+                return getattr(spec, key, default)
+
+            def _spec_fractions(spec: Any) -> Dict[str, float]:
+                if spec is None:
+                    return {}
+                if isinstance(spec, Mapping):
+                    return spec.get("fractional_carbon", {}) or spec.get(
+                        "fractions", {}
+                    )
+                return getattr(spec, "fractional_carbon", {}) or {}
+
+            def _spec_moles(spec: Any) -> Dict[str, float]:
+                if spec is None:
+                    return {}
+                if isinstance(spec, Mapping):
+                    return spec.get("moles", {}) or {}
+                return getattr(spec, "moles", {}) or {}
+
+            preview_entries: List[Dict[str, Any]] = []
+            if baseline_spec is not None:
+                base_moles = _spec_moles(baseline_spec)
+                preview_entries.append(
+                    {
+                        "cycle_id": "Fail",
+                        "co2_g": 0.0,
+                        "co2_mass_g": 0.0,
+                        "co2_to_target_g": recommended_co2,
+                        "solution_ph": _spec_value(
+                            baseline_spec, "ph", default=fail_ph
+                        ),
+                        "fractions": _spec_fractions(baseline_spec),
+                        "solid_na2co3_g": base_moles.get("CO3^2-", 0.0)
+                        * SOL_MW_NA2CO3,
+                        "solid_nahco3_g": base_moles.get("HCO3-", 0.0)
+                        * SOL_MW_NAHCO3,
+                    }
+                )
+            if target_spec is not None:
+                target_moles = _spec_moles(target_spec)
+                preview_entries.append(
+                    {
+                        "cycle_id": "Pass",
+                        "co2_g": recommended_co2 or 0.0,
+                        "co2_mass_g": recommended_co2 or 0.0,
+                        "co2_to_target_g": 0.0,
+                        "solution_ph": _spec_value(
+                            target_spec, "ph", default=target_ph_hint
+                        ),
+                        "fractions": _spec_fractions(target_spec),
+                        "solid_na2co3_g": target_moles.get("CO3^2-", 0.0)
+                        * SOL_MW_NA2CO3,
+                        "solid_nahco3_g": target_moles.get("HCO3-", 0.0)
+                        * SOL_MW_NAHCO3,
+                    }
+                )
+            if preview_entries:
+                timeline = preview_entries
+        if not timeline:
             return None
-        fig.set_size_inches(*page_size, forward=False)
-        fig.subplots_adjust(left=0.08, right=0.97, top=0.92, bottom=0.08)
+        prefs = self._get_cycle_plot_prefs()
+        fig = Figure(figsize=page_size)
+        ax = fig.add_subplot(111)
+        ax2 = ax.twinx()
+        ax3 = ax.twinx()
+        ax.set_xlabel(r"Total CO$_2$ added (g)", fontsize=11, labelpad=8)
+        ax.set_ylabel("Carbon species (%)", fontsize=11, labelpad=10)
+        ax.tick_params(axis="both", labelsize=9, pad=4)
+        ax2.set_ylabel("Predicted pH", fontsize=11, labelpad=10, rotation=-90)
+        ax2.spines["right"].set_position(("axes", 1.02))
+        ax2.yaxis.set_label_coords(1.08, 0.5)
+        ax2.tick_params(axis="both", labelsize=9, pad=4)
+        ax3.set_ylabel("Headspace pCO2 (atm)", fontsize=11, labelpad=10, rotation=-90)
+        ax3.spines["right"].set_position(("axes", 1.12))
+        ax3.yaxis.set_label_coords(1.18, 0.5)
+        ax3.tick_params(axis="both", labelsize=8, pad=3)
+        xs = []
+        h2co3_vals = []
+        hco3_vals = []
+        co3_vals = []
+        ph_values = []
+        pco2_values: List[float] = []
+        for entry in timeline:
+            xs.append(
+                _safe_float(entry.get("co2_g"))
+                or _safe_float(entry.get("co2_mass_g"))
+                or 0.0
+            )
+            fractions = entry.get("fractions") or {}
+            h2co3_vals.append(fractions.get("H2CO3", 0.0) * 100.0)
+            hco3_vals.append(fractions.get("HCO3-", 0.0) * 100.0)
+            co3_vals.append(fractions.get("CO3^2-", 0.0) * 100.0)
+            ph_val = entry.get("solution_ph")
+            ph_values.append(ph_val if ph_val is not None else float("nan"))
+            try:
+                pco2_values.append(float(entry.get("pco2_atm")))
+            except Exception:
+                pco2_values.append(float("nan"))
+        if not xs:
+            return None
+        species = [
+            ("H2CO3", h2co3_vals, "#55a868"),
+            ("HCO3-", hco3_vals, "#4c72b0"),
+            ("CO3^2-", co3_vals, "#dd8452"),
+        ]
+        ax.stackplot(
+            xs,
+            h2co3_vals,
+            hco3_vals,
+            co3_vals,
+            colors=[color for _, _, color in species],
+            alpha=0.35,
+        )
+        for label, values, color in species:
+            ax.plot(
+                xs,
+                [val if val is not None else 0.0 for val in values],
+                label=label,
+                color=color,
+            )
+        if prefs.get("species_min") is not None or prefs.get("species_max") is not None:
+            ax.set_ylim(prefs.get("species_min", 0.0), prefs.get("species_max", 100.0))
+        else:
+            ax.set_ylim(0, 100)
+        ax.grid(True, alpha=0.3)
+        ax2.plot(
+            xs,
+            [v if v is not None else float("nan") for v in ph_values],
+            color="#c44e52",
+            marker="o",
+            label="Predicted pH",
+        )
+        ax3.plot(
+            xs,
+            pco2_values,
+            color="#1b7b6b",
+            marker="s",
+            linestyle="--",
+            linewidth=1.2,
+            label="pCO2 (atm)",
+        )
+        if workflow == "Analysis":
+            reference = getattr(self, "_analysis_reference_trace", None) or {}
+            ref_x = reference.get("x_co2_g_series") or []
+            ref_ph = reference.get("ph_series") or []
+            ref_pairs = [
+                (x_val, ph_val)
+                for x_val, ph_val in zip(ref_x, ref_ph)
+                if x_val is not None
+                and ph_val is not None
+                and math.isfinite(x_val)
+                and math.isfinite(ph_val)
+            ]
+            if ref_pairs:
+                ref_xs, ref_phs = zip(*ref_pairs)
+                ax2.plot(
+                    ref_xs,
+                    ref_phs,
+                    color="#7a7a7a",
+                    alpha=0.35,
+                    linewidth=1.4,
+                    label="Planning reference",
+                    zorder=2,
+                )
+            marker = getattr(self, "_analysis_overlay_marker", None) or {}
+            marker_x = marker.get("x")
+            marker_ph = marker.get("ph")
+            if (
+                marker_x is not None
+                and marker_ph is not None
+                and math.isfinite(marker_x)
+                and math.isfinite(marker_ph)
+            ):
+                ax2.scatter(
+                    [marker_x],
+                    [marker_ph],
+                    s=140,
+                    color="#f28e2b",
+                    edgecolor="#222222",
+                    linewidths=0.8,
+                    label="Current state",
+                    zorder=4,
+                )
+                label = marker.get("label") or "Current state (cycle-derived)"
+                ax2.annotate(
+                    label,
+                    (marker_x, marker_ph),
+                    textcoords="offset points",
+                    xytext=(0, 12),
+                    ha="center",
+                    fontsize=8,
+                    color="#333333",
+                )
+        if prefs.get("ph_min") is not None or prefs.get("ph_max") is not None:
+            ax2.set_ylim(prefs.get("ph_min", 6.0), prefs.get("ph_max", 14.5))
+        else:
+            ax2.set_ylim(6.0, 14.5)
+        target_ph = reaction_guidance.get("target_ph")
+        if target_ph is not None:
+            ax2.axhline(target_ph, color="#2a9d8f", linestyle="--", linewidth=1.25)
+            ax2.text(
+                0.98,
+                target_ph,
+                f"Target pH {target_ph:.2f}",
+                va="bottom",
+                ha="right",
+                fontsize=7,
+                color="#2a9d8f",
+            )
+        for x, ph, entry in zip(xs, ph_values, timeline):
+            if not math.isfinite(ph):
+                continue
+            ax2.annotate(
+                f"{entry.get('cycle_id')}",
+                (x, ph),
+                textcoords="offset points",
+                xytext=(0, 6),
+                ha="center",
+                fontsize=7,
+            )
+        if prefs.get("show_legend"):
+            ax.legend(loc="upper left", fontsize=8)
+            ax2.legend(loc="upper right", fontsize=8)
+            ax3.legend(loc="center right", fontsize=8)
+        title_text = (prefs.get("export_title") or "").strip()
+        if title_text:
+            font_family = (settings.get("font_family") or "").strip()
+            _center_titles_to_axes_union(
+                fig,
+                list(fig.axes),
+                None,
+                title_text,
+                None,
+                13,
+                font_family,
+                0.0,
+                0.0,
+                suptitle_y=0.99,
+            )
+        for idx, axis in enumerate(fig.axes[1:], start=1):
+            try:
+                axis.yaxis.get_label().set_labelpad(18 + 4 * idx)
+                axis.yaxis.set_label_coords(1.02 + 0.1 * idx, 0.5)
+            except Exception:
+                continue
+        fig.subplots_adjust(left=0.08, right=0.88, top=0.90, bottom=0.12)
         return fig
 
     def _build_export_figure_for_final_report(
@@ -54593,93 +54819,7 @@ class UnifiedApp(tk.Tk):
     def _final_report_build_cycle_timeline_figure(
         self, page_size: Tuple[float, float]
     ) -> Optional[Figure]:
-        timeline = []
-        structured = getattr(self, "_sol_last_structured", None)
-        if structured is not None:
-            timeline = getattr(structured, "cycle_timeline", None) or []
-        if not timeline:
-            result = self._get_cycle_result_for_workflow(
-                self._current_solubility_workflow()
-            )
-            timeline = (result or {}).get("timeline", []) or []
-        if not timeline:
-            return None
-        xs = []
-        h2co3_vals = []
-        hco3_vals = []
-        co3_vals = []
-        ph_values = []
-        for entry in timeline:
-            co2_total = (
-                _safe_float(entry.get("co2_g"))
-                or _safe_float(entry.get("co2_mass_g"))
-                or 0.0
-            )
-            xs.append(co2_total)
-            fractions = entry.get("fractions") or {}
-            h2co3_vals.append(fractions.get("H2CO3", 0.0) * 100.0)
-            hco3_vals.append(fractions.get("HCO3-", 0.0) * 100.0)
-            co3_vals.append(fractions.get("CO3^2-", 0.0) * 100.0)
-            ph_val = entry.get("solution_ph")
-            ph_values.append(ph_val if ph_val is not None else float("nan"))
-        if not xs:
-            return None
-        fig = Figure(figsize=page_size)
-        ax = fig.add_subplot(111)
-        ax2 = ax.twinx()
-        ax.set_xlabel(r"Total CO$_2$ added (g)")
-        ax.set_ylabel("Carbon species (%)")
-        ax2.set_ylabel("Predicted pH")
-        species = [
-            ("H2CO3", h2co3_vals, "#55a868"),
-            ("HCO3-", hco3_vals, "#4c72b0"),
-            ("CO3^2-", co3_vals, "#dd8452"),
-        ]
-        ax.stackplot(
-            xs,
-            h2co3_vals,
-            hco3_vals,
-            co3_vals,
-            colors=[color for _, _, color in species],
-            alpha=0.35,
-        )
-        for label, values, color in species:
-            ax.plot(xs, values, label=label, color=color)
-        prefs = self._get_cycle_plot_prefs()
-        if prefs.get("species_min") is not None or prefs.get("species_max") is not None:
-            ax.set_ylim(prefs.get("species_min", 0.0), prefs.get("species_max", 100.0))
-        else:
-            ax.set_ylim(0, 100)
-        ax.grid(True, alpha=0.3)
-        ax2.plot(
-            xs,
-            [v if v is not None else float("nan") for v in ph_values],
-            color="#c44e52",
-            marker="o",
-            label="Predicted pH",
-        )
-        if prefs.get("ph_min") is not None or prefs.get("ph_max") is not None:
-            ax2.set_ylim(prefs.get("ph_min", 6.0), prefs.get("ph_max", 14.5))
-        else:
-            ax2.set_ylim(6.0, 14.5)
-        target_ph = getattr(self, "_sol_reaction_guidance", {}) or {}
-        target_value = target_ph.get("target_ph")
-        if target_value is not None:
-            ax2.axhline(target_value, color="#2a9d8f", linestyle="--", linewidth=1.25)
-            ax2.text(
-                0.98,
-                target_value,
-                f"Target pH {target_value:.2f}",
-                va="bottom",
-                ha="right",
-                fontsize=7,
-                color="#2a9d8f",
-            )
-        if prefs.get("show_legend"):
-            ax.legend(loc="upper left", fontsize=8)
-            ax2.legend(loc="upper right", fontsize=8)
-        fig.subplots_adjust(left=0.08, right=0.88, top=0.90, bottom=0.12)
-        return fig
+        return self._build_cycle_timeline_export_figure(page_size)
 
     def _final_report_build_table_figure(
         self,
