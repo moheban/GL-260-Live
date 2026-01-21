@@ -1,9 +1,14 @@
-# GL-260 Data Analysis and Plotter (v2.1.0)
+# GL-260 Data Analysis and Plotter (v2.1.1)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `v2.1.0`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `v2.1.1`.
+
+## v2.1.1 Update Highlights
+- Final Report PDFs stitch exported PDF artifacts per section in the selected order for deterministic output.
+- Final Report section ordering is state-driven; preview and generation respect the reorderable list.
+- Final Report generation requires applied columns and blocks (or prompts) if the combined plot export fails.
 
 ## v2.1.0 Update Highlights
 - Final Report PDF now stitches the Combined Triple-Axis export into the report instead of re-rendering it.
@@ -237,7 +242,7 @@ Per-series styling (for scatter/line plots):
 - Size, Color, and Line Style controls appear for series that support scatter overrides.
 
 Actions:
-- **Apply Column Selection** (bottom action bar) triggers background series building and auto-range updates.
+- **Apply Column Selection** (Columns tab + bottom action bar) triggers background series building and auto-range updates.
 - **Per-Sheet Column Mapping...** opens a dialog to override the global column mapping per sheet (multi-sheet only).
 
 ### Plot Settings Tab
@@ -489,7 +494,7 @@ Key controls:
 
 Report sections (examples):
 - Figure 1 / Figure 2
-- Combined Triple-Axis Plot (appended from export)
+- Combined Triple-Axis Plot (stitched from the exported artifact in the configured order)
 - Cycle Analysis Summary
 - Cycle Statistics Table
 - Cycle Speciation Timeline Table
@@ -505,9 +510,9 @@ Cycle Analysis plot and Cycle Speciation Timeline plot are interactive-only and 
 
 Export:
 - PDF/PNG with export DPI and output size profiles.
-- Base report pages use the standard export pipeline for text, tables, and non-combined plots.
-- Combined Triple-Axis Plot is exported separately and stitched into the PDF to preserve export fidelity (no Agg re-render).
-- Combined pages default to landscape (11x8.5) unless explicitly overridden; missing data yields a descriptive text page.
+- PDF output stitches exported PDF artifacts per section in the selected order (deterministic).
+- Combined Triple-Axis Plot uses the export artifact pipeline and is inserted in order; failures block generation unless you opt into a degraded report.
+- Final Report generation requires applied columns; pending column application blocks export.
 - Captions are rendered once during page build; figure/table numbers are independent of page numbers.
 - Tables auto-fit within margins to prevent overlap or cropping.
 
@@ -710,7 +715,7 @@ Export functions are available throughout the app and are unified by shared outp
   - Math preview and narrative exports as PNG.
 - **Timeline table export** (PDF/PNG) with orientation and ACS-quality options.
 - **Final Report** export (PDF/PNG) with configurable sections and layout.
-  - Final Report PDFs stitch the Combined Triple-Axis export after the base report, and cycle analysis plots are excluded.
+  - Final Report PDFs stitch exported section artifacts in the selected order (cycle analysis plots remain excluded).
 
 Output sizes are controlled by **Preferences -> Saved Output Options...**. Profiles support:
 - Auto sizing (inherit figure size),
@@ -774,7 +779,7 @@ The script includes internal change summaries:
   - Treeview selection recursion fix in annotations editor.
   - Layout fixes for the annotations Toplevel.
 
-Note: the UI title uses `APP_VERSION` set to `v2.1.0`.
+Note: the UI title uses `APP_VERSION` set to `v2.1.1`.
 
 ## Troubleshooting
 - **"No Data" or "Missing Columns" errors**: Load a sheet on the Data tab and set required columns on the Columns tab.
