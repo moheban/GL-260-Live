@@ -6,3 +6,5 @@ scipy
 pyflakes
 pytest
 mplcursors
+PyPDF2
+pypdf

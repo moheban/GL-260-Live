@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.0.4
+# Version: v2.1.0
 # Date: 2026-01-21
 
 import os
@@ -7250,7 +7250,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.0.4"
+APP_VERSION = "v2.1.0"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -7715,6 +7715,9 @@ FINAL_REPORT_PLOT_SECTIONS = {
     if metadata.get("type") == "figure"
 }
 
+FINAL_REPORT_COMBINED_SECTION_ID = "combined_plot"
+FINAL_REPORT_EXCLUDED_SECTIONS = {"cycle_plot", "cycle_timeline_plot"}
+
 FINAL_REPORT_ORIENTATION_OPTIONS = ("inherit", "portrait", "landscape")
 FINAL_REPORT_TEMPLATE_PLACEHOLDER = "[Current layout (unsaved)]"
 
@@ -7733,6 +7736,12 @@ FINAL_REPORT_DEFAULT_SECTION_ORDER = [
     "key_metrics",
     "sol_summary",
     "math_preview",
+]
+
+FINAL_REPORT_DEFAULT_SELECTED_SECTIONS = [
+    section_id
+    for section_id in FINAL_REPORT_DEFAULT_SECTION_ORDER
+    if section_id not in FINAL_REPORT_EXCLUDED_SECTIONS
 ]
 
 def _normalize_final_report_section_order(
@@ -7761,7 +7770,7 @@ FINAL_REPORT_DEFAULT_SECTION_ORDER = _normalize_final_report_section_order(
 FINAL_REPORT_DEFAULT_STATE = {
     "title": "GL-260 Final Report",
     "combined_plot_title_override": "",
-    "selected_sections": list(FINAL_REPORT_DEFAULT_SECTION_ORDER),
+    "selected_sections": list(FINAL_REPORT_DEFAULT_SELECTED_SECTIONS),
     "narrative": "",
     "global_layout_mode": "mixed_pages",
     "font_scale": 1.0,
@@ -17687,6 +17696,13 @@ if not _combined_plot_migrated and "combined_plot" in FINAL_REPORT_SECTION_METAD
             _normalized_sections.append("combined_plot")
     _combined_plot_migrated = True
 
+if FINAL_REPORT_EXCLUDED_SECTIONS:
+    _normalized_sections = [
+        section_id
+        for section_id in _normalized_sections
+        if section_id not in FINAL_REPORT_EXCLUDED_SECTIONS
+    ]
+
 _final_report_state["selected_sections"] = _normalized_sections
 if _combined_plot_migrated:
     _final_report_state["combined_plot_migrated_v2_0_4"] = True
@@ -24844,6 +24860,7 @@ class UnifiedApp(tk.Tk):
         self._final_report_preview_zoom_combo_var: Optional[tk.StringVar] = None
         self._final_report_preview_save_button: Optional[ttk.Button] = None
         self._final_report_preview_after_id: Optional[str] = None
+        self._final_report_combined_failure_reason: Optional[str] = None
         self._combined_plot_preview_fig: Optional[Figure] = None
         self._combined_plot_state: Optional[Dict[str, Any]] = None
         self._combined_layout_state: Optional[Tuple[Any, ...]] = None
@@ -27750,8 +27767,8 @@ class UnifiedApp(tk.Tk):
             pady=self._scale_length(8),
         )
 
-        for col in range(4):
-            weight = 1 if col in (0, 2) else 0
+        for col in range(5):
+            weight = 1 if col in (0, 3) else 0
             btns.grid_columnconfigure(col, weight=weight)
 
         self._plot_select_fig1_var = tk.BooleanVar()
@@ -27808,19 +27825,33 @@ class UnifiedApp(tk.Tk):
             command=self._generate_selected_plots,
         ).grid(row=0, column=3, sticky="ew", padx=(self._scale_length(12), 0))
 
-        ttk.Button(btns, text="Save Settings", command=self.save_settings).grid(
-            row=0, column=1, sticky="ew", padx=(self._scale_length(8), 0)
+        apply_frame = ttk.Frame(btns)
+        apply_frame.grid(row=0, column=1, sticky="w", padx=(self._scale_length(8), 0))
+        apply_frame.grid_columnconfigure(0, weight=1)
+        apply_button = ttk.Button(
+            apply_frame,
+            text="Apply Column Selection",
+            command=lambda: self._apply_columns(auto_refresh_axes=True),
+        )
+        apply_button.grid(row=0, column=0, sticky="ew")
+        self._register_apply_button(apply_button)
+        self._create_apply_indicator(
+            apply_frame, row=0, column=1, padx=(6, 0), sticky="w"
         )
 
-        # spacer in column 2 consumes extra width
+        ttk.Button(btns, text="Save Settings", command=self.save_settings).grid(
+            row=0, column=2, sticky="ew", padx=(self._scale_length(8), 0)
+        )
 
-        ttk.Label(btns, text="").grid(row=0, column=2, sticky="ew")
+        # spacer in column 3 consumes extra width
+
+        ttk.Label(btns, text="").grid(row=0, column=3, sticky="ew")
 
         ttk.Button(
             btns,
             text="Exit",
             command=self.save_and_close,
-        ).grid(row=0, column=3, sticky="ew", padx=(0, 0))
+        ).grid(row=0, column=4, sticky="ew", padx=(0, 0))
 
     def _log_plot_tab_debug(self, message: str):
         """Optionally print debug info for plot tab lifecycle."""
@@ -37265,82 +37296,6 @@ class UnifiedApp(tk.Tk):
 
         self._apply_auto_state(self.auto_deriv_ticks, self._tick_entries_deriv)
 
-        # Columns (apply from here too)
-
-        fr_cols_apply = ttk.Frame(f)
-
-        fr_cols_apply.grid(
-            row=9, column=0, columnspan=4, sticky="ew", padx=8, pady=(0, 8)
-        )
-
-        for c in range(4):
-            fr_cols_apply.grid_columnconfigure(c, weight=1)
-
-        apply_frame = ttk.Frame(fr_cols_apply)
-        apply_frame.grid(row=0, column=0, sticky="ew", padx=4)
-        apply_frame.grid_columnconfigure(0, weight=1)
-
-        plot_apply_button = ttk.Button(
-            apply_frame,
-            text="Apply Column Selection",
-            command=lambda: self._apply_columns(auto_refresh_axes=True),
-        )
-        plot_apply_button.grid(row=0, column=0, sticky="ew")
-        self._register_apply_button(plot_apply_button)
-        self._create_apply_indicator(
-            apply_frame, row=0, column=1, padx=(6, 0), sticky="w"
-        )
-
-        ttk.Button(
-            fr_cols_apply,
-            text="Generate Figures 1 & 2",
-            command=lambda: (
-                self._apply_columns(auto_refresh_axes=False),
-                self.update_plots(include_cycle=False),
-            ),
-        ).grid(row=0, column=1, padx=4, sticky="ew")
-
-        ttk.Button(
-            fr_cols_apply,
-            text="Generate Figure 1: Pressure vs. Temp",
-            command=lambda: (
-                self._apply_columns(auto_refresh_axes=False),
-                self.generate_fig1_only(),
-            ),
-        ).grid(row=0, column=2, padx=4, sticky="ew")
-
-        ttk.Button(
-            fr_cols_apply,
-            text="Generate Figure 2: Pressure vs Derivative",
-            command=lambda: (
-                self._apply_columns(auto_refresh_axes=False),
-                self.generate_fig2_only(),
-            ),
-        ).grid(row=0, column=3, padx=4, sticky="ew")
-
-        btn_combined = ttk.Button(
-            fr_cols_apply,
-            text="Generate Combined Triple-Axis Plot",
-            command=lambda: (
-                self._apply_columns(auto_refresh_axes=False),
-                self.generate_combined_plot(),
-            ),
-        )
-
-        btn_combined.grid(
-            row=1,
-            column=0,
-            columnspan=4,
-            padx=4,
-            pady=(4, 0),
-            sticky="ew",
-        )
-
-        self._attach_tooltip(
-            btn_combined,
-            "Render all pressure, temperature, and derivative traces on one figure with three Y axes.",
-        )
-
         self._refresh_combined_axis_choices()
 
     def _start_cycle_tab_build(self, *, defer=True):
@@ -42630,7 +42585,7 @@ class UnifiedApp(tk.Tk):
     def _show_cycle_apply_prompt(self):
         """Explain that the user must click Apply Column Selection before analysis."""
 
-        msg = "Click 'Rerun Cycle Analysis' or 'Apply Column Selection' to populate this tab with the selected data"
+        msg = "Click 'Rerun Cycle Analysis' or 'Apply Column Selection' to populate this tab with the selected data."
 
         self._set_cycle_selection_text("Selection: (awaiting column apply)")
         self._set_cycle_summary(msg)
@@ -42646,7 +42601,7 @@ class UnifiedApp(tk.Tk):
             ax.text(
                 0.5,
                 0.5,
-                "Click 'Apply Column Selection' on the Columns tab\n"
+                "Click 'Apply Column Selection' in the bottom action bar\n"
                 "to populate Cycle Analysis.",
                 ha="center",
                 va="center",
@@ -54805,6 +54760,126 @@ class UnifiedApp(tk.Tk):
             )
         return True, ""
 
+    def _export_combined_plot_for_final_report(self) -> Optional[Path]:
+        self._final_report_combined_failure_reason = None
+
+        if getattr(self, "_apply_columns_task_id", None) is not None:
+            self._final_report_combined_failure_reason = (
+                "Column selection is still applying. Wait for it to complete before generating the report."
+            )
+            return None
+
+        if not getattr(self, "_columns_applied", False):
+            self._final_report_combined_failure_reason = (
+                "Apply Column Selection before generating the Final Report."
+            )
+            try:
+                self._apply_columns(auto_refresh_axes=True)
+            except Exception:
+                pass
+            return None
+
+        ok, message = self._final_report_combined_preflight()
+        if not ok:
+            self._final_report_combined_failure_reason = message
+            return None
+
+        fig = self.render_plot(
+            plot_kind="fig_combined",
+            mode="export",
+            target="export",
+            plot_id="fig_combined_triple_axis",
+        )
+        if fig is None:
+            self._final_report_combined_failure_reason = (
+                "Combined plot could not be generated for this run."
+            )
+            return None
+
+        state = self._final_report_safe_state(
+            getattr(self, "_final_report_current_state", None)
+        )
+        override = self._final_report_sanitize_text(
+            state.get("combined_plot_title_override", "").strip()
+        )
+        override = _svg_safe_text(override)
+        if override:
+            try:
+                axes = fig.get_axes()
+                if axes:
+                    title_state = getattr(fig, "_gl260_title_state", {}) or {}
+                    primary_axis = None
+                    for axis in axes:
+                        if getattr(axis, "_gl260_axis_role", None) == "primary":
+                            primary_axis = axis
+                            break
+                    if primary_axis is None:
+                        primary_axis = axes[0]
+                    primary_axis.set_title(
+                        override,
+                        fontsize=title_state.get(
+                            "title_fs", DEFAULT_COMBINED_TITLE_FONTSIZE
+                        ),
+                        fontfamily=title_state.get(
+                            "font_family",
+                            (settings.get("font_family") or "").strip(),
+                        ),
+                        pad=title_state.get(
+                            "title_pad_pts", DEFAULT_COMBINED_TITLE_PAD_PTS
+                        ),
+                    )
+                    layout_mgr = getattr(fig, "_gl260_layout_manager", None)
+                    if layout_mgr is not None:
+                        layout_mgr.solve()
+                        if fig.canvas is not None:
+                            fig.canvas.draw()
+            except Exception:
+                pass
+
+        tmp_fd = None
+        tmp_path = None
+        try:
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                prefix="gl260_final_report_combined_", suffix=".pdf"
+            )
+        except Exception as exc:
+            self._final_report_combined_failure_reason = (
+                f"Failed to allocate a temporary file for the combined plot: {exc}"
+            )
+            try:
+                plt.close(fig)
+            except Exception:
+                pass
+            return None
+        if tmp_fd is not None:
+            try:
+                os.close(tmp_fd)
+            except Exception:
+                pass
+
+        try:
+            fig.savefig(tmp_path, format="pdf", dpi=EXPORT_DPI, bbox_inches="tight")
+        except Exception as exc:
+            self._final_report_combined_failure_reason = (
+                f"Combined plot export failed: {exc}"
+            )
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+            try:
+                plt.close(fig)
+            except Exception:
+                pass
+            return None
+
+        try:
+            plt.close(fig)
+        except Exception:
+            pass
+
+        return Path(tmp_path)
+
     def _final_report_build_standard_plot(
         self, section_id: str, page_size: Tuple[float, float]
     ) -> Optional[Figure]:
@@ -55206,6 +55281,12 @@ class UnifiedApp(tk.Tk):
     def _final_report_create_section_figure(
         self, section_id: str, page_size: Tuple[float, float]
     ) -> Optional[Figure]:
+        if not section_id:
+            return None
+        if section_id == FINAL_REPORT_COMBINED_SECTION_ID:
+            return None
+        if section_id in FINAL_REPORT_EXCLUDED_SECTIONS:
+            return None
         if section_id == "cycle_plot":
             return self._final_report_build_cycle_plot_figure(page_size)
         if section_id in ("fig1", "fig2"):
@@ -55737,7 +55818,17 @@ class UnifiedApp(tk.Tk):
             figure_caption_text = ""
             table_caption_text = ""
             table_rendered = False
-            if page_type == "title":
+            if section_id in FINAL_REPORT_EXCLUDED_SECTIONS:
+                continue
+            if section_id == FINAL_REPORT_COMBINED_SECTION_ID and page_type != "title":
+                page_type = "text"
+                fig = self._final_report_build_text_page(
+                    metadata.get("label", section_id) or title_text,
+                    "Combined Triple-Axis Plot is exported separately and appended to the Final Report PDF.",
+                    page_size,
+                    state,
+                )
+            elif page_type == "title":
                 fig, used_figure = self._final_report_build_title_page(
                     page_size, state, section_id
                 )
@@ -55745,98 +55836,20 @@ class UnifiedApp(tk.Tk):
                 if has_caption and section_id:
                     figure_caption_text = self._final_report_figure_caption(section_id)
             elif page_type == "figure":
-                if section_id == "combined_plot":
-                    ok, message = self._final_report_combined_preflight()
-                    if not ok:
-                        page_type = "text"
-                        fig = self._final_report_build_text_page(
-                            metadata.get("label", section_id) or title_text,
-                            message,
-                            page_size,
-                            state,
-                        )
-                    else:
-                        fig = self._build_export_figure_for_final_report(
-                            "fig_combined",
-                            "fig_combined_triple_axis",
-                            page_size,
-                        )
-                        if fig is not None:
-                            has_caption = True
-                            figure_caption_text = self._final_report_figure_caption(
-                                section_id
-                            )
-                            override = self._final_report_sanitize_text(
-                                state.get("combined_plot_title_override", "").strip()
-                            )
-                            override = _svg_safe_text(override)
-                            if override:
-                                try:
-                                    axes = fig.get_axes()
-                                    if axes:
-                                        title_state = (
-                                            getattr(fig, "_gl260_title_state", {}) or {}
-                                        )
-                                        primary_axis = None
-                                        for axis in axes:
-                                            if (
-                                                getattr(axis, "_gl260_axis_role", None)
-                                                == "primary"
-                                            ):
-                                                primary_axis = axis
-                                                break
-                                        if primary_axis is None:
-                                            primary_axis = axes[0]
-                                        primary_axis.set_title(
-                                            override,
-                                            fontsize=title_state.get(
-                                                "title_fs",
-                                                DEFAULT_COMBINED_TITLE_FONTSIZE,
-                                            ),
-                                            fontfamily=title_state.get(
-                                                "font_family",
-                                                (settings.get("font_family") or "")
-                                                .strip(),
-                                            ),
-                                            pad=title_state.get(
-                                                "title_pad_pts",
-                                                DEFAULT_COMBINED_TITLE_PAD_PTS,
-                                            ),
-                                        )
-                                        layout_mgr = getattr(
-                                            fig, "_gl260_layout_manager", None
-                                        )
-                                        if layout_mgr is not None:
-                                            layout_mgr.solve()
-                                            if fig.canvas is not None:
-                                                fig.canvas.draw()
-                                except Exception:
-                                    pass
-                        else:
-                            page_type = "text"
-                            fig = self._final_report_build_text_page(
-                                metadata.get("label", section_id) or title_text,
-                                "Combined plot could not be generated for this run.",
-                                page_size,
-                                state,
-                            )
-                else:
-                    fig = self._final_report_create_section_figure(
-                        section_id, page_size
+                fig = self._final_report_create_section_figure(section_id, page_size)
+                if fig is not None:
+                    has_caption = True
+                    figure_caption_text = self._final_report_figure_caption(
+                        section_id
                     )
-                    if fig is not None:
-                        has_caption = True
-                        figure_caption_text = self._final_report_figure_caption(
-                            section_id
-                        )
-                    else:
-                        page_type = "text"
-                        fig = self._final_report_build_text_page(
-                            metadata.get("label", section_id) or title_text,
-                            "Section omitted – no data available for this run.",
-                            page_size,
-                            state,
-                        )
+                else:
+                    page_type = "text"
+                    fig = self._final_report_build_text_page(
+                        metadata.get("label", section_id) or title_text,
+                        "Section omitted - no data available for this run.",
+                        page_size,
+                        state,
+                    )
             elif page_type == "table":
                 rows, columns = [], []
                 if section_id == "cycle_stats_table":
@@ -56036,6 +56049,34 @@ class UnifiedApp(tk.Tk):
         except Exception:
             pass
 
+    def _merge_final_report_pdfs(
+        self, output_path: str, sources: Sequence[Path]
+    ) -> Tuple[bool, str]:
+        try:
+            from pypdf import PdfMerger
+        except Exception:
+            try:
+                from PyPDF2 import PdfMerger
+            except Exception as exc:
+                return False, f"PDF merge library unavailable: {exc}"
+
+        merger = PdfMerger()
+        try:
+            for source in sources:
+                if source is None:
+                    continue
+                merger.append(str(source))
+            with open(output_path, "wb") as handle:
+                merger.write(handle)
+        except Exception as exc:
+            return False, str(exc)
+        finally:
+            try:
+                merger.close()
+            except Exception:
+                pass
+        return True, ""
+
     def _generate_final_report_pdf(self) -> None:
         state = self._collect_final_report_state_from_ui()
         sections = state.get("selected_sections") or []
@@ -56066,22 +56107,92 @@ class UnifiedApp(tk.Tk):
             return
         state = self._final_report_safe_state(state)
         self._final_report_current_state = state
+        base_path = None
+        combined_path = None
+        failure_path = None
         try:
-            page_figures = self._final_report_build_page_figures(state)
-            if not page_figures:
-                try:
-                    messagebox.showwarning(
-                        "Final Report PDF",
-                        "No recognizable sections were selected for this layout.",
+            base_sections = [
+                section_id
+                for section_id in sections
+                if section_id not in FINAL_REPORT_EXCLUDED_SECTIONS
+                and section_id != FINAL_REPORT_COMBINED_SECTION_ID
+            ]
+            base_state = copy.deepcopy(state)
+            base_state["selected_sections"] = list(base_sections)
+            page_figures = (
+                self._final_report_build_page_figures(base_state)
+                if base_sections
+                else []
+            )
+            base_fd, base_name = tempfile.mkstemp(
+                prefix="gl260_final_report_base_", suffix=".pdf"
+            )
+            os.close(base_fd)
+            base_path = Path(base_name)
+            with PdfPages(base_path) as pdf:
+                if page_figures:
+                    for page_info in page_figures:
+                        fig = page_info["figure"]
+                        pdf.savefig(fig, dpi=self._get_export_dpi())
+                        plt.close(fig)
+                else:
+                    page_size = self._final_report_page_dimensions("portrait")
+                    fig = self._final_report_build_text_page(
+                        title,
+                        "No text or table sections were selected. The combined plot is appended separately.",
+                        page_size,
+                        base_state,
                     )
-                except Exception:
-                    pass
-                return
-            with PdfPages(path) as pdf:
-                for page_info in page_figures:
-                    fig = page_info["figure"]
+                    self._final_report_finalize_figure_layout(
+                        fig, base_state, page_size, False
+                    )
+                    if base_state.get("show_page_numbers"):
+                        self._final_report_draw_page_footer(
+                            fig, 1, page_size, base_state
+                        )
                     pdf.savefig(fig, dpi=self._get_export_dpi())
                     plt.close(fig)
+
+            combined_path = self._export_combined_plot_for_final_report()
+            if combined_path is None:
+                failure_reason = (
+                    self._final_report_combined_failure_reason
+                    or "Combined plot could not be generated for this run."
+                )
+                combined_orientation = self._final_report_resolved_orientation(
+                    FINAL_REPORT_COMBINED_SECTION_ID, state
+                )
+                page_size = self._final_report_page_dimensions(combined_orientation)
+                failure_fd, failure_name = tempfile.mkstemp(
+                    prefix="gl260_final_report_combined_failure_", suffix=".pdf"
+                )
+                os.close(failure_fd)
+                failure_path = Path(failure_name)
+                fig = self._final_report_build_text_page(
+                    FINAL_REPORT_SECTION_METADATA.get(
+                        FINAL_REPORT_COMBINED_SECTION_ID, {}
+                    ).get("label", "Combined Triple-Axis Plot"),
+                    failure_reason,
+                    page_size,
+                    state,
+                )
+                self._final_report_finalize_figure_layout(
+                    fig, state, page_size, False
+                )
+                if state.get("show_page_numbers"):
+                    self._final_report_draw_page_footer(fig, 1, page_size, state)
+                with PdfPages(failure_path) as pdf:
+                    pdf.savefig(fig, dpi=self._get_export_dpi())
+                plt.close(fig)
+                combined_path = failure_path
+
+            ok, merge_error = self._merge_final_report_pdfs(
+                path, [base_path, combined_path]
+            )
+            if not ok:
+                raise RuntimeError(
+                    merge_error or "Failed to stitch the final report PDF."
+                )
         except Exception as exc:
             try:
                 messagebox.showerror(
@@ -56093,6 +56204,16 @@ class UnifiedApp(tk.Tk):
             return
         finally:
             self._final_report_current_state = None
+            cleanup_paths = {
+                tmp
+                for tmp in (base_path, combined_path, failure_path)
+                if isinstance(tmp, Path)
+            }
+            for tmp_path in cleanup_paths:
+                try:
+                    tmp_path.unlink()
+                except Exception:
+                    pass
         try:
             messagebox.showinfo("Final Report PDF", f"Final report PDF saved to {path}")
         except Exception:
@@ -57533,22 +57654,12 @@ class UnifiedApp(tk.Tk):
 
         button_frame = ttk.Frame(f)
         button_frame.pack(fill="x", padx=8, pady=8)
-        apply_button = ttk.Button(
-            button_frame,
-            text="Apply Column Selection",
-            command=lambda: self._apply_columns(auto_refresh_axes=True),
-        )
-        apply_button.pack(side="left")
-        self._register_apply_button(apply_button)
-        self._create_apply_indicator(
-            button_frame, layout="pack", padx=(6, 0), side="left"
-        )
         mapping_button = ttk.Button(
             button_frame,
             text="Per-Sheet Column Mapping...",
             command=self._open_per_sheet_column_mapping_window,
         )
-        mapping_button.pack(side="left", padx=(8, 0))
+        mapping_button.pack(side="left")
         if (
             (not self.multi_sheet_enabled)
             or (not self.selected_sheets)
