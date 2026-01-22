@@ -1,9 +1,14 @@
-# GL-260 Data Analysis and Plotter (v2.2.0)
+# GL-260 Data Analysis and Plotter (v2.3.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `v2.2.0`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `v2.3.0`.
+
+## v2.3.0 Documentation Pass
+- Added a comprehensive commenting system with docstrings on every function and loop-level intent notes.
+- Documented high-risk subsystems (combined triple-axis plots, layout editor, plot elements, solubility workflows, caching).
+- Improves reviewability, debugging safety, and future change confidence by explaining design rationale and data flow.
 
 ## v2.2.0 Update Highlights
 - Added Process Profiles (Profiles -> Manage Profiles...) to save, restore, import, and export full workspace snapshots.
