@@ -1,9 +1,16 @@
-# GL-260 Data Analysis and Plotter (v2.1.1)
+# GL-260 Data Analysis and Plotter (v2.2.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `v2.1.1`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `v2.2.0`.
+
+## v2.2.0 Update Highlights
+- Added Process Profiles (Profiles -> Manage Profiles...) to save, restore, import, and export full workspace snapshots.
+- Profiles live in `profiles/` as JSON; dataset paths are optional and trigger a relink prompt when missing.
+- Columns tab: Apply Column Selection button + indicator now sit next to Per-Sheet Column Mapping, left-aligned.
+- Combined triple-axis plot tab: redundant Clear Elements toolbar button removed (use Plot Elements -> Clear All).
+- Final Report tab: Generate Final Report and new Report Preview buttons are left-aligned.
 
 ## v2.1.1 Update Highlights
 - Final Report PDFs stitch exported PDF artifacts per section in the selected order for deterministic output.
@@ -163,6 +170,13 @@ Internally, the app stores the active data in:
 - `self.df`: Active pandas DataFrame (single sheet or stitched).
 - `self.sheet_dfs`: Per-sheet DataFrames in multi-sheet mode.
 - Global series used by the plotting functions: `x`, `y1`, `y2`, `y3`, `z`, `z2`, plus `selected_columns`.
+
+## Process Profiles
+Process Profiles store and restore full workspace snapshots, including dataset selection (optional), sheet selection, column mappings, plot settings/elements, layout tuning, and final report configuration. Access the manager via **Profiles -> Manage Profiles...**.
+
+Profiles are stored in `profiles/` as `profiles/<profile_name>.json`. The manager supports Save Current As..., Load, Overwrite, Rename, Delete, Export, and Import. Export writes the selected profile to a JSON file; Import brings a JSON profile into the `profiles/` folder.
+
+The **Include dataset file path** option determines whether the Excel path is saved with the profile. If a profile does not include a path (or the file is missing), the app prompts you to relink the dataset before loading. The current workspace is auto-backed up to `profiles/_autosave_last_workspace.json` before a profile load.
 
 ## User Interface Guide (by Tab)
 
@@ -779,7 +793,7 @@ The script includes internal change summaries:
   - Treeview selection recursion fix in annotations editor.
   - Layout fixes for the annotations Toplevel.
 
-Note: the UI title uses `APP_VERSION` set to `v2.1.1`.
+Note: the UI title uses `APP_VERSION` set to `v2.2.0`.
 
 ## Troubleshooting
 - **"No Data" or "Missing Columns" errors**: Load a sheet on the Data tab and set required columns on the Columns tab.

@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.1.1
-# Date: 2026-01-21
+# Version: v2.2.0
+# Date: 2026-01-22
 
 import os
 import sys
@@ -78,6 +78,7 @@ import json
 import csv
 import importlib
 import platform
+from datetime import datetime
 
 import base64
 import io
@@ -7250,7 +7251,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.1.1"
+APP_VERSION = "v2.2.0"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -25049,6 +25050,10 @@ class UnifiedApp(tk.Tk):
             self._output_profile_keys[0] if self._output_profile_keys else None
         )
         self._export_dpi_entry_var: Optional[tk.StringVar] = None
+        self._profile_manager_window: Optional[tk.Toplevel] = None
+        self._profile_manager_listbox: Optional[tk.Listbox] = None
+        self._profile_include_path_var = tk.BooleanVar(value=True)
+        self._profile_restore_pending: Optional[Dict[str, Any]] = None
         self._sol_regression_task_id: Optional[int] = None
         self._regression_dialog: Optional[tk.Toplevel] = None
         self._regression_output: Optional[scrolledtext.ScrolledText] = None
@@ -25155,6 +25160,12 @@ class UnifiedApp(tk.Tk):
         view_menu = self._register_menu(tk.Menu(self._menubar, tearoff=0))
         self._build_view_menu(view_menu)
         self._menubar.add_cascade(label="View", menu=view_menu)
+
+        profiles_menu = self._register_menu(tk.Menu(self._menubar, tearoff=0))
+        profiles_menu.add_command(
+            label="Manage Profiles...", command=self._open_profile_manager
+        )
+        self._menubar.add_cascade(label="Profiles", menu=profiles_menu)
 
         tools_menu = self._register_menu(tk.Menu(self._menubar, tearoff=0))
         developer_menu = self._register_menu(tk.Menu(tools_menu, tearoff=0))
@@ -31873,14 +31884,6 @@ class UnifiedApp(tk.Tk):
 
         if plot_id:
             if plot_key == "fig_combined":
-                btn_clear_elements = ttk.Button(
-                    topbar,
-                    text="Clear Elements",
-                    command=lambda: self._clear_plot_elements_for_plot_id(
-                        plot_id, fig=canvas.figure
-                    ),
-                )
-                btn_clear_elements.pack(side="right", padx=6, pady=4)
                 btn_elements = ttk.Button(
                     topbar,
                     text="Plot Elements...",
@@ -33569,6 +33572,948 @@ class UnifiedApp(tk.Tk):
         self._output_profile_listbox = None
         self._export_dpi_entry_var = None
         self._output_profile_title_var.set("")
+
+    def _profile_storage_dir(self) -> Optional[Path]:
+        base_dir = Path(__file__).resolve().parent
+        profiles_dir = base_dir / "profiles"
+        try:
+            profiles_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            messagebox.showerror(
+                "Profiles",
+                f"Could not create the profiles folder:\n{exc}",
+            )
+            return None
+        return profiles_dir
+
+    def _sanitize_profile_name(self, name: str) -> str:
+        if not isinstance(name, str):
+            return ""
+        cleaned = name.strip()
+        cleaned = re.sub(r"[<>:\"/\\\\|?*]", "_", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned)
+        cleaned = cleaned.strip(" .")
+        return cleaned
+
+    def _profile_path(self, name: str) -> Optional[Path]:
+        profiles_dir = self._profile_storage_dir()
+        if profiles_dir is None:
+            return None
+        safe_name = self._sanitize_profile_name(name)
+        if not safe_name:
+            return None
+        return profiles_dir / f"{safe_name}.json"
+
+    def _profile_timestamp(self) -> str:
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    def _read_profile_document(self, path: Path) -> Optional[Dict[str, Any]]:
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except Exception as exc:
+            messagebox.showerror("Profiles", f"Could not read profile:\n{exc}")
+            return None
+        if not isinstance(payload, dict):
+            messagebox.showerror("Profiles", "Profile data is invalid.")
+            return None
+        return payload
+
+    def _write_profile_document(
+        self, path: Path, payload: Dict[str, Any], *, show_errors: bool = True
+    ) -> bool:
+        try:
+            with path.open("w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+        except Exception as exc:
+            if show_errors:
+                messagebox.showerror("Profiles", f"Could not save profile:\n{exc}")
+            return False
+        return True
+
+    def _list_profile_names(self) -> List[str]:
+        profiles_dir = self._profile_storage_dir()
+        if profiles_dir is None or not profiles_dir.exists():
+            return []
+        names: List[str] = []
+        for profile_path in profiles_dir.glob("*.json"):
+            stem = profile_path.stem
+            if stem in {"index", "_autosave_last_workspace"}:
+                continue
+            if stem.startswith("_"):
+                continue
+            names.append(stem)
+        names.sort(key=lambda value: value.lower())
+        return names
+
+    def _refresh_profile_listbox(self, *, select_name: Optional[str] = None) -> None:
+        listbox = getattr(self, "_profile_manager_listbox", None)
+        if listbox is None:
+            return
+        names = self._list_profile_names()
+        listbox.delete(0, tk.END)
+        for name in names:
+            listbox.insert(tk.END, name)
+        if select_name and select_name in names:
+            idx = names.index(select_name)
+            listbox.selection_set(idx)
+            listbox.see(idx)
+
+    def _selected_profile_name(self) -> Optional[str]:
+        listbox = getattr(self, "_profile_manager_listbox", None)
+        if listbox is None:
+            return None
+        selection = listbox.curselection()
+        if not selection:
+            return None
+        return listbox.get(selection[0])
+
+    def _open_profile_manager(self) -> None:
+        existing = getattr(self, "_profile_manager_window", None)
+        if existing is not None and existing.winfo_exists():
+            try:
+                existing.deiconify()
+                existing.lift()
+                existing.focus_force()
+            except Exception:
+                pass
+            return
+
+        window = tk.Toplevel(self)
+        window.title("Process Profiles")
+        window.transient(self)
+        window.minsize(520, 320)
+        window.resizable(True, True)
+        window.grab_set()
+        self._profile_manager_window = window
+
+        def _close_window() -> None:
+            try:
+                window.grab_release()
+            except Exception:
+                pass
+            try:
+                window.destroy()
+            except Exception:
+                pass
+            self._profile_manager_window = None
+            self._profile_manager_listbox = None
+
+        window.protocol("WM_DELETE_WINDOW", _close_window)
+
+        container = ttk.Frame(window, padding=12)
+        container.grid(row=0, column=0, sticky="nsew")
+        window.grid_rowconfigure(0, weight=1)
+        window.grid_columnconfigure(0, weight=1)
+        container.grid_rowconfigure(1, weight=1)
+        container.grid_columnconfigure(0, weight=1)
+
+        ttk.Label(container, text="Profiles").grid(row=0, column=0, sticky="w")
+
+        listbox = tk.Listbox(container, exportselection=False, height=10)
+        listbox.grid(row=1, column=0, sticky="nsew")
+        scroll = ttk.Scrollbar(container, orient="vertical", command=listbox.yview)
+        scroll.grid(row=1, column=1, sticky="ns")
+        listbox.configure(yscrollcommand=scroll.set)
+        self._profile_manager_listbox = listbox
+
+        button_frame = ttk.Frame(container)
+        button_frame.grid(row=1, column=2, sticky="n", padx=(12, 0))
+        ttk.Button(
+            button_frame,
+            text="Save Current As...",
+            command=self._profile_save_current_as,
+        ).pack(fill="x", pady=2)
+        ttk.Button(
+            button_frame,
+            text="Load",
+            command=self._profile_load_selected,
+        ).pack(fill="x", pady=2)
+        ttk.Button(
+            button_frame,
+            text="Overwrite",
+            command=self._profile_overwrite_selected,
+        ).pack(fill="x", pady=2)
+        ttk.Button(
+            button_frame,
+            text="Rename",
+            command=self._profile_rename_selected,
+        ).pack(fill="x", pady=2)
+        ttk.Button(
+            button_frame,
+            text="Delete",
+            command=self._profile_delete_selected,
+        ).pack(fill="x", pady=2)
+        ttk.Separator(button_frame, orient="horizontal").pack(
+            fill="x", pady=(6, 6)
+        )
+        ttk.Button(
+            button_frame,
+            text="Export",
+            command=self._profile_export_selected,
+        ).pack(fill="x", pady=2)
+        ttk.Button(
+            button_frame,
+            text="Import",
+            command=self._profile_import_profile,
+        ).pack(fill="x", pady=2)
+
+        ttk.Checkbutton(
+            container,
+            text="Include dataset file path",
+            variable=self._profile_include_path_var,
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+        self._refresh_profile_listbox()
+
+    def _build_profile_document(
+        self,
+        *,
+        include_dataset_path: bool,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        try:
+            self._save_settings_dict(self._collect_plot_args())
+        except Exception:
+            pass
+        payload = self._serialize_workspace_state(include_dataset_path)
+        timestamp = self._profile_timestamp()
+        return {
+            "profile_version": 1,
+            "created_at": created_at or timestamp,
+            "updated_at": timestamp,
+            "description": "",
+            "payload": payload,
+        }
+
+    def _profile_save_current_as(self) -> None:
+        parent = getattr(self, "_profile_manager_window", None) or self
+        name = simpledialog.askstring("Save Profile", "Profile name:", parent=parent)
+        if not name:
+            return
+        safe_name = self._sanitize_profile_name(name)
+        if not safe_name:
+            messagebox.showerror("Save Profile", "Profile name cannot be empty.")
+            return
+        path = self._profile_path(safe_name)
+        if path is None:
+            return
+        created_at = None
+        if path.exists():
+            if not messagebox.askyesno(
+                "Overwrite Profile?",
+                f"A profile named '{safe_name}' already exists. Overwrite it?",
+            ):
+                return
+            existing = self._read_profile_document(path)
+            if isinstance(existing, dict):
+                created_at = existing.get("created_at")
+        doc = self._build_profile_document(
+            include_dataset_path=bool(self._profile_include_path_var.get()),
+            created_at=created_at,
+        )
+        if self._write_profile_document(path, doc):
+            self._refresh_profile_listbox(select_name=safe_name)
+
+    def _profile_overwrite_selected(self) -> None:
+        name = self._selected_profile_name()
+        if not name:
+            messagebox.showinfo("Profiles", "Select a profile to overwrite.")
+            return
+        if not messagebox.askyesno(
+            "Overwrite Profile?",
+            f"Overwrite '{name}' with the current workspace?",
+        ):
+            return
+        path = self._profile_path(name)
+        if path is None:
+            return
+        created_at = None
+        if path.exists():
+            existing = self._read_profile_document(path)
+            if isinstance(existing, dict):
+                created_at = existing.get("created_at")
+        doc = self._build_profile_document(
+            include_dataset_path=bool(self._profile_include_path_var.get()),
+            created_at=created_at,
+        )
+        if self._write_profile_document(path, doc):
+            self._refresh_profile_listbox(select_name=name)
+
+    def _profile_rename_selected(self) -> None:
+        name = self._selected_profile_name()
+        if not name:
+            messagebox.showinfo("Profiles", "Select a profile to rename.")
+            return
+        parent = getattr(self, "_profile_manager_window", None) or self
+        new_name = simpledialog.askstring(
+            "Rename Profile", "New profile name:", initialvalue=name, parent=parent
+        )
+        if not new_name:
+            return
+        safe_name = self._sanitize_profile_name(new_name)
+        if not safe_name:
+            messagebox.showerror("Rename Profile", "Profile name cannot be empty.")
+            return
+        if safe_name == name:
+            return
+        old_path = self._profile_path(name)
+        new_path = self._profile_path(safe_name)
+        if old_path is None or new_path is None:
+            return
+        if new_path.exists():
+            messagebox.showerror(
+                "Rename Profile", f"A profile named '{safe_name}' already exists."
+            )
+            return
+        try:
+            old_path.rename(new_path)
+        except Exception as exc:
+            messagebox.showerror("Rename Profile", f"Rename failed:\n{exc}")
+            return
+        self._refresh_profile_listbox(select_name=safe_name)
+
+    def _profile_delete_selected(self) -> None:
+        name = self._selected_profile_name()
+        if not name:
+            messagebox.showinfo("Profiles", "Select a profile to delete.")
+            return
+        if not messagebox.askyesno(
+            "Delete Profile?", f"Delete '{name}' permanently?"
+        ):
+            return
+        path = self._profile_path(name)
+        if path is None:
+            return
+        try:
+            path.unlink()
+        except Exception as exc:
+            messagebox.showerror("Profiles", f"Could not delete profile:\n{exc}")
+            return
+        self._refresh_profile_listbox()
+
+    def _profile_export_selected(self) -> None:
+        name = self._selected_profile_name()
+        if not name:
+            messagebox.showinfo("Profiles", "Select a profile to export.")
+            return
+        source_path = self._profile_path(name)
+        if source_path is None or not source_path.exists():
+            messagebox.showerror("Profiles", "Selected profile could not be found.")
+            return
+        target_path = filedialog.asksaveasfilename(
+            title="Export Profile",
+            defaultextension=".json",
+            filetypes=[("Profile JSON", "*.json"), ("All files", "*.*")],
+            initialfile=f"{name}.json",
+        )
+        if not target_path:
+            return
+        try:
+            shutil.copyfile(source_path, target_path)
+        except Exception as exc:
+            messagebox.showerror("Profiles", f"Export failed:\n{exc}")
+            return
+        messagebox.showinfo("Profiles", f"Profile exported to:\n{target_path}")
+
+    def _profile_import_profile(self) -> None:
+        source_path = filedialog.askopenfilename(
+            title="Import Profile",
+            filetypes=[("Profile JSON", "*.json"), ("All files", "*.*")],
+        )
+        if not source_path:
+            return
+        try:
+            with open(source_path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except Exception as exc:
+            messagebox.showerror("Profiles", f"Could not read profile:\n{exc}")
+            return
+        if not isinstance(data, dict):
+            messagebox.showerror("Profiles", "Profile data is invalid.")
+            return
+        if "payload" not in data:
+            data = {
+                "profile_version": 1,
+                "created_at": self._profile_timestamp(),
+                "updated_at": self._profile_timestamp(),
+                "description": "",
+                "payload": data,
+            }
+        name_guess = self._sanitize_profile_name(Path(source_path).stem)
+        if not name_guess:
+            name_guess = "Imported Profile"
+        parent = getattr(self, "_profile_manager_window", None) or self
+        name = simpledialog.askstring(
+            "Import Profile",
+            "Profile name:",
+            initialvalue=name_guess,
+            parent=parent,
+        )
+        if not name:
+            return
+        safe_name = self._sanitize_profile_name(name)
+        if not safe_name:
+            messagebox.showerror("Import Profile", "Profile name cannot be empty.")
+            return
+        path = self._profile_path(safe_name)
+        if path is None:
+            return
+        if path.exists():
+            if not messagebox.askyesno(
+                "Overwrite Profile?",
+                f"A profile named '{safe_name}' already exists. Overwrite it?",
+            ):
+                return
+        data.setdefault("profile_version", 1)
+        data.setdefault("created_at", self._profile_timestamp())
+        data["updated_at"] = self._profile_timestamp()
+        if self._write_profile_document(path, data):
+            self._refresh_profile_listbox(select_name=safe_name)
+
+    def _profile_load_selected(self) -> None:
+        name = self._selected_profile_name()
+        if not name:
+            messagebox.showinfo("Profiles", "Select a profile to load.")
+            return
+        path = self._profile_path(name)
+        if path is None or not path.exists():
+            messagebox.showerror("Profiles", "Selected profile could not be found.")
+            return
+        profile_doc = self._read_profile_document(path)
+        if not profile_doc:
+            return
+        if not messagebox.askyesno(
+            "Load Profile",
+            "Loading a profile replaces the current workspace. Continue?",
+        ):
+            return
+        self._autosave_last_workspace()
+        self._restore_workspace_from_profile(profile_doc)
+
+    def _collect_profile_plot_settings(self) -> Dict[str, Any]:
+        keys = {
+            "plot_generation_selection",
+            "axis_auto_range",
+            "axis_pad_pct",
+            "min_time",
+            "max_time",
+            "min_y",
+            "max_y",
+            "twin_y_min",
+            "twin_y_max",
+            "deriv_y_min",
+            "deriv_y_max",
+            "auto_time_ticks",
+            "auto_y_ticks",
+            "auto_temp_ticks",
+            "auto_deriv_ticks",
+            "x_major_tick",
+            "x_minor_tick",
+            "y_major_tick",
+            "y_minor_tick",
+            "temp_major_tick",
+            "temp_minor_tick",
+            "deriv_major_tick",
+            "deriv_minor_tick",
+            "title_text",
+            "suptitle_text",
+            "enable_temp_axis",
+            "enable_deriv_axis",
+            "min_cycle_drop",
+            "peak_prominence",
+            "peak_distance",
+            "peak_width",
+            "show_cycle_markers_on_core_plots",
+            "show_cycle_legend_on_core_plots",
+            "include_moles_in_core_plot_legend",
+            "scatter_enabled",
+            "scatter_marker",
+            "scatter_size",
+            "scatter_color",
+            "scatter_alpha",
+            "scatter_edgecolor",
+            "scatter_linewidth",
+            "scatter_series",
+            "cycle_trace",
+            "core_legend_fontsize",
+            "core_cycle_legend_fontsize",
+            "combined_y_left_key",
+            "combined_y_right_key",
+            "combined_y_third_key",
+            "combined_center_plot_legend",
+        }
+        snapshot: Dict[str, Any] = {}
+        for key in keys:
+            if key in settings:
+                snapshot[key] = copy.deepcopy(settings.get(key))
+        for key, value in settings.items():
+            if key.startswith("combined_"):
+                snapshot[key] = copy.deepcopy(value)
+        return snapshot
+
+    def _serialize_workspace_state(self, include_dataset_path: bool) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "multi_sheet_enabled": bool(self.multi_sheet_enabled),
+            "selected_sheet": self.selected_sheet.get(),
+            "selected_sheets": list(self.selected_sheets),
+            "column_assignments": (
+                dict(self.columns) if isinstance(self.columns, dict) else {}
+            ),
+            "per_sheet_mapping": self._get_per_sheet_column_map(),
+            "plot_elements": copy.deepcopy(settings.get("plot_elements", {})),
+            "plot_settings": self._collect_profile_plot_settings(),
+            "layout_profiles": copy.deepcopy(settings.get("layout_profiles", {})),
+            "final_report_settings": self._collect_final_report_state_from_ui(),
+        }
+        if include_dataset_path and self.file_path:
+            payload["dataset_path"] = self.file_path
+        return payload
+
+    def _deserialize_workspace_state(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            return {}
+        state: Dict[str, Any] = {
+            "dataset_path": payload.get("dataset_path"),
+            "multi_sheet_enabled": bool(payload.get("multi_sheet_enabled", False)),
+            "selected_sheet": str(payload.get("selected_sheet") or ""),
+            "selected_sheets": [
+                str(name) for name in (payload.get("selected_sheets") or []) if name
+            ],
+            "column_assignments": dict(payload.get("column_assignments") or {}),
+            "per_sheet_mapping": dict(payload.get("per_sheet_mapping") or {}),
+            "plot_elements": dict(payload.get("plot_elements") or {}),
+            "plot_settings": dict(payload.get("plot_settings") or {}),
+            "layout_profiles": dict(payload.get("layout_profiles") or {}),
+            "final_report_settings": dict(payload.get("final_report_settings") or {}),
+        }
+        return state
+
+    def _apply_profile_plot_settings(self, plot_settings: Dict[str, Any]) -> None:
+        if not isinstance(plot_settings, dict):
+            return
+
+        for key, value in plot_settings.items():
+            settings[key] = copy.deepcopy(value)
+
+        def _set_var(var: Optional[tk.Variable], value: Any) -> None:
+            if var is None:
+                return
+            try:
+                var.set(value)
+            except Exception:
+                pass
+
+        for key, attr in (
+            ("min_time", "min_time"),
+            ("max_time", "max_time"),
+            ("min_y", "min_y"),
+            ("max_y", "max_y"),
+            ("twin_y_min", "twin_y_min"),
+            ("twin_y_max", "twin_y_max"),
+            ("deriv_y_min", "deriv_y_min"),
+            ("deriv_y_max", "deriv_y_max"),
+            ("auto_time_ticks", "auto_time_ticks"),
+            ("auto_y_ticks", "auto_y_ticks"),
+            ("auto_temp_ticks", "auto_temp_ticks"),
+            ("auto_deriv_ticks", "auto_deriv_ticks"),
+            ("x_major_tick", "xmaj_tick"),
+            ("x_minor_tick", "xmin_tick"),
+            ("y_major_tick", "ymaj_tick"),
+            ("y_minor_tick", "ymin_tick"),
+            ("temp_major_tick", "temp_maj_tick"),
+            ("temp_minor_tick", "temp_min_tick"),
+            ("deriv_major_tick", "deriv_maj_tick"),
+            ("deriv_minor_tick", "deriv_min_tick"),
+            ("title_text", "title_text"),
+            ("suptitle_text", "suptitle_text"),
+            ("enable_temp_axis", "enable_temp_axis"),
+            ("enable_deriv_axis", "enable_deriv_axis"),
+            ("min_cycle_drop", "min_cycle_drop"),
+            ("peak_prominence", "pk_prominence"),
+            ("peak_distance", "pk_distance"),
+            ("peak_width", "pk_width"),
+            ("core_legend_fontsize", "core_legend_fontsize"),
+            ("core_cycle_legend_fontsize", "core_cycle_legend_fontsize"),
+        ):
+            if key in plot_settings:
+                _set_var(getattr(self, attr, None), plot_settings.get(key))
+
+        auto_range = plot_settings.get("axis_auto_range")
+        if isinstance(auto_range, dict):
+            _set_var(self.axis_auto_time, bool(auto_range.get("time", True)))
+            _set_var(self.axis_auto_pressure, bool(auto_range.get("pressure", True)))
+            _set_var(self.axis_auto_temp, bool(auto_range.get("temperature", True)))
+            _set_var(self.axis_auto_deriv, bool(auto_range.get("derivative", True)))
+
+        if "axis_pad_pct" in plot_settings:
+            _set_var(self.axis_pad_pct, plot_settings.get("axis_pad_pct"))
+
+        plot_selection = plot_settings.get("plot_generation_selection")
+        if isinstance(plot_selection, dict):
+            _set_var(self._plot_select_fig1_var, bool(plot_selection.get("fig1")))
+            _set_var(self._plot_select_fig2_var, bool(plot_selection.get("fig2")))
+            _set_var(
+                self._plot_select_combined_var,
+                bool(plot_selection.get("fig_combined")),
+            )
+
+        for key, attr in (
+            ("scatter_enabled", "scatter_enabled"),
+            ("scatter_marker", "scatter_marker"),
+            ("scatter_size", "scatter_size"),
+            ("scatter_color", "scatter_color"),
+            ("scatter_alpha", "scatter_alpha"),
+            ("scatter_edgecolor", "scatter_edgecolor"),
+            ("scatter_linewidth", "scatter_linewidth"),
+        ):
+            if key in plot_settings:
+                _set_var(getattr(self, attr, None), plot_settings.get(key))
+
+        if "scatter_series" in plot_settings:
+            settings["scatter_series"] = copy.deepcopy(
+                plot_settings.get("scatter_series") or {}
+            )
+        try:
+            self._persist_scatter_settings()
+        except Exception:
+            pass
+
+        cycle_trace = plot_settings.get("cycle_trace")
+        if isinstance(cycle_trace, dict):
+            try:
+                self._persist_cycle_trace_settings(cycle_trace)
+            except Exception:
+                pass
+            for key, attr in (
+                ("line_color", "cycle_line_color"),
+                ("line_style", "cycle_line_style"),
+                ("line_width", "cycle_line_width"),
+                ("peak_color", "cycle_peak_color"),
+                ("trough_color", "cycle_trough_color"),
+                ("peak_marker", "cycle_peak_marker"),
+                ("trough_marker", "cycle_trough_marker"),
+                ("marker_size", "cycle_marker_size"),
+            ):
+                if key in cycle_trace:
+                    _set_var(getattr(self, attr, None), cycle_trace.get(key))
+
+        for key, attr in (
+            ("combined_y_left_key", "combined_y_left_key"),
+            ("combined_y_right_key", "combined_y_right_key"),
+            ("combined_y_third_key", "combined_y_third_key"),
+            ("combined_x_axis_label", "combined_x_axis_label"),
+            ("combined_primary_axis_label", "combined_primary_axis_label"),
+            ("combined_deriv_axis_label", "combined_deriv_axis_label"),
+            ("combined_temp_axis_label", "combined_temp_axis_label"),
+            ("combined_primary_labelpad", "combined_primary_labelpad"),
+            ("combined_temp_labelpad", "combined_temp_labelpad"),
+            ("combined_deriv_labelpad", "combined_deriv_labelpad"),
+            ("combined_deriv_axis_offset", "combined_deriv_axis_offset"),
+            ("combined_xlabel_tick_gap_pts", "combined_xlabel_tick_gap"),
+            ("combined_left_pad_pct", "combined_left_padding_pct"),
+            ("combined_right_pad_pct", "combined_right_padding_pct"),
+            ("combined_title_pad_pts", "combined_title_pad_pts"),
+            ("combined_suptitle_pad_pts", "combined_suptitle_pad_pts"),
+            ("combined_suptitle_y", "combined_suptitle_y"),
+            ("combined_top_margin_pct", "combined_top_margin_pct"),
+            ("combined_export_pad_pts", "combined_export_pad_pts"),
+            ("combined_suptitle_fontsize", "combined_suptitle_fontsize"),
+            ("combined_title_fontsize", "combined_title_fontsize"),
+            ("combined_label_fontsize", "combined_label_fontsize"),
+            ("combined_tick_fontsize", "combined_tick_fontsize"),
+            ("combined_legend_fontsize", "combined_legend_fontsize"),
+            ("combined_cycle_legend_fontsize", "combined_cycle_legend_fontsize"),
+            ("combined_font_family", "combined_font_family"),
+            ("combined_legend_wrap", "combined_legend_wrap"),
+            ("combined_legend_rows", "combined_legend_rows"),
+            ("combined_legend_gap_pts", "combined_legend_label_gap"),
+            ("combined_legend_bottom_margin_pts", "combined_legend_bottom_margin"),
+            ("combined_legend_alignment", "combined_legend_alignment"),
+            ("combined_cycle_legend_loc_choice", "combined_cycle_legend_loc_choice"),
+            ("combined_cycle_legend_ref_axis", "combined_cycle_legend_ref_axis"),
+            ("combined_cycle_legend_ref_corner", "combined_cycle_legend_ref_corner"),
+        ):
+            if key in plot_settings:
+                _set_var(getattr(self, attr, None), plot_settings.get(key))
+
+        if "combined_center_plot_legend" in plot_settings:
+            _set_var(
+                getattr(self, "center_combined_plot_legend", None),
+                bool(plot_settings.get("combined_center_plot_legend")),
+            )
+
+        legend_anchor = plot_settings.get("combined_legend_anchor")
+        if isinstance(legend_anchor, (list, tuple)) and len(legend_anchor) == 2:
+            self._combined_legend_anchor = (legend_anchor[0], legend_anchor[1])
+        cycle_anchor = plot_settings.get("combined_cycle_legend_anchor")
+        if isinstance(cycle_anchor, (list, tuple)) and len(cycle_anchor) == 2:
+            self._combined_cycle_legend_anchor = (cycle_anchor[0], cycle_anchor[1])
+        cycle_anchor_space = plot_settings.get("combined_cycle_legend_anchor_space")
+        if isinstance(cycle_anchor_space, str):
+            self._combined_cycle_legend_anchor_space = cycle_anchor_space
+
+        try:
+            self._sync_combined_axis_display()
+        except Exception:
+            pass
+        try:
+            self._apply_combined_axis_preferences(skip_save=True)
+        except Exception:
+            pass
+
+    def _apply_profile_layout_profiles(self, layout_profiles: Dict[str, Any]) -> None:
+        if not isinstance(layout_profiles, dict):
+            return
+        settings["layout_profiles"] = _normalize_layout_profiles(layout_profiles)
+        for plot_id in settings["layout_profiles"].keys():
+            try:
+                self._mark_plot_layout_dirty(plot_id)
+            except Exception:
+                pass
+
+    def _apply_profile_plot_elements(self, plot_elements: Dict[str, Any]) -> None:
+        if not isinstance(plot_elements, dict):
+            return
+        normalized = _normalize_plot_elements(plot_elements)
+        settings["plot_elements"] = normalized
+        self._plot_elements = settings["plot_elements"]
+        for plot_id in normalized.keys():
+            try:
+                self._mark_plot_elements_dirty(plot_id)
+            except Exception:
+                pass
+
+    def _apply_profile_final_report_state(self, final_state: Dict[str, Any]) -> None:
+        if not isinstance(final_state, dict):
+            return
+        settings["final_report"] = copy.deepcopy(final_state)
+        try:
+            self._apply_final_report_state_to_ui(settings["final_report"])
+        except Exception:
+            pass
+        try:
+            self._refresh_final_report_preview()
+        except Exception:
+            pass
+
+    def _clear_workspace_state(self) -> None:
+        self.df = None
+        self.sheet_dfs = {}
+        self.sheet_names = []
+        self.file_path = ""
+        self._sheet_names_loaded = False
+        self._columns_schema_preview = []
+        self._columns_schema_preview_sheet = None
+        self._columns_schema_preview_path = None
+        self._columns_applied = False
+        self._last_applied_columns = None
+        self._cycle_mask = None
+        self._cycle_pending_range = None
+        self._cached_cycle_markers = None
+        self._preloaded_cycle_markers = None
+        self._markers_seeded_from_cache = False
+        self.columns = {}
+        settings["columns"] = {}
+        settings["per_sheet_column_map"] = {}
+        settings["plot_elements"] = {}
+        settings["layout_profiles"] = {}
+        self._plot_elements = {}
+        self._per_sheet_column_map_cache = None
+        try:
+            self.selected_sheet.set("")
+        except Exception:
+            pass
+        try:
+            self._set_selected_sheets([], persist=False)
+        except Exception:
+            pass
+        try:
+            self._set_multi_sheet_enabled(False, persist=False)
+        except Exception:
+            pass
+        entry = getattr(self, "e_file", None)
+        if entry is not None:
+            try:
+                entry.delete(0, tk.END)
+            except Exception:
+                pass
+        try:
+            self._clear_plot_tabs()
+        except Exception:
+            pass
+        try:
+            self._clear_numeric_cache()
+        except Exception:
+            pass
+        try:
+            self._render_cache.prepared.clear()
+            self._render_cache.cycles.clear()
+        except Exception:
+            pass
+        try:
+            self._auto_title_view_cache.clear()
+        except Exception:
+            pass
+        try:
+            self.lbl_status.config(text="No file loaded.")
+        except Exception:
+            pass
+        try:
+            self._refresh_columns_ui()
+        except Exception:
+            pass
+
+    def _resolve_profile_dataset_path(self, path: Optional[str]) -> Optional[str]:
+        candidate = (path or "").strip()
+        if candidate and os.path.exists(candidate):
+            return candidate
+        if candidate:
+            messagebox.showwarning(
+                "Relink Dataset",
+                "The dataset path stored in this profile cannot be found.\n"
+                "Select the dataset file to continue.",
+            )
+        else:
+            messagebox.showinfo(
+                "Relink Dataset",
+                "This profile does not include a dataset path.\n"
+                "Select the dataset file to continue.",
+            )
+        new_path = filedialog.askopenfilename(
+            title="Select Dataset File",
+            filetypes=[("Excel Files", "*.xlsx *.xls")],
+        )
+        if not new_path:
+            return None
+        return new_path
+
+    def _autosave_last_workspace(self) -> None:
+        profiles_dir = self._profile_storage_dir()
+        if profiles_dir is None:
+            return
+        path = profiles_dir / "_autosave_last_workspace.json"
+        doc = self._build_profile_document(include_dataset_path=True)
+        doc["description"] = "Autosave before loading a profile."
+        self._write_profile_document(path, doc, show_errors=False)
+
+    def _apply_column_selection(self, *, auto_refresh_axes: bool = False) -> None:
+        self._apply_columns(auto_refresh_axes=auto_refresh_axes)
+
+    def _finalize_profile_restore(self) -> None:
+        pending = getattr(self, "_profile_restore_pending", None)
+        if not isinstance(pending, dict):
+            self._profile_restore_pending = None
+            return
+        self._profile_restore_pending = None
+        self._apply_profile_layout_profiles(pending.get("layout_profiles") or {})
+        self._apply_profile_plot_elements(pending.get("plot_elements") or {})
+        self._apply_profile_final_report_state(
+            pending.get("final_report_settings") or {}
+        )
+        try:
+            self._refresh_axis_ranges()
+        except Exception:
+            pass
+        try:
+            self.save_settings()
+        except Exception:
+            pass
+        try:
+            _save_settings_to_disk()
+        except Exception:
+            pass
+
+    def _restore_workspace_from_profile(self, profile_doc: Dict[str, Any]) -> None:
+        payload = profile_doc.get("payload")
+        state = self._deserialize_workspace_state(payload or {})
+        if not state:
+            messagebox.showerror("Load Profile", "Profile payload is invalid.")
+            return
+        dataset_path = self._resolve_profile_dataset_path(state.get("dataset_path"))
+        if not dataset_path:
+            return
+        state["dataset_path"] = dataset_path
+
+        self._clear_workspace_state()
+        self._apply_profile_plot_settings(state.get("plot_settings") or {})
+
+        self.file_path = dataset_path
+        settings["last_file_path"] = self.file_path
+        entry = getattr(self, "e_file", None)
+        if entry is not None:
+            try:
+                entry.delete(0, tk.END)
+                entry.insert(0, self.file_path)
+            except Exception:
+                pass
+        try:
+            self._load_sheet_names()
+        except Exception:
+            pass
+
+        multi_sheet = bool(state.get("multi_sheet_enabled", False))
+        try:
+            self._set_multi_sheet_enabled(multi_sheet, persist=False)
+        except Exception:
+            pass
+
+        if multi_sheet:
+            try:
+                self._set_selected_sheets(
+                    state.get("selected_sheets") or [], persist=False
+                )
+            except Exception:
+                pass
+            try:
+                self._refresh_multi_sheet_lists()
+            except Exception:
+                pass
+        else:
+            selected_sheet = (state.get("selected_sheet") or "").strip()
+            if selected_sheet and selected_sheet in self.sheet_names:
+                self.selected_sheet.set(selected_sheet)
+            elif self.sheet_names:
+                self.selected_sheet.set(self.sheet_names[0])
+
+        columns_map = state.get("column_assignments")
+        if isinstance(columns_map, dict):
+            self.columns = dict(columns_map)
+            settings["columns"] = dict(columns_map)
+        else:
+            self.columns = dict(settings.get("columns", {}))
+
+        per_sheet_map = state.get("per_sheet_mapping")
+        if isinstance(per_sheet_map, dict):
+            settings["per_sheet_column_map"] = copy.deepcopy(per_sheet_map)
+        else:
+            settings["per_sheet_column_map"] = {}
+        self._per_sheet_column_map_cache = None
+
+        if multi_sheet:
+            try:
+                self._refresh_columns_ui()
+            except Exception:
+                pass
+        else:
+            try:
+                self._load_dataframe()
+            except Exception:
+                pass
+
+        try:
+            self._mark_columns_dirty(reason="profile load", allow_during_apply=True)
+        except Exception:
+            pass
+
+        self._profile_restore_pending = {
+            "plot_elements": state.get("plot_elements") or {},
+            "layout_profiles": state.get("layout_profiles") or {},
+            "final_report_settings": state.get("final_report_settings") or {},
+        }
+
+        self._apply_column_selection(auto_refresh_axes=True)
 
     def _open_plot_settings_dialog(self, plot_id: Optional[str] = None) -> None:
         plot_id = plot_id or "fig_combined_triple_axis"
@@ -53623,10 +54568,16 @@ class UnifiedApp(tk.Tk):
         action_frame.pack(fill="x", padx=8, pady=(0, 8))
         ttk.Button(
             action_frame,
+            text="Report Preview",
+            command=self._open_final_report_preview_window,
+            padding=(12, 4),
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(
+            action_frame,
             text="Generate Final Report...",
             command=self._prompt_final_report_generation,
             padding=(12, 4),
-        ).pack(side="right")
+        ).pack(side="left")
 
         def _report_preview_trigger(*_):
             self._schedule_final_report_preview_refresh()
@@ -57919,7 +58870,7 @@ class UnifiedApp(tk.Tk):
         ):
             mapping_button.state(["disabled"])
         apply_frame = ttk.Frame(button_frame)
-        apply_frame.pack(side="right")
+        apply_frame.pack(side="left", padx=(8, 0))
         apply_button = ttk.Button(
             apply_frame,
             text="Apply Column Selection",
@@ -59283,6 +60234,12 @@ class UnifiedApp(tk.Tk):
         except Exception:
             pass
 
+        if getattr(self, "_profile_restore_pending", None):
+            try:
+                self._finalize_profile_restore()
+            except Exception:
+                pass
+
         self._is_applying_columns = False
         if DEBUG_SERIES_FLOW:
             self._series_flow_active = False
@@ -59291,6 +60248,7 @@ class UnifiedApp(tk.Tk):
 
         self._apply_columns_task_id = None
         self._is_applying_columns = False
+        self._profile_restore_pending = None
         if DEBUG_SERIES_FLOW:
             self._series_flow_active = False
 
