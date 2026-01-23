@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.3.0
-# Date: 2026-01-22
+# Version: v2.4.0
+# Date: 2026-01-23
 
 import os
 import sys
@@ -109,8 +109,6 @@ import traceback
 import tempfile
 
 import unicodedata
-
-from datetime import datetime
 
 import uuid
 
@@ -7927,7 +7925,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.3.0"
+APP_VERSION = "v2.4.0"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -9282,12 +9280,38 @@ class CycleFingerprint:
     policy: str
 
 
+@dataclass(frozen=True)
+class CycleSegFingerprint:
+    """Immutable key for cached cycle segmentation results."""
+
+    data_fingerprint: DataFingerprint
+    mode: str
+    auto_params: Tuple[Any, ...]
+    manual_revision: int
+    mask_signature: int
+    policy: str
+
+
+@dataclass(frozen=True)
+class CycleMetricsFingerprint:
+    """Immutable key for cached cycle metrics results."""
+
+    seg_fingerprint: CycleSegFingerprint
+    moles_signature: Tuple[Any, ...]
+
+
 @dataclass
 class RenderCacheManager:
     """Simple cache manager for prepared series and cycle segmentation."""
 
     prepared: Dict[DataFingerprint, Dict[str, Any]] = field(default_factory=dict)
     cycles: Dict[CycleFingerprint, Dict[str, Any]] = field(default_factory=dict)
+    cycle_segments: Dict[CycleSegFingerprint, Dict[str, Any]] = field(
+        default_factory=dict
+    )
+    cycle_metrics: Dict[CycleMetricsFingerprint, Dict[str, Any]] = field(
+        default_factory=dict
+    )
 
     def get_prepared(self, fingerprint: DataFingerprint) -> Optional[Dict[str, Any]]:
         """Return prepared.
@@ -9313,6 +9337,34 @@ class RenderCacheManager:
         Used to persist cycles into the current state."""
         self.cycles[fingerprint] = payload
 
+    def get_cycle_segments(
+        self, fingerprint: CycleSegFingerprint
+    ) -> Optional[Dict[str, Any]]:
+        """Return cycle segments.
+        Used to retrieve cycle segmentation for downstream logic."""
+        return self.cycle_segments.get(fingerprint)
+
+    def set_cycle_segments(
+        self, fingerprint: CycleSegFingerprint, payload: Dict[str, Any]
+    ) -> None:
+        """Set cycle segments.
+        Used to persist cycle segmentation into the current state."""
+        self.cycle_segments[fingerprint] = payload
+
+    def get_cycle_metrics(
+        self, fingerprint: CycleMetricsFingerprint
+    ) -> Optional[Dict[str, Any]]:
+        """Return cycle metrics.
+        Used to retrieve cycle metrics for downstream logic."""
+        return self.cycle_metrics.get(fingerprint)
+
+    def set_cycle_metrics(
+        self, fingerprint: CycleMetricsFingerprint, payload: Dict[str, Any]
+    ) -> None:
+        """Set cycle metrics.
+        Used to persist cycle metrics into the current state."""
+        self.cycle_metrics[fingerprint] = payload
+
 
 @dataclass
 class RenderContext:
@@ -9325,6 +9377,19 @@ class RenderContext:
     style_ctx: Dict[str, Any]
     layout_ctx: Dict[str, Any]
     plot_elements_ctx: Dict[str, Any]
+
+
+@dataclass
+class RenderPacket:
+    """Background render packet for UI-thread plot assembly."""
+
+    render_ctx: RenderContext
+    data_fingerprint: DataFingerprint
+    args: Tuple[Any, ...]
+    fig_size: Optional[Tuple[float, float]]
+    plot_id: Optional[str]
+    target: str = "display"
+    perf: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -23338,16 +23403,17 @@ def build_combined_triple_axis_figure(
     scatter_series_configs = style_ctx.get("scatter_series_configs")
 
     series_map = data_ctx.get("series") or {}
+    series_np = data_ctx.get("series_np") or {}
     selected_columns = data_ctx.get("selected_columns") or globals().get(
         "selected_columns", {}
     )
 
-    x = series_map.get("x", globals().get("x"))
-    y1 = series_map.get("y1", globals().get("y1"))
-    y2 = series_map.get("y2", globals().get("y2"))
-    y3 = series_map.get("y3", globals().get("y3"))
-    z = series_map.get("z", globals().get("z"))
-    z2 = series_map.get("z2", globals().get("z2"))
+    x = series_np.get("x", series_map.get("x", globals().get("x")))
+    y1 = series_np.get("y1", series_map.get("y1", globals().get("y1")))
+    y2 = series_np.get("y2", series_map.get("y2", globals().get("y2")))
+    y3 = series_np.get("y3", series_map.get("y3", globals().get("y3")))
+    z = series_np.get("z", series_map.get("z", globals().get("z")))
+    z2 = series_np.get("z2", series_map.get("z2", globals().get("z2")))
     fmt = _format_axis_label
     svg_safe = _svg_safe_text
     handles = []
@@ -24055,6 +24121,14 @@ def build_combined_triple_axis_figure(
     )
     _apply_tick_font(ax)
     combined_peak_artist, combined_trough_artist = _draw_cycle_markers(ax)
+    try:
+        fig._gl260_cycle_marker_artists = {  # type: ignore[attr-defined]
+            "peak": combined_peak_artist,
+            "trough": combined_trough_artist,
+        }
+    except Exception:
+        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+        pass
 
     suptitle_display = _text_safe(suptitle_text)
     main_center_x = fig.subplotpars.left + (
@@ -25729,6 +25803,31 @@ class CsvImportDialog:
         if self._close_button is not None:
             self._close_button.configure(state=("disabled" if busy else "normal"))
 
+    def _set_combined_render_busy(self, busy: bool) -> None:
+        """Set combined render busy.
+        Used to apply a lightweight render-in-progress indicator."""
+        if busy and not self._combined_render_busy:
+            self._combined_render_busy = True
+            try:
+                self._combined_render_cursor = self.cget("cursor")
+            except Exception:
+                self._combined_render_cursor = None
+            try:
+                self.configure(cursor="watch")
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            return
+        if not busy and self._combined_render_busy:
+            self._combined_render_busy = False
+            try:
+                cursor = self._combined_render_cursor
+                self.configure(cursor=cursor if cursor is not None else "")
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            self._combined_render_cursor = None
+
     def _browse_csv(self) -> None:
         """Perform browse CSV.
         Used to keep the workflow logic localized and testable."""
@@ -26195,6 +26294,15 @@ class UnifiedApp(tk.Tk):
         self._dev_parallel_compute_var = tk.BooleanVar(value=dev_parallel_enabled)
         task_workers = dev_worker_threads if dev_parallel_enabled else 1
         self._task_runner = TkTaskRunner(self, max_workers=task_workers)
+        self._combined_render_runner = TkTaskRunner(self, max_workers=1)
+        self._combined_render_task_id: Optional[int] = None
+        self._combined_render_busy = False
+        self._combined_render_cursor = None
+        self._perf_diag_enabled_var = tk.BooleanVar(value=False)
+        self._perf_diag_dialog = None
+        self._perf_diag_output = None
+        self._perf_diag_last_run: Optional[Dict[str, Any]] = None
+        self._perf_diag_active_run: Optional[Dict[str, Any]] = None
         self._gil_import_warning_shown = False
         self._dependency_audit_dialog = None
         self._dependency_audit_report = None
@@ -26689,6 +26797,10 @@ class UnifiedApp(tk.Tk):
         developer_menu.add_command(
             label="Concurrency Controls...",
             command=self._open_concurrency_controls_dialog,
+        )
+        developer_menu.add_command(
+            label="Performance Diagnostics...",
+            command=self._open_performance_diagnostics_dialog,
         )
         developer_menu.add_separator()
         developer_menu.add_command(
@@ -27460,6 +27572,58 @@ class UnifiedApp(tk.Tk):
                 messagebox.showwarning("Settings Reset", "\n".join(lines), parent=self)
 
             self.after(300, _notify_settings_reset)
+
+    def _set_combined_render_busy(self, busy: bool) -> None:
+        """Set combined render busy state.
+        Purpose: Apply a lightweight UI busy indicator during combined plot renders.
+        Why: Combined renders run async, so the UI needs safe re-entry blocking and feedback.
+        Inputs: busy (bool) to mark busy or clear busy state.
+        Outputs: None.
+        Side effects: Updates combined render state, cursor, and Generate Plot button state.
+        Exceptions: Marshals to the Tk thread if called off-thread; guards widget updates.
+        """
+        if threading.current_thread() is not threading.main_thread():
+            # Marshal to the Tk thread to avoid cross-thread widget access.
+            try:
+                self.after(0, self._set_combined_render_busy, busy)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            return
+
+        busy = bool(busy)
+        self._combined_render_busy = busy
+
+        state = "disabled" if busy else "normal"
+        generate_btn = getattr(self, "_plot_select_generate_btn", None)
+        if generate_btn is not None:
+            try:
+                generate_btn.configure(state=state)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        if busy:
+            if self._combined_render_cursor is None:
+                try:
+                    self._combined_render_cursor = self.cget("cursor")
+                except Exception:
+                    self._combined_render_cursor = None
+            try:
+                self.configure(cursor="watch")
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            return
+
+        try:
+            cursor = self._combined_render_cursor
+            # Restore the cursor that was active before the combined render began.
+            self.configure(cursor=cursor if cursor is not None else "")
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        self._combined_render_cursor = None
 
     def _restore_last_session_async(self):
         """Perform restore last session async.
@@ -29021,6 +29185,108 @@ class UnifiedApp(tk.Tk):
             justify="left",
         ).grid(row=3, column=0, sticky="w", padx=10, pady=(0, 10))
 
+    def _open_performance_diagnostics_dialog(self) -> None:
+        """Open performance diagnostics dialog.
+        Used by UI actions to open performance diagnostics dialog."""
+        existing = getattr(self, "_perf_diag_dialog", None)
+        if existing is not None and existing.winfo_exists():
+            existing.deiconify()
+            existing.lift()
+            self._refresh_performance_diagnostics()
+            return
+
+        dialog = tk.Toplevel(self)
+        dialog.title("Performance Diagnostics")
+        dialog.geometry("720x420")
+        dialog.transient(self)
+        dialog.columnconfigure(0, weight=1)
+        dialog.rowconfigure(2, weight=1)
+        self._perf_diag_dialog = dialog
+
+        ttk.Label(
+            dialog,
+            text="Capture timing diagnostics for render and embed stages.",
+        ).grid(row=0, column=0, sticky="w", padx=10, pady=(10, 6))
+
+        ttk.Checkbutton(
+            dialog,
+            text="Enable diagnostics (session only)",
+            variable=self._perf_diag_enabled_var,
+            command=self._refresh_performance_diagnostics,
+        ).grid(row=1, column=0, sticky="w", padx=10, pady=(0, 6))
+
+        output = scrolledtext.ScrolledText(dialog, wrap="word", state="disabled")
+        output.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 8))
+        self._perf_diag_output = output
+
+        button_frame = ttk.Frame(dialog)
+        button_frame.grid(row=3, column=0, sticky="e", padx=10, pady=(0, 10))
+        ttk.Button(
+            button_frame, text="Close", command=dialog.destroy
+        ).grid(row=0, column=0, padx=4)
+
+        self._refresh_performance_diagnostics()
+
+    def _refresh_performance_diagnostics(self) -> None:
+        """Refresh performance diagnostics.
+        Used to sync performance diagnostics display with current state."""
+        output = getattr(self, "_perf_diag_output", None)
+        if output is None or not output.winfo_exists():
+            return
+        enabled = bool(self._perf_diag_enabled_var.get())
+        report = self._perf_diag_last_run
+        if not enabled:
+            body = "Diagnostics disabled."
+        elif not report:
+            body = "No diagnostics captured yet."
+        else:
+            body = self._format_performance_report(report)
+        output.configure(state="normal")
+        output.delete("1.0", tk.END)
+        output.insert("end", body + "\n")
+        output.configure(state="disabled")
+
+    def _format_performance_report(self, report: Dict[str, Any]) -> str:
+        """Format performance report.
+        Used to format performance diagnostics for display."""
+        lines = []
+        plot_kind = report.get("plot_kind") or "unknown"
+        target = report.get("target") or "display"
+        timestamp = report.get("timestamp") or ""
+        lines.append(f"Plot: {plot_kind}")
+        lines.append(f"Target: {target}")
+        if timestamp:
+            lines.append(f"Timestamp: {timestamp}")
+        stages = report.get("stages") or {}
+        lines.append("")
+        for key in ("prepared", "cycle", "combined", "embed"):
+            entry = stages.get(key)
+            if not isinstance(entry, dict):
+                continue
+            ms = entry.get("ms")
+            cache = entry.get("cache")
+            path = entry.get("path")
+            extra = entry.get("extra")
+            if ms is None:
+                continue
+            line = f"{key}: {ms:.2f} ms"
+            if cache:
+                line += f" ({cache})"
+            if path:
+                line += f" [{path}]"
+            if extra:
+                line += f" {extra}"
+            lines.append(line)
+            if key == "combined" and entry.get("layout_ms") is not None:
+                lines.append(f"layout: {entry['layout_ms']:.2f} ms")
+        return "\n".join(lines)
+
+    def _record_performance_run(self, report: Dict[str, Any]) -> None:
+        """Record performance run.
+        Used to persist a performance diagnostics snapshot."""
+        self._perf_diag_last_run = report
+        self._refresh_performance_diagnostics()
+
     def _apply_concurrency_controls(self) -> None:
         """Apply concurrency controls.
         Used to apply concurrency controls changes to live state."""
@@ -29364,7 +29630,13 @@ class UnifiedApp(tk.Tk):
 
     def _build_ui(self):
         """Build UI.
-        Used to assemble UI during UI or plot setup."""
+        Purpose: Assemble the main window layout and widget wiring.
+        Why: Centralizes UI construction after state initialization.
+        Inputs: None.
+        Outputs: None.
+        Side effects: Creates/grids widgets, stores widget references, and binds events.
+        Exceptions: Best-effort guards are used internally; no intentional raises.
+        """
 
         # Root uses grid: row 0 (Notebook) grows, row 1 (buttons) stays fixed
 
@@ -29552,11 +29824,15 @@ class UnifiedApp(tk.Tk):
             variable=self._plot_select_combined_var,
         ).grid(row=0, column=2, sticky="w", padx=(self._scale_length(8), 0))
 
-        ttk.Button(
+        generate_btn = ttk.Button(
             plot_select,
             text="Generate Plot",
             command=self._generate_selected_plots,
-        ).grid(row=0, column=3, sticky="ew", padx=(self._scale_length(12), 0))
+        )
+        generate_btn.grid(
+            row=0, column=3, sticky="ew", padx=(self._scale_length(12), 0)
+        )
+        self._plot_select_generate_btn = generate_btn
 
         apply_frame = ttk.Frame(btns)
         apply_frame.grid(row=0, column=1, sticky="w", padx=(self._scale_length(8), 0))
@@ -34405,6 +34681,9 @@ class UnifiedApp(tk.Tk):
 
         # figs may contain 'fig1', 'fig2', 'fig_peaks'
 
+        perf_run = self._perf_diag_active_run if isinstance(self._perf_diag_active_run, dict) else None
+        perf_start = time.perf_counter() if perf_run is not None else None
+
         if clear_existing:
             self._clear_plot_tabs()
 
@@ -34444,6 +34723,11 @@ class UnifiedApp(tk.Tk):
             _replace_plot(
                 "Figure 3: Cycle Analysis", figs["fig_peaks"], plot_key="fig_peaks"
             )
+
+        if perf_run is not None and perf_start is not None:
+            elapsed_ms = (time.perf_counter() - perf_start) * 1000.0
+            stages = perf_run.setdefault("stages", {})
+            stages["embed"] = {"ms": elapsed_ms}
 
     def _remove_plot_tab_by_title(self, title: str):
         """Perform remove plot tab by title.
@@ -43771,12 +44055,11 @@ class UnifiedApp(tk.Tk):
 
         self._task_runner.submit("cycle_analysis", worker, _on_ok, _on_err)
 
-    def _compute_cycle_analysis_worker(
+    def _compute_cycle_segmentation(
         self,
         xv,
         yv,
         mask,
-        z_arr,
         prom,
         dist,
         wid,
@@ -43787,11 +44070,9 @@ class UnifiedApp(tk.Tk):
         snapshot,
         *,
         manual_only: bool = False,
-        data_ctx: Optional[Dict[str, Any]] = None,
-    ):
-        """Compute cycle analysis worker.
-        Used to derive cycle analysis worker for analysis or plotting."""
-
+    ) -> Dict[str, Any]:
+        """Compute cycle segmentation.
+        Used to reuse cycle segmentation without recomputing metrics."""
         mask_arr = np.asarray(mask, dtype=bool)
         y_arr = np.asarray(yv, dtype=float)
 
@@ -43817,7 +44098,6 @@ class UnifiedApp(tk.Tk):
         idx_all = np.where(mask_arr)[0]
 
         auto_peaks = _sanitize_indices(snapshot.get("auto_peaks", set()))
-
         auto_troughs = _sanitize_indices(snapshot.get("auto_troughs", set()))
 
         auto_detection_used = bool(
@@ -43825,39 +44105,29 @@ class UnifiedApp(tk.Tk):
         )
 
         if auto_detect and not manual_only:
-
             if peak_finder is None:
-
                 raise ModuleNotFoundError(
                     _scipy_missing_message("automatic cycle detection")
                 )
-
             y_masked = y_arr[mask_arr]
-
             p_rel, _ = peak_finder(
                 y_masked,
                 prominence=prominence_safe(prom),
                 distance=max(1, dist),
                 width=max(1, wid),
             )
-
             t_rel, _ = peak_finder(
                 -y_masked,
                 prominence=prominence_safe(prom),
                 distance=max(1, dist),
                 width=max(1, wid),
             )
-
             auto_peaks = _sanitize_indices(idx_all[p_rel].tolist())
-
             auto_troughs = _sanitize_indices(idx_all[t_rel].tolist())
 
         add_peaks = _sanitize_indices(snapshot.get("add_peaks", set()))
-
         add_troughs = _sanitize_indices(snapshot.get("add_troughs", set()))
-
         rm_peaks = _sanitize_indices(snapshot.get("rm_peaks", set()))
-
         rm_troughs = _sanitize_indices(snapshot.get("rm_troughs", set()))
 
         if manual_only:
@@ -43870,68 +44140,88 @@ class UnifiedApp(tk.Tk):
         peaks = sorted(
             [i for i in effective_peaks if 0 <= i < mask_len and mask_arr[i]]
         )
-
         troughs = sorted(
             [i for i in effective_troughs if 0 <= i < mask_len and mask_arr[i]]
         )
 
         threshold = -float("inf") if ignore_min_drop else float(min_cycle_drop)
-
         cycles, total_drop = self._form_cycles(y_arr, peaks, troughs, threshold)
 
         cycle_peaks = {int(c.get("peak_idx", -1)) for c in cycles}
-
         cycle_troughs = {int(c.get("trough_idx", -1)) for c in cycles}
-
         cycle_peaks = {i for i in cycle_peaks if 0 <= i < mask_len and mask_arr[int(i)]}
-
         cycle_troughs = {
             i for i in cycle_troughs if 0 <= i < mask_len and mask_arr[int(i)]
         }
 
         display_peaks = set()
-
         # Iterate over effective_peaks to apply the per-item logic.
         for idx in effective_peaks:
-
             try:
-
                 i = int(idx)
-
             except Exception:
-
                 continue
-
             if 0 <= i < mask_len and mask_arr[i]:
-
                 display_peaks.add(i)
 
         display_troughs = set()
-
         # Iterate over effective_troughs to apply the per-item logic.
         for idx in effective_troughs:
-
             try:
-
                 i = int(idx)
-
             except Exception:
-
                 continue
-
             if 0 <= i < mask_len and mask_arr[i]:
-
                 display_troughs.add(i)
 
         plot_peaks = np.array(sorted(cycle_peaks | display_peaks), dtype=int)
-
         plot_troughs = np.array(sorted(cycle_troughs | display_troughs), dtype=int)
-
         if plot_peaks.size:
             plot_peaks = plot_peaks[(plot_peaks >= 0) & (plot_peaks < mask_len)]
-
         if plot_troughs.size:
             plot_troughs = plot_troughs[(plot_troughs >= 0) & (plot_troughs < mask_len)]
+
+        has_manual_edits = bool(add_peaks or add_troughs or rm_peaks or rm_troughs)
+        if manual_only:
+            selection_mode = "Manual-only"
+        elif auto_detection_used and has_manual_edits:
+            selection_mode = "Mixed"
+        elif auto_detection_used:
+            selection_mode = "Auto"
+        else:
+            selection_mode = "Manual-only"
+
+        return {
+            "auto_peaks": auto_peaks,
+            "auto_troughs": auto_troughs,
+            "plot_peaks": plot_peaks,
+            "plot_troughs": plot_troughs,
+            "cycles": cycles,
+            "total_drop": total_drop,
+            "auto_detection_used": auto_detection_used,
+            "selection_mode": selection_mode,
+            "mask_len": mask_len,
+            "selection_size": int(mask_arr.sum()),
+        }
+
+    def _compute_cycle_metrics_from_segmentation(
+        self,
+        segmentation: Dict[str, Any],
+        xv,
+        yv,
+        z_arr,
+        prom,
+        dist,
+        wid,
+        min_cycle_drop,
+        ignore_min_drop,
+        *,
+        data_ctx: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Compute cycle metrics from segmentation results."""
+        cycles = segmentation.get("cycles") or []
+        total_drop = segmentation.get("total_drop", 0.0)
+        selection_mode = segmentation.get("selection_mode", "Manual-only")
 
         z_all = np.asarray(z_arr, dtype=float) if z_arr is not None else None
 
@@ -44069,15 +44359,6 @@ class UnifiedApp(tk.Tk):
                     "cumulative_co2_mass_g": cumulative_co2_mass,
                 }
             )
-        has_manual_edits = bool(add_peaks or add_troughs or rm_peaks or rm_troughs)
-        if manual_only:
-            selection_mode = "Manual-only"
-        elif auto_detection_used and has_manual_edits:
-            selection_mode = "Mixed"
-        elif auto_detection_used:
-            selection_mode = "Auto"
-        else:
-            selection_mode = "Manual-only"
 
         cycle_context = {
             "volume_l": V_L,
@@ -44088,18 +44369,19 @@ class UnifiedApp(tk.Tk):
             "x_label": x_label,
             "min_cycle_drop_psi": float(min_cycle_drop),
             "ignore_min_drop": bool(ignore_min_drop),
-            "auto_detection_used": auto_detection_used,
-            "manual_only": manual_only,
+            "auto_detection_used": bool(segmentation.get("auto_detection_used")),
+            "manual_only": bool(segmentation.get("selection_mode") == "Manual-only"),
             "selection_mode": selection_mode,
             "peak_prominence": float(prom),
             "peak_distance": int(dist),
             "peak_width": int(wid),
-            "cycle_temp_column": settings.get(
-                "cycle_temp_column", CYCLE_TEMP_DEFAULT_LABEL
+            "cycle_temp_column": context.get(
+                "cycle_temp_column",
+                settings.get("cycle_temp_column", CYCLE_TEMP_DEFAULT_LABEL),
             ),
             "vdw_used": vdw_used,
             "gas_molar_mass": gas_molar_mass,
-            "selection_size": int(mask_arr.sum()),
+            "selection_size": int(segmentation.get("selection_size") or 0),
         }
 
         summary_context = {
@@ -44135,23 +44417,83 @@ class UnifiedApp(tk.Tk):
             options=options,
         )
 
+        return {
+            "per_cycle": per_cycle,
+            "total_moles_ideal": total_moles_ideal,
+            "total_moles_vdw": total_moles_vdw,
+            "gas_molar_mass": gas_molar_mass,
+            "vdw_used": vdw_used,
+            "scipy_available": scipy_available,
+            "cycle_transfer": cycle_transfer_rows,
+            "cycle_context": cycle_context,
+            "summary": summary,
+        }
+
+    def _compute_cycle_analysis_worker(
+        self,
+        xv,
+        yv,
+        mask,
+        z_arr,
+        prom,
+        dist,
+        wid,
+        min_cycle_drop,
+        auto_detect,
+        ignore_min_drop,
+        peak_finder,
+        snapshot,
+        *,
+        manual_only: bool = False,
+        data_ctx: Optional[Dict[str, Any]] = None,
+    ):
+        """Compute cycle analysis worker.
+        Used to derive cycle analysis worker for analysis or plotting."""
+
+        segmentation = self._compute_cycle_segmentation(
+            xv,
+            yv,
+            mask,
+            prom,
+            dist,
+            wid,
+            min_cycle_drop,
+            auto_detect,
+            ignore_min_drop,
+            peak_finder,
+            snapshot,
+            manual_only=manual_only,
+        )
+        metrics = self._compute_cycle_metrics_from_segmentation(
+            segmentation,
+            xv,
+            yv,
+            z_arr,
+            prom,
+            dist,
+            wid,
+            min_cycle_drop,
+            ignore_min_drop,
+            data_ctx=data_ctx,
+        )
+
         return dict(
-            auto_peaks=auto_peaks,
-            auto_troughs=auto_troughs,
-            plot_peaks=plot_peaks,
-            plot_troughs=plot_troughs,
-            cycles=cycles,
-            per_cycle=per_cycle,
-            total_drop=total_drop,
-            summary=summary,
-            auto_detection_used=auto_detection_used,
-            total_moles_ideal=total_moles_ideal,
-            total_moles_vdw=total_moles_vdw,
-            gas_molar_mass=gas_molar_mass,
-            vdw_used=vdw_used,
-            scipy_available=scipy_available,
-            cycle_transfer=cycle_transfer_rows,
-            cycle_context=cycle_context,
+            auto_peaks=segmentation.get("auto_peaks", set()),
+            auto_troughs=segmentation.get("auto_troughs", set()),
+            plot_peaks=segmentation.get("plot_peaks"),
+            plot_troughs=segmentation.get("plot_troughs"),
+            cycles=segmentation.get("cycles") or [],
+            per_cycle=metrics.get("per_cycle") or [],
+            total_drop=segmentation.get("total_drop", 0.0),
+            summary=metrics.get("summary") or "",
+            auto_detection_used=bool(segmentation.get("auto_detection_used")),
+            total_moles_ideal=metrics.get("total_moles_ideal"),
+            total_moles_vdw=metrics.get("total_moles_vdw"),
+            gas_molar_mass=metrics.get("gas_molar_mass"),
+            vdw_used=metrics.get("vdw_used"),
+            scipy_available=metrics.get("scipy_available"),
+            cycle_transfer=metrics.get("cycle_transfer") or [],
+            cycle_context=metrics.get("cycle_context") or {},
         )
 
     def _apply_cycle_analysis_result(
@@ -65046,6 +65388,34 @@ class UnifiedApp(tk.Tk):
             prep_signature=prep_signature,
         )
 
+    def _build_data_fingerprint_from_snapshot(
+        self, snapshot: Dict[str, Any]
+    ) -> DataFingerprint:
+        """Build data fingerprint from snapshot.
+        Used to avoid Tk access while caching prepared series."""
+        file_path = snapshot.get("file_path") or ""
+        sheet_key = tuple(snapshot.get("sheet_key") or ())
+        columns_snapshot = snapshot.get("columns_snapshot") or {}
+        columns_key = tuple(
+            sorted(
+                (str(key), str(columns_snapshot.get(key) or ""))
+                # Iterate to apply the per-item logic.
+                for key in columns_snapshot
+            )
+        )
+        cycle_temp_column = str(snapshot.get("cycle_temp_column") or "")
+        elapsed_unit = str(snapshot.get("elapsed_unit") or "")
+        prep_signature = snapshot.get("prep_signature") or ()
+        return DataFingerprint(
+            file_path=str(file_path),
+            sheet_key=sheet_key,
+            columns_key=columns_key,
+            cycle_temp_column=cycle_temp_column,
+            elapsed_unit=elapsed_unit,
+            multi_sheet=bool(snapshot.get("multi_sheet")),
+            prep_signature=prep_signature,
+        )
+
     def _log_render_cache(self, message: str) -> None:
         """Render cache.
         Used by log workflows to render cache."""
@@ -65053,12 +65423,22 @@ class UnifiedApp(tk.Tk):
         if DEBUG_RENDER_CACHE:
             print(message)
 
-    def _build_series_payload(self, columns_snapshot, cycle_temp_name):
+    def _build_series_payload(
+        self,
+        columns_snapshot,
+        cycle_temp_name,
+        *,
+        effective_columns: Optional[Dict[str, Any]] = None,
+    ):
         """Build series payload.
         Used to assemble series payload during UI or plot setup."""
 
         selected = dict(columns_snapshot or {})
-        effective = self._get_effective_columns()
+        effective = (
+            dict(effective_columns)
+            if isinstance(effective_columns, dict)
+            else self._get_effective_columns()
+        )
         dt_col = selected.get("dt")
         if (
             self.multi_sheet_enabled
@@ -65101,6 +65481,54 @@ class UnifiedApp(tk.Tk):
             "cycle_temp_series": self._get_cycle_temp_series_by_name(cycle_temp_name),
         }
 
+        series_np: Dict[str, Any] = {}
+        series_nan_mask: Dict[str, Any] = {}
+        series_valid_mask: Dict[str, Any] = {}
+
+        def _coerce_series_array(values: Any) -> Any:
+            """Coerce series array.
+            Used to normalize series values into contiguous arrays."""
+            if values is None:
+                return None
+            try:
+                arr = np.asarray(values)
+            except Exception:
+                return None
+            try:
+                return np.ascontiguousarray(arr)
+            except Exception:
+                return arr
+
+        def _coerce_nan_mask(values: Any) -> Optional[np.ndarray]:
+            """Coerce nan mask.
+            Used to reuse NaN masks across plot updates."""
+            if values is None:
+                return None
+            try:
+                mask = np.isnan(values)
+            except Exception:
+                try:
+                    mask = pd.isna(values)
+                except Exception:
+                    return None
+            try:
+                mask = np.asarray(mask, dtype=bool).reshape(-1)
+            except Exception:
+                return None
+            return mask
+
+        # Iterate over ("x", "y1", "y2", "y3", "z", "z2") to apply the per-item logic.
+        for key in ("x", "y1", "y2", "y3", "z", "z2"):
+            arr = _coerce_series_array(series_map.get(key))
+            series_np[key] = arr
+            mask = _coerce_nan_mask(arr)
+            if mask is not None:
+                series_nan_mask[key] = mask
+                series_valid_mask[key] = ~mask
+
+        payload["series_np"] = series_np
+        payload["series_nan_mask"] = series_nan_mask
+        payload["series_valid_mask"] = series_valid_mask
         x_series = series_map.get("x")
         payload["data_len"] = int(len(x_series)) if x_series is not None else 0
 
@@ -65194,12 +65622,19 @@ class UnifiedApp(tk.Tk):
         self._apply_series_payload(payload)
 
     def _resolve_prepared_data_context(
-        self, *, apply_globals: bool = True
+        self,
+        *,
+        apply_globals: bool = True,
+        perf: Optional[Dict[str, Any]] = None,
+        snapshot: Optional[Dict[str, Any]] = None,
     ) -> Tuple[DataFingerprint, Dict[str, Any]]:
         """Resolve prepared series and return the cache fingerprint.
         Used to reuse prepared data across preview and export renders."""
+        if snapshot is not None:
+            return self._resolve_prepared_data_context_snapshot(snapshot, perf=perf)
         # Prepared-series cache is keyed by fingerprint to avoid reprocessing
         # large data frames when only UI state changes.
+        perf_start = time.perf_counter() if perf is not None else None
         fingerprint = self._build_data_fingerprint()
         cached = self._render_cache.get_prepared(fingerprint)
         if cached is not None:
@@ -65210,6 +65645,12 @@ class UnifiedApp(tk.Tk):
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
             self._log_render_cache("Render cache: prepared data hit.")
+            if perf_start is not None:
+                stages = perf.setdefault("stages", {})
+                stages["prepared"] = {
+                    "ms": (time.perf_counter() - perf_start) * 1000.0,
+                    "cache": "hit",
+                }
             return fingerprint, cached
 
         cycle_temp_name = CYCLE_TEMP_DEFAULT_LABEL
@@ -65262,19 +65703,106 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
         self._log_render_cache("Render cache: prepared data miss.")
+        if perf_start is not None:
+            stages = perf.setdefault("stages", {})
+            stages["prepared"] = {
+                "ms": (time.perf_counter() - perf_start) * 1000.0,
+                "cache": "miss",
+            }
         return fingerprint, payload
 
-    def _cycle_mask_for_data(self, data_ctx: Dict[str, Any]) -> np.ndarray:
+    def _resolve_prepared_data_context_snapshot(
+        self, snapshot: Dict[str, Any], *, perf: Optional[Dict[str, Any]] = None
+    ) -> Tuple[DataFingerprint, Dict[str, Any]]:
+        """Resolve prepared data context from snapshot.
+        Used to keep Tk access on the UI thread."""
+        perf_start = time.perf_counter() if perf is not None else None
+        fingerprint = self._build_data_fingerprint_from_snapshot(snapshot)
+        cached = self._render_cache.get_prepared(fingerprint)
+        if cached is not None:
+            self._log_render_cache("Render cache: prepared data hit.")
+            if perf_start is not None:
+                stages = perf.setdefault("stages", {})
+                stages["prepared"] = {
+                    "ms": (time.perf_counter() - perf_start) * 1000.0,
+                    "cache": "hit",
+                }
+            return fingerprint, cached
+
+        cycle_temp_name = snapshot.get("cycle_temp_column") or CYCLE_TEMP_DEFAULT_LABEL
+        payload = self._build_series_payload(
+            dict(snapshot.get("columns_snapshot") or {}),
+            cycle_temp_name,
+            effective_columns=snapshot.get("effective_columns"),
+        )
+        if not isinstance(payload, dict):
+            payload = {}
+
+        payload = dict(payload)
+        payload["volume"] = snapshot.get("volume")
+        payload["a_const"] = snapshot.get("a_const")
+        payload["b_const"] = snapshot.get("b_const")
+        payload["starting_mass_g"] = snapshot.get("starting_mass_g")
+        payload["starting_material_mass_g"] = snapshot.get("starting_mass_g")
+        payload["gas_molar_mass"] = snapshot.get("gas_molar_mass")
+        starting_display_name = snapshot.get("starting_material_display_name") or ""
+        starting_display_name = str(starting_display_name).strip()
+        payload["starting_material_display_name"] = starting_display_name
+        payload["starting_material_display_note"] = snapshot.get(
+            "starting_material_display_note"
+        )
+        payload["starting_material_name"] = starting_display_name
+        payload["product_name"] = (
+            starting_display_name or DEFAULT_STARTING_MATERIAL_NAME
+        )
+        preset_key = snapshot.get("product_preset")
+        preset_info = PRODUCT_PRESETS.get(preset_key) or {}
+        payload["starting_material_formula"] = preset_info.get("formula") or settings.get(
+            "starting_material_formula", DEFAULT_STARTING_MATERIAL_FORMULA
+        )
+        payload["product_formula"] = payload["starting_material_formula"]
+        payload["starting_material_mw_g_mol"] = snapshot.get("product_molar_mass")
+        payload["product_molar_mass"] = snapshot.get("product_molar_mass")
+        payload["stoich_mol_gas_per_mol_starting"] = snapshot.get("starting_stoich")
+
+        self._render_cache.set_prepared(fingerprint, payload)
+        self._log_render_cache("Render cache: prepared data miss.")
+        if perf_start is not None:
+            stages = perf.setdefault("stages", {})
+            stages["prepared"] = {
+                "ms": (time.perf_counter() - perf_start) * 1000.0,
+                "cache": "miss",
+            }
+        return fingerprint, payload
+
+    def _cycle_mask_for_data(
+        self, data_ctx: Dict[str, Any], *, mask_override: Optional[Any] = None
+    ) -> np.ndarray:
         """Perform cycle mask for data.
         Used to keep the workflow logic localized and testable."""
         series_map = data_ctx.get("series") or {}
-        x_values = series_map.get("x")
-        y_values = series_map.get("y1")
+        series_np = data_ctx.get("series_np") or {}
+        series_nan = data_ctx.get("series_nan_mask") or {}
+        x_values = series_np.get("x", series_map.get("x"))
+        y_values = series_np.get("y1", series_map.get("y1"))
         if x_values is None or y_values is None:
             return np.zeros(0, dtype=bool)
-        base = (~pd.isna(x_values)) & (~pd.isna(y_values))
+        x_nan = series_nan.get("x")
+        y_nan = series_nan.get("y1")
+        if x_nan is None:
+            try:
+                x_nan = np.isnan(x_values)
+            except Exception:
+                x_nan = pd.isna(x_values)
+        if y_nan is None:
+            try:
+                y_nan = np.isnan(y_values)
+            except Exception:
+                y_nan = pd.isna(y_values)
+        base = (~np.asarray(x_nan, dtype=bool)) & (~np.asarray(y_nan, dtype=bool))
         base = base.values if hasattr(base, "values") else np.asarray(base, dtype=bool)
-        mask_override = getattr(self, "_cycle_mask", None)
+        if mask_override is None:
+            mask_override = getattr(self, "_cycle_mask", None)
         if mask_override is None:
             return base
         try:
@@ -65311,13 +65839,19 @@ class UnifiedApp(tk.Tk):
         return []
 
     def _resolve_cycle_context(
-        self, data_ctx: Dict[str, Any], data_fingerprint: DataFingerprint
+        self,
+        data_ctx: Dict[str, Any],
+        data_fingerprint: DataFingerprint,
+        *,
+        perf: Optional[Dict[str, Any]] = None,
+        snapshot: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Resolve cycle segmentation and overlay context for plots.
         Used to supply cycle markers/summary data to render pipelines."""
         series_map = data_ctx.get("series") or {}
-        x_values = series_map.get("x")
-        y_values = series_map.get("y1")
+        series_np = data_ctx.get("series_np") or {}
+        x_values = series_np.get("x", series_map.get("x"))
+        y_values = series_np.get("y1", series_map.get("y1"))
         if x_values is None or y_values is None:
             empty_cycle = {
                 "peaks_idx": [],
@@ -65329,19 +65863,44 @@ class UnifiedApp(tk.Tk):
             empty_overlay = {"cycle_overlay": None, "moles_summary": None}
             return empty_cycle, empty_overlay
 
+        perf_start = time.perf_counter() if perf is not None else None
+
+        snapshot_provided = snapshot is not None
+        if snapshot is None:
+            snapshot = {
+                "auto_peaks": set(getattr(self, "_auto_peaks", set())),
+                "auto_troughs": set(getattr(self, "_auto_troughs", set())),
+                "add_peaks": set(getattr(self, "_add_peaks", set())),
+                "add_troughs": set(getattr(self, "_add_troughs", set())),
+                "rm_peaks": set(getattr(self, "_rm_peaks", set())),
+                "rm_troughs": set(getattr(self, "_rm_troughs", set())),
+                "manual_revision": int(getattr(self, "_cycle_manual_revision", 0)),
+            }
+
         # Cycle context is derived from prepared series plus manual overrides; any
         # user edits to peak/trough selection invalidate cached results.
-        auto_enabled = False
-        try:
-            auto_enabled = bool(self.auto_detect_cycles.get())
-        except Exception:
-            auto_enabled = False
+        # Avoid Tk variable access when a snapshot is provided to worker threads.
+        allow_ui_reads = not snapshot_provided
+        auto_enabled_value = snapshot.get("auto_enabled")
+        if auto_enabled_value is None:
+            if allow_ui_reads:
+                try:
+                    auto_enabled_value = bool(self.auto_detect_cycles.get())
+                except Exception:
+                    auto_enabled_value = bool(
+                        settings.get("cycle_auto_detect_enabled", True)
+                    )
+            else:
+                auto_enabled_value = bool(
+                    settings.get("cycle_auto_detect_enabled", True)
+                )
+        auto_enabled = bool(auto_enabled_value)
 
         manual_overrides = bool(
-            getattr(self, "_add_peaks", set())
-            or getattr(self, "_add_troughs", set())
-            or getattr(self, "_rm_peaks", set())
-            or getattr(self, "_rm_troughs", set())
+            snapshot.get("add_peaks")
+            or snapshot.get("add_troughs")
+            or snapshot.get("rm_peaks")
+            or snapshot.get("rm_troughs")
         )
         manual_only = not auto_enabled
         if manual_only:
@@ -65354,25 +65913,79 @@ class UnifiedApp(tk.Tk):
             source_mode = "auto"
             policy = "auto_only"
 
+        prom_default = float(settings.get("peak_prominence", 1.0) or 1.0)
+        prom_value = snapshot.get("prominence")
+        if prom_value is None:
+            if allow_ui_reads:
+                try:
+                    prom_value = float(self.pk_prominence.get())
+                except Exception:
+                    prom_value = prom_default
+            else:
+                prom_value = prom_default
         try:
-            prom = float(self.pk_prominence.get())
+            prom = float(prom_value)
         except Exception:
-            prom = 1.0
-        try:
-            dist = max(1, int(self.pk_distance.get()))
-        except Exception:
-            dist = 1
-        try:
-            wid = max(1, int(self.pk_width.get()))
-        except Exception:
-            wid = 1
-        try:
-            min_cycle_drop = float(self.min_cycle_drop.get())
-        except Exception:
-            min_cycle_drop = 0.0
-        ignore_min_drop = bool(getattr(self, "_cycle_last_ignore_min_drop", False))
+            prom = prom_default
 
-        mask = self._cycle_mask_for_data(data_ctx)
+        dist_default = int(settings.get("peak_distance", 1) or 1)
+        dist_value = snapshot.get("distance")
+        if dist_value is None:
+            if allow_ui_reads:
+                try:
+                    dist_value = int(self.pk_distance.get())
+                except Exception:
+                    dist_value = dist_default
+            else:
+                dist_value = dist_default
+        try:
+            dist = max(1, int(dist_value))
+        except Exception:
+            dist = max(1, dist_default)
+
+        wid_default = int(settings.get("peak_width", 1) or 1)
+        wid_value = snapshot.get("width")
+        if wid_value is None:
+            if allow_ui_reads:
+                try:
+                    wid_value = int(self.pk_width.get())
+                except Exception:
+                    wid_value = wid_default
+            else:
+                wid_value = wid_default
+        try:
+            wid = max(1, int(wid_value))
+        except Exception:
+            wid = max(1, wid_default)
+
+        min_drop_default = float(settings.get("min_cycle_drop", 0.0) or 0.0)
+        min_drop_value = snapshot.get("min_cycle_drop")
+        if min_drop_value is None:
+            if allow_ui_reads:
+                try:
+                    min_drop_value = float(self.min_cycle_drop.get())
+                except Exception:
+                    min_drop_value = min_drop_default
+            else:
+                min_drop_value = min_drop_default
+        try:
+            min_cycle_drop = float(min_drop_value)
+        except Exception:
+            min_cycle_drop = min_drop_default
+
+        ignore_min_drop_value = snapshot.get("ignore_min_drop")
+        if ignore_min_drop_value is None:
+            if allow_ui_reads:
+                ignore_min_drop_value = getattr(
+                    self, "_cycle_last_ignore_min_drop", False
+                )
+            else:
+                ignore_min_drop_value = False
+        ignore_min_drop = bool(ignore_min_drop_value)
+
+        mask = self._cycle_mask_for_data(
+            data_ctx, mask_override=snapshot.get("cycle_mask")
+        )
         mask_signature = 0
         if mask.size:
             try:
@@ -65398,72 +66011,83 @@ class UnifiedApp(tk.Tk):
             bool(ignore_min_drop),
             bool(auto_enabled),
         )
-        cycle_fingerprint = CycleFingerprint(
+        seg_fingerprint = CycleSegFingerprint(
             data_fingerprint=data_fingerprint,
             mode=source_mode,
             auto_params=auto_params,
-            manual_revision=int(getattr(self, "_cycle_manual_revision", 0)),
+            manual_revision=int(snapshot.get("manual_revision", 0)),
             mask_signature=mask_signature,
-            moles_signature=moles_signature,
             policy=policy,
         )
+        metrics_fingerprint = CycleMetricsFingerprint(
+            seg_fingerprint=seg_fingerprint, moles_signature=moles_signature
+        )
 
-        # Cycle cache avoids recomputing peak/trough segmentation when the
-        # fingerprint (data + settings + manual edits) has not changed.
-        cached = self._render_cache.get_cycles(cycle_fingerprint)
-        if isinstance(cached, dict):
-            cached_cycle = cached.get("cycle_ctx")
-            cached_overlay = cached.get("overlay_ctx")
-            if isinstance(cached_cycle, dict) and isinstance(cached_overlay, dict):
-                self._log_render_cache("Render cache: cycle context hit.")
-                return cached_cycle, cached_overlay
+        seg_cached = self._render_cache.get_cycle_segments(seg_fingerprint)
+        metrics_cached = self._render_cache.get_cycle_metrics(metrics_fingerprint)
+        cache_state = (
+            "hit"
+            if seg_cached and metrics_cached
+            else ("seg_hit" if seg_cached else "miss")
+        )
 
-        peak_finder = _get_peak_finder()
-        snapshot = {
-            "auto_peaks": set(getattr(self, "_auto_peaks", set()))
-            if not manual_only
-            else set(),
-            "auto_troughs": set(getattr(self, "_auto_troughs", set()))
-            if not manual_only
-            else set(),
-            "add_peaks": set(getattr(self, "_add_peaks", set())),
-            "add_troughs": set(getattr(self, "_add_troughs", set())),
-            "rm_peaks": set(getattr(self, "_rm_peaks", set())),
-            "rm_troughs": set(getattr(self, "_rm_troughs", set())),
-        }
-        try:
-            result = self._compute_cycle_analysis_worker(
+        if not isinstance(seg_cached, dict):
+            peak_finder = _get_peak_finder()
+            try:
+                seg_cached = self._compute_cycle_segmentation(
+                    x_values,
+                    y_values,
+                    mask,
+                    prom,
+                    dist,
+                    wid,
+                    min_cycle_drop,
+                    auto_enabled,
+                    ignore_min_drop,
+                    peak_finder,
+                    snapshot,
+                    manual_only=manual_only,
+                )
+            except Exception as exc:
+                self._log_render_cache(f"Render cache: cycle build failed ({exc}).")
+                empty_cycle = {
+                    "peaks_idx": [],
+                    "troughs_idx": [],
+                    "cycles": [],
+                    "total_drop": 0.0,
+                    "source_mode": source_mode,
+                }
+                empty_overlay = {"cycle_overlay": None, "moles_summary": None}
+                return empty_cycle, empty_overlay
+            self._render_cache.set_cycle_segments(seg_fingerprint, seg_cached)
+            cache_state = "miss"
+
+        if not isinstance(metrics_cached, dict):
+            try:
+                z_series = data_ctx.get("cycle_temp_series")
+                z_values = (
+                    np.asarray(z_series, dtype=float) if z_series is not None else None
+                )
+            except Exception:
+                z_values = None
+            metrics_cached = self._compute_cycle_metrics_from_segmentation(
+                seg_cached,
                 x_values,
                 y_values,
-                mask,
-                np.asarray(data_ctx.get("cycle_temp_series"), dtype=float)
-                if data_ctx.get("cycle_temp_series") is not None
-                else None,
+                z_values,
                 prom,
                 dist,
                 wid,
                 min_cycle_drop,
-                auto_enabled,
                 ignore_min_drop,
-                peak_finder,
-                snapshot,
-                manual_only=manual_only,
                 data_ctx=data_ctx,
             )
-        except Exception as exc:
-            self._log_render_cache(f"Render cache: cycle build failed ({exc}).")
-            empty_cycle = {
-                "peaks_idx": [],
-                "troughs_idx": [],
-                "cycles": [],
-                "total_drop": 0.0,
-                "source_mode": source_mode,
-            }
-            empty_overlay = {"cycle_overlay": None, "moles_summary": None}
-            return empty_cycle, empty_overlay
+            self._render_cache.set_cycle_metrics(metrics_fingerprint, metrics_cached)
 
-        peak_indices = self._coerce_to_list(result.get("plot_peaks"), cast_int=True)
-        trough_indices = self._coerce_to_list(result.get("plot_troughs"), cast_int=True)
+        peak_indices = self._coerce_to_list(seg_cached.get("plot_peaks"), cast_int=True)
+        trough_indices = self._coerce_to_list(
+            seg_cached.get("plot_troughs"), cast_int=True
+        )
         try:
             xv = np.asarray(x_values, dtype=float)
             yv = np.asarray(y_values, dtype=float)
@@ -65497,12 +66121,12 @@ class UnifiedApp(tk.Tk):
         trough_points = _points_for(trough_indices)
 
         payload = {
-            "cycle_transfer": self._coerce_to_list(result.get("cycle_transfer")),
-            "total_moles_ideal": result.get("total_moles_ideal"),
-            "total_moles_vdw": result.get("total_moles_vdw"),
-            "vdw_used": result.get("vdw_used"),
-            "reagent_summary": result.get("reagent_summary"),
-            "gas_molar_mass": result.get("gas_molar_mass"),
+            "cycle_transfer": self._coerce_to_list(metrics_cached.get("cycle_transfer")),
+            "total_moles_ideal": metrics_cached.get("total_moles_ideal"),
+            "total_moles_vdw": metrics_cached.get("total_moles_vdw"),
+            "vdw_used": metrics_cached.get("vdw_used"),
+            "reagent_summary": metrics_cached.get("reagent_summary"),
+            "gas_molar_mass": metrics_cached.get("gas_molar_mass"),
         }
         moles_lines = self._cycle_moles_legend_lines(payload, data_ctx=data_ctx)
         cycle_overlay = {
@@ -65510,26 +66134,33 @@ class UnifiedApp(tk.Tk):
             "troughs_idx": list(trough_indices),
             "peak_points": peak_points,
             "trough_points": trough_points,
-            "cycles": self._coerce_to_list(result.get("cycles")),
-            "total_drop": float(result.get("total_drop", 0.0) or 0.0),
+            "cycles": self._coerce_to_list(seg_cached.get("cycles")),
+            "total_drop": float(seg_cached.get("total_drop", 0.0) or 0.0),
             "payload": payload,
             "moles_lines": moles_lines,
         }
         cycle_ctx = {
             "peaks_idx": list(peak_indices),
             "troughs_idx": list(trough_indices),
-            "cycles": self._coerce_to_list(result.get("cycles")),
-            "total_drop": float(result.get("total_drop", 0.0) or 0.0),
-            "auto_detection_used": bool(result.get("auto_detection_used")),
+            "cycles": self._coerce_to_list(seg_cached.get("cycles")),
+            "total_drop": float(seg_cached.get("total_drop", 0.0) or 0.0),
+            "auto_detection_used": bool(seg_cached.get("auto_detection_used")),
             "source_mode": source_mode,
         }
         overlay_ctx = {"cycle_overlay": cycle_overlay, "moles_summary": moles_lines}
 
-        self._render_cache.set_cycles(
-            cycle_fingerprint,
-            {"cycle_ctx": cycle_ctx, "overlay_ctx": overlay_ctx},
-        )
-        self._log_render_cache("Render cache: cycle context miss.")
+        if cache_state == "hit":
+            self._log_render_cache("Render cache: cycle context hit.")
+        elif cache_state == "seg_hit":
+            self._log_render_cache("Render cache: cycle metrics miss.")
+        else:
+            self._log_render_cache("Render cache: cycle context miss.")
+        if perf_start is not None and perf is not None:
+            stages = perf.setdefault("stages", {})
+            stages["cycle"] = {
+                "ms": (time.perf_counter() - perf_start) * 1000.0,
+                "cache": cache_state,
+            }
         return cycle_ctx, overlay_ctx
 
     def _prime_cycle_markers_from_cache(self):
@@ -66104,11 +66735,20 @@ class UnifiedApp(tk.Tk):
         mode_value = (mode or ("export" if target_value == "export" else "display"))
         plot_id = plot_id or self._plot_key_to_plot_id(plot_kind)
 
+        plot_kind_value = (plot_kind or "").strip().lower()
+        perf_run = None
+        if plot_kind_value in {"fig_combined", "combined"} and bool(
+            self._perf_diag_enabled_var.get()
+        ):
+            perf_run = {
+                "plot_kind": plot_kind_value,
+                "target": target_value,
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "stages": {},
+            }
+
         data_fingerprint, data_ctx = self._resolve_prepared_data_context(
-            apply_globals=True
-        )
-        cycle_ctx, overlay_ctx = self._resolve_cycle_context(
-            data_ctx, data_fingerprint
+            apply_globals=True, perf=perf_run
         )
 
         gates_ctx = {
@@ -66128,6 +66768,32 @@ class UnifiedApp(tk.Tk):
                 else settings.get("include_moles_in_core_plot_legend", False)
             ),
         }
+
+        cycle_ctx: Dict[str, Any] = {}
+        overlay_ctx: Dict[str, Any] = {}
+        cycle_needed = True
+        if plot_kind_value in {"fig_combined", "combined"}:
+            cycle_needed = bool(
+                gates_ctx.get("show_cycle_markers")
+                or gates_ctx.get("show_cycle_legend")
+                or gates_ctx.get("include_moles")
+            )
+        if cycle_needed:
+            cycle_ctx, overlay_ctx = self._resolve_cycle_context(
+                data_ctx, data_fingerprint, perf=perf_run
+            )
+        else:
+            cycle_ctx = {
+                "peaks_idx": [],
+                "troughs_idx": [],
+                "cycles": [],
+                "total_drop": 0.0,
+                "source_mode": "none",
+            }
+            overlay_ctx = {"cycle_overlay": None, "moles_summary": None}
+            if perf_run is not None:
+                stages = perf_run.setdefault("stages", {})
+                stages["cycle"] = {"ms": 0.0, "cache": "skipped"}
 
         overlay_ctx = dict(overlay_ctx or {})
         cycle_overlay = overlay_ctx.get("cycle_overlay")
@@ -66174,7 +66840,6 @@ class UnifiedApp(tk.Tk):
         args = self._override_plot_args_gates(args, gates_ctx)
         args = self._override_plot_args_title(args)
 
-        plot_kind_value = (plot_kind or "").strip().lower()
         if plot_kind_value in {"fig1", "fig2", "fig_peaks", "core"}:
             figs = main_plotting_function(
                 *args, fig_size=fig_size, render_ctx=render_ctx
@@ -66191,15 +66856,340 @@ class UnifiedApp(tk.Tk):
                     fig_size = (11.0, 8.5)
                 else:
                     fig_size = self._compute_target_figsize_inches()
-            return self._build_combined_triple_axis_from_state(
+            fig = self._build_combined_triple_axis_from_state(
                 args=args,
                 fig_size=fig_size,
                 mode=mode_value,
-                reuse=False,
+                reuse=(target_value == "display" and mode_value == "display"),
                 render_ctx=render_ctx,
+                perf_run=perf_run,
             )
+            if perf_run is not None:
+                self._record_performance_run(perf_run)
+            return fig
 
         return None
+
+    def _capture_combined_render_snapshot(
+        self,
+        *,
+        fig_size: Optional[Tuple[float, float]],
+        plot_id: str,
+        target: str,
+    ) -> Dict[str, Any]:
+        """Capture combined render snapshot.
+        Used to move heavy data prep off the UI thread safely."""
+        try:
+            file_path = os.path.abspath(self.file_path) if self.file_path else ""
+        except Exception:
+            file_path = str(self.file_path or "")
+        if self.multi_sheet_enabled:
+            sheet_key = tuple(str(name) for name in (self.selected_sheets or []))
+        else:
+            try:
+                sheet_key = (str(self.selected_sheet.get() or ""),)
+            except Exception:
+                sheet_key = ("",)
+
+        cycle_temp_column = CYCLE_TEMP_DEFAULT_LABEL
+        try:
+            cycle_temp_column = (
+                self.cycle_temp_column.get()
+                if hasattr(self, "cycle_temp_column")
+                else CYCLE_TEMP_DEFAULT_LABEL
+            )
+        except Exception:
+            cycle_temp_column = CYCLE_TEMP_DEFAULT_LABEL
+
+        try:
+            starting_display_name = self.v_starting_material_display_name.get().strip()
+        except Exception:
+            starting_display_name = ""
+        if not starting_display_name:
+            try:
+                starting_display_name = self.v_product_name.get().strip()
+            except Exception:
+                starting_display_name = ""
+
+        gates_ctx = {
+            "show_cycle_markers": bool(
+                self.show_cycle_markers_on_core.get()
+                if hasattr(self, "show_cycle_markers_on_core")
+                else settings.get("show_cycle_markers_on_core_plots", False)
+            ),
+            "show_cycle_legend": bool(
+                self.show_cycle_legend_on_core.get()
+                if hasattr(self, "show_cycle_legend_on_core")
+                else settings.get("show_cycle_legend_on_core_plots", False)
+            ),
+            "include_moles": bool(
+                self.include_moles_core_legend.get()
+                if hasattr(self, "include_moles_core_legend")
+                else settings.get("include_moles_in_core_plot_legend", False)
+            ),
+        }
+
+        args = self._collect_plot_args()
+        args = self._override_plot_args_gates(args, gates_ctx)
+        args = self._override_plot_args_title(args)
+
+        snapshot = {
+            "plot_id": plot_id,
+            "target": target,
+            "fig_size": fig_size,
+            "file_path": file_path,
+            "sheet_key": sheet_key,
+            "columns_snapshot": dict(self.columns or {}),
+            "effective_columns": self._get_effective_columns(),
+            "cycle_temp_column": str(cycle_temp_column or ""),
+            "elapsed_unit": self._elapsed_unit_label(),
+            "prep_signature": self._data_prep_signature(),
+            "multi_sheet": bool(self.multi_sheet_enabled),
+            "volume": self.v_volume.get(),
+            "a_const": self.v_a.get(),
+            "b_const": self.v_b.get(),
+            "starting_mass_g": self.v_starting_mass.get(),
+            "gas_molar_mass": self.v_gas_molar_mass.get(),
+            "starting_material_display_name": starting_display_name,
+            "starting_material_display_note": self.v_starting_material_display_note.get(),
+            "product_preset": self.v_product_preset.get(),
+            "product_molar_mass": self.v_product_molar_mass.get(),
+            "starting_stoich": self.v_starting_stoich.get(),
+            "auto_enabled": bool(self.auto_detect_cycles.get())
+            if hasattr(self, "auto_detect_cycles")
+            else False,
+            "prominence": float(self.pk_prominence.get())
+            if hasattr(self, "pk_prominence")
+            else 1.0,
+            "distance": max(1, int(self.pk_distance.get()))
+            if hasattr(self, "pk_distance")
+            else 1,
+            "width": max(1, int(self.pk_width.get()))
+            if hasattr(self, "pk_width")
+            else 1,
+            "min_cycle_drop": float(self.min_cycle_drop.get())
+            if hasattr(self, "min_cycle_drop")
+            else 0.0,
+            "ignore_min_drop": bool(getattr(self, "_cycle_last_ignore_min_drop", False)),
+            "manual_revision": int(getattr(self, "_cycle_manual_revision", 0)),
+            "auto_peaks": set(getattr(self, "_auto_peaks", set())),
+            "auto_troughs": set(getattr(self, "_auto_troughs", set())),
+            "add_peaks": set(getattr(self, "_add_peaks", set())),
+            "add_troughs": set(getattr(self, "_add_troughs", set())),
+            "rm_peaks": set(getattr(self, "_rm_peaks", set())),
+            "rm_troughs": set(getattr(self, "_rm_troughs", set())),
+            "gates_ctx": gates_ctx,
+            "style_ctx": {
+                "scatter_config": self._gather_scatter_settings(),
+                "scatter_series_configs": self._gather_series_scatter_settings(),
+                "font_family": settings.get("font_family"),
+                "core_legend_fontsize": settings.get("core_legend_fontsize"),
+                "core_cycle_legend_fontsize": settings.get("core_cycle_legend_fontsize"),
+            },
+            "layout_ctx": {
+                "plot_id": plot_id,
+                "profile": _get_layout_profile(plot_id) if plot_id else None,
+                "target": target,
+            },
+            "plot_elements_ctx": {
+                "plot_id": plot_id,
+                "elements": settings.get("plot_elements", {}),
+            },
+            "cycle_overlays_enabled": bool(
+                gates_ctx.get("show_cycle_markers")
+                or gates_ctx.get("show_cycle_legend")
+                or gates_ctx.get("include_moles")
+            ),
+            "args": args,
+            "perf_enabled": bool(self._perf_diag_enabled_var.get()),
+        }
+
+        mask_override = getattr(self, "_cycle_mask", None)
+        if mask_override is not None:
+            try:
+                snapshot["cycle_mask"] = np.asarray(mask_override, dtype=bool).copy()
+            except Exception:
+                snapshot["cycle_mask"] = mask_override
+        else:
+            snapshot["cycle_mask"] = None
+
+        return snapshot
+
+    def _build_combined_render_packet(self, snapshot: Dict[str, Any]) -> RenderPacket:
+        """Build combined render packet.
+        Used to prepare render inputs off the UI thread."""
+        perf_run = None
+        if snapshot.get("perf_enabled"):
+            perf_run = {
+                "plot_kind": "fig_combined",
+                "target": snapshot.get("target", "display"),
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "stages": {},
+            }
+
+        data_fingerprint, data_ctx = self._resolve_prepared_data_context(
+            apply_globals=False, perf=perf_run, snapshot=snapshot
+        )
+
+        if snapshot.get("cycle_overlays_enabled"):
+            cycle_ctx, overlay_ctx = self._resolve_cycle_context(
+                data_ctx, data_fingerprint, perf=perf_run, snapshot=snapshot
+            )
+        else:
+            cycle_ctx = {
+                "peaks_idx": [],
+                "troughs_idx": [],
+                "cycles": [],
+                "total_drop": 0.0,
+                "source_mode": "none",
+            }
+            overlay_ctx = {"cycle_overlay": None, "moles_summary": None}
+            if perf_run is not None:
+                stages = perf_run.setdefault("stages", {})
+                stages["cycle"] = {"ms": 0.0, "cache": "skipped"}
+
+        overlay_ctx = dict(overlay_ctx or {})
+        gates_ctx = snapshot.get("gates_ctx") or {}
+        cycle_overlay = overlay_ctx.get("cycle_overlay")
+        overlay_ctx["markers"] = (
+            cycle_overlay if gates_ctx.get("show_cycle_markers") else None
+        )
+        overlay_ctx["cycle_legend"] = (
+            cycle_overlay if gates_ctx.get("show_cycle_legend") else None
+        )
+        overlay_ctx["moles_summary"] = (
+            overlay_ctx.get("moles_summary")
+            if gates_ctx.get("include_moles")
+            else None
+        )
+
+        render_ctx = RenderContext(
+            data_ctx=data_ctx,
+            cycle_ctx=cycle_ctx,
+            overlay_ctx=overlay_ctx,
+            gates_ctx=gates_ctx,
+            style_ctx=snapshot.get("style_ctx") or {},
+            layout_ctx=snapshot.get("layout_ctx") or {},
+            plot_elements_ctx=snapshot.get("plot_elements_ctx") or {},
+        )
+
+        return RenderPacket(
+            render_ctx=render_ctx,
+            data_fingerprint=data_fingerprint,
+            args=tuple(snapshot.get("args") or ()),
+            fig_size=snapshot.get("fig_size"),
+            plot_id=snapshot.get("plot_id"),
+            target=snapshot.get("target", "display"),
+            perf=perf_run,
+        )
+
+    def _start_combined_render_async(
+        self, snapshot: Dict[str, Any], *, warn_on_failure: bool
+    ) -> None:
+        """Start combined render async.
+        Used to keep the UI responsive during combined renders."""
+        self._set_combined_render_busy(True)
+
+        def _worker():
+            """Perform worker.
+            Used to keep the workflow logic localized and testable."""
+            return self._build_combined_render_packet(snapshot)
+
+        def _on_ok(packet):
+            """Handle ok.
+            Used as an event callback for ok."""
+            self._set_combined_render_busy(False)
+            self._finalize_combined_render_packet(
+                packet, warn_on_failure=warn_on_failure
+            )
+
+        def _on_err(exc):
+            """Handle err.
+            Used as an event callback for err."""
+            self._set_combined_render_busy(False)
+            try:
+                print(
+                    "Combined plot generation failed in background worker.",
+                    file=sys.stderr,
+                )
+                traceback.print_exception(
+                    type(exc), exc, exc.__traceback__, file=sys.stderr
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            if warn_on_failure:
+                try:
+                    messagebox.showwarning(
+                        "Plot Selection",
+                        "Combined plot generation failed due to internal error. "
+                        "See console for details.",
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+
+        self._combined_render_task_id = self._combined_render_runner.submit(
+            "combined_render", _worker, _on_ok, _on_err
+        )
+
+    def _finalize_combined_render_packet(
+        self, packet: RenderPacket, *, warn_on_failure: bool
+    ) -> None:
+        """Finalize combined render packet.
+        Used to assemble and embed the combined figure on the UI thread."""
+        perf_run = packet.perf if isinstance(packet.perf, dict) else None
+        self._perf_diag_active_run = perf_run
+        try:
+            fig = None
+            render_error = None
+            try:
+                fig = self._build_combined_triple_axis_from_state(
+                    args=packet.args,
+                    fig_size=packet.fig_size,
+                    mode="display",
+                    reuse=True,
+                    render_ctx=packet.render_ctx,
+                    perf_run=perf_run,
+                )
+            except Exception as exc:
+                render_error = exc
+                fig = None
+                try:
+                    print(
+                        "Combined plot generation failed on UI thread.",
+                        file=sys.stderr,
+                    )
+                    traceback.print_exception(
+                        type(exc), exc, exc.__traceback__, file=sys.stderr
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+
+            if fig is not None:
+                self._render_figures_in_tabs(
+                    {"fig_combined": fig}, clear_existing=False
+                )
+            elif warn_on_failure:
+                try:
+                    messagebox.showwarning(
+                        "Plot Selection",
+                        (
+                            "Combined plot generation failed due to internal error. "
+                            "See console for details."
+                            if render_error is not None
+                            else "No plots were generated for the current data."
+                        ),
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+
+            if perf_run is not None:
+                self._record_performance_run(perf_run)
+        finally:
+            self._perf_diag_active_run = None
 
     def _generate_selected_plots(self) -> None:
         """Generate selected plots.
@@ -66261,20 +67251,20 @@ class UnifiedApp(tk.Tk):
                 if selections["fig2"] and figs.get("fig2") is not None:
                     figs_to_render["fig2"] = figs["fig2"]
 
-        if selections["fig_combined"]:
-            fig_size = self._compute_target_figsize_inches()
-            fig = self.render_plot(
-                "fig_combined",
-                target="display",
-                plot_id="fig_combined_triple_axis",
-                fig_size=fig_size,
-            )
-            if fig is not None:
-                figs_to_render["fig_combined"] = fig
-
         if figs_to_render:
             self._render_figures_in_tabs(figs_to_render, clear_existing=False)
-        else:
+
+        if selections["fig_combined"]:
+            fig_size = self._compute_target_figsize_inches()
+            snapshot = self._capture_combined_render_snapshot(
+                fig_size=fig_size,
+                plot_id="fig_combined_triple_axis",
+                target="display",
+            )
+            self._start_combined_render_async(
+                snapshot, warn_on_failure=not bool(figs_to_render)
+            )
+        elif not figs_to_render:
             try:
                 messagebox.showwarning(
                     "Plot Selection", "No plots were generated for the current data."
@@ -66721,6 +67711,44 @@ class UnifiedApp(tk.Tk):
             )
         return tuple(signature)
 
+    def _combined_legend_config_signature(
+        self, config: Mapping[str, Any]
+    ) -> Tuple[Any, ...]:
+        """Compute combined legend config signature.
+        Used to detect legend layout changes during reuse."""
+        return (
+            bool(config.get("wrap_enabled")),
+            config.get("legend_rows_value"),
+            config.get("legend_alignment_value"),
+            config.get("legend_anchor"),
+            config.get("legend_loc"),
+            config.get("cycle_legend_anchor"),
+            config.get("cycle_legend_loc"),
+            config.get("cycle_legend_anchor_space"),
+        )
+
+    def _combined_cycle_overlay_signature(
+        self, overlay_ctx: Mapping[str, Any]
+    ) -> Tuple[Any, ...]:
+        """Compute combined cycle overlay signature.
+        Used to detect cycle legend content changes."""
+        cycle_overlay = overlay_ctx.get("cycle_overlay") or {}
+        peaks = cycle_overlay.get("peak_points") or []
+        troughs = cycle_overlay.get("trough_points") or []
+        cycles = cycle_overlay.get("cycles") or []
+        total_drop = _coerce_float(cycle_overlay.get("total_drop")) or 0.0
+        moles_lines = overlay_ctx.get("moles_summary")
+        if moles_lines is None and isinstance(cycle_overlay, dict):
+            moles_lines = cycle_overlay.get("moles_lines")
+        moles_lines = tuple(moles_lines or ())
+        return (
+            len(peaks),
+            len(troughs),
+            len(cycles),
+            round(float(total_drop), 6),
+            moles_lines,
+        )
+
     def _combined_structure_signature(
         self,
         config: Mapping[str, Any],
@@ -66773,6 +67801,9 @@ class UnifiedApp(tk.Tk):
         config: Mapping[str, Any],
         args: Tuple[Any, ...],
         fig_size: Optional[Tuple[float, float]],
+        *,
+        legend_text_sig: Optional[Tuple[Tuple[str, ...], Tuple[str, ...]]] = None,
+        plot_elements_sig: Optional[Tuple[Any, ...]] = None,
     ) -> Tuple[Any, ...]:
         """Compute the combined-plot layout signature.
         Used to detect spacing changes that require a layout re-solve."""
@@ -66836,7 +67867,61 @@ class UnifiedApp(tk.Tk):
             tuple(sorted(baseline_margins.items())),
             tuple(sorted(labelpad_overrides.items())),
             tuple(sorted(label_overrides.items())),
+            legend_text_sig or (),
+            plot_elements_sig or (),
         )
+
+    def _combined_legend_text_signature(
+        self, fig: Optional[Figure]
+    ) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
+        """Collect combined legend text signature.
+        Used to detect layout-affecting legend text changes."""
+        if fig is None:
+            return ((), ())
+        main_labels: List[str] = []
+        cycle_labels: List[str] = []
+        # Iterate over self._collect_combined_legends(fig) to apply the per-item logic.
+        for legend in self._collect_combined_legends(fig):
+            try:
+                texts = [txt.get_text() for txt in legend.get_texts() if txt is not None]
+            except Exception:
+                texts = []
+            if self._is_combined_cycle_legend(legend):
+                cycle_labels.extend(texts)
+            elif getattr(legend, "_combined_main_legend", False):
+                main_labels.extend(texts)
+        return (tuple(main_labels), tuple(cycle_labels))
+
+    def _plot_elements_signature(self, plot_id: Optional[str]) -> Tuple[Any, ...]:
+        """Collect plot element signature.
+        Used to detect layout-affecting plot element changes."""
+        if not plot_id:
+            return ()
+        elements_map = settings.get("plot_elements", {})
+        elements = (
+            elements_map.get(plot_id)
+            if isinstance(elements_map, dict)
+            else None
+        )
+        elements = elements if isinstance(elements, list) else []
+
+        def _signature(value: Any) -> Any:
+            """Perform signature.
+            Used to normalize plot element values for signatures."""
+            if isinstance(value, dict):
+                return tuple(
+                    sorted((str(k), _signature(v)) for k, v in value.items())
+                )
+            if isinstance(value, (list, tuple)):
+                return tuple(_signature(v) for v in value)
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                return value
+            try:
+                return str(value)
+            except Exception:
+                return repr(value)
+
+        return tuple(_signature(item) for item in elements)
 
     def _combined_preview_decimate(
         self,
@@ -66844,13 +67929,22 @@ class UnifiedApp(tk.Tk):
         canvas: Optional[FigureCanvasTkAgg],
         x_values: Any,
         series_values: Dict[str, Any],
+        *,
+        series_arrays: Optional[Dict[str, Any]] = None,
+        series_nan_mask: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Any, Dict[str, Any]]:
         """Perform combined preview decimate.
         Used to keep the workflow logic localized and testable."""
-        if x_values is None:
+        series_arrays = series_arrays or {}
+        series_nan_mask = series_nan_mask or {}
+        if x_values is None and series_arrays.get("x") is None:
             return x_values, series_values
         try:
-            x_array = np.asarray(x_values)
+            x_array = (
+                np.asarray(series_arrays.get("x"))
+                if series_arrays.get("x") is not None
+                else np.asarray(x_values)
+            )
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             return x_values, series_values
@@ -66881,10 +67975,12 @@ class UnifiedApp(tk.Tk):
         if idx[-1] != x_array.size - 1:
             idx = np.append(idx, x_array.size - 1)
         required_mask = np.zeros(x_array.size, dtype=bool)
-        try:
-            x_nan = np.isnan(x_array)
-        except Exception:
-            x_nan = None
+        x_nan = series_nan_mask.get("x")
+        if x_nan is None:
+            try:
+                x_nan = np.isnan(x_array)
+            except Exception:
+                x_nan = None
         if x_nan is not None:
             try:
                 x_nan = np.asarray(x_nan).reshape(-1)
@@ -66892,23 +67988,27 @@ class UnifiedApp(tk.Tk):
                 x_nan = None
         if x_nan is not None and x_nan.size == x_array.size:
             required_mask |= x_nan
-        # Iterate over values from series_values to apply the per-item logic.
-        for values in series_values.values():
+        # Iterate over items from series_values to apply the per-item logic.
+        for key, values in series_values.items():
             if values is None:
                 continue
-            try:
-                y_array = np.asarray(values)
-            except Exception:
-                continue
+            y_array = series_arrays.get(key)
+            if y_array is None:
+                try:
+                    y_array = np.asarray(values)
+                except Exception:
+                    continue
             if y_array.shape[0] != x_array.shape[0]:
                 continue
-            try:
-                y_nan = np.isnan(y_array)
-            except Exception:
+            y_nan = series_nan_mask.get(key)
+            if y_nan is None:
                 try:
-                    y_nan = pd.isna(y_array)
+                    y_nan = np.isnan(y_array)
                 except Exception:
-                    y_nan = None
+                    try:
+                        y_nan = pd.isna(y_array)
+                    except Exception:
+                        y_nan = None
             if y_nan is None:
                 continue
             try:
@@ -66938,11 +68038,13 @@ class UnifiedApp(tk.Tk):
             if values is None:
                 decimated[key] = None
                 continue
-            try:
-                y_array = np.asarray(values)
-            except Exception:
-                decimated[key] = values
-                continue
+            y_array = series_arrays.get(key)
+            if y_array is None:
+                try:
+                    y_array = np.asarray(values)
+                except Exception:
+                    decimated[key] = values
+                    continue
             if y_array.shape[0] != x_array.shape[0]:
                 decimated[key] = values
                 continue
@@ -66957,6 +68059,7 @@ class UnifiedApp(tk.Tk):
         canvas: Optional[FigureCanvasTkAgg],
         *,
         render_ctx: Optional[RenderContext] = None,
+        perf_run: Optional[Dict[str, Any]] = None,
     ) -> Optional[Figure]:
         """Update the combined triple-axis preview figure in place when possible.
         Used to reuse axes unless structure changes require a rebuild."""
@@ -66967,6 +68070,14 @@ class UnifiedApp(tk.Tk):
         scatter_config = style_ctx.get("scatter_config")
         scatter_series_configs = style_ctx.get("scatter_series_configs")
         cycle_overlay = overlay_ctx.get("cycle_overlay")
+        markers_overlay = overlay_ctx.get("markers", cycle_overlay)
+        legend_overlay = overlay_ctx.get("cycle_legend", cycle_overlay)
+        cycle_style = (
+            get_cycle_trace_style() if (markers_overlay or legend_overlay) else None
+        )
+        moles_lines = overlay_ctx.get("moles_summary")
+        if moles_lines is None and isinstance(cycle_overlay, dict):
+            moles_lines = cycle_overlay.get("moles_lines")
 
         base_args = config.get("base_args") or ()
         if len(base_args) < 24:
@@ -66978,6 +68089,9 @@ class UnifiedApp(tk.Tk):
             scatter_config=scatter_config,
             scatter_series_configs=scatter_series_configs,
         )
+        legend_sig = self._combined_legend_config_signature(config)
+        cycle_overlay_sig = self._combined_cycle_overlay_signature(overlay_ctx)
+        legend_font_value = config.get("legend_font_value")
         state = (
             self._combined_plot_state if isinstance(self._combined_plot_state, dict) else {}
         )
@@ -67030,6 +68144,8 @@ class UnifiedApp(tk.Tk):
             self._combined_plot_state = {
                 "fig": fig,
                 "structure_sig": structure_sig,
+                "legend_sig": legend_sig,
+                "cycle_overlay_sig": cycle_overlay_sig,
             }
             self._combined_layout_state = None
             self._combined_layout_dirty = True
@@ -67381,19 +68497,65 @@ class UnifiedApp(tk.Tk):
             return fig
 
         series_map = data_ctx.get("series") or {}
+        series_np = data_ctx.get("series_np") or {}
+        series_nan_mask = data_ctx.get("series_nan_mask") or {}
         series_values = {
-            "y1": series_map.get("y1", globals().get("y1")),
-            "y3": series_map.get("y3", globals().get("y3")),
-            "y2": series_map.get("y2", globals().get("y2")),
-            "z": series_map.get("z", globals().get("z")),
-            "z2": series_map.get("z2", globals().get("z2")),
+            "y1": series_np.get("y1", series_map.get("y1", globals().get("y1"))),
+            "y3": series_np.get("y3", series_map.get("y3", globals().get("y3"))),
+            "y2": series_np.get("y2", series_map.get("y2", globals().get("y2"))),
+            "z": series_np.get("z", series_map.get("z", globals().get("z"))),
+            "z2": series_np.get("z2", series_map.get("z2", globals().get("z2"))),
         }
-        x_values = series_map.get("x", globals().get("x"))
+        x_values = series_np.get("x", series_map.get("x", globals().get("x")))
         x_plot, decimated = self._combined_preview_decimate(
-            fig, canvas, x_values, series_values
+            fig,
+            canvas,
+            x_values,
+            series_values,
+            series_arrays=series_np,
+            series_nan_mask=series_nan_mask,
         )
 
-        legend_dirty = False
+        if bool(config.get("show_cycle_markers")) and markers_overlay and cycle_style:
+            marker_state = getattr(fig, "_gl260_cycle_marker_artists", None)
+            peak_artist = (
+                marker_state.get("peak") if isinstance(marker_state, dict) else None
+            )
+            trough_artist = (
+                marker_state.get("trough") if isinstance(marker_state, dict) else None
+            )
+            peaks = markers_overlay.get("peak_points") or []
+            troughs = markers_overlay.get("trough_points") or []
+
+            def _apply_marker_offsets(artist, points):
+                """Perform apply marker offsets.
+                Used to update cycle marker positions on reuse."""
+                if artist is None:
+                    return
+                if points:
+                    try:
+                        offsets = np.asarray(points, dtype=float)
+                    except Exception:
+                        offsets = None
+                    if offsets is not None:
+                        artist.set_offsets(offsets)
+                        try:
+                            artist.set_visible(True)
+                        except Exception:
+                            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                            pass
+                else:
+                    try:
+                        artist.set_offsets(np.zeros((0, 2), dtype=float))
+                        artist.set_visible(False)
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+
+            _apply_marker_offsets(peak_artist, peaks)
+            _apply_marker_offsets(trough_artist, troughs)
+
+        legend_dirty = state.get("legend_sig") != legend_sig
         # Iterate over items from line_map to apply the per-item logic.
         for key, artist in line_map.items():
             if artist is None:
@@ -67492,7 +68654,6 @@ class UnifiedApp(tk.Tk):
                 else:
                     ncol = min(4, len(legend_handles))
                 wrapped_labels = [_wrap_legend_label(label) for label in legend_labels]
-                legend_font_value = config.get("legend_font_value")
                 legend_markerscale = _coerce_float(
                     settings.get("combined_legend_markerscale")
                 )
@@ -67537,6 +68698,178 @@ class UnifiedApp(tk.Tk):
                     except Exception:
                         # Best-effort guard; ignore failures to avoid interrupting the workflow.
                         pass
+
+        cycle_legend_dirty = state.get("cycle_overlay_sig") != cycle_overlay_sig
+        if (
+            cycle_legend_dirty
+            and bool(config.get("show_cycle_legend"))
+            and isinstance(legend_overlay, dict)
+            and ax is not None
+        ):
+            # Iterate over self._collect_combined_legends(fig) to apply the per-item logic.
+            for legend in self._collect_combined_legends(fig):
+                if self._is_combined_cycle_legend(legend):
+                    try:
+                        legend.remove()
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+
+            def _cycle_marker_artist(marker, color):
+                """Perform cycle marker artist.
+                Used to keep the workflow logic localized and testable."""
+                size_val = None
+                try:
+                    size_val = max(4.0, math.sqrt(float(cycle_style["marker_size"])))
+                except Exception:
+                    size_val = 6.0
+                return Line2D(
+                    [], [], linestyle="None", marker=marker, color=color, markersize=size_val
+                )
+
+            def _add_cycle_legend(
+                ax_target,
+                peak_artist,
+                trough_artist,
+                anchor=None,
+                loc_override=None,
+                anchor_space=None,
+            ):
+                """Perform add cycle legend.
+                Used to keep the workflow logic localized and testable."""
+                if not (legend_overlay and cycle_style):
+                    return None
+                handles_cycle: List[Any] = []
+                labels_cycle: List[str] = []
+                if peak_artist is not None:
+                    handles_cycle.append(peak_artist)
+                    labels_cycle.append(_text_safe("Peak"))
+                elif cycle_style:
+                    handles_cycle.append(
+                        _cycle_marker_artist(
+                            cycle_style["peak_marker"], cycle_style["peak_color"]
+                        )
+                    )
+                    labels_cycle.append(_text_safe("Peak"))
+                if trough_artist is not None:
+                    handles_cycle.append(trough_artist)
+                    labels_cycle.append(_text_safe("Trough"))
+                elif cycle_style:
+                    handles_cycle.append(
+                        _cycle_marker_artist(
+                            cycle_style["trough_marker"], cycle_style["trough_color"]
+                        )
+                    )
+                    labels_cycle.append(_text_safe("Trough"))
+                cycles_list = legend_overlay.get("cycles") or []
+                total_drop_val = legend_overlay.get("total_drop", 0.0)
+                try:
+                    total_drop_val = float(total_drop_val)
+                except Exception:
+                    total_drop_val = 0.0
+                handles_cycle.append(Line2D([], [], color="none"))
+                labels_cycle.append(_text_safe(f"Cycles: {len(cycles_list)}"))
+                import matplotlib.patches as mpatches
+
+                handles_cycle.append(mpatches.Patch(color="none"))
+                labels_cycle.append(_text_safe(f"Total ΔP: {total_drop_val:.2f} PSI"))
+                if bool(config.get("include_moles_core")):
+                    # Iterate over moles_lines or [] to apply the per-item logic.
+                    for line in moles_lines or []:
+                        handles_cycle.append(mpatches.Patch(color="none"))
+                        labels_cycle.append(_text_safe(line))
+                cycle_legend_font_value = config.get(
+                    "cycle_legend_font_value", legend_font_value
+                )
+                cycle_legend_font_value = _sanitize_spacing_value(
+                    cycle_legend_font_value,
+                    legend_font_value,
+                    MIN_COMBINED_FONT_SIZE,
+                    MAX_COMBINED_FONT_SIZE,
+                )
+                cycle_legend_markerscale = _coerce_float(
+                    settings.get("combined_cycle_legend_markerscale")
+                )
+                if cycle_legend_markerscale is None:
+                    base_font = cycle_legend_font_value if cycle_legend_font_value else 1.0
+                    cycle_legend_markerscale = (
+                        base_font / DEFAULT_COMBINED_LEGEND_FONTSIZE
+                    )
+                legend_kwargs = {
+                    "fontsize": cycle_legend_font_value,
+                    "prop": {"family": family_value, "size": cycle_legend_font_value},
+                    "markerscale": cycle_legend_markerscale,
+                    **_legend_shadowbox_kwargs(),
+                }
+                loc_value = None
+                if loc_override is not None:
+                    loc_value = _normalize_legend_loc_value(loc_override)
+                if loc_value is None:
+                    loc_value = "upper right"
+                if loc_value is not None:
+                    legend_kwargs["loc"] = loc_value
+                anchor_value = _validated_anchor_pair(anchor)
+                if anchor_value is None and isinstance(loc_value, str):
+                    loc_key = loc_value.strip().lower()
+                    anchor_map = {
+                        "upper right": (0.98, 0.98),
+                        "upper left": (0.02, 0.98),
+                        "lower right": (0.98, 0.02),
+                        "lower left": (0.02, 0.02),
+                        "center right": (0.98, 0.5),
+                        "center left": (0.02, 0.5),
+                        "upper center": (0.5, 0.98),
+                        "lower center": (0.5, 0.02),
+                        "center": (0.5, 0.5),
+                    }
+                    anchor_value = anchor_map.get(loc_key, (0.98, 0.98))
+                if anchor_value is not None:
+                    legend_kwargs["bbox_to_anchor"] = anchor_value
+                legend = fig.legend(handles_cycle, labels_cycle, **legend_kwargs)
+                if anchor_value is not None:
+                    try:
+                        transform = None
+                        if anchor_space == "axes" and ax_target is not None:
+                            transform = ax_target.transAxes
+                        elif anchor_space in {"figure", None}:
+                            transform = fig.transFigure
+                        if transform is None:
+                            legend.set_bbox_to_anchor(anchor_value)
+                        else:
+                            legend.set_bbox_to_anchor(anchor_value, transform=transform)
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+                try:
+                    legend._cycle_overlay_legend = True  # type: ignore[attr-defined]
+                    legend._combined_cycle_legend = True  # type: ignore[attr-defined]
+                    legend._gl260_legend_role = "cycle"  # type: ignore[attr-defined]
+                    legend._gl260_markerscale = legend_kwargs.get(
+                        "markerscale"
+                    )  # type: ignore[attr-defined]
+                    legend._gl260_markerscale_base_font = (  # type: ignore[attr-defined]
+                        DEFAULT_COMBINED_LEGEND_FONTSIZE
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+                try:
+                    legend.set_draggable(True)
+                except Exception:
+                    _make_legend_draggable(legend)
+                return legend
+
+            marker_state = getattr(fig, "_gl260_cycle_marker_artists", None)
+            peak_artist = marker_state.get("peak") if isinstance(marker_state, dict) else None
+            trough_artist = marker_state.get("trough") if isinstance(marker_state, dict) else None
+            _add_cycle_legend(
+                ax,
+                peak_artist,
+                trough_artist,
+                anchor=config.get("cycle_legend_anchor"),
+                loc_override=config.get("cycle_legend_loc"),
+                anchor_space=config.get("cycle_legend_anchor_space"),
+            )
 
         try:
             cycle_legend_font_value = config.get(
@@ -67605,7 +68938,15 @@ class UnifiedApp(tk.Tk):
 
         # Layout signature captures margin/legend inputs so we only re-solve when
         # layout-affecting settings change, avoiding unnecessary redraw churn.
-        layout_sig = self._combined_layout_signature(config, args, fig_size)
+        legend_text_sig = self._combined_legend_text_signature(fig)
+        plot_elements_sig = self._plot_elements_signature("fig_combined_triple_axis")
+        layout_sig = self._combined_layout_signature(
+            config,
+            args,
+            fig_size,
+            legend_text_sig=legend_text_sig,
+            plot_elements_sig=plot_elements_sig,
+        )
         layout_dirty = self._combined_layout_dirty or self._combined_layout_state != layout_sig
 
         # Preview layout uses the same inference as export but limits passes to
@@ -67644,7 +68985,14 @@ class UnifiedApp(tk.Tk):
         layout_mgr.register_artist("cycle_legend", cycle_legend)
         layout_mgr.set_legend_alignment(config.get("legend_alignment_value", "center"))
         if layout_dirty:
+            layout_start = time.perf_counter() if perf_run is not None else None
             layout_mgr.solve(max_passes=1, allow_draw=False)
+            if perf_run is not None and layout_start is not None:
+                stages = perf_run.setdefault("stages", {})
+                combined_stage = stages.setdefault("combined", {})
+                combined_stage["layout_ms"] = (
+                    time.perf_counter() - layout_start
+                ) * 1000.0
             self._combined_layout_state = layout_sig
             self._combined_layout_dirty = False
         fig._gl260_layout_manager = layout_mgr  # type: ignore[attr-defined]
@@ -67671,6 +69019,17 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
 
+        try:
+            state["legend_sig"] = legend_sig
+            state["cycle_overlay_sig"] = cycle_overlay_sig
+            state["layout_sig"] = layout_sig
+            state["line_map"] = line_map
+            state["marker_artists"] = getattr(fig, "_gl260_cycle_marker_artists", None)
+            self._combined_plot_state = state
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
         if fig.canvas is not None:
             try:
                 fig.canvas.draw_idle()
@@ -67688,12 +69047,10 @@ class UnifiedApp(tk.Tk):
         reuse: bool = False,
         canvas: Optional[FigureCanvasTkAgg] = None,
         render_ctx: Optional[RenderContext] = None,
+        perf_run: Optional[Dict[str, Any]] = None,
     ) -> Optional[Figure]:
         """Build the combined triple-axis figure from state or render context.
         Used by preview/export pipelines to produce consistent combined plots."""
-
-        if str(mode or "").strip().lower() == "display":
-            reuse = False
 
         data_ctx = render_ctx.data_ctx if render_ctx else {}
         style_ctx = render_ctx.style_ctx if render_ctx else {}
@@ -67785,10 +69142,22 @@ class UnifiedApp(tk.Tk):
         if config is None:
             return None
 
+        perf_start = time.perf_counter() if perf_run is not None else None
         if reuse and mode == "display":
-            return self._update_combined_triple_axis_display(
-                config, args, fig_size, canvas, render_ctx=render_ctx
+            fig = self._update_combined_triple_axis_display(
+                config,
+                args,
+                fig_size,
+                canvas,
+                render_ctx=render_ctx,
+                perf_run=perf_run,
             )
+            if perf_start is not None and perf_run is not None:
+                stages = perf_run.setdefault("stages", {})
+                combined_stage = stages.setdefault("combined", {})
+                combined_stage["ms"] = (time.perf_counter() - perf_start) * 1000.0
+                combined_stage["path"] = "reuse"
+            return fig
 
         base_args = config["base_args"]
         deriv_offset = config["deriv_offset"]
@@ -67889,10 +69258,19 @@ class UnifiedApp(tk.Tk):
                 layout_mgr = getattr(fig, "_gl260_layout_manager", None)
                 if layout_mgr is not None:
                     # Pipeline boundary: build -> apply elements -> layout solve -> render.
+                    layout_start = (
+                        time.perf_counter() if perf_run is not None else None
+                    )
                     if mode == "export":
                         layout_mgr.solve()
                     else:
                         layout_mgr.solve(max_passes=1, allow_draw=False)
+                    if perf_run is not None and layout_start is not None:
+                        stages = perf_run.setdefault("stages", {})
+                        combined_stage = stages.setdefault("combined", {})
+                        combined_stage["layout_ms"] = (
+                            time.perf_counter() - layout_start
+                        ) * 1000.0
                     if fig.canvas is not None:
                         if mode == "export":
                             fig.canvas.draw()
@@ -67978,6 +69356,19 @@ class UnifiedApp(tk.Tk):
             )
             if mode == "display":
                 try:
+                    legend_sig = self._combined_legend_config_signature(config)
+                    cycle_overlay_sig = self._combined_cycle_overlay_signature(overlay_ctx)
+                    legend_text_sig = self._combined_legend_text_signature(fig)
+                    plot_elements_sig = self._plot_elements_signature(
+                        "fig_combined_triple_axis"
+                    )
+                    layout_sig = self._combined_layout_signature(
+                        config,
+                        args,
+                        fig_size,
+                        legend_text_sig=legend_text_sig,
+                        plot_elements_sig=plot_elements_sig,
+                    )
                     self._combined_plot_state = {
                         "fig": fig,
                         "structure_sig": self._combined_structure_signature(
@@ -67987,14 +69378,22 @@ class UnifiedApp(tk.Tk):
                             scatter_config=scatter_config,
                             scatter_series_configs=scatter_series_configs,
                         ),
+                        "legend_sig": legend_sig,
+                        "cycle_overlay_sig": cycle_overlay_sig,
+                        "layout_sig": layout_sig,
+                        "line_map": getattr(fig, "_gl260_combined_line_map", None),
+                        "marker_artists": getattr(fig, "_gl260_cycle_marker_artists", None),
                     }
-                    self._combined_layout_state = self._combined_layout_signature(
-                        config, args, fig_size
-                    )
+                    self._combined_layout_state = layout_sig
                     self._combined_layout_dirty = False
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
+            if perf_start is not None and perf_run is not None:
+                stages = perf_run.setdefault("stages", {})
+                combined_stage = stages.setdefault("combined", {})
+                combined_stage["ms"] = (time.perf_counter() - perf_start) * 1000.0
+                combined_stage["path"] = "rebuild"
         return fig
 
     def open_cycle_analysis_tab(self):
