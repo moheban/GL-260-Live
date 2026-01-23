@@ -5,16 +5,16 @@ GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib applica
 
 The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `v2.4.0`.
 
+## v2.4.1 Combined Overlay Corrections
+- Cycle overlays (peaks, troughs, cycle legend) now render reliably in the Combined Triple-Axis display window, matching Plot Preview and export output.
+- Overlay updates trigger a performance-safe refresh so cycle legend content stays in sync without reverting the v2.4.0 reuse optimizations.
+
 ## v2.4.0 Performance and Responsiveness
 - Combined triple-axis plot preview now uses a two-phase render (background data prep + UI-thread figure build) to keep the UI responsive.
 - Display renders reuse the combined figure when structure is unchanged; export renders always rebuild for deterministic output.
 - Added performance diagnostics in Developer Tools -> Performance Diagnostics... with stage-level timings for prepared data, cycle context, combined render, and embed.
 - Combined plot cycle context is skipped when cycle overlays are disabled to avoid unnecessary work.
 - Output invariance: plot appearance, export results, and analysis semantics are unchanged by these performance updates.
-
-## v2.4.1 Combined Overlay Corrections
-- Cycle overlays (peaks, troughs, cycle legend) now render reliably in the Combined Triple-Axis display window, matching Plot Preview and export output.
-- Overlay updates trigger a performance-safe refresh so cycle legend content stays in sync without reverting the v2.4.0 reuse optimizations.
 
 ## v2.3.0 Documentation Pass
 - Added a comprehensive commenting system with docstrings on every function and loop-level intent notes.
