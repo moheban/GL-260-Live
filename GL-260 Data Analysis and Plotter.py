@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.4.0
+# Version: v2.4.1
 # Date: 2026-01-23
 
 import os
@@ -7925,7 +7925,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.4.0"
+APP_VERSION = "v2.4.1"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -68061,8 +68061,30 @@ class UnifiedApp(tk.Tk):
         render_ctx: Optional[RenderContext] = None,
         perf_run: Optional[Dict[str, Any]] = None,
     ) -> Optional[Figure]:
-        """Update the combined triple-axis preview figure in place when possible.
-        Used to reuse axes unless structure changes require a rebuild."""
+        """Update the combined triple-axis display figure with reuse when possible.
+        Exists to keep interactive rendering fast by reusing axes/lines, while still
+        rebuilding when structure or overlay data changes demand it.
+
+        Args:
+            config: Mapping of combined plot configuration values for display.
+            args: Plot argument tuple (time/axis ranges, tick settings, titles).
+            fig_size: Target figure size in inches for the display view.
+            canvas: Tkinter-backed canvas used to guide decimation sizing.
+            render_ctx: Optional RenderContext with prepared data/overlays/styles.
+                Required on rebuild so cycle overlays and legends are preserved.
+            perf_run: Optional performance accumulator updated with timing data.
+
+        Returns:
+            The updated Matplotlib Figure, or None if inputs are incomplete.
+
+        Side Effects:
+            Mutates figure artists, updates cached combined plot/layout state,
+            and schedules a canvas redraw when available.
+
+        Exceptions:
+            Internal rendering errors are caught and ignored to avoid breaking
+            the UI; returns None when required inputs are missing.
+        """
         data_ctx = render_ctx.data_ctx if render_ctx else {}
         style_ctx = render_ctx.style_ctx if render_ctx else {}
         overlay_ctx = render_ctx.overlay_ctx if render_ctx else {}
@@ -68096,7 +68118,18 @@ class UnifiedApp(tk.Tk):
             self._combined_plot_state if isinstance(self._combined_plot_state, dict) else {}
         )
         fig = state.get("fig") if state else None
-        if fig is None or state.get("structure_sig") != structure_sig:
+        cycle_overlay_changed = state.get("cycle_overlay_sig") != cycle_overlay_sig
+        # When overlay content changes and cycle legend is enabled, force a rebuild
+        # so the legend data refreshes without regressing reuse performance.
+        force_overlay_rebuild = cycle_overlay_changed and bool(
+            config.get("show_cycle_legend")
+        )
+        overlay_rebuild_applied = False
+        if (
+            fig is None
+            or state.get("structure_sig") != structure_sig
+            or force_overlay_rebuild
+        ):
             fig = build_combined_triple_axis_figure(
                 *base_args,
                 deriv_axis_offset=config.get("deriv_offset"),
@@ -68136,6 +68169,8 @@ class UnifiedApp(tk.Tk):
                 baseline_margins=config.get("baseline_margins"),
                 legend_anchor_y=config.get("legend_anchor_y"),
                 xlabel_pad_pts=config.get("xlabel_pad_value"),
+                # Render context is mandatory on rebuilds so overlays/legends persist.
+                render_ctx=render_ctx,
                 mode="display",
                 fig_size=fig_size,
             )
@@ -68149,6 +68184,7 @@ class UnifiedApp(tk.Tk):
             }
             self._combined_layout_state = None
             self._combined_layout_dirty = True
+            overlay_rebuild_applied = force_overlay_rebuild
             try:
                 fig._gl260_expect_cycle_legend = bool(config.get("show_cycle_legend"))
                 fig._gl260_expect_cycle_markers = bool(
@@ -68699,7 +68735,7 @@ class UnifiedApp(tk.Tk):
                         # Best-effort guard; ignore failures to avoid interrupting the workflow.
                         pass
 
-        cycle_legend_dirty = state.get("cycle_overlay_sig") != cycle_overlay_sig
+        cycle_legend_dirty = cycle_overlay_changed and not overlay_rebuild_applied
         if (
             cycle_legend_dirty
             and bool(config.get("show_cycle_legend"))

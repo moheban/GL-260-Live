@@ -12,6 +12,10 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - Combined plot cycle context is skipped when cycle overlays are disabled to avoid unnecessary work.
 - Output invariance: plot appearance, export results, and analysis semantics are unchanged by these performance updates.
 
+## v2.4.1 Combined Overlay Corrections
+- Cycle overlays (peaks, troughs, cycle legend) now render reliably in the Combined Triple-Axis display window, matching Plot Preview and export output.
+- Overlay updates trigger a performance-safe refresh so cycle legend content stays in sync without reverting the v2.4.0 reuse optimizations.
+
 ## v2.3.0 Documentation Pass
 - Added a comprehensive commenting system with docstrings on every function and loop-level intent notes.
 - Documented high-risk subsystems (combined triple-axis plots, layout editor, plot elements, solubility workflows, caching).
