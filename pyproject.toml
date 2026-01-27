@@ -26,3 +26,7 @@ dependencies = [
 
 [project.optional-dependencies]
 mplcursors = ["mplcursors"]
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "I", "UP", "B"]
