@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.5.0
+# Version: v2.6.0
 # Date: 2026-01-27
 
 import os
@@ -7925,7 +7925,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.5.0"
+APP_VERSION = "v2.6.0"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -58685,10 +58685,104 @@ class UnifiedApp(tk.Tk):
         self._final_report_section_caption_placement_vars = {}
         self._final_report_section_order = []
 
-        container = ttk.Frame(frame)
-        container.pack(fill="both", expand=True)
+        outer = ttk.Frame(frame)
+        outer.grid(row=0, column=0, sticky="nsew")
+        outer.grid_columnconfigure(0, weight=1)
+        outer.grid_rowconfigure(0, weight=1)
 
-        top_frame = ttk.Frame(container)
+        # Tkinter does not provide a native scrollable frame; use a canvas wrapper to
+        # enable full-tab vertical scrolling without changing inner layout logic.
+        final_report_canvas = tk.Canvas(outer, highlightthickness=0)
+        final_report_canvas.grid(row=0, column=0, sticky="nsew")
+        final_report_scrollbar = ttk.Scrollbar(
+            outer, orient="vertical", command=final_report_canvas.yview
+        )
+        final_report_scrollbar.grid(row=0, column=1, sticky="ns")
+        final_report_canvas.configure(yscrollcommand=final_report_scrollbar.set)
+
+        scroll_content = ttk.Frame(final_report_canvas)
+        scroll_window = final_report_canvas.create_window(
+            (0, 0), window=scroll_content, anchor="nw"
+        )
+
+        # Closure captures _build_tab_final_report local context to keep helper logic scoped and invoked directly within _build_tab_final_report.
+        def _refresh_final_report_scroll(_event=None):
+            """Refresh final report scroll region.
+            Used to keep the canvas scroll region aligned with the content size."""
+            # Sync scrollregion to the interior frame height so content is not clipped.
+            final_report_canvas.configure(
+                scrollregion=final_report_canvas.bbox("all")
+            )
+
+        scroll_content.bind("<Configure>", _refresh_final_report_scroll)
+
+        # Closure captures _build_tab_final_report local context to keep helper logic scoped and invoked directly within _build_tab_final_report.
+        def _expand_final_report_width(event):
+            """Perform expand final report width.
+            Used to keep the scroll frame width aligned with the canvas."""
+            final_report_canvas.itemconfigure(scroll_window, width=event.width)
+
+        final_report_canvas.bind("<Configure>", _expand_final_report_width)
+
+        # Closure captures _build_tab_final_report local context to keep helper logic scoped and invoked directly within _build_tab_final_report.
+        def _skip_final_report_scroll(widget):
+            """Return whether the widget should keep its own scroll handling.
+            Used to avoid hijacking mousewheel behavior for text or list widgets."""
+            return isinstance(widget, (tk.Text, tk.Listbox))
+
+        # Closure captures _build_tab_final_report local context to keep helper logic scoped and invoked directly within _build_tab_final_report.
+        def _on_final_report_mousewheel(event):
+            """Handle final report mousewheel.
+            Used to scroll the tab canvas without overriding text widget scrolling."""
+            if _skip_final_report_scroll(event.widget):
+                return None
+            delta = event.delta
+            if delta == 0:
+                return None
+            step = -1 if delta > 0 else 1
+            if abs(delta) >= 120:
+                step = int(-delta / 120)
+            final_report_canvas.yview_scroll(step, "units")
+            return "break"
+
+        # Closure captures _build_tab_final_report local context to keep helper logic scoped and invoked directly within _build_tab_final_report.
+        def _on_final_report_scroll_up(event):
+            """Scroll final report canvas up.
+            Used to support Linux-style mousewheel events."""
+            if _skip_final_report_scroll(event.widget):
+                return None
+            final_report_canvas.yview_scroll(-1, "units")
+            return "break"
+
+        # Closure captures _build_tab_final_report local context to keep helper logic scoped and invoked directly within _build_tab_final_report.
+        def _on_final_report_scroll_down(event):
+            """Scroll final report canvas down.
+            Used to support Linux-style mousewheel events."""
+            if _skip_final_report_scroll(event.widget):
+                return None
+            final_report_canvas.yview_scroll(1, "units")
+            return "break"
+
+        # Closure captures _build_tab_final_report local context to keep helper logic scoped and invoked directly within _build_tab_final_report.
+        def _bind_final_report_mousewheel(widget):
+            """Bind mousewheel events for final report scrolling.
+            Used to enable scrolling when the pointer is over any tab widget."""
+            widget.bind("<MouseWheel>", _on_final_report_mousewheel, add="+")
+            widget.bind("<Button-4>", _on_final_report_scroll_up, add="+")
+            widget.bind("<Button-5>", _on_final_report_scroll_down, add="+")
+            # Iterate over widget.winfo_children() to apply the per-item logic.
+            for child in widget.winfo_children():
+                _bind_final_report_mousewheel(child)
+
+        # Closure captures _build_tab_final_report local context to keep helper logic scoped and invoked directly within _build_tab_final_report.
+        def _init_final_report_mousewheel():
+            """Initialize mousewheel bindings for the Final Report tab.
+            Used to keep scrolling active only within Final Report widgets."""
+            _bind_final_report_mousewheel(scroll_content)
+
+        self.after_idle(_init_final_report_mousewheel)
+
+        top_frame = ttk.Frame(scroll_content)
         top_frame.pack(fill="x", padx=8, pady=(8, 4))
         top_frame.grid_columnconfigure(1, weight=1)
 
@@ -58754,7 +58848,7 @@ class UnifiedApp(tk.Tk):
             command=self._delete_final_report_template,
         ).pack(side="left", padx=2)
 
-        layout_frame = ttk.LabelFrame(container, text="Layout & Orientation")
+        layout_frame = ttk.LabelFrame(scroll_content, text="Layout & Orientation")
         layout_frame.pack(fill="x", padx=8, pady=(0, 4))
         layout_frame.grid_columnconfigure(1, weight=1)
         layout_frame.grid_columnconfigure(3, weight=1)
@@ -58789,7 +58883,7 @@ class UnifiedApp(tk.Tk):
             state="readonly",
         ).grid(row=1, column=3, sticky="ew", padx=4, pady=4)
 
-        typography_frame = ttk.LabelFrame(container, text="Typography & Margins")
+        typography_frame = ttk.LabelFrame(scroll_content, text="Typography & Margins")
         typography_frame.pack(fill="x", padx=8, pady=(0, 8))
         typography_frame.grid_columnconfigure(1, weight=1)
         ttk.Label(typography_frame, text="Font scale:").grid(
@@ -58857,7 +58951,7 @@ class UnifiedApp(tk.Tk):
             width=14,
         ).grid(row=2, column=1, sticky="w", padx=4, pady=(0, 8))
 
-        action_frame = ttk.Frame(container)
+        action_frame = ttk.Frame(scroll_content)
         action_frame.pack(fill="x", padx=8, pady=(0, 8))
         ttk.Button(
             action_frame,
@@ -58893,7 +58987,7 @@ class UnifiedApp(tk.Tk):
         ):
             var.trace_add("write", _report_preview_trigger)
 
-        paned = ttk.Panedwindow(container, orient="horizontal")
+        paned = ttk.Panedwindow(scroll_content, orient="horizontal")
         paned.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
         left_panel = ttk.Frame(paned)
