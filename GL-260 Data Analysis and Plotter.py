@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.4.1
-# Date: 2026-01-23
+# Version: v2.5.0
+# Date: 2026-01-27
 
 import os
 import sys
@@ -7925,7 +7925,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.4.1"
+APP_VERSION = "v2.5.0"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -8266,6 +8266,27 @@ FINAL_REPORT_LAYOUT_MODES = (
     "plots_landscape_pages",
 )
 
+FINAL_REPORT_FIT_MODES = (
+    "Preserve Export Layout",
+    "Report Layout (legacy)",
+)
+
+FINAL_REPORT_SAFE_MARGIN_PRESETS = (
+    "Normal",
+    "Extra-Safe",
+)
+
+FINAL_REPORT_CAPTION_PLACEMENTS = (
+    "Same Page",
+    "Next Page",
+)
+
+FINAL_REPORT_TABLE_STYLE_PRESETS = (
+    "Compact",
+    "Normal",
+    "Large",
+)
+
 FINAL_REPORT_SECTION_METADATA = OrderedDict(
     [
         (
@@ -8402,6 +8423,24 @@ FINAL_REPORT_EXCLUDED_SECTIONS = {"cycle_plot", "cycle_timeline_plot"}
 FINAL_REPORT_ORIENTATION_OPTIONS = ("inherit", "portrait", "landscape")
 FINAL_REPORT_TEMPLATE_PLACEHOLDER = "[Current layout (unsaved)]"
 
+FINAL_REPORT_SECTION_HEADER_DEFAULTS = {
+    section_id: True
+    # Iterate to apply the per-item logic.
+    for section_id in FINAL_REPORT_SECTION_METADATA.keys()
+}
+
+FINAL_REPORT_SECTION_CAPTION_DEFAULTS = {
+    section_id: metadata.get("type") in ("figure", "table")
+    # Iterate to apply the per-item logic.
+    for section_id, metadata in FINAL_REPORT_SECTION_METADATA.items()
+}
+
+FINAL_REPORT_SECTION_CAPTION_PLACEMENT_DEFAULTS = {
+    section_id: "Same Page"
+    # Iterate to apply the per-item logic.
+    for section_id in FINAL_REPORT_SECTION_METADATA.keys()
+}
+
 FINAL_REPORT_DEFAULT_SECTION_ORDER = [
     "cycle_plot",
     "fig1",
@@ -8461,10 +8500,16 @@ FINAL_REPORT_DEFAULT_STATE = {
     "selected_sections": list(FINAL_REPORT_DEFAULT_SELECTED_SECTIONS),
     "narrative": "",
     "global_layout_mode": "mixed_pages",
+    "fit_mode": "Preserve Export Layout",
     "font_scale": 1.0,
     "margin_in": 0.75,
+    "safe_margin_preset": "Normal",
     "show_page_numbers": True,
     "show_section_headers": True,
+    "table_style_preset": "Normal",
+    "section_header_enabled": dict(FINAL_REPORT_SECTION_HEADER_DEFAULTS),
+    "section_caption_enabled": dict(FINAL_REPORT_SECTION_CAPTION_DEFAULTS),
+    "section_caption_placement": dict(FINAL_REPORT_SECTION_CAPTION_PLACEMENT_DEFAULTS),
     "section_orientation": {
         section_id: "inherit" for section_id in FINAL_REPORT_PLOT_SECTIONS
     },
@@ -18767,16 +18812,46 @@ _final_report_state.setdefault("title", FINAL_REPORT_DEFAULT_STATE["title"])
 _final_report_state.setdefault(
     "global_layout_mode", FINAL_REPORT_DEFAULT_STATE["global_layout_mode"]
 )
+_final_report_state.setdefault("fit_mode", FINAL_REPORT_DEFAULT_STATE["fit_mode"])
 _final_report_state.setdefault("font_scale", FINAL_REPORT_DEFAULT_STATE["font_scale"])
 _final_report_state.setdefault("margin_in", FINAL_REPORT_DEFAULT_STATE["margin_in"])
+_final_report_state.setdefault(
+    "safe_margin_preset", FINAL_REPORT_DEFAULT_STATE["safe_margin_preset"]
+)
 _final_report_state.setdefault(
     "show_page_numbers", FINAL_REPORT_DEFAULT_STATE["show_page_numbers"]
 )
 _final_report_state.setdefault(
     "show_section_headers", FINAL_REPORT_DEFAULT_STATE["show_section_headers"]
 )
+_final_report_state.setdefault(
+    "table_style_preset", FINAL_REPORT_DEFAULT_STATE["table_style_preset"]
+)
 _final_report_state.setdefault("narrative", FINAL_REPORT_DEFAULT_STATE["narrative"])
 _final_report_state.setdefault("profile_key", FINAL_REPORT_DEFAULT_STATE["profile_key"])
+
+section_header_state = _final_report_state.setdefault("section_header_enabled", {})
+# Iterate over FINAL_REPORT_DEFAULT_STATE["section_header_enabled"] to apply the per-item logic.
+for section_id, header_enabled in FINAL_REPORT_DEFAULT_STATE[
+    "section_header_enabled"
+].items():
+    section_header_state.setdefault(section_id, bool(header_enabled))
+
+section_caption_state = _final_report_state.setdefault("section_caption_enabled", {})
+# Iterate over FINAL_REPORT_DEFAULT_STATE["section_caption_enabled"] to apply the per-item logic.
+for section_id, caption_enabled in FINAL_REPORT_DEFAULT_STATE[
+    "section_caption_enabled"
+].items():
+    section_caption_state.setdefault(section_id, bool(caption_enabled))
+
+section_caption_place_state = _final_report_state.setdefault(
+    "section_caption_placement", {}
+)
+# Iterate over FINAL_REPORT_DEFAULT_STATE["section_caption_placement"] to apply the per-item logic.
+for section_id, placement in FINAL_REPORT_DEFAULT_STATE[
+    "section_caption_placement"
+].items():
+    section_caption_place_state.setdefault(section_id, placement)
 
 orientation_state = _final_report_state.setdefault("section_orientation", {})
 # Iterate to apply the per-item logic.
@@ -58585,8 +58660,19 @@ class UnifiedApp(tk.Tk):
         self._run_solubility_workflow("contaminated_bicarb_diagnostic")
 
     def _build_tab_final_report(self) -> None:
-        """Build tab final report.
-        Used to assemble tab final report during UI or plot setup."""
+        """Purpose: Build the Final Report tab UI and wire callbacks.
+        Why: Centralize layout controls so report settings and previews stay in sync.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            - Creates and packs Tk widgets for the Final Report tab.
+            - Binds variable traces and command callbacks for live preview updates.
+            - Refreshes template lists and preview thumbnails.
+        Exceptions:
+            - UI errors are handled by Tkinter; this method does not raise explicitly.
+        """
         final_state = settings.get("final_report", {})
         frame = self.tab_final_report
         frame.grid_rowconfigure(0, weight=1)
@@ -58594,6 +58680,9 @@ class UnifiedApp(tk.Tk):
 
         self._final_report_section_vars = {}
         self._final_orientation_vars = {}
+        self._final_report_section_header_vars = {}
+        self._final_report_section_caption_vars = {}
+        self._final_report_section_caption_placement_vars = {}
         self._final_report_section_order = []
 
         container = ttk.Frame(frame)
@@ -58668,6 +58757,7 @@ class UnifiedApp(tk.Tk):
         layout_frame = ttk.LabelFrame(container, text="Layout & Orientation")
         layout_frame.pack(fill="x", padx=8, pady=(0, 4))
         layout_frame.grid_columnconfigure(1, weight=1)
+        layout_frame.grid_columnconfigure(3, weight=1)
         ttk.Label(layout_frame, text="Layout mode:").grid(
             row=0, column=0, sticky="w", padx=4, pady=4
         )
@@ -58678,6 +58768,26 @@ class UnifiedApp(tk.Tk):
             values=list(FINAL_REPORT_LAYOUT_MODES),
             state="readonly",
         ).grid(row=0, column=1, sticky="ew", padx=4, pady=4)
+        ttk.Label(layout_frame, text="Fit mode:").grid(
+            row=1, column=0, sticky="w", padx=4, pady=4
+        )
+        self._final_report_fit_mode_var = tk.StringVar()
+        ttk.Combobox(
+            layout_frame,
+            textvariable=self._final_report_fit_mode_var,
+            values=list(FINAL_REPORT_FIT_MODES),
+            state="readonly",
+        ).grid(row=1, column=1, sticky="ew", padx=4, pady=4)
+        ttk.Label(layout_frame, text="Safe margins:").grid(
+            row=1, column=2, sticky="w", padx=4, pady=4
+        )
+        self._final_report_safe_margins_var = tk.StringVar()
+        ttk.Combobox(
+            layout_frame,
+            textvariable=self._final_report_safe_margins_var,
+            values=list(FINAL_REPORT_SAFE_MARGIN_PRESETS),
+            state="readonly",
+        ).grid(row=1, column=3, sticky="ew", padx=4, pady=4)
 
         typography_frame = ttk.LabelFrame(container, text="Typography & Margins")
         typography_frame.pack(fill="x", padx=8, pady=(0, 8))
@@ -58735,6 +58845,17 @@ class UnifiedApp(tk.Tk):
             padx=4,
             pady=(4, 8),
         )
+        ttk.Label(typography_frame, text="Table style:").grid(
+            row=2, column=0, sticky="w", padx=4, pady=(0, 8)
+        )
+        self._final_report_table_style_var = tk.StringVar()
+        ttk.Combobox(
+            typography_frame,
+            textvariable=self._final_report_table_style_var,
+            values=list(FINAL_REPORT_TABLE_STYLE_PRESETS),
+            state="readonly",
+            width=14,
+        ).grid(row=2, column=1, sticky="w", padx=4, pady=(0, 8))
 
         action_frame = ttk.Frame(container)
         action_frame.pack(fill="x", padx=8, pady=(0, 8))
@@ -58761,10 +58882,13 @@ class UnifiedApp(tk.Tk):
         for var in (
             self._final_report_title_var,
             self._final_report_layout_mode_var,
+            self._final_report_fit_mode_var,
             self._final_report_font_scale_var,
             self._final_report_margin_in_var,
+            self._final_report_safe_margins_var,
             self._final_report_show_page_numbers_var,
             self._final_report_show_section_headers_var,
+            self._final_report_table_style_var,
             self._final_report_combined_title_var,
         ):
             var.trace_add("write", _report_preview_trigger)
@@ -58798,21 +58922,62 @@ class UnifiedApp(tk.Tk):
                     variable=var,
                     command=partial(self._on_final_section_toggle, section_id),
                 ).pack(side="left", fill="x", expand=True)
+                controls_frame = ttk.Frame(row_frame)
+                controls_frame.pack(side="right")
+                control_col = 0
+                header_var = tk.BooleanVar()
+                self._final_report_section_header_vars[section_id] = header_var
+                ttk.Checkbutton(
+                    controls_frame,
+                    text="Header",
+                    variable=header_var,
+                    command=self._final_report_section_layout_changed,
+                ).grid(row=0, column=control_col, padx=(4, 0))
+                control_col += 1
+                if metadata.get("type") in ("figure", "table"):
+                    caption_var = tk.BooleanVar()
+                    self._final_report_section_caption_vars[section_id] = caption_var
+                    ttk.Checkbutton(
+                        controls_frame,
+                        text="Caption",
+                        variable=caption_var,
+                        command=self._final_report_section_layout_changed,
+                    ).grid(row=0, column=control_col, padx=(4, 0))
+                    control_col += 1
+                    placement_var = tk.StringVar(
+                        value=FINAL_REPORT_CAPTION_PLACEMENTS[0]
+                    )
+                    self._final_report_section_caption_placement_vars[section_id] = (
+                        placement_var
+                    )
+                    placement_combo = ttk.Combobox(
+                        controls_frame,
+                        values=FINAL_REPORT_CAPTION_PLACEMENTS,
+                        textvariable=placement_var,
+                        state="readonly",
+                        width=10,
+                    )
+                    placement_combo.grid(row=0, column=control_col, padx=(4, 0))
+                    placement_var.trace_add(
+                        "write", lambda *_: self._final_report_section_layout_changed()
+                    )
+                    control_col += 1
                 if metadata.get("type") == "figure":
                     orientation_var = tk.StringVar(
                         value=orientation_defaults.get(section_id, "inherit")
                     )
                     self._final_orientation_vars[section_id] = orientation_var
-                    ttk.Label(row_frame, text="Orientation:").pack(
-                        side="right", padx=(4, 0)
+                    ttk.Label(controls_frame, text="Orientation:").grid(
+                        row=0, column=control_col, padx=(4, 0)
                     )
+                    control_col += 1
                     ttk.Combobox(
-                        row_frame,
+                        controls_frame,
                         values=FINAL_REPORT_ORIENTATION_OPTIONS,
                         textvariable=orientation_var,
                         state="readonly",
                         width=10,
-                    ).pack(side="right")
+                    ).grid(row=0, column=control_col, padx=(4, 0))
                     orientation_var.trace_add(
                         "write",
                         lambda *args, sid=section_id, var=orientation_var: self._final_report_orientation_changed(
@@ -58904,6 +59069,11 @@ class UnifiedApp(tk.Tk):
             preview_buttons,
             text="Open Preview Window",
             command=self._open_final_report_preview_window,
+        ).pack(side="left", padx=(0, 4))
+        ttk.Button(
+            preview_buttons,
+            text="Render Selected Page Preview",
+            command=self._final_report_render_selected_page_preview,
         ).pack(side="left", padx=(0, 4))
         ttk.Button(
             preview_buttons,
@@ -59000,8 +59170,18 @@ class UnifiedApp(tk.Tk):
         dialog.wait_window(dialog)
 
     def _apply_final_report_state_to_ui(self, state: Dict[str, Any]) -> None:
-        """Apply final report state to UI.
-        Used to apply final report state to UI changes to live state."""
+        """Purpose: Apply stored final report state to UI widgets.
+        Why: Keep settings, templates, and live controls synchronized.
+        Args:
+            state (Dict[str, Any]): Final report settings payload to apply.
+        Returns:
+            None.
+        Side Effects:
+            - Updates Tk variables and text widgets.
+            - Refreshes section order listbox state.
+        Exceptions:
+            - Best-effort; invalid values fall back to defaults.
+        """
         if not state:
             return
         title = state.get("title") or FINAL_REPORT_DEFAULT_STATE["title"]
@@ -59012,10 +59192,20 @@ class UnifiedApp(tk.Tk):
             "global_layout_mode", FINAL_REPORT_DEFAULT_STATE["global_layout_mode"]
         )
         self._final_report_layout_mode_var.set(layout_mode)
+        fit_mode = state.get("fit_mode", FINAL_REPORT_DEFAULT_STATE["fit_mode"])
+        if fit_mode not in FINAL_REPORT_FIT_MODES:
+            fit_mode = FINAL_REPORT_DEFAULT_STATE["fit_mode"]
+        self._final_report_fit_mode_var.set(fit_mode)
         font_scale = state.get("font_scale", FINAL_REPORT_DEFAULT_STATE["font_scale"])
         self._final_report_font_scale_var.set(font_scale)
         margin_in = state.get("margin_in", FINAL_REPORT_DEFAULT_STATE["margin_in"])
         self._final_report_margin_in_var.set(margin_in)
+        safe_margin = state.get(
+            "safe_margin_preset", FINAL_REPORT_DEFAULT_STATE["safe_margin_preset"]
+        )
+        if safe_margin not in FINAL_REPORT_SAFE_MARGIN_PRESETS:
+            safe_margin = FINAL_REPORT_DEFAULT_STATE["safe_margin_preset"]
+        self._final_report_safe_margins_var.set(safe_margin)
         self._final_report_show_page_numbers_var.set(
             bool(
                 state.get(
@@ -59031,6 +59221,12 @@ class UnifiedApp(tk.Tk):
                 )
             )
         )
+        table_style = state.get(
+            "table_style_preset", FINAL_REPORT_DEFAULT_STATE["table_style_preset"]
+        )
+        if table_style not in FINAL_REPORT_TABLE_STYLE_PRESETS:
+            table_style = FINAL_REPORT_DEFAULT_STATE["table_style_preset"]
+        self._final_report_table_style_var.set(table_style)
         narrative = state.get("narrative", "")
         self._final_report_narrative_text.delete("1.0", "end")
         self._final_report_narrative_text.insert("1.0", narrative)
@@ -59050,11 +59246,58 @@ class UnifiedApp(tk.Tk):
         # Iterate over items from self._final_orientation_vars to apply the per-item logic.
         for section_id, orientation_var in self._final_orientation_vars.items():
             orientation_var.set(orientation_state.get(section_id, "inherit"))
+        header_state = state.get("section_header_enabled", {})
+        # Iterate over items from self._final_report_section_header_vars to apply the per-item logic.
+        for section_id, header_var in self._final_report_section_header_vars.items():
+            header_var.set(
+                bool(
+                    header_state.get(
+                        section_id,
+                        FINAL_REPORT_SECTION_HEADER_DEFAULTS.get(section_id, True),
+                    )
+                )
+            )
+        caption_state = state.get("section_caption_enabled", {})
+        # Iterate over items from self._final_report_section_caption_vars to apply the per-item logic.
+        for section_id, caption_var in self._final_report_section_caption_vars.items():
+            caption_var.set(
+                bool(
+                    caption_state.get(
+                        section_id,
+                        FINAL_REPORT_SECTION_CAPTION_DEFAULTS.get(section_id, False),
+                    )
+                )
+            )
+        placement_state = state.get("section_caption_placement", {})
+        # Iterate over items from self._final_report_section_caption_placement_vars to apply the per-item logic.
+        for section_id, placement_var in (
+            self._final_report_section_caption_placement_vars.items()
+        ):
+            placement = placement_state.get(
+                section_id,
+                FINAL_REPORT_SECTION_CAPTION_PLACEMENT_DEFAULTS.get(
+                    section_id, "Same Page"
+                ),
+            )
+            if placement not in FINAL_REPORT_CAPTION_PLACEMENTS:
+                placement = FINAL_REPORT_SECTION_CAPTION_PLACEMENT_DEFAULTS.get(
+                    section_id, "Same Page"
+                )
+            placement_var.set(placement)
         self._refresh_final_report_section_order_listbox()
 
     def _collect_final_report_state_from_ui(self) -> Dict[str, Any]:
-        """Collect final report state from UI.
-        Used to gather final report state from UI into a structured payload."""
+        """Purpose: Collect Final Report state from UI widgets.
+        Why: Build a normalized settings payload for previews and exports.
+        Args:
+            None.
+        Returns:
+            Dict[str, Any]: Final Report settings snapshot derived from UI values.
+        Side Effects:
+            - None; reads UI state only.
+        Exceptions:
+            - Invalid numeric inputs fall back to defaults.
+        """
         # Closure captures _collect_final_report_state_from_ui local context to keep helper logic scoped and invoked directly within _collect_final_report_state_from_ui.
         def _safe_float(var: tk.Variable, fallback: float) -> float:
             """Perform safe float.
@@ -59074,9 +59317,18 @@ class UnifiedApp(tk.Tk):
         layout_mode = self._final_report_layout_mode_var.get()
         if not layout_mode:
             layout_mode = FINAL_REPORT_DEFAULT_STATE["global_layout_mode"]
+        fit_mode = self._final_report_fit_mode_var.get()
+        if fit_mode not in FINAL_REPORT_FIT_MODES:
+            fit_mode = FINAL_REPORT_DEFAULT_STATE["fit_mode"]
         profile_key = settings.get("final_report", {}).get(
             "profile_key", FINAL_REPORT_DEFAULT_STATE["profile_key"]
         )
+        safe_margin = self._final_report_safe_margins_var.get()
+        if safe_margin not in FINAL_REPORT_SAFE_MARGIN_PRESETS:
+            safe_margin = FINAL_REPORT_DEFAULT_STATE["safe_margin_preset"]
+        table_style = self._final_report_table_style_var.get()
+        if table_style not in FINAL_REPORT_TABLE_STYLE_PRESETS:
+            table_style = FINAL_REPORT_DEFAULT_STATE["table_style_preset"]
         return {
             "title": title,
             "combined_plot_title_override": self._final_report_combined_title_var.get().strip(),
@@ -59084,6 +59336,7 @@ class UnifiedApp(tk.Tk):
             "section_order": list(self._final_report_section_order),
             "narrative": self._final_report_narrative_text.get("1.0", "end").strip(),
             "global_layout_mode": layout_mode,
+            "fit_mode": fit_mode,
             "font_scale": _safe_float(
                 self._final_report_font_scale_var,
                 FINAL_REPORT_DEFAULT_STATE["font_scale"],
@@ -59092,10 +59345,35 @@ class UnifiedApp(tk.Tk):
                 self._final_report_margin_in_var,
                 FINAL_REPORT_DEFAULT_STATE["margin_in"],
             ),
+            "safe_margin_preset": safe_margin,
             "show_page_numbers": bool(self._final_report_show_page_numbers_var.get()),
             "show_section_headers": bool(
                 self._final_report_show_section_headers_var.get()
             ),
+            "table_style_preset": table_style,
+            "section_header_enabled": {
+                section_id: bool(var.get())
+                # Iterate to apply the per-item logic.
+                for section_id, var in self._final_report_section_header_vars.items()
+            },
+            "section_caption_enabled": {
+                section_id: bool(var.get())
+                # Iterate to apply the per-item logic.
+                for section_id, var in self._final_report_section_caption_vars.items()
+            },
+            "section_caption_placement": {
+                section_id: (
+                    var.get()
+                    if var.get() in FINAL_REPORT_CAPTION_PLACEMENTS
+                    else FINAL_REPORT_SECTION_CAPTION_PLACEMENT_DEFAULTS.get(
+                        section_id, "Same Page"
+                    )
+                )
+                # Iterate to apply the per-item logic.
+                for section_id, var in (
+                    self._final_report_section_caption_placement_vars.items()
+                )
+            },
             "section_orientation": {
                 section_id: var.get()
                 # Iterate to apply the per-item logic.
@@ -59362,6 +59640,20 @@ class UnifiedApp(tk.Tk):
         orientation_state[section_id] = var.get()
         self._refresh_final_report_preview()
 
+    def _final_report_section_layout_changed(self) -> None:
+        """Purpose: React to per-section layout control changes.
+        Why: Keep the report preview aligned with section header/caption toggles.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            - Schedules a preview refresh.
+        Exceptions:
+            - None; this method is a simple UI callback.
+        """
+        self._schedule_final_report_preview_refresh()
+
     def _refresh_final_report_preview(self) -> None:
         """Refresh final report preview.
         Used to sync final report preview with current settings."""
@@ -59511,14 +59803,25 @@ class UnifiedApp(tk.Tk):
     def _final_report_preview_page_label(
         self, entry: Dict[str, Any], page_number: int
     ) -> str:
-        """Perform final report preview page label.
-        Used to keep the workflow logic localized and testable."""
+        """Purpose: Build a short label for the layout preview thumbnail.
+        Why: Provide a quick page-type summary in the preview strip.
+        Args:
+            entry (Dict[str, Any]): Layout entry describing a page.
+            page_number (int): 1-based page index for display.
+        Returns:
+            str: Label string for the preview thumbnail.
+        Side Effects:
+            - None.
+        Exceptions:
+            - None; unknown page types fall back to title-cased keys.
+        """
         page_type = entry.get("page_type", "text")
         type_map = {
             "title": "Title",
             "figure": "Figure",
             "table": "Table",
             "text": "Text",
+            "caption": "Caption",
         }
         type_label = type_map.get(page_type, page_type.title())
         return f"{page_number}. {type_label}"
@@ -59570,6 +59873,397 @@ class UnifiedApp(tk.Tk):
         if isinstance(state, dict):
             return state
         return FINAL_REPORT_DEFAULT_STATE
+
+    def _final_report_section_header_enabled(
+        self, section_id: Optional[str], state: Dict[str, Any]
+    ) -> bool:
+        """Purpose: Decide whether to draw a section header for a page.
+        Why: Centralize global and per-section header toggles.
+        Args:
+            section_id (Optional[str]): Section identifier for lookup.
+            state (Dict[str, Any]): Final report settings state.
+        Returns:
+            bool: True if a header should be rendered for the section.
+        Side Effects:
+            - None.
+        Exceptions:
+            - None; invalid state falls back to defaults.
+        """
+        if not section_id:
+            return False
+        state = self._final_report_safe_state(state)
+        if not state.get("show_section_headers", True):
+            return False
+        header_state = state.get("section_header_enabled", {})
+        default_value = FINAL_REPORT_SECTION_HEADER_DEFAULTS.get(section_id, True)
+        return bool(header_state.get(section_id, default_value))
+
+    def _final_report_section_caption_enabled(
+        self, section_id: Optional[str], state: Dict[str, Any]
+    ) -> bool:
+        """Purpose: Decide whether a section caption should be used.
+        Why: Apply per-section caption enablement consistently.
+        Args:
+            section_id (Optional[str]): Section identifier for lookup.
+            state (Dict[str, Any]): Final report settings state.
+        Returns:
+            bool: True if the caption should be generated for the section.
+        Side Effects:
+            - None.
+        Exceptions:
+            - None; invalid state falls back to defaults.
+        """
+        if not section_id:
+            return False
+        state = self._final_report_safe_state(state)
+        caption_state = state.get("section_caption_enabled", {})
+        default_value = FINAL_REPORT_SECTION_CAPTION_DEFAULTS.get(section_id, False)
+        return bool(caption_state.get(section_id, default_value))
+
+    def _final_report_section_caption_placement(
+        self, section_id: Optional[str], state: Dict[str, Any]
+    ) -> str:
+        """Purpose: Resolve the caption placement for a section.
+        Why: Keep caption placement logic consistent across preview and export.
+        Args:
+            section_id (Optional[str]): Section identifier for lookup.
+            state (Dict[str, Any]): Final report settings state.
+        Returns:
+            str: Caption placement label ("Same Page" or "Next Page").
+        Side Effects:
+            - None.
+        Exceptions:
+            - None; invalid state falls back to defaults.
+        """
+        if not section_id:
+            return FINAL_REPORT_SECTION_CAPTION_PLACEMENT_DEFAULTS.get(
+                section_id, "Same Page"
+            )
+        state = self._final_report_safe_state(state)
+        placement_state = state.get("section_caption_placement", {})
+        default_value = FINAL_REPORT_SECTION_CAPTION_PLACEMENT_DEFAULTS.get(
+            section_id, "Same Page"
+        )
+        placement = placement_state.get(section_id, default_value)
+        if placement not in FINAL_REPORT_CAPTION_PLACEMENTS:
+            return default_value
+        return placement
+
+    def _final_report_header_band(
+        self,
+        state: Dict[str, Any],
+        margins: Dict[str, float],
+        page_size: Tuple[float, float],
+        *,
+        include_group_label: bool,
+        include_section_header: bool,
+        include_table_caption: bool,
+    ) -> float:
+        """Purpose: Compute the vertical band needed for headers.
+        Why: Reserve space above plots/tables to prevent overlap with header text.
+        Args:
+            state (Dict[str, Any]): Final report settings state.
+            margins (Dict[str, float]): Normalized margin values for the page.
+            page_size (Tuple[float, float]): Page size in inches (width, height).
+            include_group_label (bool): Whether the group label will be drawn.
+            include_section_header (bool): Whether the section header will be drawn.
+            include_table_caption (bool): Whether a table caption is drawn at the top.
+        Returns:
+            float: Header band height in normalized figure coordinates.
+        Side Effects:
+            - None.
+        Exceptions:
+            - None; returns a best-effort computed band height.
+        """
+        state = self._final_report_safe_state(state)
+        page_height = page_size[1]
+        font_scale = state.get("font_scale", 1.0)
+        top_anchor = 1 - margins["top"]
+
+        def _line_height_norm(font_size: float, spacing: float = 1.2) -> float:
+            """Purpose: Convert a font size to normalized line height.
+            Why: Estimate header band height using font size and page height.
+            Args:
+                font_size (float): Font size in points.
+                spacing (float): Line spacing multiplier.
+            Returns:
+                float: Normalized line height in figure coordinates.
+            Side Effects:
+                - None.
+            Exceptions:
+                - None; uses safe defaults for small page heights.
+            """
+            return (font_size * spacing) / 72.0 / max(page_height, 0.1)
+
+        header_band = 0.0
+        if include_group_label:
+            group_font_size = max(10.0, 11.0 * font_scale)
+            group_y = min(0.98, top_anchor + 0.02)
+            group_bottom = group_y - _line_height_norm(group_font_size)
+            header_band = max(header_band, max(0.0, top_anchor - group_bottom))
+        if include_section_header:
+            header_font_size = max(13.0, 14.0 * font_scale)
+            header_y = top_anchor - 0.02
+            header_line_y = header_y - 0.01
+            header_bottom = min(
+                header_line_y, header_y - _line_height_norm(header_font_size)
+            )
+            header_band = max(header_band, top_anchor - header_bottom)
+        if include_table_caption:
+            caption_font_size = max(9.0, 10.0 * font_scale)
+            caption_y = top_anchor + 0.005
+            caption_bottom = caption_y - _line_height_norm(caption_font_size)
+            header_band = max(header_band, max(0.0, top_anchor - caption_bottom))
+        if header_band > 0:
+            header_band += 0.004
+        return header_band
+
+    def _final_report_content_rect(
+        self,
+        state: Dict[str, Any],
+        page_size: Tuple[float, float],
+        *,
+        has_caption: bool,
+        include_group_label: bool,
+        include_section_header: bool,
+        include_table_caption: bool,
+    ) -> Tuple[float, float, float, float]:
+        """Purpose: Compute the content rectangle for report elements.
+        Why: Ensure plots and tables respect margins, headers, captions, and footers.
+        Args:
+            state (Dict[str, Any]): Final report settings state.
+            page_size (Tuple[float, float]): Page size in inches (width, height).
+            has_caption (bool): Whether a bottom caption band is reserved.
+            include_group_label (bool): Whether the group label will be drawn.
+            include_section_header (bool): Whether the section header will be drawn.
+            include_table_caption (bool): Whether a table caption is drawn at the top.
+        Returns:
+            Tuple[float, float, float, float]: (left, bottom, right, top) normalized.
+        Side Effects:
+            - None.
+        Exceptions:
+            - None; returns a best-effort rectangle.
+        """
+        state = self._final_report_safe_state(state)
+        margins = self._final_report_page_margins(state, page_size)
+        caption_space = margins["caption"] if has_caption else 0.0
+        header_band = self._final_report_header_band(
+            state,
+            margins,
+            page_size,
+            include_group_label=include_group_label,
+            include_section_header=include_section_header,
+            include_table_caption=include_table_caption,
+        )
+        left = margins["left"]
+        right = 1 - margins["right"]
+        bottom = margins["bottom"] + margins["footer"] + caption_space
+        top = (1 - margins["top"]) - header_band
+        if top <= bottom + 0.02:
+            top = min(0.98, bottom + 0.05)
+        return (left, bottom, right, top)
+
+    def _final_report_fit_axes_to_rect(
+        self, fig: Figure, rect: Tuple[float, float, float, float]
+    ) -> None:
+        """Purpose: Fit existing axes into a target rectangle.
+        Why: Preserve multi-axis layouts (e.g., combined plots) without tight_layout.
+        Args:
+            fig (Figure): Matplotlib figure containing axes to reposition.
+            rect (Tuple[float, float, float, float]): Target rect in figure coords.
+        Returns:
+            None.
+        Side Effects:
+            - Updates axes positions on the figure.
+        Exceptions:
+            - Best-effort; returns early on invalid axes geometry.
+        """
+        if fig is None:
+            return
+        axes = [ax for ax in fig.axes if isinstance(ax, Axes)]
+        if not axes:
+            return
+        try:
+            union = Bbox.union([ax.get_position() for ax in axes])
+        except Exception:
+            return
+        if union.width <= 0 or union.height <= 0:
+            return
+        target_left, target_bottom, target_right, target_top = rect
+        target_width = max(0.01, target_right - target_left)
+        target_height = max(0.01, target_top - target_bottom)
+        scale_x = target_width / union.width
+        scale_y = target_height / union.height
+        # Rescale each axis into the content rectangle without reflow.
+        for ax in axes:
+            try:
+                pos = ax.get_position()
+                new_left = target_left + (pos.x0 - union.x0) * scale_x
+                new_bottom = target_bottom + (pos.y0 - union.y0) * scale_y
+                new_width = pos.width * scale_x
+                new_height = pos.height * scale_y
+                ax.set_position([new_left, new_bottom, new_width, new_height])
+            except Exception:
+                continue
+
+    def _final_report_table_style_settings(self, state: Dict[str, Any]) -> Dict[str, float]:
+        """Purpose: Resolve table style preset settings.
+        Why: Keep table font sizing and padding consistent per preset.
+        Args:
+            state (Dict[str, Any]): Final report settings state.
+        Returns:
+            Dict[str, float]: Style settings for tables (font size, padding, ratios).
+        Side Effects:
+            - None.
+        Exceptions:
+            - None; invalid presets fall back to defaults.
+        """
+        state = self._final_report_safe_state(state)
+        preset = state.get(
+            "table_style_preset", FINAL_REPORT_DEFAULT_STATE["table_style_preset"]
+        )
+        if preset not in FINAL_REPORT_TABLE_STYLE_PRESETS:
+            preset = FINAL_REPORT_DEFAULT_STATE["table_style_preset"]
+        font_scale = state.get("font_scale", 1.0)
+        preset_scale = {"Compact": 0.92, "Normal": 1.0, "Large": 1.08}.get(preset, 1.0)
+        return {
+            "font_size": max(7.0, 8.5 * font_scale * preset_scale),
+            "min_font_size": max(6.0, 7.0 * font_scale * preset_scale),
+            "cell_pad": {"Compact": 0.02, "Normal": 0.04, "Large": 0.06}.get(
+                preset, 0.04
+            ),
+            "line_spacing": {"Compact": 1.05, "Normal": 1.15, "Large": 1.2}.get(
+                preset, 1.15
+            ),
+            "width_ratio": {"Compact": 0.95, "Normal": 0.92, "Large": 0.9}.get(
+                preset, 0.92
+            ),
+            "height_ratio": {"Compact": 0.92, "Normal": 0.9, "Large": 0.88}.get(
+                preset, 0.9
+            ),
+        }
+
+    def _final_report_build_export_image_page(
+        self,
+        plot_kind: str,
+        plot_id: str,
+        page_size: Tuple[float, float],
+        state: Dict[str, Any],
+        *,
+        include_group_label: bool,
+        include_section_header: bool,
+        has_caption: bool,
+    ) -> Optional[Figure]:
+        """Purpose: Render an export plot into a report page as an image.
+        Why: Preserve export layout for complex plots while reserving report bands.
+        Args:
+            plot_kind (str): Plot kind passed to the export renderer.
+            plot_id (str): Plot identifier for layout/profile application.
+            page_size (Tuple[float, float]): Page size in inches (width, height).
+            state (Dict[str, Any]): Final report settings state.
+            include_group_label (bool): Whether the group label will be drawn.
+            include_section_header (bool): Whether the section header will be drawn.
+            has_caption (bool): Whether a bottom caption band is reserved.
+        Returns:
+            Optional[Figure]: A report figure with the plot image embedded.
+        Side Effects:
+            - Creates and closes an intermediate export figure.
+        Exceptions:
+            - Best-effort; returns None if rendering fails.
+        """
+        export_fig = self._build_export_figure_for_final_report(
+            plot_kind, plot_id, page_size
+        )
+        if export_fig is None:
+            return None
+        try:
+            canvas = FigureCanvasAgg(export_fig)
+            export_fig.set_canvas(canvas)
+            canvas.draw()
+            image = np.asarray(canvas.buffer_rgba())
+        except Exception:
+            try:
+                plt.close(export_fig)
+            except Exception:
+                pass
+            return None
+        try:
+            plt.close(export_fig)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+        report_fig = Figure(figsize=page_size)
+        ax = report_fig.add_subplot(111)
+        ax.axis("off")
+        rect = self._final_report_content_rect(
+            state,
+            page_size,
+            has_caption=has_caption,
+            include_group_label=include_group_label,
+            include_section_header=include_section_header,
+            include_table_caption=False,
+        )
+        left, bottom, right, top = rect
+        content_width = max(0.01, right - left)
+        content_height = max(0.01, top - bottom)
+        img_height = float(image.shape[0]) if image is not None else 1.0
+        img_width = float(image.shape[1]) if image is not None else 1.0
+        img_aspect = img_width / img_height if img_height else 1.0
+        content_aspect = content_width / content_height if content_height else 1.0
+        if img_aspect >= content_aspect:
+            fit_width = content_width
+            fit_height = content_width / img_aspect if img_aspect else content_height
+        else:
+            fit_height = content_height
+            fit_width = content_height * img_aspect
+        fit_left = left + (content_width - fit_width) / 2.0
+        fit_bottom = bottom + (content_height - fit_height) / 2.0
+        ax.set_position((fit_left, fit_bottom, fit_width, fit_height))
+        ax.imshow(image)
+        ax.set_xlim(0, img_width)
+        ax.set_ylim(img_height, 0)
+        report_fig._gl260_report_skip_tight_layout = True
+        return report_fig
+
+    def _final_report_build_caption_page(
+        self, caption_text: str, page_size: Tuple[float, float], state: Dict[str, Any]
+    ) -> Figure:
+        """Purpose: Build a caption-only report page.
+        Why: Support captions placed on the next page without layout overlap.
+        Args:
+            caption_text (str): Caption content to render.
+            page_size (Tuple[float, float]): Page size in inches (width, height).
+            state (Dict[str, Any]): Final report settings state.
+        Returns:
+            Figure: Matplotlib figure containing the caption text.
+        Side Effects:
+            - Creates a new Matplotlib figure.
+        Exceptions:
+            - None; best-effort rendering for provided text.
+        """
+        fig = Figure(figsize=page_size)
+        state = self._final_report_safe_state(state)
+        margins = self._final_report_page_margins(state, page_size)
+        ax = fig.add_subplot(111)
+        ax.axis("off")
+        caption_font_size = max(9.0, 10.0 * state.get("font_scale", 1.0))
+        caption_text = self._final_report_sanitize_text(caption_text or "")
+        start_y = 1 - margins["top"] - 0.02
+        self._final_report_render_justified_text(
+            fig,
+            page_size,
+            caption_text,
+            margins["left"],
+            start_y,
+            1 - margins["left"] - margins["right"],
+            1.15,
+            self._final_report_font_properties(caption_font_size),
+            caption_font_size,
+            hyphenate=True,
+            y_limit=margins["bottom"] + margins["footer"],
+        )
+        return fig
 
     def _final_report_sanitize_text(self, text: str) -> str:
         """Sanitize text.
@@ -59902,8 +60596,20 @@ class UnifiedApp(tk.Tk):
         plot_id: Optional[str],
         page_size: Tuple[float, float],
     ) -> Optional[Figure]:
-        """Build export figure for final report.
-        Used to assemble export figure for final report during UI or plot setup."""
+        """Purpose: Build an export-quality figure for the Final Report.
+        Why: Ensure report pages reuse the export pipeline with consistent styling.
+        Args:
+            plot_kind (str): Plot key passed to the renderer (e.g., fig1/combined).
+            plot_id (Optional[str]): Plot identifier used for layout/profile rules.
+            page_size (Tuple[float, float]): Page size in inches (width, height).
+        Returns:
+            Optional[Figure]: Matplotlib figure ready for report layout or None.
+        Side Effects:
+            - Applies layout profiles and plot element settings to the figure.
+            - Initializes an Agg canvas and forces a draw for layout stability.
+        Exceptions:
+            - Best-effort; returns None if rendering fails.
+        """
         fig = self.render_plot(
             plot_kind or "",
             target="export",
@@ -59913,7 +60619,10 @@ class UnifiedApp(tk.Tk):
         )
         if fig is None:
             return None
-        if plot_kind != "fig_combined" and plot_id:
+        plot_elements_applied = bool(
+            getattr(fig, "_gl260_plot_elements_applied", False)
+        )
+        if plot_id and not plot_elements_applied:
             try:
                 _apply_layout_profile_to_figure(fig, plot_id, "export")
             except Exception:
@@ -59924,6 +60633,7 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+            fig._gl260_plot_elements_applied = True
         try:
             self._apply_gl260_legend_sizing(fig, plot_id=plot_id, plot_key=plot_kind)
         except Exception:
@@ -60299,8 +61009,19 @@ class UnifiedApp(tk.Tk):
     def _final_report_export_page_pdf(
         self, fig: Figure, export_profile: str
     ) -> Optional[Path]:
-        """Export page PDF.
-        Used by final report workflows to export page PDF."""
+        """Purpose: Export a single report page to a temporary PDF.
+        Why: Provide per-page artifacts for stitched Final Report output.
+        Args:
+            fig (Figure): Matplotlib figure to export.
+            export_profile (str): Export profile key (currently informational).
+        Returns:
+            Optional[Path]: Path to the exported PDF page, or None on failure.
+        Side Effects:
+            - Writes a temporary PDF file to disk.
+            - Closes the Matplotlib figure after export.
+        Exceptions:
+            - Best-effort; returns None if export fails.
+        """
         if fig is None:
             return None
         tmp_fd = None
@@ -60325,7 +61046,7 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
         try:
-            fig.savefig(tmp_path, format="pdf", dpi=self._get_export_dpi(), bbox_inches="tight")
+            fig.savefig(tmp_path, format="pdf", dpi=self._get_export_dpi())
         except Exception:
             try:
                 os.remove(tmp_path)
@@ -60403,36 +61124,54 @@ class UnifiedApp(tk.Tk):
         columns: List[str],
         page_size: Tuple[float, float],
         state: Dict[str, Any],
+        *,
+        include_group_label: bool,
+        include_section_header: bool,
+        include_table_caption: bool,
     ) -> Optional[Figure]:
-        """Build table figure.
-        Used by final report workflows to build table figure."""
+        """Purpose: Build a centered, wrapped table figure for the report.
+        Why: Ensure tables are readable, centered, and never clipped in export.
+        Args:
+            rows (List[Dict[str, Any]]): Table row dictionaries.
+            columns (List[str]): Column keys to render in order.
+            page_size (Tuple[float, float]): Page size in inches (width, height).
+            state (Dict[str, Any]): Final report settings state.
+            include_group_label (bool): Whether the group label will be drawn.
+            include_section_header (bool): Whether the section header will be drawn.
+            include_table_caption (bool): Whether a table caption is drawn at the top.
+        Returns:
+            Optional[Figure]: Matplotlib figure with a table, or None if empty.
+        Side Effects:
+            - Creates a new Matplotlib figure and axes.
+            - Applies font settings and sizing to table cells.
+        Exceptions:
+            - Best-effort; returns None if rendering fails.
+        """
         if not rows or not columns:
             return None
         fig = Figure(figsize=page_size)
         ax = fig.add_subplot(111)
         ax.axis("off")
         state = self._final_report_safe_state(state)
-        margins = self._final_report_page_margins(state, page_size)
-        content_left = margins["left"]
-        content_right = 1 - margins["right"]
-        content_bottom = margins["bottom"] + margins["footer"]
-        caption_padding = margins["caption"] + 0.02
-        content_top = 1 - margins["top"] - caption_padding
-        if content_top <= content_bottom + 0.01:
-            content_top = content_bottom + 0.1
+        rect = self._final_report_content_rect(
+            state,
+            page_size,
+            has_caption=False,
+            include_group_label=include_group_label,
+            include_section_header=include_section_header,
+            include_table_caption=include_table_caption,
+        )
+        content_left, content_bottom, content_right, content_top = rect
         ax.set_position(
             (
                 content_left,
                 content_bottom,
-                content_right - content_left,
-                max(0.1, content_top - content_bottom),
+                max(0.05, content_right - content_left),
+                max(0.05, content_top - content_bottom),
             )
         )
         column_keys = list(columns)
-        column_labels = [
-            self._final_report_sanitize_text(str(col)) for col in column_keys
-        ]
-        table_data = [
+        table_data_raw = [
             [
                 self._final_report_sanitize_text(str(row.get(col, "")))
                 if row.get(col, "") is not None
@@ -60443,60 +61182,179 @@ class UnifiedApp(tk.Tk):
             # Iterate to apply the per-item logic.
             for row in rows
         ]
+        style = self._final_report_table_style_settings(state)
+        table_font_size = style["font_size"]
+        min_font_size = style["min_font_size"]
+        line_spacing = style["line_spacing"]
+        cell_pad = style["cell_pad"]
+        table_width_ratio = min(0.95, max(0.9, style["width_ratio"]))
+        table_height_ratio = min(0.95, max(0.85, style["height_ratio"]))
+        table_bbox = (
+            (1.0 - table_width_ratio) / 2.0,
+            (1.0 - table_height_ratio) / 2.0,
+            table_width_ratio,
+            table_height_ratio,
+        )
+
+        content_width_in = page_size[0] * max(0.1, content_right - content_left)
+        content_height_in = page_size[1] * max(0.1, content_top - content_bottom)
+        column_lengths = []
+        # Iterate over column_keys to apply the per-item logic.
+        for col in column_keys:
+            lengths = [len(str(col))]
+            # Iterate over rows to apply the per-item logic.
+            for row in rows:
+                value = row.get(col, "")
+                if value is None:
+                    value = ""
+                lengths.append(len(str(value)))
+            column_lengths.append(max(4, min(max(lengths), 48)))
+        total_length = sum(column_lengths) or len(column_lengths)
+        column_fracs = [length / total_length for length in column_lengths]
+
+        def _wrap_cell(text: str, max_chars: int) -> Tuple[str, int]:
+            """Purpose: Wrap a cell value to a maximum character width.
+            Why: Pre-wrap table text to avoid clipping and improve readability.
+            Args:
+                text (str): Cell text value to wrap.
+                max_chars (int): Maximum characters per line for the cell.
+            Returns:
+                Tuple[str, int]: Wrapped text and resulting line count.
+            Side Effects:
+                - None.
+            Exceptions:
+                - None; empty text returns a single-line placeholder.
+            """
+            if not text:
+                return "", 1
+            lines = textwrap.wrap(
+                text,
+                width=max_chars,
+                break_long_words=True,
+                break_on_hyphens=True,
+            )
+            if not lines:
+                return text, 1
+            return "\n".join(lines), len(lines)
+
+        def _wrap_table(font_size: float) -> Tuple[List[str], List[List[str]], List[int]]:
+            """Purpose: Wrap header labels and row values for a font size.
+            Why: Ensure wrapping matches the current font size and column widths.
+            Args:
+                font_size (float): Font size in points for wrapping estimates.
+            Returns:
+                Tuple[List[str], List[List[str]], List[int]]: Wrapped labels, rows,
+                and per-row line counts (including header).
+            Side Effects:
+                - None.
+            Exceptions:
+                - None; fallback wrapping returns original text.
+            """
+            approx_char_width = max(4.5, font_size * 0.55)
+            table_width_in = content_width_in * table_width_ratio
+            header_line_counts = []
+            wrapped_labels = []
+            for label, frac in zip(column_keys, column_fracs):
+                max_chars = max(
+                    6,
+                    int((table_width_in * frac * 72.0) / approx_char_width),
+                )
+                wrapped_label, line_count = _wrap_cell(str(label), max_chars)
+                wrapped_labels.append(self._final_report_sanitize_text(wrapped_label))
+                header_line_counts.append(line_count)
+            row_line_counts = []
+            wrapped_rows = []
+            # Iterate over table_data_raw to apply the per-item logic.
+            for row in table_data_raw:
+                wrapped_row = []
+                line_counts = []
+                # Iterate over row values to apply the per-item logic.
+                for value, frac in zip(row, column_fracs):
+                    max_chars = max(
+                        6,
+                        int((table_width_in * frac * 72.0) / approx_char_width),
+                    )
+                    wrapped_value, line_count = _wrap_cell(str(value), max_chars)
+                    wrapped_row.append(self._final_report_sanitize_text(wrapped_value))
+                    line_counts.append(line_count)
+                wrapped_rows.append(wrapped_row)
+                row_line_counts.append(max(line_counts) if line_counts else 1)
+            header_lines = max(header_line_counts) if header_line_counts else 1
+            line_counts = [header_lines] + row_line_counts
+            return wrapped_labels, wrapped_rows, line_counts
+
+        for _ in range(4):
+            wrapped_labels, wrapped_rows, line_counts = _wrap_table(table_font_size)
+            line_height_in = (table_font_size / 72.0) * line_spacing
+            pad_in = (table_font_size / 72.0) * (cell_pad * 2.0)
+            required_height_in = sum(
+                line_height_in * max(1, count) + pad_in for count in line_counts
+            )
+            available_height_in = content_height_in * table_height_ratio
+            if required_height_in <= available_height_in:
+                break
+            scale = available_height_in / required_height_in if required_height_in else 1.0
+            next_size = max(min_font_size, table_font_size * scale)
+            if abs(next_size - table_font_size) < 0.1:
+                table_font_size = next_size
+                break
+            table_font_size = next_size
+
+        wrapped_labels, wrapped_rows, line_counts = _wrap_table(table_font_size)
         tbl = ax.table(
-            cellText=table_data,
-            colLabels=column_labels,
+            cellText=wrapped_rows,
+            colLabels=wrapped_labels,
             loc="center",
             cellLoc="center",
+            bbox=table_bbox,
         )
-        table_font_size = max(7.5, 8.5 * state.get("font_scale", 1.0))
-        min_font_size = max(6.0, 7.0 * state.get("font_scale", 1.0))
         tbl.auto_set_font_size(False)
         tbl.set_fontsize(table_font_size)
         table_font_family = self._final_report_font_family()
-        if table_font_family:
-            # Iterate over values from tbl.get_celld() to apply the per-item logic.
-            for cell in tbl.get_celld().values():
-                try:
+        total_units = sum(line_counts) if line_counts else 1.0
+        header_units = line_counts[0] if line_counts else 1.0
+        row_units = line_counts[1:] if len(line_counts) > 1 else []
+        row_heights = [header_units / total_units] + [
+            units / total_units for units in row_units
+        ]
+        # Iterate over table cells to apply formatting and sizing.
+        for (row_idx, col_idx), cell in tbl.get_celld().items():
+            try:
+                cell.get_text().set_wrap(True)
+                if table_font_family:
                     cell.get_text().set_fontfamily(table_font_family)
-                except Exception:
-                    continue
+                cell.PAD = cell_pad
+                if col_idx < len(column_fracs):
+                    cell.set_width(column_fracs[col_idx] * table_bbox[2])
+                if row_idx < len(row_heights):
+                    cell.set_height(row_heights[row_idx] * table_bbox[3])
+            except Exception:
+                continue
         canvas = FigureCanvasAgg(fig)
         fig.set_canvas(canvas)
-
-        def _fit_table_to_axes() -> None:
-            """Fit table to axes.
-            Used to size table to axes within layout constraints."""
-            font_size = table_font_size
-            # Iterate over the configured range to apply the per-item logic.
-            for _ in range(12):
+        # Best-effort pass to keep the table within the axes bounds.
+        for _ in range(3):
+            try:
                 canvas.draw()
                 renderer = canvas.get_renderer()
                 bbox = tbl.get_window_extent(renderer=renderer)
                 ax_bbox = ax.get_window_extent(renderer=renderer)
-                if bbox.width <= ax_bbox.width and bbox.height <= ax_bbox.height:
-                    return
-                scale_w = ax_bbox.width / bbox.width if bbox.width else 1.0
-                scale_h = ax_bbox.height / bbox.height if bbox.height else 1.0
-                scale = min(scale_w, scale_h, 1.0) * 0.98
-                if scale >= 0.99:
-                    return
-                font_size = max(min_font_size, font_size * scale)
-                tbl.set_fontsize(font_size)
+            except Exception:
+                break
+            if bbox.width <= ax_bbox.width and bbox.height <= ax_bbox.height:
+                break
+            scale_w = ax_bbox.width / bbox.width if bbox.width else 1.0
+            scale_h = ax_bbox.height / bbox.height if bbox.height else 1.0
+            scale = min(scale_w, scale_h, 1.0) * 0.98
+            if scale >= 0.99:
+                break
+            table_font_size = max(min_font_size, table_font_size * scale)
+            tbl.set_fontsize(table_font_size)
+            try:
                 tbl.scale(scale, scale)
-            canvas.draw()
-            renderer = canvas.get_renderer()
-            bbox = tbl.get_window_extent(renderer=renderer)
-            ax_bbox = ax.get_window_extent(renderer=renderer)
-            if bbox.width > ax_bbox.width or bbox.height > ax_bbox.height:
-                scale_w = ax_bbox.width / bbox.width if bbox.width else 1.0
-                scale_h = ax_bbox.height / bbox.height if bbox.height else 1.0
-                scale = min(scale_w, scale_h, 1.0) * 0.98
-                if scale < 1.0:
-                    tbl.scale(scale, scale)
-                    canvas.draw()
-
-        _fit_table_to_axes()
+            except Exception:
+                break
+        fig._gl260_report_skip_tight_layout = True
         return fig
 
     def _final_report_build_text_page(
@@ -60577,13 +61435,28 @@ class UnifiedApp(tk.Tk):
     def _final_report_page_margins(
         self, state: Dict[str, Any], page_size: Tuple[float, float]
     ) -> Dict[str, float]:
-        """Perform final report page margins.
-        Used to keep the workflow logic localized and testable."""
+        """Purpose: Compute normalized page margins for the Final Report.
+        Why: Keep layout margins consistent across report pages and presets.
+        Args:
+            state (Dict[str, Any]): Final report settings state.
+            page_size (Tuple[float, float]): Page size in inches (width, height).
+        Returns:
+            Dict[str, float]: Normalized margins and reserved caption/footer bands.
+        Side Effects:
+            - None.
+        Exceptions:
+            - None; invalid inputs fall back to defaults.
+        """
         state = self._final_report_safe_state(state)
         page_width, page_height = page_size
         requested_margin = state.get(
             "margin_in", FINAL_REPORT_DEFAULT_STATE["margin_in"]
         )
+        safe_preset = state.get(
+            "safe_margin_preset", FINAL_REPORT_DEFAULT_STATE["safe_margin_preset"]
+        )
+        if safe_preset == "Extra-Safe":
+            requested_margin *= 1.2
         requested_margin = float(
             requested_margin
             if requested_margin > 0
@@ -60778,8 +61651,17 @@ class UnifiedApp(tk.Tk):
     def _final_report_compute_layout_sequence(
         self, state: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
-        """Compute layout sequence.
-        Used by final report workflows to compute layout sequence."""
+        """Purpose: Compute the ordered layout sequence for report pages.
+        Why: Build a deterministic page list, including optional caption pages.
+        Args:
+            state (Dict[str, Any]): Final report settings state.
+        Returns:
+            List[Dict[str, Any]]: Ordered layout entries for report assembly.
+        Side Effects:
+            - None.
+        Exceptions:
+            - None; invalid metadata entries are skipped.
+        """
         state = self._final_report_safe_state(state)
         ordered = self._final_report_ordered_sections(state)
         sequence: List[Dict[str, Any]] = []
@@ -60799,18 +61681,37 @@ class UnifiedApp(tk.Tk):
                 if major_section
                 else "portrait"
             )
+            major_metadata = FINAL_REPORT_SECTION_METADATA.get(major_section)
             sequence.append(
                 {
                     "page_type": "title",
                     "section_id": major_section,
                     "orientation": orientation,
-                    "metadata": FINAL_REPORT_SECTION_METADATA.get(major_section),
-                    "group": FINAL_REPORT_SECTION_METADATA.get(major_section, {}).get(
-                        "group", "Final Report"
-                    ),
+                    "metadata": major_metadata,
+                    "group": (major_metadata or {}).get("group", "Final Report"),
                     "is_title": True,
                 }
             )
+            if (
+                major_section
+                and major_metadata
+                and major_metadata.get("type") in ("figure", "table")
+                and self._final_report_section_caption_enabled(major_section, state)
+                and self._final_report_section_caption_placement(major_section, state)
+                == "Next Page"
+            ):
+                sequence.append(
+                    {
+                        "page_type": "caption",
+                        "section_id": major_section,
+                        "caption_kind": major_metadata.get("type"),
+                        "orientation": orientation,
+                        "metadata": major_metadata,
+                        "group": major_metadata.get("group"),
+                        "is_title": False,
+                        "is_caption_page": True,
+                    }
+                )
             if major_section:
                 ordered = [sec for sec in ordered if sec != major_section]
         # Iterate over ordered to apply the per-item logic.
@@ -60819,9 +61720,10 @@ class UnifiedApp(tk.Tk):
             if not metadata:
                 continue
             orientation = self._final_report_resolved_orientation(section_id, state)
+            page_type = metadata.get("type", "text")
             sequence.append(
                 {
-                    "page_type": metadata.get("type", "text"),
+                    "page_type": page_type,
                     "section_id": section_id,
                     "orientation": orientation,
                     "metadata": metadata,
@@ -60829,6 +61731,24 @@ class UnifiedApp(tk.Tk):
                     "is_title": False,
                 }
             )
+            if (
+                page_type in ("figure", "table")
+                and self._final_report_section_caption_enabled(section_id, state)
+                and self._final_report_section_caption_placement(section_id, state)
+                == "Next Page"
+            ):
+                sequence.append(
+                    {
+                        "page_type": "caption",
+                        "section_id": section_id,
+                        "caption_kind": page_type,
+                        "orientation": orientation,
+                        "metadata": metadata,
+                        "group": metadata.get("group"),
+                        "is_title": False,
+                        "is_caption_page": True,
+                    }
+                )
         return sequence
 
     def _final_report_create_section_figure(
@@ -60986,18 +61906,47 @@ class UnifiedApp(tk.Tk):
         state: Dict[str, Any],
         page_size: Tuple[float, float],
         has_caption: bool,
+        *,
+        section_id: Optional[str],
+        page_type: str,
+        include_group_label: bool,
+        include_section_header: bool,
+        include_table_caption: bool,
     ) -> Dict[str, float]:
-        """Perform final report finalize figure layout.
-        Used to keep the workflow logic localized and testable."""
+        """Purpose: Finalize figure layout within report margins and bands.
+        Why: Prevent overlaps between plots/tables and headers/captions/footers.
+        Args:
+            fig (Figure): Matplotlib figure to adjust.
+            state (Dict[str, Any]): Final report settings state.
+            page_size (Tuple[float, float]): Page size in inches (width, height).
+            has_caption (bool): Whether a bottom caption band is reserved.
+            section_id (Optional[str]): Section identifier for layout decisions.
+            page_type (str): Page type label (figure/table/text/title/caption).
+            include_group_label (bool): Whether a group label will be drawn.
+            include_section_header (bool): Whether a section header will be drawn.
+            include_table_caption (bool): Whether a table caption is drawn at the top.
+        Returns:
+            Dict[str, float]: Normalized margins used for layout.
+        Side Effects:
+            - Updates axes positions and figure layout parameters.
+        Exceptions:
+            - Best-effort; falls back to subplots_adjust on layout errors.
+        """
         state = self._final_report_safe_state(state)
         margins = self._final_report_page_margins(state, page_size)
-        caption_space = margins["caption"] if has_caption else 0.0
-        rect = (
-            margins["left"],
-            margins["bottom"] + margins["footer"] + caption_space,
-            1 - margins["right"],
-            1 - margins["top"],
+        rect = self._final_report_content_rect(
+            state,
+            page_size,
+            has_caption=has_caption,
+            include_group_label=include_group_label,
+            include_section_header=include_section_header,
+            include_table_caption=include_table_caption,
         )
+        if getattr(fig, "_gl260_report_skip_tight_layout", False):
+            return margins
+        if section_id == FINAL_REPORT_COMBINED_SECTION_ID and page_type != "caption":
+            self._final_report_fit_axes_to_rect(fig, rect)
+            return margins
         try:
             fig.tight_layout(rect=rect)
         except Exception:
@@ -61141,13 +62090,29 @@ class UnifiedApp(tk.Tk):
         self,
         fig: Figure,
         metadata: Optional[Dict[str, Any]],
+        section_id: Optional[str],
         page_size: Tuple[float, float],
         state: Dict[str, Any],
     ) -> None:
-        """Perform final report draw section header.
-        Used to keep the workflow logic localized and testable."""
+        """Purpose: Draw the section header label on the report page.
+        Why: Provide clear section labeling without overlapping plot content.
+        Args:
+            fig (Figure): Matplotlib figure to draw on.
+            metadata (Optional[Dict[str, Any]]): Section metadata (label, group).
+            section_id (Optional[str]): Section identifier for toggle lookup.
+            page_size (Tuple[float, float]): Page size in inches (width, height).
+            state (Dict[str, Any]): Final report settings state.
+        Returns:
+            None.
+        Side Effects:
+            - Adds header text and separator line to the figure.
+        Exceptions:
+            - None; silently returns on invalid metadata or disabled header.
+        """
         state = self._final_report_safe_state(state)
-        if not metadata or not state.get("show_section_headers"):
+        if not metadata:
+            return
+        if not self._final_report_section_header_enabled(section_id, state):
             return
         margins = self._final_report_page_margins(state, page_size)
         font_size = max(13.0, 14.0 * state.get("font_scale", 1.0))
@@ -61417,8 +62382,20 @@ class UnifiedApp(tk.Tk):
         counters: Dict[str, int],
         last_group: Optional[str],
     ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-        """Build page entry.
-        Used by final report workflows to build page entry."""
+        """Purpose: Build a single Final Report page entry.
+        Why: Assemble figures/text, apply layout rules, and track numbering.
+        Args:
+            entry (Dict[str, Any]): Layout entry describing the page to build.
+            state (Dict[str, Any]): Final report settings state.
+            counters (Dict[str, int]): Running counters (page/figure/table + maps).
+            last_group (Optional[str]): Last rendered group label, if any.
+        Returns:
+            Tuple[Optional[Dict[str, Any]], Optional[str]]: Page info and group label.
+        Side Effects:
+            - Increments counters and may update combined failure state.
+        Exceptions:
+            - Best-effort; returns (None, last_group) on build failures.
+        """
         page_type = entry.get("page_type", "text")
         orientation = entry.get("orientation", "portrait")
         page_size = self._final_report_page_dimensions(orientation)
@@ -61431,21 +62408,119 @@ class UnifiedApp(tk.Tk):
         table_caption_text = ""
         table_rendered = False
         used_figure = False
+        caption_kind = entry.get("caption_kind") or metadata.get("type")
+        caption_enabled = False
+        caption_placement = "Same Page"
+        caption_on_page = False
+        include_table_caption = False
+        caption_display_text = ""
+        combined_failed = False
+        combined_failure_reason = ""
         if section_id in FINAL_REPORT_EXCLUDED_SECTIONS:
             return None, last_group
-        if page_type == "title":
+        state = self._final_report_safe_state(state)
+        fit_mode = state.get("fit_mode", FINAL_REPORT_DEFAULT_STATE["fit_mode"])
+        draw_group_label = bool(group_label and group_label != last_group)
+        show_section_header = self._final_report_section_header_enabled(
+            section_id, state
+        ) and page_type != "title"
+        if section_id and caption_kind in ("figure", "table"):
+            caption_enabled = self._final_report_section_caption_enabled(
+                section_id, state
+            )
+            caption_placement = self._final_report_section_caption_placement(
+                section_id, state
+            )
+            caption_on_page = caption_enabled and caption_placement == "Same Page"
+            has_caption = caption_on_page and caption_kind == "figure"
+            include_table_caption = caption_on_page and caption_kind == "table"
+            if caption_enabled and caption_kind == "figure":
+                figure_caption_text = self._final_report_figure_caption(section_id)
+            elif caption_enabled and caption_kind == "table":
+                table_caption_text = self._final_report_table_caption(section_id)
+        if page_type == "caption":
+            caption_text = ""
+            if caption_kind == "figure":
+                figure_index = counters.get("section_figures", {}).get(section_id)
+                if figure_index is None:
+                    return None, last_group
+                figure_caption_text = (
+                    figure_caption_text
+                    or self._final_report_figure_caption(section_id)
+                )
+                caption_text = f"Figure {figure_index}. {figure_caption_text}"
+            elif caption_kind == "table":
+                table_index = counters.get("section_tables", {}).get(section_id)
+                if table_index is None:
+                    return None, last_group
+                table_caption_text = (
+                    table_caption_text
+                    or self._final_report_table_caption(section_id)
+                )
+                caption_text = f"Table {table_index}. {table_caption_text}"
+            else:
+                caption_text = metadata.get("label", "") or ""
+            caption_display_text = caption_text
+            fig = self._final_report_build_caption_page(caption_text, page_size, state)
+            if fig is None:
+                return None, last_group
+        elif page_type == "title":
             fig, used_figure = self._final_report_build_title_page(
                 page_size, state, section_id
             )
-            has_caption = bool(used_figure and section_id)
-            if has_caption and section_id:
-                figure_caption_text = self._final_report_figure_caption(section_id)
-        elif page_type == "figure":
-            fig = self._final_report_create_section_figure(section_id, page_size)
-            if fig is not None:
-                has_caption = True
-                figure_caption_text = self._final_report_figure_caption(section_id)
+            if used_figure and section_id and caption_kind == "figure":
+                caption_enabled = self._final_report_section_caption_enabled(
+                    section_id, state
+                )
+                caption_placement = self._final_report_section_caption_placement(
+                    section_id, state
+                )
+                caption_on_page = caption_enabled and caption_placement == "Same Page"
+                has_caption = caption_on_page
+                if caption_enabled and not figure_caption_text:
+                    figure_caption_text = self._final_report_figure_caption(section_id)
             else:
+                caption_enabled = False
+                caption_on_page = False
+                has_caption = False
+                if section_id == FINAL_REPORT_COMBINED_SECTION_ID and not used_figure:
+                    combined_failed = True
+                    combined_failure_reason = (
+                        self._final_report_combined_failure_reason
+                        or "Combined plot could not be generated for this run."
+                    )
+        elif page_type == "figure":
+            if (
+                section_id == FINAL_REPORT_COMBINED_SECTION_ID
+                and fit_mode == "Preserve Export Layout"
+            ):
+                fig = self._final_report_build_export_image_page(
+                    "fig_combined",
+                    "fig_combined_triple_axis",
+                    page_size,
+                    state,
+                    include_group_label=draw_group_label,
+                    include_section_header=show_section_header,
+                    has_caption=has_caption,
+                )
+                if fig is None:
+                    combined_failed = True
+                    combined_failure_reason = (
+                        self._final_report_combined_failure_reason
+                        or "Combined plot could not be generated for this run."
+                    )
+            if fig is None:
+                fig = self._final_report_create_section_figure(section_id, page_size)
+                if section_id == FINAL_REPORT_COMBINED_SECTION_ID and fig is None:
+                    combined_failed = True
+                    combined_failure_reason = (
+                        self._final_report_combined_failure_reason
+                        or "Combined plot could not be generated for this run."
+                    )
+            if fig is not None and section_id == FINAL_REPORT_COMBINED_SECTION_ID:
+                combined_failed = False
+                combined_failure_reason = ""
+            if fig is None:
                 page_type = "text"
                 fig = self._final_report_build_text_page(
                     metadata.get("label", section_id) or "",
@@ -61453,6 +62528,9 @@ class UnifiedApp(tk.Tk):
                     page_size,
                     state,
                 )
+                caption_enabled = False
+                caption_on_page = False
+                has_caption = False
         elif page_type == "table":
             rows, columns = [], []
             if section_id == "cycle_stats_table":
@@ -61461,20 +62539,33 @@ class UnifiedApp(tk.Tk):
                 rows, columns = self._final_report_get_cycle_timeline_rows()
             elif section_id == "key_metrics":
                 rows, columns = self._final_report_get_key_metrics_rows()
-            table_caption_text = self._final_report_table_caption(section_id)
             fig = self._final_report_build_table_figure(
-                rows, columns, page_size, state
+                rows,
+                columns,
+                page_size,
+                state,
+                include_group_label=draw_group_label,
+                include_section_header=show_section_header,
+                include_table_caption=include_table_caption,
             )
             if fig is not None:
                 table_rendered = True
             else:
                 page_type = "text"
+                fallback_title = (
+                    table_caption_text
+                    or metadata.get("label", section_id)
+                    or "Table"
+                )
                 fig = self._final_report_build_text_page(
-                    table_caption_text,
+                    fallback_title,
                     "Table data is not available for this section.",
                     page_size,
                     state,
                 )
+                caption_enabled = False
+                caption_on_page = False
+                include_table_caption = False
                 table_rendered = False
         else:
             body = self._final_report_section_body_text(section_id)
@@ -61489,19 +62580,40 @@ class UnifiedApp(tk.Tk):
         counters["page_number"] += 1
         figure_index = None
         table_index = None
-        if has_caption:
+        if (
+            caption_enabled
+            and caption_kind == "figure"
+            and page_type in ("figure", "title")
+            and (page_type != "title" or used_figure)
+        ):
             counters["figure_number"] += 1
             figure_index = counters["figure_number"]
-        elif page_type == "table" and table_rendered:
+            if section_id:
+                counters.setdefault("section_figures", {})[section_id] = figure_index
+        elif caption_enabled and caption_kind == "table" and table_rendered:
             counters["table_number"] += 1
             table_index = counters["table_number"]
-        self._final_report_finalize_figure_layout(fig, state, page_size, has_caption)
-        if group_label and group_label != last_group:
+            if section_id:
+                counters.setdefault("section_tables", {})[section_id] = table_index
+        self._final_report_finalize_figure_layout(
+            fig,
+            state,
+            page_size,
+            has_caption,
+            section_id=section_id,
+            page_type=page_type,
+            include_group_label=draw_group_label,
+            include_section_header=show_section_header,
+            include_table_caption=include_table_caption,
+        )
+        if draw_group_label:
             self._final_report_draw_group_label(fig, group_label, page_size, state)
             last_group = group_label
-        if page_type != "title":
-            self._final_report_draw_section_header(fig, metadata, page_size, state)
-        if has_caption and figure_index is not None:
+        if show_section_header:
+            self._final_report_draw_section_header(
+                fig, metadata, section_id, page_size, state
+            )
+        if has_caption and figure_index is not None and caption_on_page:
             self._final_report_draw_figure_caption(
                 fig,
                 figure_caption_text,
@@ -61509,7 +62621,7 @@ class UnifiedApp(tk.Tk):
                 page_size,
                 state,
             )
-        elif page_type == "table" and table_rendered and table_index is not None:
+        elif include_table_caption and table_rendered and table_index is not None:
             self._final_report_draw_table_caption(
                 fig,
                 table_index,
@@ -61521,17 +62633,14 @@ class UnifiedApp(tk.Tk):
             self._final_report_draw_page_footer(
                 fig, counters["page_number"], page_size, state
             )
-        if figure_index is not None:
+        if page_type == "caption":
+            display_caption = caption_display_text
+        elif has_caption and figure_index is not None and caption_on_page:
             display_caption = f"Figure {figure_index}. {figure_caption_text}"
-        elif table_index is not None:
+        elif include_table_caption and table_index is not None:
             display_caption = f"Table {table_index}. {table_caption_text}"
         else:
-            display_caption = (
-                figure_caption_text
-                or (table_caption_text if table_rendered else "")
-                or metadata.get("label", "")
-                or ""
-            )
+            display_caption = metadata.get("label", "") or section_id or ""
         return (
             {
                 "figure": fig,
@@ -61549,6 +62658,12 @@ class UnifiedApp(tk.Tk):
                 "has_caption": has_caption,
                 "table_rendered": table_rendered,
                 "used_figure": used_figure,
+                "caption_enabled": caption_enabled,
+                "caption_placement": caption_placement,
+                "caption_on_page": caption_on_page,
+                "is_caption_page": bool(entry.get("is_caption_page")),
+                "combined_failed": combined_failed,
+                "combined_failure_reason": combined_failure_reason,
             },
             last_group,
         )
@@ -61556,14 +62671,29 @@ class UnifiedApp(tk.Tk):
     def _final_report_build_page_figures(
         self, state: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
-        """Build page figures.
-        Used by final report workflows to build page figures."""
+        """Purpose: Build Matplotlib figures for each report page.
+        Why: Provide page figures for preview and export workflows.
+        Args:
+            state (Dict[str, Any]): Final report settings state.
+        Returns:
+            List[Dict[str, Any]]: Page info entries containing figures and metadata.
+        Side Effects:
+            - Creates Matplotlib figures and updates numbering counters.
+        Exceptions:
+            - None; invalid pages are skipped.
+        """
         state = self._final_report_safe_state(state)
         sequence = self._final_report_compute_layout_sequence(state)
         results: List[Dict[str, Any]] = []
         if not sequence:
             return results
-        counters = {"page_number": 0, "figure_number": 0, "table_number": 0}
+        counters = {
+            "page_number": 0,
+            "figure_number": 0,
+            "table_number": 0,
+            "section_figures": {},
+            "section_tables": {},
+        }
         last_group: Optional[str] = None
         # Iterate over sequence to apply the per-item logic.
         for entry in sequence:
@@ -61717,8 +62847,18 @@ class UnifiedApp(tk.Tk):
         return True, ""
 
     def _generate_final_report_pdf(self) -> None:
-        """Generate final report PDF.
-        Used to produce final report PDF outputs for analysis or export."""
+        """Purpose: Generate the Final Report PDF export.
+        Why: Provide a single stitched PDF matching the configured layout rules.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            - Opens file dialogs and writes PDF files to disk.
+            - Updates settings and uses temporary PDF artifacts.
+        Exceptions:
+            - Errors are surfaced via message boxes; failures abort export.
+        """
         state = self._collect_final_report_state_from_ui()
         sections = state.get("selected_sections") or []
         if not sections:
@@ -61767,7 +62907,13 @@ class UnifiedApp(tk.Tk):
             sequence = self._final_report_compute_layout_sequence(state)
             if not sequence:
                 raise RuntimeError("Final report layout could not be assembled.")
-            counters = {"page_number": 0, "figure_number": 0, "table_number": 0}
+            counters = {
+                "page_number": 0,
+                "figure_number": 0,
+                "table_number": 0,
+                "section_figures": {},
+                "section_tables": {},
+            }
             last_group: Optional[str] = None
             # Iterate over sequence to apply the per-item logic.
             for entry in sequence:
@@ -61775,56 +62921,23 @@ class UnifiedApp(tk.Tk):
                 page_type = entry.get("page_type", "text")
                 if section_id in FINAL_REPORT_EXCLUDED_SECTIONS:
                     continue
-                if (
-                    section_id == FINAL_REPORT_COMBINED_SECTION_ID
-                    and page_type != "title"
-                ):
-                    counters["page_number"] += 1
-                    combined_path = self._export_plot_artifact(
-                        "fig_combined_triple_axis",
-                        export_profile,
-                        {"state": state, "fig_size": (11.0, 8.5)},
-                    )
-                    if combined_path is None:
-                        failure_reason = (
-                            self._final_report_combined_failure_reason
-                            or "Combined plot could not be generated for this run."
-                        )
-                        if not self._final_report_confirm_degraded_combined(
-                            failure_reason
-                        ):
-                            return
-                        continue
-                    report_paths.append(combined_path)
-                    continue
                 page_info, last_group = self._final_report_build_page_entry(
                     entry, state, counters, last_group
                 )
                 if page_info is None:
                     continue
-                resolved_page_type = page_info.get("page_type", page_type)
-                if (
-                    section_id == FINAL_REPORT_COMBINED_SECTION_ID
-                    and resolved_page_type == "title"
-                    and not page_info.get("used_figure")
-                ):
+                if page_info.get("combined_failed"):
                     failure_reason = (
-                        self._final_report_combined_failure_reason
+                        page_info.get("combined_failure_reason")
                         or "Combined plot could not be generated for this run."
                     )
                     if not self._final_report_confirm_degraded_combined(
                         failure_reason
                     ):
                         return
+                    continue
                 fig = page_info["figure"]
-                if resolved_page_type == "figure":
-                    page_path = self._export_plot_artifact(
-                        "final_report_page",
-                        export_profile,
-                        {"figure": fig},
-                    )
-                else:
-                    page_path = self._final_report_export_page_pdf(fig, export_profile)
+                page_path = self._final_report_export_page_pdf(fig, export_profile)
                 if page_path is None:
                     raise RuntimeError("Failed to export a report page.")
                 report_paths.append(page_path)
@@ -62034,12 +63147,123 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 pass
 
-    def _open_final_report_preview_window(self) -> None:
-        """Open final report preview window.
-        Used by UI actions to open final report preview window."""
-        page_figures = self._final_report_build_page_figures(
-            self._collect_final_report_state_from_ui()
-        )
+    def _final_report_build_selected_page(
+        self, section_id: str, state: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Purpose: Build a single report page for a selected section.
+        Why: Enable targeted preview without rendering the full report.
+        Args:
+            section_id (str): Section identifier selected in the UI.
+            state (Dict[str, Any]): Final report settings state.
+        Returns:
+            Optional[Dict[str, Any]]: Page info dict, or None if unavailable.
+        Side Effects:
+            - Creates and closes interim figures for skipped pages.
+        Exceptions:
+            - None; best-effort rendering returns None on failure.
+        """
+        state = self._final_report_safe_state(state)
+        sequence = self._final_report_compute_layout_sequence(state)
+        if not sequence:
+            return None
+        counters = {
+            "page_number": 0,
+            "figure_number": 0,
+            "table_number": 0,
+            "section_figures": {},
+            "section_tables": {},
+        }
+        last_group: Optional[str] = None
+        # Iterate over sequence to build pages until the target section is reached.
+        for entry in sequence:
+            if entry.get("section_id") in FINAL_REPORT_EXCLUDED_SECTIONS:
+                continue
+            page_info, last_group = self._final_report_build_page_entry(
+                entry, state, counters, last_group
+            )
+            if page_info is None:
+                continue
+            if (
+                page_info.get("section_id") == section_id
+                and not page_info.get("is_caption_page")
+            ):
+                return page_info
+            fig = page_info.get("figure")
+            if fig is not None:
+                try:
+                    plt.close(fig)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+        return None
+
+    def _final_report_render_selected_page_preview(self) -> None:
+        """Purpose: Render a single selected page preview.
+        Why: Allow focused inspection of one report section layout.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            - Updates preview window with a single page figure.
+            - Updates persisted final report settings.
+        Exceptions:
+            - Errors are shown via message boxes when selection is invalid.
+        """
+        listbox = getattr(self, "_final_report_section_order_listbox", None)
+        if listbox is None:
+            return
+        selection = listbox.curselection()
+        if not selection:
+            try:
+                messagebox.showwarning(
+                    "Final Report Preview", "Select a section to render first."
+                )
+            except Exception:
+                pass
+            return
+        index = selection[0]
+        if index >= len(self._final_report_section_order):
+            return
+        section_id = self._final_report_section_order[index]
+        state = self._collect_final_report_state_from_ui()
+        settings["final_report"].clear()
+        settings["final_report"].update(copy.deepcopy(state))
+        try:
+            _save_settings_to_disk()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        page_info = self._final_report_build_selected_page(section_id, state)
+        if page_info is None:
+            try:
+                messagebox.showwarning(
+                    "Final Report Preview",
+                    "Selected section could not be rendered for preview.",
+                )
+            except Exception:
+                pass
+            return
+        self._open_final_report_preview_window([page_info])
+
+    def _open_final_report_preview_window(
+        self, page_figures: Optional[List[Dict[str, Any]]] = None
+    ) -> None:
+        """Purpose: Open or refresh the live Final Report preview window.
+        Why: Show rendered report pages for visual inspection.
+        Args:
+            page_figures (Optional[List[Dict[str, Any]]]): Prebuilt page figures.
+        Returns:
+            None.
+        Side Effects:
+            - Builds report figures and opens/updates the preview window.
+        Exceptions:
+            - Errors are surfaced via message boxes.
+        """
+        if page_figures is None:
+            page_figures = self._final_report_build_page_figures(
+                self._collect_final_report_state_from_ui()
+            )
         if not page_figures:
             try:
                 messagebox.showwarning(

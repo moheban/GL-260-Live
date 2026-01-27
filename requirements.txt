@@ -8,3 +8,6 @@ pytest
 mplcursors
 PyPDF2
 pypdf
+ruff
+black
+isort

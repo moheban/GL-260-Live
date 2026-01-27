@@ -1,9 +1,17 @@
-# GL-260 Data Analysis and Plotter (v2.4.0)
+# GL-260 Data Analysis and Plotter (v2.5.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `v2.4.0`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION` in the script, which currently reports `v2.5.0`.
+
+## v2.5.0 Final Report Pipeline Hardening
+- Final Report layout now reserves header/caption/footer bands before layout, eliminating overlaps with section headers and group labels.
+- Combined Triple-Axis report pages skip tight_layout and fit existing axes into the content rect; Preserve Export Layout reuses export rendering for complex plots.
+- Added Fit Mode selector: Preserve Export Layout (default) and Report Layout (legacy).
+- Added per-section header/caption toggles, caption placement (Same Page / Next Page), and a Render Selected Page Preview action.
+- Tables are centered, wrapped, and dynamically sized with style presets (Compact / Normal / Large).
+- Safe Margins preset adds extra spacing for tighter layouts.
 
 ## v2.4.0 Performance and Responsiveness
 - Combined triple-axis plot preview now uses a two-phase render (background data prep + UI-thread figure build) to keep the UI responsive.
@@ -519,12 +527,19 @@ Key controls:
   - `single_page_portrait`
   - `mixed_pages`
   - `plots_landscape_pages`
+- Fit mode:
+  - Preserve Export Layout (default)
+  - Report Layout (legacy)
+- Safe margins preset: Normal / Extra-Safe.
 - Typography: font scale, margins, page numbers, section headers.
+- Table style preset: Compact / Normal / Large.
+- Per-section toggles: Include Section Header, Include Caption, Caption Placement (Same Page / Next Page).
 - Section selection and ordering.
+- Preview actions: Open Preview Window, Render Selected Page Preview, Update Layout Preview.
 
 Report sections (examples):
 - Figure 1 / Figure 2
-- Combined Triple-Axis Plot (stitched from the exported artifact in the configured order)
+- Combined Triple-Axis Plot (Preserve Export Layout reuses export rendering; Report Layout uses report layout fit)
 - Cycle Analysis Summary
 - Cycle Statistics Table
 - Cycle Speciation Timeline Table
@@ -541,10 +556,21 @@ Cycle Analysis plot and Cycle Speciation Timeline plot are interactive-only and 
 Export:
 - PDF/PNG with export DPI and output size profiles.
 - PDF output stitches exported PDF artifacts per section in the selected order (deterministic).
-- Combined Triple-Axis Plot uses the export artifact pipeline and is inserted in order; failures block generation unless you opt into a degraded report.
+- Fit Mode controls how complex plots are rendered:
+  - Preserve Export Layout embeds the export render into the report page.
+  - Report Layout uses the report layout solver and axes-fit placement.
+- Combined Triple-Axis Plot failures block generation unless you opt into a degraded report.
 - Final Report generation requires applied columns; pending column application blocks export.
-- Captions are rendered once during page build; figure/table numbers are independent of page numbers.
-- Tables auto-fit within margins to prevent overlap or cropping.
+- Captions can render on the same page or a dedicated caption page; figure/table numbers are independent of page numbers.
+- Tables are centered, wrapped, and styled with presets to prevent overlap or clipping.
+
+Settings keys (settings.json):
+- `final_report.fit_mode`: `"Preserve Export Layout"` (default) or `"Report Layout (legacy)"`.
+- `final_report.safe_margin_preset`: `"Normal"` (default) or `"Extra-Safe"`.
+- `final_report.table_style_preset`: `"Normal"` (default), `"Compact"`, or `"Large"`.
+- `final_report.section_header_enabled`: per-section header toggle map.
+- `final_report.section_caption_enabled`: per-section caption toggle map.
+- `final_report.section_caption_placement`: per-section caption placement map (`"Same Page"` / `"Next Page"`).
 
 ### Menus, Preferences, and Tools
 **File**
@@ -809,7 +835,7 @@ The script includes internal change summaries:
   - Treeview selection recursion fix in annotations editor.
   - Layout fixes for the annotations Toplevel.
 
-Note: the UI title uses `APP_VERSION` set to `v2.2.0`.
+Note: the UI title uses `APP_VERSION` set to `v2.5.0`.
 
 ## Troubleshooting
 - **"No Data" or "Missing Columns" errors**: Load a sheet on the Data tab and set required columns on the Columns tab.
