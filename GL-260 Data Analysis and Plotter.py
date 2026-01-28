@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.6.0
-# Date: 2026-01-27
+# Version: v2.8.0
+# Date: 2026-01-28
 
 import os
 import sys
@@ -7925,7 +7925,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.6.0"
+APP_VERSION = "v2.8.0"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
