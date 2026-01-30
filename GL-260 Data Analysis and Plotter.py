@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.9.6
+# Version: v2.9.7
 # Date: 2026-01-30
 
 import os
@@ -7925,7 +7925,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.9.6"
+APP_VERSION = "v2.9.7"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -47471,14 +47471,12 @@ class UnifiedApp(tk.Tk):
         """
         if fig is None:
             return
+        persist = bool(settings.get("combined_cycle_legend_persist_position", True))
+        saved_dx = settings.get("combined_cycle_legend_ref_dx_px", None)
+        saved_dy = settings.get("combined_cycle_legend_ref_dy_px", None)
         print(
             f"DEBUG: apply_saved_anchor persist={persist} "
             f"dx={saved_dx} dy={saved_dy} fig_id={id(fig)}"
-        )
-        # Debug: confirm the authoritative tracker function is executing.
-        print(
-            "DEBUG: _register_combined_legend_tracking active "
-            f"fig_id={id(fig)}"
         )
         try:
             if fig.canvas is not None:
