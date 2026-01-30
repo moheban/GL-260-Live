@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.9.0
+# Version: v2.9.1
 # Date: 2026-01-30
 
 import os
@@ -7925,7 +7925,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.9.0"
+APP_VERSION = "v2.9.1"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -18378,6 +18378,36 @@ if os.path.exists(SETTINGS_FILE):
     else:
         anchor_mode_value = "legacy_anchor"
     settings["combined_cycle_legend_anchor_mode"] = anchor_mode_value
+    initial_combined_cycle_legend_enable_drag = bool(
+        settings.get("combined_cycle_legend_enable_drag", True)
+    )
+    settings["combined_cycle_legend_enable_drag"] = (
+        initial_combined_cycle_legend_enable_drag
+    )
+    initial_combined_cycle_legend_lock_position = bool(
+        settings.get("combined_cycle_legend_lock_position", False)
+    )
+    settings["combined_cycle_legend_lock_position"] = (
+        initial_combined_cycle_legend_lock_position
+    )
+    initial_combined_cycle_legend_persist_position = bool(
+        settings.get("combined_cycle_legend_persist_position", True)
+    )
+    settings["combined_cycle_legend_persist_position"] = (
+        initial_combined_cycle_legend_persist_position
+    )
+    initial_combined_cycle_legend_clamp_to_axes = bool(
+        settings.get("combined_cycle_legend_clamp_to_axes", True)
+    )
+    settings["combined_cycle_legend_clamp_to_axes"] = (
+        initial_combined_cycle_legend_clamp_to_axes
+    )
+    initial_combined_main_legend_enable_drag = bool(
+        settings.get("combined_main_legend_enable_drag", False)
+    )
+    settings["combined_main_legend_enable_drag"] = (
+        initial_combined_main_legend_enable_drag
+    )
     initial_combined_center_plot_legend = bool(
         settings.get("combined_center_plot_legend", False)
     )
@@ -18579,6 +18609,24 @@ else:
         "combined_cycle_legend_ref_corner"
     ] = initial_combined_cycle_legend_ref_corner
     settings["combined_cycle_legend_anchor_mode"] = "legacy_anchor"
+    initial_combined_cycle_legend_enable_drag = True
+    settings["combined_cycle_legend_enable_drag"] = initial_combined_cycle_legend_enable_drag
+    initial_combined_cycle_legend_lock_position = False
+    settings["combined_cycle_legend_lock_position"] = (
+        initial_combined_cycle_legend_lock_position
+    )
+    initial_combined_cycle_legend_persist_position = True
+    settings["combined_cycle_legend_persist_position"] = (
+        initial_combined_cycle_legend_persist_position
+    )
+    initial_combined_cycle_legend_clamp_to_axes = True
+    settings["combined_cycle_legend_clamp_to_axes"] = (
+        initial_combined_cycle_legend_clamp_to_axes
+    )
+    initial_combined_main_legend_enable_drag = False
+    settings["combined_main_legend_enable_drag"] = (
+        initial_combined_main_legend_enable_drag
+    )
     initial_combined_center_plot_legend = False
 
     # Titles
@@ -22532,9 +22580,31 @@ def _legend_anchor_point_display(legend: Any, loc_value: Any, renderer) -> Optio
     return (cx, cy)
 
 
-def _combined_cycle_axis_offset_values() -> Optional[Tuple[float, float]]:
-    """Perform combined cycle axis offset values.
-    Used to keep the workflow logic localized and testable."""
+def _combined_cycle_axis_offset_values() -> tuple[float, float] | None:
+    """Return combined cycle legend axis offsets.
+
+    Purpose:
+        Load persisted axis-offset values for the combined cycle legend.
+    Why:
+        Axis offsets reapply drag placement without introducing extra layout
+        passes or altering the export pipeline.
+
+    Args:
+        None.
+
+    Returns:
+        Tuple of (dx, dy) offsets in pixels, or None when persistence is
+        disabled or offsets are missing.
+
+    Side Effects:
+        None.
+
+    Exceptions:
+        Errors are handled internally and return None.
+    """
+    if not bool(settings.get("combined_cycle_legend_persist_position", True)):
+        # Persistence disabled: ignore stored offsets so refresh/rebuild uses defaults.
+        return None
     dx = _coerce_float(settings.get("combined_cycle_legend_ref_dx_px"))
     dy = _coerce_float(settings.get("combined_cycle_legend_ref_dy_px"))
     if dx is None or dy is None:
@@ -24065,6 +24135,7 @@ def build_combined_triple_axis_figure(
                 pass
         try:
             legend._cycle_overlay_legend = True  # type: ignore[attr-defined]
+            # Tag combined cycle legend so capture logic can identify it reliably.
             legend._combined_cycle_legend = True  # type: ignore[attr-defined]
             legend._gl260_legend_role = "cycle"  # type: ignore[attr-defined]
             legend._gl260_markerscale = cycle_legend_markerscale  # type: ignore[attr-defined]
@@ -24405,6 +24476,30 @@ def build_combined_triple_axis_figure(
             transform=legend_transform,
             loc_override=cycle_loc_override,
         )
+    if axis_offset_values is not None and cycle_legend is not None:
+        try:
+            # Apply offsets before layout solve so legend bboxes reflect drag placement.
+            ref_axis = _resolve_combined_cycle_ref_axis(
+                fig,
+                ax_main=ax,
+                ax_right=ax_temp,
+                ax_deriv=ax_deriv,
+                ref_axis_key=settings.get("combined_cycle_legend_ref_axis"),
+            )
+            loc_value = _resolve_combined_cycle_legend_loc()
+            _apply_cycle_legend_axis_offset(
+                fig,
+                cycle_legend,
+                ref_axis,
+                settings.get("combined_cycle_legend_ref_corner"),
+                axis_offset_values[0],
+                axis_offset_values[1],
+                loc_value,
+                allow_draw=False,
+            )
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
 
     # Layout solve: measure bboxes + adjust margins in a deterministic pass.
     layout_manager = PlotLayoutManager(
@@ -27427,6 +27522,21 @@ class UnifiedApp(tk.Tk):
         self.center_combined_plot_legend = tk.BooleanVar(
             value=initial_combined_center_plot_legend
         )
+        self.combined_cycle_legend_enable_drag = tk.BooleanVar(
+            value=initial_combined_cycle_legend_enable_drag
+        )
+        self.combined_cycle_legend_lock_position = tk.BooleanVar(
+            value=initial_combined_cycle_legend_lock_position
+        )
+        self.combined_cycle_legend_persist_position = tk.BooleanVar(
+            value=initial_combined_cycle_legend_persist_position
+        )
+        self.combined_cycle_legend_clamp_to_axes = tk.BooleanVar(
+            value=initial_combined_cycle_legend_clamp_to_axes
+        )
+        self.combined_main_legend_enable_drag = tk.BooleanVar(
+            value=initial_combined_main_legend_enable_drag
+        )
 
         self._register_var_default(
             self.combined_primary_labelpad, initial_combined_primary_labelpad
@@ -27511,6 +27621,26 @@ class UnifiedApp(tk.Tk):
         self._register_var_default(
             self.combined_cycle_legend_ref_corner,
             initial_combined_cycle_legend_ref_corner,
+        )
+        self._register_var_default(
+            self.combined_cycle_legend_enable_drag,
+            initial_combined_cycle_legend_enable_drag,
+        )
+        self._register_var_default(
+            self.combined_cycle_legend_lock_position,
+            initial_combined_cycle_legend_lock_position,
+        )
+        self._register_var_default(
+            self.combined_cycle_legend_persist_position,
+            initial_combined_cycle_legend_persist_position,
+        )
+        self._register_var_default(
+            self.combined_cycle_legend_clamp_to_axes,
+            initial_combined_cycle_legend_clamp_to_axes,
+        )
+        self._register_var_default(
+            self.combined_main_legend_enable_drag,
+            initial_combined_main_legend_enable_drag,
         )
 
         self.title_text = tk.StringVar(value=settings.get("title_text", initial_title))
@@ -29830,6 +29960,7 @@ class UnifiedApp(tk.Tk):
         self.tab_columns = ttk.Frame(self.nb)
 
         self.tab_plot = ttk.Frame(self.nb)
+        self._plot_settings_tab = self.tab_plot
 
         self.tab_cycle = ttk.Frame(self.nb)
 
@@ -30306,7 +30437,13 @@ class UnifiedApp(tk.Tk):
         height_in = max(height_px / dpi, 3.0)
         return (width_in, height_in)
 
-    def _force_plot_refresh(self, frame, canvas):
+    def _force_plot_refresh(
+        self,
+        frame,
+        canvas,
+        *,
+        capture_combined_legend: bool = True,
+    ):
         """Force a plot refresh and rebuild as needed.
 
         Purpose:
@@ -30319,12 +30456,14 @@ class UnifiedApp(tk.Tk):
         Args:
             frame: Tkinter frame hosting the plot tab.
             canvas: FigureCanvasTkAgg displaying the figure.
+            capture_combined_legend: When True, capture combined legend anchors
+                before refresh if persistence is enabled and not locked.
 
         Returns:
             None.
 
         Side Effects:
-            Captures combined legend anchors before rebuild, replaces figures,
+            Captures combined legend anchors before rebuild when enabled, replaces figures,
             rebinds plot element controllers, and redraws the canvas.
 
         Exceptions:
@@ -30334,7 +30473,11 @@ class UnifiedApp(tk.Tk):
         plot_id = self._plot_key_to_plot_id(plot_key)
         if not plot_id:
             plot_id = getattr(frame, "_plot_id", None)
-        if plot_key == "fig_combined":
+        if (
+            plot_key == "fig_combined"
+            and capture_combined_legend
+            and self._combined_cycle_legend_capture_enabled()
+        ):
             # Capture current legend anchors before rebuilding the combined figure.
             try:
                 self._capture_combined_legend_anchor_from_fig(
@@ -32819,7 +32962,27 @@ class UnifiedApp(tk.Tk):
         self, canvas: FigureCanvasTkAgg, plot_id: Optional[str]
     ) -> None:
         """Open the layout editor for a specific plot.
-        Used to stage layout edits before applying to preview/export profiles."""
+
+        Purpose:
+            Launch the layout editor for a given plot and stage layout edits.
+        Why:
+            The editor allows non-destructive layout tuning before applying
+            changes to preview/export profiles.
+
+        Args:
+            canvas: FigureCanvasTkAgg hosting the target plot.
+            plot_id: Identifier for the plot layout profile to edit.
+
+        Returns:
+            None.
+
+        Side Effects:
+            Creates a Toplevel window, registers editor state, and wires event
+            handlers for interactive layout edits.
+
+        Exceptions:
+            Errors are caught to avoid interrupting the UI.
+        """
         if not plot_id or canvas is None:
             return
         existing = self._layout_editor_windows.get(plot_id)
@@ -33497,11 +33660,15 @@ class UnifiedApp(tk.Tk):
             loc_key="legend_loc",
         )
         if cycle_legend is not None:
-            # ALWAYS make combined cycle legend draggable
-            try:
-                cycle_legend.set_draggable(True)
-            except Exception:
-                _make_legend_draggable(cycle_legend)
+            # Respect lock/drag settings to avoid accidental cycle legend changes.
+            if (
+                bool(settings.get("combined_cycle_legend_enable_drag", True))
+                and not bool(settings.get("combined_cycle_legend_lock_position", False))
+            ):
+                try:
+                    cycle_legend.set_draggable(True)
+                except Exception:
+                    _make_legend_draggable(cycle_legend)
 
             cycle_anchor_space = "axes"
             cycle_anchor_axis = axis_legend_axes.get(cycle_legend)
@@ -33879,8 +34046,8 @@ class UnifiedApp(tk.Tk):
             None.
 
         Side Effects:
-            Captures combined legend anchors, tears down plot UI helpers, and
-            removes tabs/canvases from the notebook.
+            Captures combined legend anchors when persistence is enabled,
+            tears down plot UI helpers, and removes tabs/canvases from the notebook.
 
         Exceptions:
             Errors are caught to avoid breaking the UI teardown flow.
@@ -33925,6 +34092,9 @@ class UnifiedApp(tk.Tk):
                     tab, "_plot_id", None
                 ) != "fig_combined_triple_axis":
                     continue
+                if not self._combined_cycle_legend_capture_enabled():
+                    # Skip capture when persistence is disabled or locked.
+                    continue
                 canvas = canvases[idx] if idx < len(canvases) else None
                 try:
                     self._capture_combined_legend_anchor_from_fig(
@@ -33955,6 +34125,17 @@ class UnifiedApp(tk.Tk):
         self._plot_tabs = []
 
         self._canvases = []
+
+        plot_settings_tab = getattr(self, "_plot_settings_tab", None) or getattr(
+            self, "tab_plot", None
+        )
+        if plot_settings_tab is not None:
+            try:
+                # Explicitly return focus to Plot Settings after tab teardown.
+                self.nb.select(plot_settings_tab)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
 
         self._log_plot_tab_debug("Plot tabs cleared; flushing Tk events.")
 
@@ -34423,8 +34604,8 @@ class UnifiedApp(tk.Tk):
                 None.
 
             Side Effects:
-                Captures combined legend anchors, destroys the tab/canvas, and
-                selects the Plot Settings tab.
+                Captures combined legend anchors when persistence is enabled,
+                destroys the tab/canvas, and selects the Plot Settings tab.
 
             Exceptions:
                 Errors are caught to avoid interrupting UI teardown.
@@ -34434,14 +34615,15 @@ class UnifiedApp(tk.Tk):
 
             if plot_key == "fig_combined":
                 # Capture combined legend anchors before the figure is closed.
-                try:
-                    self._capture_combined_legend_anchor_from_fig(
-                        fig,
-                        source="refresh",
-                    )
-                except Exception:
-                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                    pass
+                if self._combined_cycle_legend_capture_enabled():
+                    try:
+                        self._capture_combined_legend_anchor_from_fig(
+                            fig,
+                            source="refresh",
+                        )
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
 
             if plot_id:
                 controller = self._plot_annotation_controllers.pop(plot_id, None)
@@ -34516,6 +34698,17 @@ class UnifiedApp(tk.Tk):
 
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+
+            plot_settings_tab = getattr(self, "_plot_settings_tab", None) or getattr(
+                self, "tab_plot", None
+            )
+            if plot_settings_tab is not None:
+                try:
+                    # Explicitly route focus to Plot Settings after tab close.
+                    self.nb.select(plot_settings_tab)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
 
         btn_close = ttk.Button(topbar, text="Close Plot", command=_close_this_plot)
 
@@ -34968,7 +35161,7 @@ class UnifiedApp(tk.Tk):
             None.
 
         Side Effects:
-            Captures combined legend anchors, destroys canvases, and tears down
+            Captures combined legend anchors when persistence is enabled, destroys canvases, and tears down
             plot controllers tied to the removed tab.
 
         Exceptions:
@@ -34991,15 +35184,18 @@ class UnifiedApp(tk.Tk):
                     plot_key = getattr(tab, "_plot_key", None)
                     if plot_key == "fig_combined" or plot_id == "fig_combined_triple_axis":
                         # Capture combined legend anchors before removing the tab.
-                        try:
-                            canvas = self._canvases[i] if i < len(self._canvases) else None
-                            self._capture_combined_legend_anchor_from_fig(
-                                getattr(canvas, "figure", None),
-                                source="refresh",
-                            )
-                        except Exception:
-                            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                            pass
+                        if self._combined_cycle_legend_capture_enabled():
+                            try:
+                                canvas = (
+                                    self._canvases[i] if i < len(self._canvases) else None
+                                )
+                                self._capture_combined_legend_anchor_from_fig(
+                                    getattr(canvas, "figure", None),
+                                    source="refresh",
+                                )
+                            except Exception:
+                                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                                pass
                     if plot_id and plot_id in self._plot_annotation_controllers:
                         try:
                             self._plot_annotation_controllers[plot_id].disconnect()
@@ -41132,8 +41328,27 @@ class UnifiedApp(tk.Tk):
             self._build_tab_plot_stage_two(content, pad)
 
     def _build_tab_plot_stage_two(self, f, pad):
-        """Build tab plot stage two.
-        Used to assemble tab plot stage two during UI or plot setup."""
+        """Build the second stage of the Plot Settings tab.
+
+        Purpose:
+            Assemble the remaining Plot Settings sections after initial UI load.
+        Why:
+            Splitting the build keeps startup responsive while still providing
+            the full settings surface once the UI is ready.
+
+        Args:
+            f: Parent Tkinter frame holding Plot Settings content.
+            pad: Padding dictionary applied to section frames.
+
+        Returns:
+            None.
+
+        Side Effects:
+            Constructs widgets, binds callbacks, and updates layout state.
+
+        Exceptions:
+            Errors are handled internally to keep the UI responsive.
+        """
 
         if getattr(self, "_plot_tab_stage_two_built", False):
 
@@ -41376,9 +41591,80 @@ class UnifiedApp(tk.Tk):
             variable=self.include_moles_core_legend,
         ).grid(row=1, column=0, sticky="w", padx=6, pady=4)
 
+        # Combined cycle legend controls
+        lf_cycle_legend = ttk.Labelframe(f, text="Cycle Legend (Combined Plot)")
+        lf_cycle_legend.grid(row=7, column=0, columnspan=4, sticky="ew", **pad)
+        lf_cycle_legend.grid_columnconfigure(0, weight=1)
+        lf_cycle_legend.grid_columnconfigure(1, weight=1)
+
+        # Closure captures _build_tab_plot_stage_two local context to keep helper logic scoped and invoked directly within _build_tab_plot_stage_two.
+        def _apply_cycle_legend_controls():
+            """Apply cycle legend controls.
+
+            Purpose:
+                Persist cycle legend control toggles and apply them immediately.
+            Why:
+                Users expect drag/lock/persist changes to affect the live combined
+                plot without manual refresh.
+
+            Args:
+                None.
+
+            Returns:
+                None.
+
+            Side Effects:
+                Updates settings and refreshes legend tracking on active figures.
+
+            Exceptions:
+                Errors are caught by the caller to avoid UI interruption.
+            """
+            self._sync_combined_cycle_legend_controls(refresh_display=True)
+
+        ttk.Checkbutton(
+            lf_cycle_legend,
+            text="Enable Cycle Legend Dragging",
+            variable=self.combined_cycle_legend_enable_drag,
+            command=_apply_cycle_legend_controls,
+        ).grid(row=0, column=0, sticky="w", padx=6, pady=4)
+
+        ttk.Checkbutton(
+            lf_cycle_legend,
+            text="Lock Cycle Legend Position",
+            variable=self.combined_cycle_legend_lock_position,
+            command=_apply_cycle_legend_controls,
+        ).grid(row=0, column=1, sticky="w", padx=6, pady=4)
+
+        ttk.Checkbutton(
+            lf_cycle_legend,
+            text="Persist Cycle Legend Position (Refresh/Rebuild)",
+            variable=self.combined_cycle_legend_persist_position,
+            command=_apply_cycle_legend_controls,
+        ).grid(row=1, column=0, sticky="w", padx=6, pady=4)
+
+        ttk.Checkbutton(
+            lf_cycle_legend,
+            text="Clamp Cycle Legend Inside Axes on Capture",
+            variable=self.combined_cycle_legend_clamp_to_axes,
+            command=_apply_cycle_legend_controls,
+        ).grid(row=1, column=1, sticky="w", padx=6, pady=4)
+
+        ttk.Button(
+            lf_cycle_legend,
+            text="Reset Cycle Legend Position",
+            command=self._reset_combined_cycle_legend_position,
+        ).grid(row=2, column=0, sticky="w", padx=6, pady=4)
+
+        ttk.Checkbutton(
+            lf_cycle_legend,
+            text="Enable Main Legend Dragging (Combined Plot)",
+            variable=self.combined_main_legend_enable_drag,
+            command=_apply_cycle_legend_controls,
+        ).grid(row=2, column=1, sticky="w", padx=6, pady=4)
+
         # Combined triple-axis dataset selection
         lf_combined_axis = ttk.Labelframe(f, text="Combined Triple-Axis Settings")
-        lf_combined_axis.grid(row=7, column=0, columnspan=4, sticky="ew", **pad)
+        lf_combined_axis.grid(row=8, column=0, columnspan=4, sticky="ew", **pad)
         lf_combined_axis.grid_columnconfigure(1, weight=1)
 
         ttk.Label(lf_combined_axis, text="Inner Left Y Axis Dataset").grid(
@@ -41433,7 +41719,7 @@ class UnifiedApp(tk.Tk):
 
         lf_ticks = ttk.Labelframe(f, text="Ticks")
 
-        lf_ticks.grid(row=8, column=0, columnspan=4, sticky="ew", **pad)
+        lf_ticks.grid(row=9, column=0, columnspan=4, sticky="ew", **pad)
 
         # Iterate over the configured range to apply the per-item logic.
         for i in range(8):
@@ -46509,6 +46795,186 @@ class UnifiedApp(tk.Tk):
         has_total = any("total" in label and "psi" in label for label in labels)
         return has_peak_trough or has_total
 
+    def _combined_cycle_legend_capture_enabled(
+        self, *, require_drag: bool = False
+    ) -> bool:
+        """Return whether combined cycle legend capture is enabled.
+
+        Purpose:
+            Centralize gating for cycle legend capture in the combined plot.
+        Why:
+            Capture must honor persist/lock settings so user intent is respected
+            across drag, refresh, and regeneration flows.
+
+        Args:
+            require_drag: When True, require cycle legend dragging to be enabled.
+
+        Returns:
+            True when capture should proceed; False otherwise.
+
+        Side Effects:
+            None.
+
+        Exceptions:
+            Errors are handled internally to avoid interrupting UI workflows.
+        """
+        try:
+            if not bool(settings.get("combined_cycle_legend_persist_position", True)):
+                return False
+            if bool(settings.get("combined_cycle_legend_lock_position", False)):
+                return False
+            if require_drag and not bool(
+                settings.get("combined_cycle_legend_enable_drag", True)
+            ):
+                return False
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            return False
+        return True
+
+    def _refresh_combined_legend_tracking(self) -> None:
+        """Refresh combined legend tracking for active display figures.
+
+        Purpose:
+            Rebind combined legend drag tracking after settings changes.
+        Why:
+            Drag/lock/persist toggles should take effect immediately without
+            a full plot regeneration.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Side Effects:
+            Re-registers legend drag callbacks on displayed combined plots.
+
+        Exceptions:
+            Errors are caught to keep the UI responsive.
+        """
+        tabs = list(getattr(self, "_plot_tabs", []) or [])
+        canvases = list(getattr(self, "_canvases", []) or [])
+        # Iterate over indexed elements from tabs to apply the per-item logic.
+        for idx, tab in enumerate(tabs):
+            if getattr(tab, "_plot_key", None) != "fig_combined" and getattr(
+                tab, "_plot_id", None
+            ) != "fig_combined_triple_axis":
+                continue
+            canvas = canvases[idx] if idx < len(canvases) else None
+            fig = getattr(canvas, "figure", None)
+            if fig is None:
+                continue
+            try:
+                self._register_combined_legend_tracking(fig)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+    def _sync_combined_cycle_legend_controls(
+        self, *, refresh_display: bool = True
+    ) -> None:
+        """Sync combined cycle legend controls to settings and runtime.
+
+        Purpose:
+            Persist cycle legend control toggles and apply them immediately.
+        Why:
+            Users expect drag/lock/persist changes to affect the live combined
+            plot without manual refresh.
+
+        Args:
+            refresh_display: When True, re-register legend tracking on live plots.
+
+        Returns:
+            None.
+
+        Side Effects:
+            Updates settings keys, schedules a settings save, and optionally
+            refreshes legend tracking.
+
+        Exceptions:
+            Errors are caught to avoid interrupting the UI.
+        """
+        try:
+            settings["combined_cycle_legend_enable_drag"] = bool(
+                self.combined_cycle_legend_enable_drag.get()
+            )
+            settings["combined_cycle_legend_lock_position"] = bool(
+                self.combined_cycle_legend_lock_position.get()
+            )
+            settings["combined_cycle_legend_persist_position"] = bool(
+                self.combined_cycle_legend_persist_position.get()
+            )
+            settings["combined_cycle_legend_clamp_to_axes"] = bool(
+                self.combined_cycle_legend_clamp_to_axes.get()
+            )
+            settings["combined_main_legend_enable_drag"] = bool(
+                self.combined_main_legend_enable_drag.get()
+            )
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            return
+        try:
+            self._schedule_save_settings()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        if refresh_display:
+            self._refresh_combined_legend_tracking()
+
+    def _reset_combined_cycle_legend_position(self) -> None:
+        """Reset combined cycle legend placement to defaults.
+
+        Purpose:
+            Clear persisted cycle legend offsets/anchors for the combined plot.
+        Why:
+            Provides a user-facing reset so the legend can return to default
+            placement after manual drags.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Side Effects:
+            Clears cycle legend placement settings, resets in-memory anchors,
+            and refreshes the combined plot if it is displayed.
+
+        Exceptions:
+            Errors are caught to avoid interrupting the UI.
+        """
+        settings.pop("combined_cycle_legend_anchor", None)
+        settings.pop("combined_cycle_legend_loc", None)
+        settings.pop("combined_cycle_legend_anchor_space", None)
+        settings.pop("combined_cycle_legend_ref_dx_px", None)
+        settings.pop("combined_cycle_legend_ref_dy_px", None)
+        settings["combined_cycle_legend_anchor_mode"] = "legacy_anchor"
+        self._combined_cycle_legend_anchor = None
+        self._combined_cycle_legend_loc = None
+        self._combined_cycle_legend_anchor_space = None
+        try:
+            self._schedule_save_settings()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        tabs = list(getattr(self, "_plot_tabs", []) or [])
+        canvases = list(getattr(self, "_canvases", []) or [])
+        # Iterate over indexed elements from tabs to apply the per-item logic.
+        for idx, tab in enumerate(tabs):
+            if getattr(tab, "_plot_key", None) != "fig_combined" and getattr(
+                tab, "_plot_id", None
+            ) != "fig_combined_triple_axis":
+                continue
+            canvas = canvases[idx] if idx < len(canvases) else None
+            try:
+                # Skip pre-refresh capture so the reset is not overwritten.
+                self._force_plot_refresh(tab, canvas, capture_combined_legend=False)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            break
+
     def _capture_combined_legend_anchor_from_fig(
         self, fig: Optional[Figure], *, source: str = "auto"
     ) -> None:
@@ -46531,7 +46997,9 @@ class UnifiedApp(tk.Tk):
         Side Effects:
             Updates self._combined_* anchor fields, writes settings keys,
             optionally disables center_combined_plot_legend on manual drag, and
-            persists settings to disk.
+            persists settings to disk. Cycle legend updates are gated by
+            persistence/lock settings, and main legend updates require explicit
+            drag enablement.
 
         Exceptions:
             Errors are caught internally to avoid interrupting UI rendering.
@@ -46540,6 +47008,14 @@ class UnifiedApp(tk.Tk):
             return
         prev_main_anchor = getattr(self, "_combined_legend_anchor", None)
         prev_main_loc = getattr(self, "_combined_legend_loc", None)
+        cycle_capture_enabled = self._combined_cycle_legend_capture_enabled()
+        cycle_drag_capture_enabled = self._combined_cycle_legend_capture_enabled(
+            require_drag=True
+        )
+        clamp_cycle_axes = bool(
+            settings.get("combined_cycle_legend_clamp_to_axes", True)
+        )
+        main_drag_enabled = bool(settings.get("combined_main_legend_enable_drag", False))
         legends = self._collect_combined_legends(fig)
         if not legends:
             return
@@ -46599,8 +47075,13 @@ class UnifiedApp(tk.Tk):
                 return None
             if not (math.isfinite(x_val) and math.isfinite(y_val)):
                 return None
-            x_val = max(-0.1, min(1.1, x_val))
-            y_val = max(-0.1, min(1.1, y_val))
+            if clamp_cycle_axes:
+                # Clamp within axes bounds when the user enables clamp capture.
+                x_val = max(0.0, min(1.0, x_val))
+                y_val = max(0.0, min(1.0, y_val))
+            else:
+                x_val = max(-0.1, min(1.1, x_val))
+                y_val = max(-0.1, min(1.1, y_val))
             return (x_val, y_val)
 
         # Closure captures _capture_combined_legend_anchor_from_fig local context to keep helper logic scoped and invoked directly within _capture_combined_legend_anchor_from_fig.
@@ -46820,6 +47301,7 @@ class UnifiedApp(tk.Tk):
                 if (
                     getattr(lg, "_combined_main_legend", False)
                     and anchor_loc is not None
+                    and main_drag_enabled
                 ):
                     self._combined_legend_anchor = anchor_loc
                     settings["combined_legend_anchor"] = [anchor_loc[0], anchor_loc[1]]
@@ -46830,7 +47312,13 @@ class UnifiedApp(tk.Tk):
                         settings.pop("combined_legend_loc", None)
                     updated = True
                     main_anchor_updated = True
-                if is_cycle_legend and anchor_loc is not None:
+                if (
+                    is_cycle_legend
+                    and anchor_loc is not None
+                    and cycle_capture_enabled
+                    and (source != "drag" or cycle_drag_capture_enabled)
+                ):
+                    # Capture cycle legend placement only when persistence is allowed.
                     self._combined_cycle_legend_anchor = anchor_loc
                     settings["combined_cycle_legend_anchor"] = [
                         anchor_loc[0],
@@ -46853,6 +47341,35 @@ class UnifiedApp(tk.Tk):
                     offsets = _compute_cycle_legend_offsets_px(
                         lg, cycle_ref_axis, ref_corner_key, loc_value, renderer
                     )
+                    if (
+                        offsets is not None
+                        and clamp_cycle_axes
+                        and cycle_ref_axis is not None
+                        and renderer is not None
+                    ):
+                        # Clamp offsets by constraining the captured anchor to axes bounds.
+                        ref_point = _axis_anchor_point_display(
+                            cycle_ref_axis, ref_corner_key, renderer
+                        )
+                        if ref_point is not None:
+                            target_display = (ref_point[0] + offsets[0], ref_point[1] + offsets[1])
+                            try:
+                                target_axes = cycle_ref_axis.transAxes.inverted().transform(
+                                    target_display
+                                )
+                            except Exception:
+                                target_axes = None
+                            clamped_axes = (
+                                _clamp_axes_anchor(target_axes) if target_axes is not None else None
+                            )
+                            if clamped_axes is not None:
+                                clamped_display = cycle_ref_axis.transAxes.transform(
+                                    clamped_axes
+                                )
+                                offsets = (
+                                    clamped_display[0] - ref_point[0],
+                                    clamped_display[1] - ref_point[1],
+                                )
                     if offsets is not None:
                         settings["combined_cycle_legend_ref_dx_px"] = offsets[0]
                         settings["combined_cycle_legend_ref_dy_px"] = offsets[1]
@@ -46926,6 +47443,13 @@ class UnifiedApp(tk.Tk):
         legends = self._collect_combined_legends(fig)
         if not legends:
             return
+        main_drag_enabled = bool(settings.get("combined_main_legend_enable_drag", False))
+        cycle_drag_enabled = bool(
+            settings.get("combined_cycle_legend_enable_drag", True)
+        )
+        cycle_lock_enabled = bool(
+            settings.get("combined_cycle_legend_lock_position", False)
+        )
         fig_expect_cycle = getattr(fig, "_gl260_expect_cycle_legend", None)
         if fig_expect_cycle is None:
             fig_expect_cycle = bool(
@@ -46940,8 +47464,30 @@ class UnifiedApp(tk.Tk):
             )
         # Iterate over legends to apply the per-item logic.
         for lg in legends:
+            if self._is_combined_cycle_legend(lg):
+                # Lock overrides drag to prevent accidental cycle legend movement.
+                if cycle_drag_enabled and not cycle_lock_enabled:
+                    _make_legend_draggable(lg)
+                else:
+                    try:
+                        lg.set_draggable(False)
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+                continue
+            if getattr(lg, "_combined_main_legend", False):
+                if main_drag_enabled:
+                    _make_legend_draggable(lg)
+                else:
+                    try:
+                        lg.set_draggable(False)
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+                continue
             _make_legend_draggable(lg)
-        self._capture_combined_legend_anchor_from_fig(fig, source="auto")
+        if self._combined_cycle_legend_capture_enabled() or main_drag_enabled:
+            self._capture_combined_legend_anchor_from_fig(fig, source="auto")
         try:
             canvas = legends[0].figure.canvas if legends else None
         except Exception:
@@ -46977,6 +47523,11 @@ class UnifiedApp(tk.Tk):
             Exceptions:
                 Errors are caught by the caller to avoid UI interruption.
             """
+            if (
+                not self._combined_cycle_legend_capture_enabled(require_drag=True)
+                and not main_drag_enabled
+            ):
+                return
             self._capture_combined_legend_anchor_from_fig(fig, source="drag")
 
         try:
@@ -69026,7 +69577,27 @@ class UnifiedApp(tk.Tk):
         self, args: Tuple[Any, ...], mode: str
     ) -> Optional[Dict[str, Any]]:
         """Normalize combined-plot configuration and layout parameters.
-        Used to build a stable config shared by preview and export pipelines."""
+
+        Purpose:
+            Build a normalized configuration payload for combined plot rendering.
+        Why:
+            A single config source keeps preview, display, and export pipelines
+            consistent while honoring persisted layout and legend settings.
+
+        Args:
+            args: Plot argument tuple (time/axis ranges, ticks, titles).
+            mode: "display" or "export" to select layout profile overrides.
+
+        Returns:
+            Dictionary of normalized combined plot configuration values, or
+            None when required arguments are missing.
+
+        Side Effects:
+            Updates settings flags for cycle overlay toggles.
+
+        Exceptions:
+            Returns None on invalid inputs; errors are handled by callers.
+        """
         # Centralized normalization of combined-plot layout settings ensures that
         # preview and export share the same margin and padding rules.
         if not args or len(args) < 24:
@@ -69159,6 +69730,11 @@ class UnifiedApp(tk.Tk):
         cycle_legend_anchor_space = getattr(
             self, "_combined_cycle_legend_anchor_space", None
         )
+        if not bool(settings.get("combined_cycle_legend_persist_position", True)):
+            # Persistence toggle should suppress stored cycle legend placement.
+            cycle_legend_anchor = None
+            cycle_legend_loc = None
+            cycle_legend_anchor_space = None
         if cycle_legend_anchor is not None and cycle_legend_anchor_space not in {
             "figure",
             "axes",
@@ -70616,9 +71192,31 @@ class UnifiedApp(tk.Tk):
                 cycle_legend = legend
             elif getattr(legend, "_combined_main_legend", False):
                 main_legend = legend
+        axis_offset_values = config.get("axis_offset_values")
         layout_mgr.register_artist("plot_legend", main_legend)
         layout_mgr.register_artist("cycle_legend", cycle_legend)
         layout_mgr.set_legend_alignment(config.get("legend_alignment_value", "center"))
+        if axis_offset_values is not None and cycle_legend is not None:
+            try:
+                # Apply offsets before layout solve so legend bboxes are accurate.
+                ref_axis = _resolve_combined_cycle_ref_axis(
+                    fig,
+                    ref_axis_key=settings.get("combined_cycle_legend_ref_axis"),
+                )
+                loc_value = _resolve_combined_cycle_legend_loc()
+                _apply_cycle_legend_axis_offset(
+                    fig,
+                    cycle_legend,
+                    ref_axis,
+                    settings.get("combined_cycle_legend_ref_corner"),
+                    axis_offset_values[0],
+                    axis_offset_values[1],
+                    loc_value,
+                    allow_draw=False,
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
         if layout_dirty:
             layout_start = time.perf_counter() if perf_run is not None else None
             layout_mgr.solve(max_passes=1, allow_draw=False)
@@ -70632,7 +71230,6 @@ class UnifiedApp(tk.Tk):
             self._combined_layout_dirty = False
         fig._gl260_layout_manager = layout_mgr  # type: ignore[attr-defined]
 
-        axis_offset_values = config.get("axis_offset_values")
         if axis_offset_values is not None and cycle_legend is not None:
             try:
                 ref_axis = _resolve_combined_cycle_ref_axis(
