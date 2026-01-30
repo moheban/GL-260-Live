@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.9.4
+# Version: v2.9.5
 # Date: 2026-01-30
 
 import os
@@ -7925,7 +7925,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.9.4"
+APP_VERSION = "v2.9.5"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -47412,6 +47412,11 @@ class UnifiedApp(tk.Tk):
                         settings["combined_cycle_legend_ref_dx_px"] = offsets[0]
                         settings["combined_cycle_legend_ref_dy_px"] = offsets[1]
                         settings["combined_cycle_legend_anchor_mode"] = "axis_offset"
+                        # Debug: confirm capture source and offsets for persistence.
+                        print(
+                            "DEBUG: Combined cycle legend capture "
+                            f"source={source} dx_px={offsets[0]} dy_px={offsets[1]}"
+                        )
                     updated = True
             except Exception:
                 continue
@@ -47451,6 +47456,11 @@ class UnifiedApp(tk.Tk):
         """
         if fig is None:
             return
+        # Debug: confirm the authoritative tracker function is executing.
+        print(
+            "DEBUG: _register_combined_legend_tracking active "
+            f"fig_id={id(fig)}"
+        )
         try:
             if fig.canvas is not None:
                 fig.canvas.draw()
