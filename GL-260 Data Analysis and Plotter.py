@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.9.1
+# Version: v2.9.2
 # Date: 2026-01-30
 
 import os
@@ -7925,7 +7925,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.9.1"
+APP_VERSION = "v2.9.2"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -46975,6 +46975,7 @@ class UnifiedApp(tk.Tk):
                 pass
             break
 
+    # Hard dedupe keeps a single capture path so cycle legend anchors persist across refreshes.
     def _capture_combined_legend_anchor_from_fig(
         self, fig: Optional[Figure], *, source: str = "auto"
     ) -> None:
