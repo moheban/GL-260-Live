@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.9.7
+# Version: v2.9.8
 # Date: 2026-01-30
 
 import os
@@ -7925,7 +7925,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.9.7"
+APP_VERSION = "v2.9.8"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -46813,6 +46813,43 @@ class UnifiedApp(tk.Tk):
         has_total = any("total" in label and "psi" in label for label in labels)
         return has_peak_trough or has_total
 
+    def _get_combined_cycle_legend(self, fig: Optional[Figure]) -> Optional[Any]:
+        """Return the active combined cycle legend for a figure.
+
+        Purpose:
+            Resolve the current cycle legend instance tied to a combined plot.
+        Why:
+            Combined plots rebuild legends across refresh/regenerate, so a fresh
+            lookup is needed before applying persisted offsets.
+
+        Args:
+            fig: Matplotlib Figure to scan for combined cycle legends.
+
+        Returns:
+            The cycle legend artist when available; otherwise None.
+
+        Side Effects:
+            None.
+
+        Exceptions:
+            Errors are handled defensively and result in None.
+        """
+        if fig is None:
+            return None
+        legends = self._collect_combined_legends(fig)
+        if not legends:
+            return None
+        cycle_legends = [
+            lg for lg in legends if self._is_combined_cycle_legend(lg) is True
+        ]
+        if not cycle_legends:
+            return None
+        # Prefer explicitly tagged cycle legends to avoid misclassification.
+        for legend in cycle_legends:
+            if getattr(legend, "_combined_cycle_legend", False):
+                return legend
+        return cycle_legends[0]
+
     def _combined_cycle_legend_capture_enabled(
         self, *, require_drag: bool = False
     ) -> bool:
@@ -47427,6 +47464,13 @@ class UnifiedApp(tk.Tk):
                         settings["combined_cycle_legend_ref_dx_px"] = offsets[0]
                         settings["combined_cycle_legend_ref_dy_px"] = offsets[1]
                         settings["combined_cycle_legend_anchor_mode"] = "axis_offset"
+                        if source == "drag":
+                            # Drag capture implies persistence for the updated offsets.
+                            settings["combined_cycle_legend_persist_position"] = True
+                            print(
+                                "DEBUG: persist_write "
+                                f"dx={offsets[0]} dy={offsets[1]} persist=True"
+                            )
                         # Debug: confirm capture source and offsets for persistence.
                         print(
                             "DEBUG: Combined cycle legend capture "
@@ -47464,7 +47508,8 @@ class UnifiedApp(tk.Tk):
         Side Effects:
             Enables legend dragging, recenters the main legend when centering
             is enabled, wires a canvas callback, and persists cycle anchors via
-            _capture_combined_legend_anchor_from_fig.
+            _capture_combined_legend_anchor_from_fig. Queues persisted cycle
+            offsets for post-draw application when available.
 
         Exceptions:
             Internal errors are caught to avoid breaking the UI.
@@ -47474,10 +47519,19 @@ class UnifiedApp(tk.Tk):
         persist = bool(settings.get("combined_cycle_legend_persist_position", True))
         saved_dx = settings.get("combined_cycle_legend_ref_dx_px", None)
         saved_dy = settings.get("combined_cycle_legend_ref_dy_px", None)
+        saved_offsets = _combined_cycle_axis_offset_values()
         print(
             f"DEBUG: apply_saved_anchor persist={persist} "
             f"dx={saved_dx} dy={saved_dy} fig_id={id(fig)}"
         )
+        if saved_offsets is not None:
+            self._combined_cycle_legend_pending_apply = True
+            self._combined_cycle_legend_pending_fig_id = id(fig)
+            self._combined_cycle_legend_pending_offsets = saved_offsets
+        else:
+            self._combined_cycle_legend_pending_apply = False
+            self._combined_cycle_legend_pending_fig_id = None
+            self._combined_cycle_legend_pending_offsets = None
         try:
             if fig.canvas is not None:
                 fig.canvas.draw()
@@ -47654,7 +47708,7 @@ class UnifiedApp(tk.Tk):
         if not cycle_drag_enabled:
             # Drag capture callbacks are only registered when cycle dragging is enabled.
             return
-        if self._combined_cycle_legend_capture_enabled():
+        if self._combined_cycle_legend_capture_enabled() and saved_offsets is None:
             self._capture_combined_legend_anchor_from_fig(fig, source="auto")
 
         # Closure captures _register_combined_legend_tracking state for callback
@@ -47663,9 +47717,10 @@ class UnifiedApp(tk.Tk):
             """Handle draw event.
 
             Purpose:
-                Anchor a draw-event callback for debug wiring.
+                Apply queued cycle legend offsets once a renderer is available.
             Why:
-                Connection IDs confirm the active canvas wiring in logs.
+                Legends rebuild on refresh/regenerate; offsets must be applied
+                after a draw to ensure display-space anchors are stable.
 
             Args:
                 _event: Matplotlib draw event payload (unused).
@@ -47674,11 +47729,53 @@ class UnifiedApp(tk.Tk):
                 None.
 
             Side Effects:
-                None.
+                Applies queued cycle legend offsets and triggers a redraw.
 
             Exceptions:
                 None.
             """
+            if not getattr(self, "_combined_cycle_legend_pending_apply", False):
+                return
+            if getattr(self, "_combined_cycle_legend_pending_fig_id", None) != id(fig):
+                return
+            event_canvas = getattr(_event, "canvas", None)
+            if event_canvas is not None and event_canvas is not canvas:
+                return
+            offsets = getattr(self, "_combined_cycle_legend_pending_offsets", None)
+            if offsets is None:
+                self._combined_cycle_legend_pending_apply = False
+                return
+            cycle_legend = self._get_combined_cycle_legend(fig)
+            if cycle_legend is None:
+                return
+            ref_axis = self._combined_cycle_reference_axis(fig)
+            ref_corner = settings.get("combined_cycle_legend_ref_corner")
+            loc_value = _resolve_combined_cycle_legend_loc()
+            applied = False
+            try:
+                applied = _apply_cycle_legend_axis_offset(
+                    fig,
+                    cycle_legend,
+                    ref_axis,
+                    ref_corner,
+                    offsets[0],
+                    offsets[1],
+                    loc_value,
+                    allow_draw=False,
+                )
+            except Exception:
+                applied = False
+            if applied:
+                # Clear pending apply before scheduling a redraw to avoid loops.
+                self._combined_cycle_legend_pending_apply = False
+                self._combined_cycle_legend_pending_fig_id = None
+                self._combined_cycle_legend_pending_offsets = None
+                try:
+                    canvas.draw_idle()
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting
+                    # the workflow.
+                    pass
             return
 
         # Closure captures _register_combined_legend_tracking state for callback
@@ -47780,6 +47877,14 @@ class UnifiedApp(tk.Tk):
             print(f"DEBUG: connect button_press_event cid={press_cid}")
             print(f"DEBUG: connect button_release_event cid={release_cid}")
             print(f"DEBUG: connect motion_notify_event cid={motion_cid}")
+            if getattr(self, "_combined_cycle_legend_pending_apply", False):
+                # Ensure a post-bind draw so pending offsets can apply.
+                try:
+                    canvas.draw_idle()
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting
+                    # the workflow.
+                    pass
         except Exception:
             self._combined_legend_event_cids = {}
             self._combined_legend_cid = None
