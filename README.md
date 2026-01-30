@@ -1,12 +1,13 @@
-# GL-260 Data Analysis and Plotter (v2.9.3)
+# GL-260 Data Analysis and Plotter (v2.9.6)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.9.3`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.9.6`.
 
 ## Table of Contents
 - [Part I - Changelog / Ledger](#part-i---changelog--ledger)
+  - [v2.9.6 Combined Cycle Legend Tracking Debug](#v296-combined-cycle-legend-tracking-debug)
   - [v2.9.3 Combined Legend Isolation](#v293-combined-legend-isolation)
   - [v2.9.1 Combined Cycle Legend Controls](#v291-combined-cycle-legend-controls)
   - [v2.9.0 Combined Legend Persistence](#v290-combined-legend-persistence)
@@ -45,6 +46,11 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [License](#license)
 
 ## Part I - Changelog / Ledger
+
+### v2.9.6 Combined Cycle Legend Tracking Debug
+- Combined triple-axis legend tracking now logs the active Tk canvas identity and event connection IDs so drag-release wiring can be verified in terminal output.
+- Button release events emit a mandatory debug line on every mouse-up, confirming drag releases are detected.
+- Auto-capture no longer overwrites persisted cycle legend offsets; stored offsets are reapplied when persistence is enabled.
 
 ### v2.9.3 Combined Legend Isolation
 - Main and cycle legends in the combined plot are now fully independent; only the cycle legend persists its dragged position across Refresh/Regenerate when persistence is enabled.
@@ -683,6 +689,19 @@ Tools -> Developer Tools
 - Workflow: Enable Cycle Legend Dragging -> drag the legend -> keep Persist Cycle Legend Position ON to retain placement across Refresh/Rebuild; Lock Cycle Legend Position disables dragging without hiding the legend; Reset Cycle Legend Position clears stored offsets and returns to defaults.
 - Clamp Cycle Legend Inside Axes on Capture keeps stored positions within the visible axes bounds.
 - Legacy combined cycle legend anchors are automatically migrated to the axis-offset model on first render.
+
+#### Combined cycle legend persistence debug verification
+Use the terminal debug output to confirm that drag-release capture and persistence are wired correctly:
+- Generate the Combined Triple-Axis plot and confirm:
+  - `DEBUG: legend tracking canvas type=FigureCanvasTkAgg id=...`
+  - `DEBUG: connect button_release_event cid=...`
+- Click anywhere in the plot and confirm:
+  - `DEBUG: button_release_event fired fig_id=... x=... y=... inaxes=...`
+- Drag the cycle legend and release; confirm:
+  - `DEBUG: button_release_event fired fig_id=...`
+  - `DEBUG: Combined cycle legend capture source=drag ...`
+- Click Refresh, then click in the plot again; confirm the canvas identity and cids are re-printed and the button-release debug line fires.
+- With Persist Cycle Legend Position enabled and stored offsets present, `source=auto` capture should not appear; only `source=drag` commits new offsets.
 
 ### Plot Elements and Annotations System
 Plot annotations are stored per plot in `settings.json` and rendered on top of figures.

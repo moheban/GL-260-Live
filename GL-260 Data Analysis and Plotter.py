@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.9.5
+# Version: v2.9.6
 # Date: 2026-01-30
 
 import os
@@ -7925,7 +7925,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.9.5"
+APP_VERSION = "v2.9.6"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -34893,13 +34893,6 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
 
-        if plot_key == "fig_combined":
-            try:
-                self._register_combined_legend_tracking(fig)
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-
         return frame
 
     def _open_plot_preview(
@@ -47069,6 +47062,28 @@ class UnifiedApp(tk.Tk):
         settings["combined_cycle_legend_ref_axis"] = ref_axis_key
         settings["combined_cycle_legend_ref_corner"] = ref_corner_key
         cycle_ref_axis = self._combined_cycle_reference_axis(fig)
+        stored_offsets = _combined_cycle_axis_offset_values()
+        if source == "auto" and stored_offsets is not None:
+            # Reapply persisted offsets and skip auto-capture to avoid overwrites.
+            loc_value = _resolve_combined_cycle_legend_loc()
+            # Iterate over cycle legends to apply the per-item logic.
+            for lg in cycle_legends:
+                try:
+                    _apply_cycle_legend_axis_offset(
+                        fig,
+                        lg,
+                        cycle_ref_axis,
+                        ref_corner_key,
+                        stored_offsets[0],
+                        stored_offsets[1],
+                        loc_value,
+                        allow_draw=False,
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting
+                    # the workflow.
+                    pass
+            return
         renderer = None
         try:
             canvas = fig.canvas
@@ -47581,24 +47596,136 @@ class UnifiedApp(tk.Tk):
                     # the workflow.
                     pass
         try:
-            canvas = legends[0].figure.canvas if legends else None
+            canvas = fig.canvas
         except Exception:
             canvas = None
-        if canvas is None:
+        if canvas is None or not isinstance(canvas, FigureCanvasTkAgg):
+            # Resolve the live Tk canvas so event wiring targets user input.
+            try:
+                for candidate in list(getattr(self, "_canvases", []) or []):
+                    if getattr(candidate, "figure", None) is fig:
+                        canvas = candidate
+                        break
+            except Exception:
+                pass
+        if canvas is not None and getattr(fig, "canvas", None) is not canvas:
+            try:
+                fig.set_canvas(canvas)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting
+                # the workflow.
+                pass
+        canvas_type = type(canvas).__name__ if canvas is not None else "None"
+        canvas_id = id(canvas) if canvas is not None else None
+        print(
+            "DEBUG: legend tracking canvas "
+            f"type={canvas_type} id={canvas_id}"
+        )
+        if canvas is None or not isinstance(canvas, FigureCanvasTkAgg):
+            print(
+                "WARN: Combined legend tracking skipped; "
+                "canvas is not FigureCanvasTkAgg."
+            )
             return
         try:
-            if getattr(self, "_combined_legend_cid", None):
-                canvas.mpl_disconnect(self._combined_legend_cid)
+            prior_canvas = getattr(self, "_combined_legend_canvas", None)
+            prior_cids = getattr(self, "_combined_legend_event_cids", None)
+            if not isinstance(prior_cids, dict):
+                prior_cids = {}
+            if prior_canvas is not None:
+                # Disconnect previously registered callbacks to avoid duplicates.
+                for cid in prior_cids.values():
+                    if cid:
+                        try:
+                            prior_canvas.mpl_disconnect(cid)
+                        except Exception:
+                            # Best-effort guard; ignore failures to avoid interrupting
+                            # the workflow.
+                            pass
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting
             # the workflow.
             pass
         self._combined_legend_cid = None
+        self._combined_legend_event_cids = {}
+        self._combined_legend_canvas = canvas
         if not cycle_drag_enabled:
             # Drag capture callbacks are only registered when cycle dragging is enabled.
             return
         if self._combined_cycle_legend_capture_enabled():
             self._capture_combined_legend_anchor_from_fig(fig, source="auto")
+
+        # Closure captures _register_combined_legend_tracking state for callback
+        # wiring, kept nested to scope the handler, and invoked by bindings set below.
+        def _on_draw(_event=None):
+            """Handle draw event.
+
+            Purpose:
+                Anchor a draw-event callback for debug wiring.
+            Why:
+                Connection IDs confirm the active canvas wiring in logs.
+
+            Args:
+                _event: Matplotlib draw event payload (unused).
+
+            Returns:
+                None.
+
+            Side Effects:
+                None.
+
+            Exceptions:
+                None.
+            """
+            return
+
+        # Closure captures _register_combined_legend_tracking state for callback
+        # wiring, kept nested to scope the handler, and invoked by bindings set below.
+        def _on_press(_event=None):
+            """Handle button press event.
+
+            Purpose:
+                Anchor a press-event callback for debug wiring.
+            Why:
+                Connection IDs confirm the active canvas wiring in logs.
+
+            Args:
+                _event: Matplotlib button press event payload (unused).
+
+            Returns:
+                None.
+
+            Side Effects:
+                None.
+
+            Exceptions:
+                None.
+            """
+            return
+
+        # Closure captures _register_combined_legend_tracking state for callback
+        # wiring, kept nested to scope the handler, and invoked by bindings set below.
+        def _on_motion(_event=None):
+            """Handle motion notify event.
+
+            Purpose:
+                Anchor a motion-event callback for debug wiring.
+            Why:
+                Connection IDs confirm the active canvas wiring in logs.
+
+            Args:
+                _event: Matplotlib motion event payload (unused).
+
+            Returns:
+                None.
+
+            Side Effects:
+                None.
+
+            Exceptions:
+                None.
+            """
+            return
 
         # Closure captures _register_combined_legend_tracking state for callback
         # wiring, kept nested to scope the handler, and invoked by bindings set below.
@@ -47623,15 +47750,36 @@ class UnifiedApp(tk.Tk):
             Exceptions:
                 Errors are caught by the caller to avoid UI interruption.
             """
+            event_x = getattr(_event, "x", None)
+            event_y = getattr(_event, "y", None)
+            event_inaxes = getattr(_event, "inaxes", None)
+            print(
+                "DEBUG: button_release_event fired "
+                f"fig_id={id(fig)} x={event_x} y={event_y} "
+                f"inaxes={event_inaxes}"
+            )
             if not self._combined_cycle_legend_capture_enabled(require_drag=True):
                 return
             self._capture_combined_legend_anchor_from_fig(fig, source="drag")
 
         try:
-            self._combined_legend_cid = canvas.mpl_connect(
-                "button_release_event", _on_release
-            )
+            draw_cid = canvas.mpl_connect("draw_event", _on_draw)
+            press_cid = canvas.mpl_connect("button_press_event", _on_press)
+            motion_cid = canvas.mpl_connect("motion_notify_event", _on_motion)
+            release_cid = canvas.mpl_connect("button_release_event", _on_release)
+            self._combined_legend_event_cids = {
+                "draw_event": draw_cid,
+                "button_press_event": press_cid,
+                "motion_notify_event": motion_cid,
+                "button_release_event": release_cid,
+            }
+            self._combined_legend_cid = release_cid
+            print(f"DEBUG: connect draw_event cid={draw_cid}")
+            print(f"DEBUG: connect button_press_event cid={press_cid}")
+            print(f"DEBUG: connect button_release_event cid={release_cid}")
+            print(f"DEBUG: connect motion_notify_event cid={motion_cid}")
         except Exception:
+            self._combined_legend_event_cids = {}
             self._combined_legend_cid = None
 
     def _set_cycle_summary(self, text):
