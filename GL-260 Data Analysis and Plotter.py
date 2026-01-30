@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.8.0
-# Date: 2026-01-28
+# Version: v2.9.0
+# Date: 2026-01-30
 
 import os
 import sys
@@ -7925,7 +7925,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.8.0"
+APP_VERSION = "v2.9.0"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -23420,8 +23420,35 @@ def build_combined_triple_axis_figure(
     fig_size=None,
     render_ctx: Optional[RenderContext] = None,
 ):
-    """Build the combined triple-axis figure with primary and secondary axes.
-    Used by preview and export pipelines to ensure consistent layout and overlays."""
+    """Build the combined triple-axis figure for display/export workflows.
+
+    Purpose:
+        Assemble the combined triple-axis plot with legends, overlays, and layout
+        rules that keep the interactive display and export pipeline aligned.
+    Why:
+        The combined plot is the authoritative multi-axis view; rebuilding it in
+        one routine preserves consistent legend placement and export geometry.
+
+    Args:
+        min_time/max_time/etc.: Numeric axis limits and tick settings in data
+            units; tick spacing values are floats.
+        legend_anchor/cycle_legend_anchor: (x, y) tuple in normalized figure or
+            axes fraction coordinates (0-1 with small tolerance).
+        cycle_legend_anchor_space: "figure" or "axes" to interpret the anchor.
+        mode: "display" or "export" to control layout solving behavior.
+        fig_size: Optional (width, height) in inches for display rendering.
+        render_ctx: Optional RenderContext payload for prepared data/overlays.
+
+    Returns:
+        Matplotlib Figure configured with axes, legends, and layout manager.
+
+    Side Effects:
+        Writes legend/axis metadata onto the Figure and may update settings when
+        cycle legend offsets are migrated for export consistency.
+
+    Exceptions:
+        Internal rendering errors are caught and ignored to keep UI flows alive.
+    """
     # Combined triple-axis pipeline: one primary axis shares the x-scale with
     # optional temperature/derivative axes, so preview and export stay aligned
     # while supporting detached right-side spines and overlay annotations.
@@ -24343,8 +24370,22 @@ def build_combined_triple_axis_figure(
     has_cycle_anchor = cycle_legend_anchor is not None and axis_offset_values is None
     cycle_anchor = cycle_legend_anchor if has_cycle_anchor else None
     cycle_loc_override = cycle_legend_loc if cycle_legend_loc is not None else cycle_loc_choice
+    cycle_anchor_ref_axis = None
+    if cycle_legend_anchor_space == "axes":
+        # Preserve axis-space anchors by applying them against the configured
+        # reference axis, matching export preview behavior.
+        cycle_anchor_ref_axis = _resolve_combined_cycle_ref_axis(
+            fig,
+            ax_main=ax,
+            ax_right=ax_temp,
+            ax_deriv=ax_deriv,
+            ref_axis_key=settings.get("combined_cycle_legend_ref_axis"),
+        )
+        if cycle_anchor_ref_axis is None:
+            cycle_anchor_ref_axis = ax
+    cycle_anchor_axis = cycle_anchor_ref_axis or ax
     cycle_legend = _add_cycle_legend(
-        ax,
+        cycle_anchor_axis,
         combined_peak_artist,
         combined_trough_artist,
         anchor=cycle_anchor,
@@ -24353,8 +24394,11 @@ def build_combined_triple_axis_figure(
     )
     if cycle_legend is not None and has_cycle_anchor:
         legend_transform = fig.transFigure
-        if cycle_legend_anchor_space == "axes" and ax is not None:
-            legend_transform = ax.transAxes
+        if (
+            cycle_legend_anchor_space == "axes"
+            and cycle_anchor_ref_axis is not None
+        ):
+            legend_transform = cycle_anchor_ref_axis.transAxes
         _apply_legend_anchor_to_artist(
             cycle_legend,
             cycle_legend_anchor,
@@ -30263,12 +30307,43 @@ class UnifiedApp(tk.Tk):
         return (width_in, height_in)
 
     def _force_plot_refresh(self, frame, canvas):
-        """Refresh value.
-        Used by force plot workflows to refresh value."""
+        """Force a plot refresh and rebuild as needed.
+
+        Purpose:
+            Rebuild the requested plot with current settings and re-install it
+            on the existing Tk canvas without changing overall layout rules.
+        Why:
+            Refresh needs to reuse cached data where possible while preserving
+            user-driven legend placement for combined plots.
+
+        Args:
+            frame: Tkinter frame hosting the plot tab.
+            canvas: FigureCanvasTkAgg displaying the figure.
+
+        Returns:
+            None.
+
+        Side Effects:
+            Captures combined legend anchors before rebuild, replaces figures,
+            rebinds plot element controllers, and redraws the canvas.
+
+        Exceptions:
+            Internal errors are caught and ignored to keep UI responsive.
+        """
         plot_key = getattr(frame, "_plot_key", None)
         plot_id = self._plot_key_to_plot_id(plot_key)
         if not plot_id:
             plot_id = getattr(frame, "_plot_id", None)
+        if plot_key == "fig_combined":
+            # Capture current legend anchors before rebuilding the combined figure.
+            try:
+                self._capture_combined_legend_anchor_from_fig(
+                    getattr(canvas, "figure", None),
+                    source="refresh",
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
         try:
             self._refresh_canvas_display(frame, canvas, trigger_resize=True)
         except Exception:
@@ -33789,8 +33864,27 @@ class UnifiedApp(tk.Tk):
         editor.protocol("WM_DELETE_WINDOW", _close_editor)
 
     def _clear_plot_tabs(self):
-        """Clear plot tabs.
-        Used to reset plot tabs state safely."""
+        """Clear all plot tabs and associated UI state.
+
+        Purpose:
+            Remove generated plot tabs and release associated controllers/canvases.
+        Why:
+            Plot regeneration and dataset changes require a clean plot tab slate
+            without leaving stale canvases or losing persisted legend anchors.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Side Effects:
+            Captures combined legend anchors, tears down plot UI helpers, and
+            removes tabs/canvases from the notebook.
+
+        Exceptions:
+            Errors are caught to avoid breaking the UI teardown flow.
+        """
 
         # remove any previously added plot tabs
         for controller in list(self._plot_annotation_controllers.values()):
@@ -33817,6 +33911,29 @@ class UnifiedApp(tk.Tk):
         self._plot_dirty_flags = {}
         try:
             self._close_plot_settings_dialog()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+        # Capture combined legend anchors before tabs are destroyed.
+        try:
+            tabs = list(getattr(self, "_plot_tabs", []) or [])
+            canvases = list(getattr(self, "_canvases", []) or [])
+            # Iterate over indexed elements from tabs to apply the per-item logic.
+            for idx, tab in enumerate(tabs):
+                if getattr(tab, "_plot_key", None) != "fig_combined" and getattr(
+                    tab, "_plot_id", None
+                ) != "fig_combined_triple_axis":
+                    continue
+                canvas = canvases[idx] if idx < len(canvases) else None
+                try:
+                    self._capture_combined_legend_anchor_from_fig(
+                        getattr(canvas, "figure", None),
+                        source="refresh",
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
@@ -34290,10 +34407,41 @@ class UnifiedApp(tk.Tk):
 
         # Closure captures _add_plot_tab state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _add_plot_tab.
         def _close_this_plot():
-            """Close this plot.
-            Used by UI actions to close this plot safely."""
+            """Close the current plot tab and return to Plot Settings.
+
+            Purpose:
+                Tear down the selected plot tab and route focus back to the
+                Plot Settings tab to keep the workflow centered on plotting.
+            Why:
+                Users expect to continue adjusting plot settings after closing
+                a generated figure, not to land on Final Report.
+
+            Args:
+                None.
+
+            Returns:
+                None.
+
+            Side Effects:
+                Captures combined legend anchors, destroys the tab/canvas, and
+                selects the Plot Settings tab.
+
+            Exceptions:
+                Errors are caught to avoid interrupting UI teardown.
+            """
 
             self._log_plot_tab_debug(f"Close requested for '{title}'")
+
+            if plot_key == "fig_combined":
+                # Capture combined legend anchors before the figure is closed.
+                try:
+                    self._capture_combined_legend_anchor_from_fig(
+                        fig,
+                        source="refresh",
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
 
             if plot_id:
                 controller = self._plot_annotation_controllers.pop(plot_id, None)
@@ -34805,8 +34953,27 @@ class UnifiedApp(tk.Tk):
             stages["embed"] = {"ms": elapsed_ms}
 
     def _remove_plot_tab_by_title(self, title: str):
-        """Perform remove plot tab by title.
-        Used to keep the workflow logic localized and testable."""
+        """Remove a plot tab by its notebook title.
+
+        Purpose:
+            Remove a specific plot tab and its associated resources.
+        Why:
+            Targeted plot refreshes need to replace individual tabs without
+            clearing the entire plot area.
+
+        Args:
+            title: Notebook tab title to remove.
+
+        Returns:
+            None.
+
+        Side Effects:
+            Captures combined legend anchors, destroys canvases, and tears down
+            plot controllers tied to the removed tab.
+
+        Exceptions:
+            Errors are caught to avoid interrupting tab removal.
+        """
 
         if not hasattr(self, "_plot_tabs"):
 
@@ -34821,6 +34988,18 @@ class UnifiedApp(tk.Tk):
 
                 if self.nb.tab(tab, "text") == title:
                     plot_id = getattr(tab, "_plot_id", None)
+                    plot_key = getattr(tab, "_plot_key", None)
+                    if plot_key == "fig_combined" or plot_id == "fig_combined_triple_axis":
+                        # Capture combined legend anchors before removing the tab.
+                        try:
+                            canvas = self._canvases[i] if i < len(self._canvases) else None
+                            self._capture_combined_legend_anchor_from_fig(
+                                getattr(canvas, "figure", None),
+                                source="refresh",
+                            )
+                        except Exception:
+                            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                            pass
                     if plot_id and plot_id in self._plot_annotation_controllers:
                         try:
                             self._plot_annotation_controllers[plot_id].disconnect()
@@ -46330,15 +46509,42 @@ class UnifiedApp(tk.Tk):
         has_total = any("total" in label and "psi" in label for label in labels)
         return has_peak_trough or has_total
 
-    def _capture_combined_legend_anchor_from_fig(self, fig: Optional[Figure]) -> None:
-        """Perform capture combined legend anchor from fig.
-        Used to keep the workflow logic localized and testable."""
+    def _capture_combined_legend_anchor_from_fig(
+        self, fig: Optional[Figure], *, source: str = "auto"
+    ) -> None:
+        """Capture combined legend anchors from a figure.
+
+        Purpose:
+            Extract current main/cycle legend anchors so display refreshes and
+            exports reuse the user-chosen placement.
+        Why:
+            The display pipeline does not rebuild legends with persistent state
+            unless the last drag location is captured and stored.
+
+        Args:
+            fig: Matplotlib Figure containing combined legends to inspect.
+            source: "auto" for passive capture, "drag" for user mouse-up capture.
+
+        Returns:
+            None.
+
+        Side Effects:
+            Updates self._combined_* anchor fields, writes settings keys,
+            optionally disables center_combined_plot_legend on manual drag, and
+            persists settings to disk.
+
+        Exceptions:
+            Errors are caught internally to avoid interrupting UI rendering.
+        """
         if fig is None:
             return
+        prev_main_anchor = getattr(self, "_combined_legend_anchor", None)
+        prev_main_loc = getattr(self, "_combined_legend_loc", None)
         legends = self._collect_combined_legends(fig)
         if not legends:
             return
         updated = False
+        main_anchor_updated = False
         fig_legend_ids = set()
         try:
             fig_legend_ids = {
@@ -46623,6 +46829,7 @@ class UnifiedApp(tk.Tk):
                     else:
                         settings.pop("combined_legend_loc", None)
                     updated = True
+                    main_anchor_updated = True
                 if is_cycle_legend and anchor_loc is not None:
                     self._combined_cycle_legend_anchor = anchor_loc
                     settings["combined_cycle_legend_anchor"] = [
@@ -46653,6 +46860,31 @@ class UnifiedApp(tk.Tk):
                     updated = True
             except Exception:
                 continue
+        if updated and source == "drag" and main_anchor_updated:
+            anchor_changed = (
+                prev_main_anchor != getattr(self, "_combined_legend_anchor", None)
+                or prev_main_loc != getattr(self, "_combined_legend_loc", None)
+            )
+            if anchor_changed:
+                # Manual drag disables centering so the captured anchors persist.
+                center_toggle = getattr(self, "center_combined_plot_legend", None)
+                center_enabled = False
+                if center_toggle is not None:
+                    try:
+                        center_enabled = bool(center_toggle.get())
+                    except Exception:
+                        center_enabled = False
+                else:
+                    center_enabled = bool(settings.get("combined_center_plot_legend"))
+                if center_enabled:
+                    try:
+                        if center_toggle is not None:
+                            center_toggle.set(False)
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+                    settings["combined_center_plot_legend"] = False
+                    updated = True
         if updated:
             try:
                 _save_settings_to_disk()
@@ -46662,8 +46894,27 @@ class UnifiedApp(tk.Tk):
             self._combined_layout_dirty = True
 
     def _register_combined_legend_tracking(self, fig: Optional[Figure]) -> None:
-        """Perform register combined legend tracking.
-        Used to keep the workflow logic localized and testable."""
+        """Register draggable legend tracking for combined plots.
+
+        Purpose:
+            Attach drag handlers and capture logic for combined plot legends.
+        Why:
+            The display pipeline needs live mouse-up capture to persist legend
+            anchors across refresh/regeneration without extra layout passes.
+
+        Args:
+            fig: Matplotlib Figure with combined legends to monitor.
+
+        Returns:
+            None.
+
+        Side Effects:
+            Enables legend dragging, wires a canvas callback, and persists
+            captured anchors via _capture_combined_legend_anchor_from_fig.
+
+        Exceptions:
+            Internal errors are caught to avoid breaking the UI.
+        """
         if fig is None:
             return
         try:
@@ -46690,7 +46941,7 @@ class UnifiedApp(tk.Tk):
         # Iterate over legends to apply the per-item logic.
         for lg in legends:
             _make_legend_draggable(lg)
-        self._capture_combined_legend_anchor_from_fig(fig)
+        self._capture_combined_legend_anchor_from_fig(fig, source="auto")
         try:
             canvas = legends[0].figure.canvas if legends else None
         except Exception:
@@ -46706,9 +46957,27 @@ class UnifiedApp(tk.Tk):
 
         # Closure captures _register_combined_legend_tracking state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _register_combined_legend_tracking.
         def _on_release(_event=None):
-            """Handle release.
-            Used as an event callback for release."""
-            self._capture_combined_legend_anchor_from_fig(fig)
+            """Handle legend drag completion for combined plots.
+
+            Purpose:
+                Capture legend anchors on mouse release after a drag.
+            Why:
+                Persisting anchors on drag completion prevents snap-back on
+                refresh/regeneration.
+
+            Args:
+                _event: Matplotlib event payload (unused).
+
+            Returns:
+                None.
+
+            Side Effects:
+                Writes legend anchor state and updates settings persistence.
+
+            Exceptions:
+                Errors are caught by the caller to avoid UI interruption.
+            """
+            self._capture_combined_legend_anchor_from_fig(fig, source="drag")
 
         try:
             self._combined_legend_cid = canvas.mpl_connect(
@@ -70060,6 +70329,18 @@ class UnifiedApp(tk.Tk):
             and isinstance(legend_overlay, dict)
             and ax is not None
         ):
+            cycle_anchor_ref_axis = None
+            if config.get("cycle_legend_anchor_space") == "axes":
+                # Use the configured reference axis for axes-space anchors.
+                cycle_anchor_ref_axis = _resolve_combined_cycle_ref_axis(
+                    fig,
+                    ax_main=ax,
+                    ax_right=ax_temp,
+                    ax_deriv=ax_deriv,
+                    ref_axis_key=settings.get("combined_cycle_legend_ref_axis"),
+                )
+                if cycle_anchor_ref_axis is None:
+                    cycle_anchor_ref_axis = ax
             # Iterate over self._collect_combined_legends(fig) to apply the per-item logic.
             for legend in self._collect_combined_legends(fig):
                 if self._is_combined_cycle_legend(legend):
@@ -70217,7 +70498,7 @@ class UnifiedApp(tk.Tk):
             peak_artist = marker_state.get("peak") if isinstance(marker_state, dict) else None
             trough_artist = marker_state.get("trough") if isinstance(marker_state, dict) else None
             _add_cycle_legend(
-                ax,
+                cycle_anchor_ref_axis or ax,
                 peak_artist,
                 trough_artist,
                 anchor=config.get("cycle_legend_anchor"),
