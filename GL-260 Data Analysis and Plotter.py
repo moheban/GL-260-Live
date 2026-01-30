@@ -47471,6 +47471,10 @@ class UnifiedApp(tk.Tk):
         """
         if fig is None:
             return
+        print(
+            f"DEBUG: apply_saved_anchor persist={persist} "
+            f"dx={saved_dx} dy={saved_dy} fig_id={id(fig)}"
+        )
         # Debug: confirm the authoritative tracker function is executing.
         print(
             "DEBUG: _register_combined_legend_tracking active "
