@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.9.3
+# Version: v2.9.4
 # Date: 2026-01-30
 
 import os
@@ -7925,7 +7925,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.9.3"
+APP_VERSION = "v2.9.4"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -47000,7 +47000,8 @@ class UnifiedApp(tk.Tk):
                 pass
             break
 
-    # Hard dedupe keeps a single capture path so cycle legend anchors persist across refreshes.
+    # CRITICAL: This function MUST exist exactly once.
+    # Do NOT duplicate or redefine below — this WILL break legend persistence.
     def _capture_combined_legend_anchor_from_fig(
         self, fig: Figure | None, *, source: str = "auto"
     ) -> None:
@@ -47423,6 +47424,8 @@ class UnifiedApp(tk.Tk):
                 pass
             self._combined_layout_dirty = True
 
+    # CRITICAL: This function MUST exist exactly once.
+    # Do NOT duplicate or redefine below — this WILL break legend persistence.
     def _register_combined_legend_tracking(self, fig: Figure | None) -> None:
         """Register draggable legend tracking for combined plots.
 
