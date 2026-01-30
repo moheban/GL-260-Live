@@ -1,12 +1,13 @@
-# GL-260 Data Analysis and Plotter (v2.9.2)
+# GL-260 Data Analysis and Plotter (v2.9.3)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.9.2`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.9.3`.
 
 ## Table of Contents
 - [Part I - Changelog / Ledger](#part-i---changelog--ledger)
+  - [v2.9.3 Combined Legend Isolation](#v293-combined-legend-isolation)
   - [v2.9.1 Combined Cycle Legend Controls](#v291-combined-cycle-legend-controls)
   - [v2.9.0 Combined Legend Persistence](#v290-combined-legend-persistence)
   - [v2.6.0 Final Report Tab Scrolling](#v260-final-report-tab-scrolling)
@@ -45,6 +46,12 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 
 ## Part I - Changelog / Ledger
 
+### v2.9.3 Combined Legend Isolation
+- Main and cycle legends in the combined plot are now fully independent; only the cycle legend persists its dragged position across Refresh/Regenerate when persistence is enabled.
+- Cycle legend drag capture is gated to explicitly tagged cycle legends and only wired when cycle dragging is enabled, preventing cross-talk with the main legend.
+- Cycle legend offsets are reapplied before layout solve; main legend centering is re-applied after layout solve for consistent placement.
+- Main legend dragging remains optional and session-only; Center Plot Legend is no longer disabled by drag.
+
 ### v2.9.1 Combined Cycle Legend Controls
 - Added a Plot Settings -> Cycle Legend (Combined Plot) subsection with drag enable/lock/persist/reset and clamp-on-capture controls.
 - Cycle legend drag placement now persists across display refresh/regeneration when persistence is enabled; lock prevents accidental moves.
@@ -52,9 +59,9 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - Closing generated plot tabs explicitly returns focus to the Plot Settings tab.
 
 ### v2.9.0 Combined Legend Persistence
-- Combined triple-axis main and cycle legend positions persist in the display view across Refresh/regeneration, tab switches, and app restarts.
+- Combined triple-axis cycle legend positions persist in the display view across Refresh/regeneration, tab switches, and app restarts.
 - Display legend dragging now captures anchors on mouse release, keeping export preview and final exports aligned with the on-screen placement.
-- Manual main-legend drags automatically disable Center plot legend so user anchors are retained.
+- Manual main-legend drags are session-only; Center Plot Legend remains in control of default centering.
 - Closing a generated plot tab now returns focus to the Plot Settings tab.
 
 ### v2.6.0 Final Report Tab Scrolling
@@ -663,15 +670,15 @@ Tools -> Developer Tools
 - Legends are created per figure and are draggable when enabled in Plot Settings.
 - Legends omit datasets that are set to None in the Columns tab.
 - Cycle legends can be added to core plots when enabled.
-- Combined triple-axis main/cycle legend anchors persist across refresh/regeneration and are reused for export preview and final exports.
-- Center Plot Legend affects only the main legend; cycle legend placement is independent.
-- Manual main-legend drags (when enabled) disable Center plot legend to preserve the captured anchor.
+- Combined triple-axis cycle legend anchors persist across refresh/regeneration (when enabled) and are reused for export preview and final exports; main legends re-center on rebuild.
+- Center Plot Legend affects only the main legend; cycle legend placement is independent and is never captured by main-legend logic.
+- Manual main-legend drags (when enabled) are session-only and do not disable Center Plot Legend.
 - Plot Settings -> Cycle Legend (Combined Plot) provides Enable Dragging, Lock Position, Persist Position, Reset Position, and Clamp-on-capture controls.
 
 #### Combined cycle legend placement
 - The combined triple-axis cycle legend supports axis-relative placement with fixed pixel offsets.
 - A reference axis (main/right/deriv) and reference corner define where the offsets are measured from.
-- Placement is preserved across the main window, export preview, and final exports.
+- Placement is preserved across the main window, export preview, and final exports when persistence is enabled.
 - Anchor space (figure vs axes) is preserved when reapplying user-dragged cycle legend positions.
 - Workflow: Enable Cycle Legend Dragging -> drag the legend -> keep Persist Cycle Legend Position ON to retain placement across Refresh/Rebuild; Lock Cycle Legend Position disables dragging without hiding the legend; Reset Cycle Legend Position clears stored offsets and returns to defaults.
 - Clamp Cycle Legend Inside Axes on Capture keeps stored positions within the visible axes bounds.
