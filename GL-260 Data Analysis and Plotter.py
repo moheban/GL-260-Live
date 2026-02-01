@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.9.8
-# Date: 2026-01-30
+# Version: v2.9.9
+# Date: 2026-02-01
 
 import os
 import sys
@@ -7925,7 +7925,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.9.8"
+APP_VERSION = "v2.9.9"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -18373,7 +18373,12 @@ if os.path.exists(SETTINGS_FILE):
     if combined_cycle_ref_dy is not None:
         settings["combined_cycle_legend_ref_dy_px"] = combined_cycle_ref_dy
     anchor_mode_value = settings.get("combined_cycle_legend_anchor_mode")
-    if combined_cycle_ref_dx is not None and combined_cycle_ref_dy is not None:
+    normalized_cycle_loc = _normalize_legend_loc_value(
+        settings.get("combined_cycle_legend_loc")
+    )
+    if isinstance(normalized_cycle_loc, tuple):
+        anchor_mode_value = "loc_tuple"
+    elif combined_cycle_ref_dx is not None and combined_cycle_ref_dy is not None:
         anchor_mode_value = "axis_offset"
     else:
         anchor_mode_value = "legacy_anchor"
@@ -22602,6 +22607,12 @@ def _combined_cycle_axis_offset_values() -> tuple[float, float] | None:
     Exceptions:
         Errors are handled internally and return None.
     """
+    try:
+        if settings.get("combined_cycle_legend_anchor_mode") == "loc_tuple":
+            return None
+    except Exception:
+        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+        return None
     if not bool(settings.get("combined_cycle_legend_persist_position", True)):
         # Persistence disabled: ignore stored offsets so refresh/rebuild uses defaults.
         return None
@@ -39113,10 +39124,22 @@ class UnifiedApp(tk.Tk):
             return
 
         try:
+            start_fig = getattr(combined_canvas, "figure", None)
+        except Exception:
+            start_fig = None
+        start_fig_id = id(start_fig) if start_fig is not None else None
+        print(f"DEBUG: COMBINED_REFRESH start fig_id={start_fig_id}")
+        try:
             self._force_plot_refresh(combined_tab, combined_canvas)
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+        try:
+            end_fig = getattr(combined_canvas, "figure", None)
+        except Exception:
+            end_fig = None
+        end_fig_id = id(end_fig) if end_fig is not None else None
+        print(f"DEBUG: COMBINED_REFRESH end fig_id={end_fig_id}")
 
     def _open_combined_layout_tuner(self) -> None:
         """Open combined layout tuner.
@@ -46850,6 +46873,129 @@ class UnifiedApp(tk.Tk):
                 return legend
         return cycle_legends[0]
 
+    def _debug_dump_cycle_legend(self, fig: Figure, tag: str) -> None:
+        """Dump combined cycle legend identity/geometry for debug tracing."""
+        if fig is None:
+            return
+        try:
+            fig_id = id(fig)
+        except Exception:
+            fig_id = None
+        try:
+            canvas = getattr(fig, "canvas", None)
+        except Exception:
+            canvas = None
+        canvas_id = id(canvas) if canvas is not None else None
+        try:
+            legends = self._collect_combined_legends(fig)
+        except Exception:
+            legends = []
+        try:
+            fig_legend_ids = {
+                id(lg) for lg in getattr(fig, "legends", []) if lg is not None
+            }
+        except Exception:
+            fig_legend_ids = set()
+        print(f"DEBUG: LEGENDS_FOUND tag={tag} count={len(legends)}")
+        # Iterate over legends to apply the per-item logic.
+        for lg in legends:
+            parent = "unknown"
+            if id(lg) in fig_legend_ids:
+                parent = "fig"
+            else:
+                ax = getattr(lg, "axes", None)
+                if ax is not None:
+                    parent = f"axes:{id(ax)}"
+            try:
+                labels = self._legend_texts(lg)
+            except Exception:
+                labels = []
+            print(
+                "DEBUG: LEGEND_CANDIDATE "
+                f"tag={tag} legend_id={id(lg)} parent={parent} labels={labels}"
+            )
+        legend = None
+        try:
+            legend = self._get_combined_cycle_legend(fig)
+        except Exception:
+            legend = None
+        if legend is None:
+            print(
+                "DEBUG: CYCLE_LEGEND_DUMP "
+                f"tag={tag} fig_id={fig_id} canvas_id={canvas_id} "
+                "legend_id=None parent=None loc=None"
+            )
+            print(f"DEBUG: CYCLE_LEGEND_LABELS tag={tag} labels=[]")
+            print(
+                "DEBUG: CYCLE_LEGEND_GEOM "
+                f"tag={tag} bbox_to_anchor=None bbox_px=None axpos=None renderer=None"
+            )
+            return
+        parent = "unknown"
+        if id(legend) in fig_legend_ids:
+            parent = "fig"
+        else:
+            ax = getattr(legend, "axes", None)
+            if ax is not None:
+                parent = f"axes:{id(ax)}"
+        try:
+            legend_loc = legend.get_loc()
+        except Exception:
+            legend_loc = getattr(legend, "_loc", None)
+        try:
+            labels = self._legend_texts(legend)
+        except Exception:
+            labels = []
+        print(
+            "DEBUG: CYCLE_LEGEND_DUMP "
+            f"tag={tag} fig_id={fig_id} canvas_id={canvas_id} "
+            f"legend_id={id(legend)} parent={parent} loc={legend_loc}"
+        )
+        print(f"DEBUG: CYCLE_LEGEND_LABELS tag={tag} labels={labels}")
+        try:
+            bbox_to_anchor = legend.get_bbox_to_anchor()
+        except Exception:
+            bbox_to_anchor = None
+        renderer = None
+        if canvas is not None:
+            try:
+                renderer = canvas.get_renderer()
+            except Exception:
+                renderer = getattr(canvas, "renderer", None)
+        bbox_px = None
+        renderer_label = "None"
+        if renderer is not None:
+            renderer_label = "ok"
+            try:
+                ext = legend.get_window_extent(renderer=renderer)
+                bbox_px = (ext.x0, ext.y0, ext.x1, ext.y1)
+            except Exception:
+                bbox_px = None
+        ax = getattr(legend, "axes", None)
+        if ax is None:
+            try:
+                axes_map = self._resolve_plot_element_axes(fig)
+                ax = axes_map.get("primary") or next(iter(axes_map.values()), None)
+            except Exception:
+                ax = None
+        if ax is None:
+            try:
+                ax = fig.axes[0] if fig.axes else None
+            except Exception:
+                ax = None
+        axpos = None
+        if ax is not None:
+            try:
+                pos = ax.get_position()
+                axpos = (pos.x0, pos.y0, pos.width, pos.height)
+            except Exception:
+                axpos = None
+        print(
+            "DEBUG: CYCLE_LEGEND_GEOM "
+            f"tag={tag} bbox_to_anchor={bbox_to_anchor} "
+            f"bbox_px={bbox_px} axpos={axpos} renderer={renderer_label}"
+        )
+
     def _combined_cycle_legend_capture_enabled(
         self, *, require_drag: bool = False
     ) -> bool:
@@ -47062,6 +47208,13 @@ class UnifiedApp(tk.Tk):
         """
         if fig is None:
             return
+        if source != "drag":
+            try:
+                if settings.get("combined_cycle_legend_anchor_mode") == "loc_tuple":
+                    return
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
         cycle_capture_enabled = self._combined_cycle_legend_capture_enabled()
         cycle_drag_capture_enabled = self._combined_cycle_legend_capture_enabled(
             require_drag=True
@@ -47390,6 +47543,13 @@ class UnifiedApp(tk.Tk):
                     loc_value = lg.get_loc()
                 except Exception:
                     loc_value = getattr(lg, "_loc", None)
+                loc_is_tuple = isinstance(loc_value, tuple) and len(loc_value) == 2
+                loc_tuple = None
+                if loc_is_tuple:
+                    try:
+                        loc_tuple = (float(loc_value[0]), float(loc_value[1]))
+                    except Exception:
+                        loc_tuple = None
                 normalized_loc = (
                     _normalize_legend_loc_value(loc_value) or "lower left"
                     if anchor_loc is not None
@@ -47400,12 +47560,77 @@ class UnifiedApp(tk.Tk):
                     and cycle_capture_enabled
                     and (source != "drag" or cycle_drag_capture_enabled)
                 ):
+                    if source == "drag":
+                        try:
+                            fig_id = id(fig)
+                        except Exception:
+                            fig_id = None
+                        try:
+                            canvas = getattr(fig, "canvas", None)
+                        except Exception:
+                            canvas = None
+                        canvas_id = id(canvas) if canvas is not None else None
+                        try:
+                            legend_id = id(lg)
+                        except Exception:
+                            legend_id = None
+                        bbox_anchor_obj = None
+                        try:
+                            bbox_anchor_obj = lg.get_bbox_to_anchor()
+                        except Exception:
+                            bbox_anchor_obj = None
+                        bbox_anchor_type = (
+                            type(bbox_anchor_obj).__name__
+                            if bbox_anchor_obj is not None
+                            else None
+                        )
+                        bbox_bounds = None
+                        if bbox_anchor_obj is not None:
+                            try:
+                                bbox_bounds = bbox_anchor_obj.bounds
+                            except Exception:
+                                bbox_bounds = None
+                        try:
+                            bbox_repr = repr(bbox_anchor_obj)
+                        except Exception:
+                            bbox_repr = None
+                        print(
+                            "DEBUG: CAPTURE_PRE "
+                            f"fig_id={fig_id} canvas_id={canvas_id} "
+                            f"legend_id={legend_id} loc={loc_value} "
+                            f"loc_is_tuple={loc_is_tuple} "
+                            f"bbox_anchor_obj={bbox_anchor_obj} "
+                            f"bbox_anchor_type={bbox_anchor_type} "
+                            f"bbox_bounds={bbox_bounds} bbox_repr={bbox_repr}"
+                        )
+                    if source == "drag" and loc_tuple is not None:
+                        persist_value = bool(
+                            settings.get(
+                                "combined_cycle_legend_persist_position", True
+                            )
+                        )
+                        print(
+                            "DEBUG: CAPTURE_PERSIST_WRITE "
+                            f"persist={persist_value} mode=loc_tuple "
+                            f"loc={loc_tuple}"
+                        )
                     # Capture cycle legend placement only when persistence is allowed.
                     self._combined_cycle_legend_anchor = anchor_loc
                     settings["combined_cycle_legend_anchor"] = [
                         anchor_loc[0],
                         anchor_loc[1],
                     ]
+                    if loc_tuple is not None and source == "drag":
+                        self._combined_cycle_legend_anchor_space = "figure"
+                        settings["combined_cycle_legend_anchor_space"] = "figure"
+                        self._combined_cycle_legend_loc = loc_tuple
+                        settings["combined_cycle_legend_loc"] = loc_tuple
+                        settings["combined_cycle_legend_anchor_mode"] = "loc_tuple"
+                        settings.pop("combined_cycle_legend_ref_dx_px", None)
+                        settings.pop("combined_cycle_legend_ref_dy_px", None)
+                        settings["combined_cycle_legend_persist_position"] = True
+                        updated = True
+                        continue
                     if anchor_space in {"figure", "axes"}:
                         self._combined_cycle_legend_anchor_space = anchor_space
                         settings["combined_cycle_legend_anchor_space"] = anchor_space
@@ -47461,6 +47686,24 @@ class UnifiedApp(tk.Tk):
                                     clamped_display[1] - ref_point[1],
                                 )
                     if offsets is not None:
+                        if source == "drag":
+                            persist_value = bool(
+                                settings.get(
+                                    "combined_cycle_legend_persist_position", True
+                                )
+                            )
+                            if loc_is_tuple:
+                                print(
+                                    "DEBUG: CAPTURE_PERSIST_WRITE "
+                                    f"persist={persist_value} mode=loc_tuple "
+                                    f"loc={loc_value}"
+                                )
+                            else:
+                                print(
+                                    "DEBUG: CAPTURE_PERSIST_WRITE "
+                                    f"persist={persist_value} mode=dxdy "
+                                    f"dx={offsets[0]} dy={offsets[1]}"
+                                )
                         settings["combined_cycle_legend_ref_dx_px"] = offsets[0]
                         settings["combined_cycle_legend_ref_dy_px"] = offsets[1]
                         settings["combined_cycle_legend_anchor_mode"] = "axis_offset"
@@ -47471,6 +47714,14 @@ class UnifiedApp(tk.Tk):
                                 "DEBUG: persist_write "
                                 f"dx={offsets[0]} dy={offsets[1]} persist=True"
                             )
+                            try:
+                                self._debug_dump_cycle_legend(
+                                    fig, "after_drag_persist_write"
+                                )
+                            except Exception:
+                                # Best-effort guard; ignore failures to avoid interrupting
+                                # the workflow.
+                                pass
                         # Debug: confirm capture source and offsets for persistence.
                         print(
                             "DEBUG: Combined cycle legend capture "
@@ -47487,6 +47738,13 @@ class UnifiedApp(tk.Tk):
                 # the workflow.
                 pass
             self._combined_layout_dirty = True
+            if source == "refresh":
+                try:
+                    self._debug_dump_cycle_legend(fig, "after_refresh_capture")
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting
+                    # the workflow.
+                    pass
 
     # CRITICAL: This function MUST exist exactly once.
     # Do NOT duplicate or redefine below — this WILL break legend persistence.
@@ -47516,15 +47774,44 @@ class UnifiedApp(tk.Tk):
         """
         if fig is None:
             return
+        try:
+            fig._cycle_legend_anchor_applied = False  # type: ignore[attr-defined]
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        self._cycle_leg_drag_active = False
+        self._cycle_leg_drag_moved = False
+        self._cycle_leg_drag_start_xy = None
+        self._cycle_leg_drag_start_loc = None
+        self._cycle_leg_pre_click_loc = None
+        self._cycle_leg_pre_click_bbox = None
+        self._cycle_leg_pre_click_is_tuple = False
+        self._cycle_leg_drag_use_loc_tuple = False
         persist = bool(settings.get("combined_cycle_legend_persist_position", True))
         saved_dx = settings.get("combined_cycle_legend_ref_dx_px", None)
         saved_dy = settings.get("combined_cycle_legend_ref_dy_px", None)
         saved_offsets = _combined_cycle_axis_offset_values()
+        stored_mode = None
+        stored_loc = None
+        stored_loc_tuple = None
+        try:
+            stored_mode = settings.get("combined_cycle_legend_anchor_mode")
+            stored_loc = settings.get("combined_cycle_legend_loc")
+            normalized_loc = _normalize_legend_loc_value(stored_loc)
+            if isinstance(normalized_loc, tuple):
+                stored_loc_tuple = normalized_loc
+        except Exception:
+            stored_mode = None
+            stored_loc = None
+            stored_loc_tuple = None
+        defer_cycle_drag_enable = bool(stored_mode == "loc_tuple")
         print(
             f"DEBUG: apply_saved_anchor persist={persist} "
             f"dx={saved_dx} dy={saved_dy} fig_id={id(fig)}"
         )
-        if saved_offsets is not None:
+        if saved_offsets is not None or (
+            stored_mode == "loc_tuple" and stored_loc_tuple is not None
+        ):
             self._combined_cycle_legend_pending_apply = True
             self._combined_cycle_legend_pending_fig_id = id(fig)
             self._combined_cycle_legend_pending_offsets = saved_offsets
@@ -47597,7 +47884,15 @@ class UnifiedApp(tk.Tk):
                     pass
                 # Lock overrides drag to prevent accidental cycle legend movement.
                 if cycle_drag_enabled and not cycle_lock_enabled:
-                    _make_legend_draggable(lg)
+                    if defer_cycle_drag_enable:
+                        try:
+                            lg.set_draggable(False)
+                        except Exception:
+                            # Best-effort guard; ignore failures to avoid interrupting
+                            # the workflow.
+                            pass
+                    else:
+                        _make_legend_draggable(lg)
                 else:
                     try:
                         lg.set_draggable(False)
@@ -47708,7 +48003,13 @@ class UnifiedApp(tk.Tk):
         if not cycle_drag_enabled:
             # Drag capture callbacks are only registered when cycle dragging is enabled.
             return
-        if self._combined_cycle_legend_capture_enabled() and saved_offsets is None:
+        if (
+            self._combined_cycle_legend_capture_enabled()
+            and saved_offsets is None
+            and not (
+                stored_mode == "loc_tuple" and stored_loc_tuple is not None
+            )
+        ):
             self._capture_combined_legend_anchor_from_fig(fig, source="auto")
 
         # Closure captures _register_combined_legend_tracking state for callback
@@ -47734,6 +48035,25 @@ class UnifiedApp(tk.Tk):
             Exceptions:
                 None.
             """
+            try:
+                seen = getattr(self, "_debug_combined_draw_seen", set())
+                if not isinstance(seen, set):
+                    seen = set()
+                if id(fig) not in seen:
+                    seen.add(id(fig))
+                    self._debug_combined_draw_seen = seen
+                    self._debug_dump_cycle_legend(fig, "on_first_draw_event")
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting
+                # the workflow.
+                pass
+            try:
+                if getattr(fig, "_cycle_legend_anchor_applied", False):
+                    return
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting
+                # the workflow.
+                pass
             if not getattr(self, "_combined_cycle_legend_pending_apply", False):
                 return
             if getattr(self, "_combined_cycle_legend_pending_fig_id", None) != id(fig):
@@ -47741,37 +48061,145 @@ class UnifiedApp(tk.Tk):
             event_canvas = getattr(_event, "canvas", None)
             if event_canvas is not None and event_canvas is not canvas:
                 return
-            offsets = getattr(self, "_combined_cycle_legend_pending_offsets", None)
-            if offsets is None:
-                self._combined_cycle_legend_pending_apply = False
-                return
             cycle_legend = self._get_combined_cycle_legend(fig)
             if cycle_legend is None:
                 return
             ref_axis = self._combined_cycle_reference_axis(fig)
             ref_corner = settings.get("combined_cycle_legend_ref_corner")
             loc_value = _resolve_combined_cycle_legend_loc()
-            applied = False
+            stored_mode = None
             try:
-                applied = _apply_cycle_legend_axis_offset(
-                    fig,
-                    cycle_legend,
-                    ref_axis,
-                    ref_corner,
-                    offsets[0],
-                    offsets[1],
-                    loc_value,
-                    allow_draw=False,
-                )
+                stored_mode = settings.get("combined_cycle_legend_anchor_mode")
             except Exception:
-                applied = False
+                stored_mode = None
+            stored_loc = None
+            try:
+                stored_loc = settings.get("combined_cycle_legend_loc")
+            except Exception:
+                stored_loc = None
+            stored_loc_tuple = None
+            normalized_loc = _normalize_legend_loc_value(stored_loc)
+            if isinstance(normalized_loc, tuple):
+                try:
+                    stored_loc_tuple = (
+                        float(normalized_loc[0]),
+                        float(normalized_loc[1]),
+                    )
+                except Exception:
+                    stored_loc_tuple = None
+            offsets = getattr(self, "_combined_cycle_legend_pending_offsets", None)
+            stored_dx = None
+            stored_dy = None
+            try:
+                stored_dx = settings.get("combined_cycle_legend_ref_dx_px", None)
+                stored_dy = settings.get("combined_cycle_legend_ref_dy_px", None)
+            except Exception:
+                stored_dx = None
+                stored_dy = None
+            print(
+                "DEBUG: APPLY_PRE "
+                f"fig_id={id(fig)} persist={persist} mode={stored_mode} "
+                f"stored_loc={stored_loc_tuple} stored_dx={stored_dx} "
+                f"stored_dy={stored_dy}"
+            )
+            applied = False
+            if stored_mode == "loc_tuple" and stored_loc_tuple is not None:
+                try:
+                    cycle_legend.set_bbox_to_anchor(
+                        (0.0, 0.0, 1.0, 1.0), transform=fig.transFigure
+                    )
+                    cycle_legend.set_loc(
+                        (float(stored_loc_tuple[0]), float(stored_loc_tuple[1]))
+                    )
+                    applied = True
+                except Exception:
+                    applied = False
+            else:
+                if offsets is None:
+                    self._combined_cycle_legend_pending_apply = False
+                    return
+                try:
+                    applied = _apply_cycle_legend_axis_offset(
+                        fig,
+                        cycle_legend,
+                        ref_axis,
+                        ref_corner,
+                        offsets[0],
+                        offsets[1],
+                        loc_value,
+                        allow_draw=False,
+                    )
+                except Exception:
+                    applied = False
+            try:
+                legend_id = id(cycle_legend)
+            except Exception:
+                legend_id = None
+            try:
+                loc_post = cycle_legend.get_loc()
+            except Exception:
+                loc_post = getattr(cycle_legend, "_loc", None)
+            loc_is_tuple = isinstance(loc_post, tuple)
+            bbox_anchor_obj = None
+            try:
+                bbox_anchor_obj = cycle_legend.get_bbox_to_anchor()
+            except Exception:
+                bbox_anchor_obj = None
+            bbox_anchor_type = (
+                type(bbox_anchor_obj).__name__ if bbox_anchor_obj is not None else None
+            )
+            bbox_bounds = None
+            if bbox_anchor_obj is not None:
+                try:
+                    bbox_bounds = bbox_anchor_obj.bounds
+                except Exception:
+                    bbox_bounds = None
+            print(
+                "DEBUG: APPLY_POST "
+                f"legend_id={legend_id} loc={loc_post} "
+                f"loc_is_tuple={loc_is_tuple} "
+                f"bbox_anchor_type={bbox_anchor_type} "
+                f"bbox_bounds={bbox_bounds}"
+            )
             if applied:
+                try:
+                    self._debug_dump_cycle_legend(fig, "after_apply_saved_anchor")
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting
+                    # the workflow.
+                    pass
                 # Clear pending apply before scheduling a redraw to avoid loops.
                 self._combined_cycle_legend_pending_apply = False
                 self._combined_cycle_legend_pending_fig_id = None
                 self._combined_cycle_legend_pending_offsets = None
                 try:
-                    canvas.draw_idle()
+                    fig._cycle_legend_anchor_applied = True  # type: ignore[attr-defined]
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting
+                    # the workflow.
+                    pass
+                try:
+                    redraw_canvas = getattr(cycle_legend.figure, "canvas", None)
+                    if redraw_canvas is None:
+                        redraw_canvas = canvas
+                    if redraw_canvas is not None:
+                        redraw_canvas.draw_idle()
+                        try:
+                            redraw_canvas.flush_events()
+                        except Exception:
+                            # Best-effort guard; ignore failures to avoid interrupting
+                            # the workflow.
+                            pass
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting
+                    # the workflow.
+                    pass
+            else:
+                self._combined_cycle_legend_pending_apply = False
+                self._combined_cycle_legend_pending_fig_id = None
+                self._combined_cycle_legend_pending_offsets = None
+                try:
+                    fig._cycle_legend_anchor_applied = True  # type: ignore[attr-defined]
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting
                     # the workflow.
@@ -47800,6 +48228,78 @@ class UnifiedApp(tk.Tk):
             Exceptions:
                 None.
             """
+            event_x = getattr(_event, "x", None)
+            event_y = getattr(_event, "y", None)
+            drag_active = False
+            start_loc = None
+            cycle_legend = self._get_combined_cycle_legend(fig)
+            self._cycle_leg_pre_click_loc = None
+            self._cycle_leg_pre_click_bbox = None
+            self._cycle_leg_pre_click_is_tuple = False
+            self._cycle_leg_drag_use_loc_tuple = False
+            if cycle_legend is not None:
+                pre_loc = None
+                try:
+                    pre_loc = cycle_legend.get_loc()
+                except Exception:
+                    pre_loc = getattr(cycle_legend, "_loc", None)
+                pre_bbox = None
+                try:
+                    pre_bbox = cycle_legend.get_bbox_to_anchor()
+                except Exception:
+                    pre_bbox = None
+                self._cycle_leg_pre_click_loc = pre_loc
+                self._cycle_leg_pre_click_bbox = pre_bbox
+                self._cycle_leg_pre_click_is_tuple = isinstance(pre_loc, tuple)
+                try:
+                    legend_id = id(cycle_legend)
+                except Exception:
+                    legend_id = None
+                print(
+                    "DEBUG: PRESS_CAPTURE "
+                    f"legend_loc={pre_loc} "
+                    f"is_tuple={self._cycle_leg_pre_click_is_tuple} "
+                    f"legend_id={legend_id}"
+                )
+            if cycle_legend is not None and event_x is not None and event_y is not None:
+                contains = False
+                try:
+                    contains, _ = cycle_legend.contains(_event)
+                except Exception:
+                    contains = False
+                if not contains:
+                    try:
+                        renderer = None
+                        canvas = getattr(cycle_legend.figure, "canvas", None)
+                        if canvas is not None:
+                            try:
+                                renderer = canvas.get_renderer()
+                            except Exception:
+                                renderer = None
+                        bbox = cycle_legend.get_window_extent(renderer=renderer)
+                        if bbox is not None:
+                            contains = bbox.contains(event_x, event_y)
+                    except Exception:
+                        contains = False
+                if contains and cycle_drag_enabled and not cycle_lock_enabled:
+                    drag_active = True
+                    try:
+                        start_loc = cycle_legend.get_loc()
+                    except Exception:
+                        start_loc = getattr(cycle_legend, "_loc", None)
+                    try:
+                        self._cycle_leg_drag_use_loc_tuple = (
+                            settings.get("combined_cycle_legend_anchor_mode")
+                            == "loc_tuple"
+                        )
+                    except Exception:
+                        self._cycle_leg_drag_use_loc_tuple = False
+            self._cycle_leg_drag_active = drag_active
+            self._cycle_leg_drag_start_xy = (
+                (event_x, event_y) if drag_active else None
+            )
+            self._cycle_leg_drag_start_loc = start_loc if drag_active else None
+            self._cycle_leg_drag_moved = False
             return
 
         # Closure captures _register_combined_legend_tracking state for callback
@@ -47824,6 +48324,60 @@ class UnifiedApp(tk.Tk):
             Exceptions:
                 None.
             """
+            if not getattr(self, "_cycle_leg_drag_active", False):
+                return
+            start_xy = getattr(self, "_cycle_leg_drag_start_xy", None)
+            event_x = getattr(_event, "x", None)
+            event_y = getattr(_event, "y", None)
+            if start_xy is None or event_x is None or event_y is None:
+                return
+            dx = event_x - start_xy[0]
+            dy = event_y - start_xy[1]
+            use_loc_tuple_drag = bool(
+                getattr(self, "_cycle_leg_drag_use_loc_tuple", False)
+            )
+            if not use_loc_tuple_drag:
+                if (dx * dx + dy * dy) >= 9.0:
+                    self._cycle_leg_drag_moved = True
+                return
+            if not getattr(self, "_cycle_leg_drag_moved", False):
+                if (dx * dx + dy * dy) < 9.0:
+                    return
+                self._cycle_leg_drag_moved = True
+            cycle_legend = self._get_combined_cycle_legend(fig)
+            if cycle_legend is None:
+                return
+            fig_obj = getattr(cycle_legend, "figure", None) or fig
+            if fig_obj is None:
+                return
+            fig_width = None
+            fig_height = None
+            try:
+                fig_width, fig_height = fig_obj.canvas.get_width_height()
+            except Exception:
+                fig_width = getattr(getattr(fig_obj, "bbox", None), "width", None)
+                fig_height = getattr(getattr(fig_obj, "bbox", None), "height", None)
+            if not fig_width or not fig_height:
+                return
+            try:
+                x_norm = float(event_x) / float(fig_width)
+                y_norm = float(event_y) / float(fig_height)
+            except Exception:
+                return
+            try:
+                cycle_legend.set_bbox_to_anchor(
+                    (0.0, 0.0, 1.0, 1.0), transform=fig_obj.transFigure
+                )
+                cycle_legend.set_loc((x_norm, y_norm))
+            except Exception:
+                return
+            try:
+                if fig_obj.canvas is not None:
+                    fig_obj.canvas.draw_idle()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting
+                # the workflow.
+                pass
             return
 
         # Closure captures _register_combined_legend_tracking state for callback
@@ -47849,17 +48403,87 @@ class UnifiedApp(tk.Tk):
             Exceptions:
                 Errors are caught by the caller to avoid UI interruption.
             """
-            event_x = getattr(_event, "x", None)
-            event_y = getattr(_event, "y", None)
-            event_inaxes = getattr(_event, "inaxes", None)
-            print(
-                "DEBUG: button_release_event fired "
-                f"fig_id={id(fig)} x={event_x} y={event_y} "
-                f"inaxes={event_inaxes}"
-            )
-            if not self._combined_cycle_legend_capture_enabled(require_drag=True):
-                return
-            self._capture_combined_legend_anchor_from_fig(fig, source="drag")
+            try:
+                event_x = getattr(_event, "x", None)
+                event_y = getattr(_event, "y", None)
+                event_inaxes = getattr(_event, "inaxes", None)
+                print(
+                    "DEBUG: button_release_event fired "
+                    f"fig_id={id(fig)} x={event_x} y={event_y} "
+                    f"inaxes={event_inaxes}"
+                )
+                drag_active = bool(getattr(self, "_cycle_leg_drag_active", False))
+                drag_moved = bool(getattr(self, "_cycle_leg_drag_moved", False))
+                if not (drag_active and drag_moved):
+                    cycle_legend = self._get_combined_cycle_legend(fig)
+                    try:
+                        legend_id = (
+                            id(cycle_legend) if cycle_legend is not None else None
+                        )
+                    except Exception:
+                        legend_id = None
+                    try:
+                        legend_loc = (
+                            cycle_legend.get_loc()
+                            if cycle_legend is not None
+                            else None
+                        )
+                    except Exception:
+                        legend_loc = getattr(cycle_legend, "_loc", None)
+                    print(
+                        "DEBUG: NONDRAG_RETURN "
+                        f"legend_loc={legend_loc} legend_id={legend_id}"
+                    )
+                    pre_loc = getattr(self, "_cycle_leg_pre_click_loc", None)
+                    pre_is_tuple = bool(
+                        getattr(self, "_cycle_leg_pre_click_is_tuple", False)
+                    )
+                    if (
+                        pre_is_tuple
+                        and cycle_legend is not None
+                        and pre_loc is not None
+                        and not isinstance(legend_loc, tuple)
+                    ):
+                        try:
+                            cycle_legend.set_bbox_to_anchor(
+                                (0.0, 0.0, 1.0, 1.0), transform=fig.transFigure
+                            )
+                            cycle_legend.set_loc(tuple(map(float, pre_loc)))
+                            if fig.canvas is not None:
+                                fig.canvas.draw_idle()
+                            print(
+                                "DEBUG: NONDRAG_RESTORE "
+                                f"from={legend_loc} to={pre_loc} "
+                                f"legend_id={legend_id}"
+                            )
+                        except Exception:
+                            # Best-effort guard; ignore failures to avoid interrupting
+                            # the workflow.
+                            pass
+                    print(
+                        "DEBUG: SKIP_PERSIST reason=not_drag "
+                        f"cycle_leg_drag_active={drag_active} moved={drag_moved}"
+                    )
+                    return
+                try:
+                    self._debug_dump_cycle_legend(fig, "after_button_release_event")
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting
+                    # the workflow.
+                    pass
+                if not self._combined_cycle_legend_capture_enabled(require_drag=True):
+                    return
+                self._capture_combined_legend_anchor_from_fig(fig, source="drag")
+            finally:
+                # Always reset drag state so non-drag releases can't leak flags.
+                self._cycle_leg_drag_active = False
+                self._cycle_leg_drag_moved = False
+                self._cycle_leg_drag_start_xy = None
+                self._cycle_leg_drag_start_loc = None
+                self._cycle_leg_drag_use_loc_tuple = False
+                self._cycle_leg_pre_click_loc = None
+                self._cycle_leg_pre_click_bbox = None
+                self._cycle_leg_pre_click_is_tuple = False
 
         try:
             draw_cid = canvas.mpl_connect("draw_event", _on_draw)
@@ -71416,10 +72040,21 @@ class UnifiedApp(tk.Tk):
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
+                defer_drag_enable = False
                 try:
-                    legend.set_draggable(True)
+                    stored_mode = settings.get("combined_cycle_legend_anchor_mode")
+                    stored_loc = _normalize_legend_loc_value(
+                        settings.get("combined_cycle_legend_loc")
+                    )
+                    if stored_mode == "loc_tuple":
+                        defer_drag_enable = True
                 except Exception:
-                    _make_legend_draggable(legend)
+                    defer_drag_enable = False
+                if not defer_drag_enable:
+                    try:
+                        legend.set_draggable(True)
+                    except Exception:
+                        _make_legend_draggable(legend)
                 return legend
 
             marker_state = getattr(fig, "_gl260_cycle_marker_artists", None)
@@ -71636,6 +72271,25 @@ class UnifiedApp(tk.Tk):
         """Build the combined triple-axis figure from state or render context.
         Used by preview/export pipelines to produce consistent combined plots."""
 
+        try:
+            existing_state = (
+                self._combined_plot_state
+                if isinstance(self._combined_plot_state, dict)
+                else {}
+            )
+            existing_fig = existing_state.get("fig")
+        except Exception:
+            existing_fig = None
+        existing_fig_id = id(existing_fig) if existing_fig is not None else None
+        print(f"DEBUG: COMBINED_BUILD start fig_id={existing_fig_id}")
+
+        def _debug_build_end(fig: Optional[Figure]) -> None:
+            try:
+                fig_id = id(fig) if fig is not None else None
+            except Exception:
+                fig_id = None
+            print(f"DEBUG: COMBINED_BUILD end fig_id={fig_id}")
+
         data_ctx = render_ctx.data_ctx if render_ctx else {}
         style_ctx = render_ctx.style_ctx if render_ctx else {}
         overlay_ctx = render_ctx.overlay_ctx if render_ctx else {}
@@ -71648,6 +72302,7 @@ class UnifiedApp(tk.Tk):
 
         if self.df is None:
 
+            _debug_build_end(None)
             return None
 
         if render_ctx is None:
@@ -71677,6 +72332,7 @@ class UnifiedApp(tk.Tk):
 
         if not args or len(args) < 24:
 
+            _debug_build_end(None)
             return None
 
         if render_ctx is None:
@@ -71720,10 +72376,12 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+            _debug_build_end(None)
             return None
 
         config = self._combined_plot_config(args, mode)
         if config is None:
+            _debug_build_end(None)
             return None
 
         perf_start = time.perf_counter() if perf_run is not None else None
@@ -71741,6 +72399,7 @@ class UnifiedApp(tk.Tk):
                 combined_stage = stages.setdefault("combined", {})
                 combined_stage["ms"] = (time.perf_counter() - perf_start) * 1000.0
                 combined_stage["path"] = "reuse"
+            _debug_build_end(fig)
             return fig
 
         base_args = config["base_args"]
@@ -71978,6 +72637,7 @@ class UnifiedApp(tk.Tk):
                 combined_stage = stages.setdefault("combined", {})
                 combined_stage["ms"] = (time.perf_counter() - perf_start) * 1000.0
                 combined_stage["path"] = "rebuild"
+        _debug_build_end(fig)
         return fig
 
     def open_cycle_analysis_tab(self):
@@ -72430,11 +73090,12 @@ class UnifiedApp(tk.Tk):
         ] = _normalize_combined_cycle_ref_corner(
             self.combined_cycle_legend_ref_corner.get()
         )
-        anchor_mode_value = (
-            "axis_offset"
-            if _combined_cycle_axis_offset_values() is not None
-            else "legacy_anchor"
-        )
+        if isinstance(cycle_loc_value, tuple):
+            anchor_mode_value = "loc_tuple"
+        elif _combined_cycle_axis_offset_values() is not None:
+            anchor_mode_value = "axis_offset"
+        else:
+            anchor_mode_value = "legacy_anchor"
         settings["combined_cycle_legend_anchor_mode"] = anchor_mode_value
 
         _save_settings_to_disk()
