@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.9.9
-# Date: 2026-02-01
+# Version: v2.9.10
+# Date: 2026-02-03
 
 import os
 import sys
@@ -7925,7 +7925,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.9.9"
+APP_VERSION = "v2.9.10"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -48182,14 +48182,66 @@ class UnifiedApp(tk.Tk):
                     redraw_canvas = getattr(cycle_legend.figure, "canvas", None)
                     if redraw_canvas is None:
                         redraw_canvas = canvas
-                    if redraw_canvas is not None:
-                        redraw_canvas.draw_idle()
+                    if redraw_canvas is None:
+                        return
+                    tk_widget = None
+                    if isinstance(redraw_canvas, FigureCanvasTkAgg):
                         try:
-                            redraw_canvas.flush_events()
+                            tk_widget = redraw_canvas.get_tk_widget()
                         except Exception:
-                            # Best-effort guard; ignore failures to avoid interrupting
-                            # the workflow.
-                            pass
+                            tk_widget = None
+                    if tk_widget is None:
+                        redraw_canvas.draw_idle()
+                        return
+                    # One-shot guard prevents redraw storms during multi-pass draws.
+                    if getattr(fig, "_cycle_legend_redraw_queued", False):
+                        return
+                    try:
+                        fig._cycle_legend_redraw_queued = True  # type: ignore[attr-defined]
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting
+                        # the workflow.
+                        pass
+
+                    def _run_cycle_legend_redraw():
+                        """Perform a one-shot redraw after legend relocation.
+
+                        Purpose:
+                            Trigger a Tk-idle redraw once the draw stack unwinds.
+                        Why:
+                            Ensures the cycle legend visually updates after
+                            persisted anchors are applied during a draw callback.
+
+                        Args:
+                            None.
+
+                        Returns:
+                            None.
+
+                        Side Effects:
+                            Calls draw_idle on the canvas and clears the redraw guard.
+
+                        Exceptions:
+                            None.
+                        """
+                        try:
+                            redraw_canvas.draw_idle()
+                        finally:
+                            try:
+                                fig._cycle_legend_redraw_queued = False  # type: ignore[attr-defined]
+                            except Exception:
+                                # Best-effort guard; ignore failures to avoid interrupting
+                                # the workflow.
+                                pass
+
+                    # Defer redraw until Tk is idle to avoid re-entrant draw callbacks.
+                    try:
+                        tk_widget.after_idle(_run_cycle_legend_redraw)
+                    except Exception:
+                        try:
+                            tk_widget.after(0, _run_cycle_legend_redraw)
+                        except Exception:
+                            _run_cycle_legend_redraw()
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting
                     # the workflow.

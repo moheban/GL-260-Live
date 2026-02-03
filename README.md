@@ -1,12 +1,13 @@
-# GL-260 Data Analysis and Plotter (v2.9.9)
+# GL-260 Data Analysis and Plotter (v2.9.10)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.9.9`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.9.10`.
 
 ## Table of Contents
 - [Part I - Changelog / Ledger](#part-i---changelog--ledger)
+  - [v2.9.10 Combined Cycle Legend Refresh Redraw](#v2910-combined-cycle-legend-refresh-redraw)
   - [v2.9.8 Combined Cycle Legend Persistence Apply](#v298-combined-cycle-legend-persistence-apply)
   - [v2.9.6 Combined Cycle Legend Tracking Debug](#v296-combined-cycle-legend-tracking-debug)
   - [v2.9.3 Combined Legend Isolation](#v293-combined-legend-isolation)
@@ -47,6 +48,9 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [License](#license)
 
 ## Part I - Changelog / Ledger
+
+### v2.9.10 Combined Cycle Legend Refresh Redraw
+- Combined triple-axis cycle legend now renders at the saved dragged location immediately after Refresh/regenerate without requiring a click.
 
 ### v2.9.8 Combined Cycle Legend Persistence Apply
 - Combined triple-axis cycle legend persistence now applies saved offsets post-draw to ensure stable placement across refresh/regenerate.
