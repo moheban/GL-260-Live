@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.9.10
+# Version: v2.9.11
 # Date: 2026-02-03
 
 import os
@@ -7925,7 +7925,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.9.10"
+APP_VERSION = "v2.9.11"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -47609,10 +47609,25 @@ class UnifiedApp(tk.Tk):
                                 "combined_cycle_legend_persist_position", True
                             )
                         )
+                        # Keep loc tuples in their native space so axes anchors stay
+                        # locked to the plot area across refresh and DPI changes.
+                        loc_tuple_to_store = loc_tuple
+                        anchor_space_to_store = "figure"
+                        if (
+                            anchor_space == "axes"
+                            and anchor_loc is not None
+                            and cycle_ref_axis is not None
+                        ):
+                            loc_tuple_to_store = (
+                                float(anchor_loc[0]),
+                                float(anchor_loc[1]),
+                            )
+                            anchor_space_to_store = "axes"
                         print(
                             "DEBUG: CAPTURE_PERSIST_WRITE "
                             f"persist={persist_value} mode=loc_tuple "
-                            f"loc={loc_tuple}"
+                            f"loc={loc_tuple_to_store} "
+                            f"space={anchor_space_to_store}"
                         )
                     # Capture cycle legend placement only when persistence is allowed.
                     self._combined_cycle_legend_anchor = anchor_loc
@@ -47621,10 +47636,26 @@ class UnifiedApp(tk.Tk):
                         anchor_loc[1],
                     ]
                     if loc_tuple is not None and source == "drag":
-                        self._combined_cycle_legend_anchor_space = "figure"
-                        settings["combined_cycle_legend_anchor_space"] = "figure"
-                        self._combined_cycle_legend_loc = loc_tuple
-                        settings["combined_cycle_legend_loc"] = loc_tuple
+                        # Persist drag anchors in axes space when the cycle legend
+                        # is axes-anchored; preserve figure-space for legacy anchors.
+                        loc_tuple_to_store = loc_tuple
+                        anchor_space_to_store = "figure"
+                        if (
+                            anchor_space == "axes"
+                            and anchor_loc is not None
+                            and cycle_ref_axis is not None
+                        ):
+                            loc_tuple_to_store = (
+                                float(anchor_loc[0]),
+                                float(anchor_loc[1]),
+                            )
+                            anchor_space_to_store = "axes"
+                        self._combined_cycle_legend_anchor_space = anchor_space_to_store
+                        settings[
+                            "combined_cycle_legend_anchor_space"
+                        ] = anchor_space_to_store
+                        self._combined_cycle_legend_loc = loc_tuple_to_store
+                        settings["combined_cycle_legend_loc"] = loc_tuple_to_store
                         settings["combined_cycle_legend_anchor_mode"] = "loc_tuple"
                         settings.pop("combined_cycle_legend_ref_dx_px", None)
                         settings.pop("combined_cycle_legend_ref_dy_px", None)
@@ -48077,6 +48108,15 @@ class UnifiedApp(tk.Tk):
                 stored_loc = settings.get("combined_cycle_legend_loc")
             except Exception:
                 stored_loc = None
+            stored_anchor_space = None
+            try:
+                stored_anchor_space = settings.get(
+                    "combined_cycle_legend_anchor_space"
+                )
+            except Exception:
+                stored_anchor_space = None
+            if stored_anchor_space not in {"axes", "figure"}:
+                stored_anchor_space = None
             stored_loc_tuple = None
             normalized_loc = _normalize_legend_loc_value(stored_loc)
             if isinstance(normalized_loc, tuple):
@@ -48105,9 +48145,16 @@ class UnifiedApp(tk.Tk):
             applied = False
             if stored_mode == "loc_tuple" and stored_loc_tuple is not None:
                 try:
-                    cycle_legend.set_bbox_to_anchor(
-                        (0.0, 0.0, 1.0, 1.0), transform=fig.transFigure
-                    )
+                    # Respect the saved anchor space so axes-anchored legends
+                    # persist relative to the plot area.
+                    if stored_anchor_space == "axes" and ref_axis is not None:
+                        cycle_legend.set_bbox_to_anchor(
+                            (0.0, 0.0, 1.0, 1.0), transform=ref_axis.transAxes
+                        )
+                    else:
+                        cycle_legend.set_bbox_to_anchor(
+                            (0.0, 0.0, 1.0, 1.0), transform=fig.transFigure
+                        )
                     cycle_legend.set_loc(
                         (float(stored_loc_tuple[0]), float(stored_loc_tuple[1]))
                     )
@@ -48162,6 +48209,16 @@ class UnifiedApp(tk.Tk):
                 f"bbox_bounds={bbox_bounds}"
             )
             if applied:
+                if (
+                    defer_cycle_drag_enable
+                    and cycle_drag_enabled
+                    and not cycle_lock_enabled
+                ):
+                    # Re-enable drag after the saved anchor is applied once.
+                    try:
+                        cycle_legend.set_draggable(True)
+                    except Exception:
+                        _make_legend_draggable(cycle_legend)
                 try:
                     self._debug_dump_cycle_legend(fig, "after_apply_saved_anchor")
                 except Exception:
