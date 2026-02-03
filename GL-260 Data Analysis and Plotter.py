@@ -1,9 +1,11 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.9.12
+# Version: v2.10.0
 # Date: 2026-02-03
 
 import os
 import sys
+import logging
+from logging.handlers import RotatingFileHandler
 
 
 def _supports_free_threading_build():
@@ -85,6 +87,7 @@ from tkinter import (
 
 import json
 import csv
+import contextlib
 import importlib
 import platform
 from datetime import datetime
@@ -7926,7 +7929,55 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.9.12"
+APP_VERSION = "v2.10.0"
+
+DEBUG_LOGGER_NAME = "gl260"
+DEBUG_LOG_FILE = "gl260_debug.log"
+
+DEBUG_CATEGORIES = (
+    "ui.events",
+    "cache.render",
+    "perf.timing",
+    "plotting.render",
+    "plotting.layout",
+    "plotting.legends",
+    "cycle.analysis",
+    "cycle.interaction",
+    "report.build",
+    "report.figures",
+    "report.export",
+    "speciation.engine",
+    "speciation.solver",
+    "speciation.chemistry",
+    "speciation.results",
+    "io.excel",
+    "io.files",
+)
+
+DEBUG_CATEGORY_LABELS = {
+    "ui.events": "UI Events",
+    "cache.render": "Render Cache",
+    "perf.timing": "Performance Timing",
+    "plotting.render": "Plotting: Render",
+    "plotting.layout": "Plotting: Layout",
+    "plotting.legends": "Plotting: Legends",
+    "cycle.analysis": "Cycle Analysis",
+    "cycle.interaction": "Cycle Interaction",
+    "report.build": "Final Report: Build",
+    "report.figures": "Final Report: Figures",
+    "report.export": "Final Report: Export",
+    "speciation.engine": "Speciation: Engine",
+    "speciation.solver": "Speciation: Solver",
+    "speciation.chemistry": "Speciation: Chemistry",
+    "speciation.results": "Speciation: Results",
+    "io.excel": "IO: Excel",
+    "io.files": "IO: Files",
+}
+
+DEBUG_CATEGORY_DEFAULTS = {name: False for name in DEBUG_CATEGORIES}
+
+_GL260_LOGGER = logging.getLogger(DEBUG_LOGGER_NAME)
+_GL260_LOGGER.addHandler(logging.NullHandler())
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -17954,6 +18005,34 @@ _SETTINGS_BACKUP_PATH = None
 settings = {}
 _SETTINGS_LOCK = threading.RLock()
 
+
+def _normalize_debug_categories(value: Any) -> Dict[str, bool]:
+    """Normalize debug categories for persistence.
+
+    Purpose:
+        Coerce the stored debug category map into a full, known-key dictionary.
+    Why:
+        Keeps debug toggle persistence stable across upgrades and prevents
+        missing keys from breaking Developer Tools toggles.
+    Args:
+        value: Incoming settings value, expected to be a dict[str, bool].
+    Returns:
+        Dict[str, bool] containing all DEBUG_CATEGORIES with boolean values.
+    Side Effects:
+        None.
+    Exceptions:
+        Falls back to defaults when input types are invalid.
+    """
+    normalized: Dict[str, bool] = {}
+    if isinstance(value, dict):
+        # Iterate over DEBUG_CATEGORIES to apply the per-item logic.
+        for name in DEBUG_CATEGORIES:
+            normalized[name] = bool(value.get(name, False))
+    else:
+        for name in DEBUG_CATEGORIES:
+            normalized[name] = False
+    return normalized
+
 if os.path.exists(SETTINGS_FILE):
 
     loaded_settings = None
@@ -17991,6 +18070,14 @@ if os.path.exists(SETTINGS_FILE):
     else:
 
         settings = loaded_settings
+
+    settings["debug_enabled"] = bool(settings.get("debug_enabled", False))
+    settings["debug_categories"] = _normalize_debug_categories(
+        settings.get("debug_categories")
+    )
+    settings["debug_file_logging_enabled"] = bool(
+        settings.get("debug_file_logging_enabled", False)
+    )
 
     def _coerce_setting_float(value, fallback):
         """Coerce setting float.
@@ -18552,6 +18639,9 @@ else:
     # No saved settings; use defaults
 
     settings = {}
+    settings["debug_enabled"] = False
+    settings["debug_categories"] = _normalize_debug_categories({})
+    settings["debug_file_logging_enabled"] = False
 
     # Ranges
 
@@ -26055,26 +26145,62 @@ class CsvImportDialog:
             self._combined_render_cursor = None
 
     def _browse_csv(self) -> None:
-        """Perform browse CSV.
-        Used to keep the workflow logic localized and testable."""
+        """Open a file dialog to select a CSV input.
+
+        Purpose:
+            Allow users to choose a CSV file for import.
+        Why:
+            Provides a UI pathway to load CSV data into the import workflow.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Updates the CSV path variable and refreshes the preview.
+        Exceptions:
+            Best-effort guards suppress dialog or preview errors.
+        """
         path = filedialog.askopenfilename(
             title="Select GL-260 CSV",
             filetypes=[("CSV File", "*.csv")],
         )
         if not path:
             return
+        try:
+            self.app._dbg("io.files", "CSV browse selected path=%s", path)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
         self._csv_path_var.set(path)
         self._suggest_sheet_name(force=False)
         self._refresh_preview()
 
     def _browse_workbook(self) -> None:
-        """Perform browse workbook.
-        Used to keep the workflow logic localized and testable."""
+        """Open a file dialog to select an Excel workbook.
+
+        Purpose:
+            Allow users to choose an Excel file for CSV import output.
+        Why:
+            Supports routing CSV imports into a target workbook.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Updates the workbook path variable.
+        Exceptions:
+            Best-effort guards suppress dialog errors.
+        """
         path = filedialog.askopenfilename(
             title="Select Excel File", filetypes=[("Excel Files", "*.xlsx *.xls")]
         )
         if not path:
             return
+        try:
+            self.app._dbg("io.excel", "Workbook browse selected path=%s", path)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
         self._workbook_path_var.set(path)
 
     def _suggest_sheet_name(self, *, force: bool) -> None:
@@ -26482,7 +26608,22 @@ class UnifiedApp(tk.Tk):
 
     def __init__(self):
         """Initialize UnifiedApp instance.
-        Used at object creation to configure initial state and bindings."""
+
+        Purpose:
+            Construct the main application window and initialize shared state.
+        Why:
+            Centralizes UI setup, settings wiring, and developer tooling so
+            workflows share a consistent runtime configuration.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Builds Tk widgets, binds menus, seeds settings defaults, and
+            configures debug/performance instrumentation.
+        Exceptions:
+            Initialization uses best-effort guards to avoid crashing the UI.
+        """
 
         super().__init__()
 
@@ -26529,6 +26670,32 @@ class UnifiedApp(tk.Tk):
         self._perf_diag_output = None
         self._perf_diag_last_run: Optional[Dict[str, Any]] = None
         self._perf_diag_active_run: Optional[Dict[str, Any]] = None
+        self._debug_state_lock = threading.Lock()
+        self._debug_enabled = bool(settings.get("debug_enabled", False))
+        self._debug_categories = _normalize_debug_categories(
+            settings.get("debug_categories")
+        )
+        self._debug_file_logging_enabled = bool(
+            settings.get("debug_file_logging_enabled", False)
+        )
+        settings["debug_enabled"] = self._debug_enabled
+        settings["debug_categories"] = dict(self._debug_categories)
+        settings["debug_file_logging_enabled"] = self._debug_file_logging_enabled
+        self._debug_enabled_var = tk.BooleanVar(value=self._debug_enabled)
+        self._debug_file_logging_var = tk.BooleanVar(
+            value=self._debug_file_logging_enabled
+        )
+        self._debug_category_vars = {
+            name: tk.BooleanVar(value=bool(self._debug_categories.get(name, False)))
+            for name in DEBUG_CATEGORIES
+        }
+        self._debug_once: Set[Tuple[str, Any]] = set()
+        self._perf_stats: Dict[Tuple[str, str], Dict[str, float]] = {}
+        self._perf_stats_lock = threading.Lock()
+        self._debug_log_handler = None
+        self._debug_file_handler = None
+        self._perf_noop = contextlib.nullcontext()
+        self._configure_debug_logging()
         self._gil_import_warning_shown = False
         self._dependency_audit_dialog = None
         self._dependency_audit_report = None
@@ -27012,6 +27179,45 @@ class UnifiedApp(tk.Tk):
 
         tools_menu = self._register_menu(tk.Menu(self._menubar, tearoff=0))
         developer_menu = self._register_menu(tk.Menu(tools_menu, tearoff=0))
+        developer_menu.add_checkbutton(
+            label="Enable Debug Logging",
+            variable=self._debug_enabled_var,
+            command=lambda: self._set_debug_enabled(self._debug_enabled_var.get()),
+        )
+        developer_menu.add_checkbutton(
+            label="Enable Debug File Logging",
+            variable=self._debug_file_logging_var,
+            command=lambda: self._set_debug_file_logging_enabled(
+                self._debug_file_logging_var.get()
+            ),
+        )
+        debug_categories_menu = self._register_menu(
+            tk.Menu(developer_menu, tearoff=0)
+        )
+        # Iterate over DEBUG_CATEGORIES to apply the per-item logic.
+        for category in DEBUG_CATEGORIES:
+            var = self._debug_category_vars.get(category)
+            if var is None:
+                continue
+            label = DEBUG_CATEGORY_LABELS.get(category, category)
+            debug_categories_menu.add_checkbutton(
+                label=label,
+                variable=var,
+                command=lambda key=category: self._set_debug_category_enabled(
+                    key, self._debug_category_vars[key].get()
+                ),
+            )
+        developer_menu.add_cascade(label="Debug Categories", menu=debug_categories_menu)
+        developer_menu.add_command(
+            label="Dump Debug Settings", command=self._dump_debug_settings
+        )
+        developer_menu.add_command(
+            label="Clear Debug Once-Guards", command=self._clear_debug_once_guards
+        )
+        developer_menu.add_command(
+            label="Dump Performance Stats", command=self._dump_performance_stats
+        )
+        developer_menu.add_separator()
         developer_menu.add_command(
             label="Free-Threading & GIL...",
             command=self._open_free_threading_dialog,
@@ -29723,6 +29929,580 @@ class UnifiedApp(tk.Tk):
         self._perf_diag_last_run = report
         self._refresh_performance_diagnostics()
 
+    def _configure_debug_logging(self) -> None:
+        """Configure debug logging handlers and levels.
+
+        Purpose:
+            Ensure logging output is wired consistently for debug categories.
+        Why:
+            Keeps debug output centralized and toggled via Developer Tools.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Adds/removes logging handlers and updates logger levels.
+        Exceptions:
+            Best-effort guards prevent logging setup from crashing the UI.
+        """
+        try:
+            logger = _GL260_LOGGER
+            enabled = bool(self._debug_enabled)
+            file_enabled = bool(self._debug_file_logging_enabled)
+            level = logging.DEBUG if enabled else logging.WARNING
+            logger.setLevel(level)
+
+            if self._debug_log_handler is None:
+                handler = logging.StreamHandler()
+                handler.setFormatter(
+                    logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+                )
+                self._debug_log_handler = handler
+                logger.addHandler(handler)
+            if self._debug_log_handler is not None:
+                self._debug_log_handler.setLevel(level)
+
+            if file_enabled:
+                if self._debug_file_handler is None:
+                    settings_dir = os.path.dirname(os.path.abspath(SETTINGS_FILE)) or "."
+                    log_path = os.path.join(settings_dir, DEBUG_LOG_FILE)
+                    handler = RotatingFileHandler(
+                        log_path, maxBytes=1_000_000, backupCount=3, encoding="utf-8"
+                    )
+                    handler.setFormatter(
+                        logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+                    )
+                    self._debug_file_handler = handler
+                    logger.addHandler(handler)
+                if self._debug_file_handler is not None:
+                    self._debug_file_handler.setLevel(level)
+            elif self._debug_file_handler is not None:
+                try:
+                    logger.removeHandler(self._debug_file_handler)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+                try:
+                    self._debug_file_handler.close()
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+                self._debug_file_handler = None
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _persist_debug_settings(self) -> None:
+        """Persist debug settings to disk.
+
+        Purpose:
+            Save debug-related settings immediately after a toggle change.
+        Why:
+            Ensures Developer Tools choices persist across restarts.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Writes to settings.json via the existing save pathway.
+        Exceptions:
+            Best-effort guard suppresses persistence errors.
+        """
+        settings["debug_enabled"] = bool(self._debug_enabled)
+        settings["debug_categories"] = dict(self._debug_categories)
+        settings["debug_file_logging_enabled"] = bool(
+            self._debug_file_logging_enabled
+        )
+        try:
+            _save_settings_to_disk()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _set_debug_enabled(self, enabled: bool) -> None:
+        """Apply the global debug enable toggle.
+
+        Purpose:
+            Update global debug state from the Developer Tools menu.
+        Why:
+            Centralizes gating for all debug logging and perf instrumentation.
+        Args:
+            enabled: True to enable debug logging; False to disable it.
+        Returns:
+            None.
+        Side Effects:
+            Updates settings, logging configuration, and cached debug state.
+        Exceptions:
+            Best-effort guards prevent UI failures on invalid state.
+        """
+        self._debug_enabled = bool(enabled)
+        if self._debug_enabled_var is not None:
+            try:
+                self._debug_enabled_var.set(self._debug_enabled)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._configure_debug_logging()
+        self._persist_debug_settings()
+
+    def _set_debug_file_logging_enabled(self, enabled: bool) -> None:
+        """Apply the debug file logging toggle.
+
+        Purpose:
+            Enable or disable the rotating file handler for debug logs.
+        Why:
+            Lets developers capture debug output without console spam.
+        Args:
+            enabled: True to enable file logging; False to disable it.
+        Returns:
+            None.
+        Side Effects:
+            Updates settings and reconfigures logging handlers.
+        Exceptions:
+            Best-effort guards prevent UI failures on invalid state.
+        """
+        self._debug_file_logging_enabled = bool(enabled)
+        if self._debug_file_logging_var is not None:
+            try:
+                self._debug_file_logging_var.set(self._debug_file_logging_enabled)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._configure_debug_logging()
+        self._persist_debug_settings()
+
+    def _set_debug_category_enabled(self, category: str, enabled: bool) -> None:
+        """Apply a per-category debug toggle.
+
+        Purpose:
+            Update a single debug category based on the menu toggle state.
+        Why:
+            Allows selective debug output without enabling all categories.
+        Args:
+            category: Category key to update.
+            enabled: True to enable the category; False to disable it.
+        Returns:
+            None.
+        Side Effects:
+            Updates settings and in-memory category state.
+        Exceptions:
+            Best-effort guards prevent UI failures on invalid input.
+        """
+        if category not in DEBUG_CATEGORIES:
+            return
+        self._debug_categories[category] = bool(enabled)
+        var = self._debug_category_vars.get(category)
+        if var is not None:
+            try:
+                var.set(bool(enabled))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._persist_debug_settings()
+
+    def _is_debug_category_enabled(self, category: str) -> bool:
+        """Return whether a debug category is active.
+
+        Purpose:
+            Provide a cheap gate before emitting debug output.
+        Why:
+            Ensures debug logging is disabled by default and cheap when off.
+        Args:
+            category: Category key to evaluate.
+        Returns:
+            True when global debug and the category are enabled.
+        Side Effects:
+            None.
+        Exceptions:
+            None.
+        """
+        if not self._debug_enabled:
+            return False
+        return bool(self._debug_categories.get(category, False))
+
+    def _log(
+        self,
+        category: str,
+        level: int,
+        msg: str,
+        *args: Any,
+        once_key: Optional[str] = None,
+    ) -> None:
+        """Emit a structured log message for a debug category.
+
+        Purpose:
+            Route debug output through the centralized logging backend.
+        Why:
+            Keeps debug output consistent and lazy-formatted across the app.
+        Args:
+            category: Category key that gates the log output.
+            level: Logging level (e.g., logging.DEBUG).
+            msg: Log message template using %-style placeholders.
+            *args: Arguments for lazy formatting.
+            once_key: Optional token for one-shot logging suppression.
+        Returns:
+            None.
+        Side Effects:
+            Writes to the configured logger when enabled.
+        Exceptions:
+            Best-effort guards suppress logging failures.
+        """
+        if not self._is_debug_category_enabled(category):
+            return
+        if once_key:
+            token = (category, once_key)
+            if token in self._debug_once:
+                return
+            self._debug_once.add(token)
+        try:
+            _GL260_LOGGER.log(level, "[%s] " + msg, category, *args)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _dbg(
+        self, category: str, msg: str, *args: Any, once_key: Optional[str] = None
+    ) -> None:
+        """Emit a debug-level log for a category.
+
+        Purpose:
+            Provide a convenience wrapper for debug logging.
+        Why:
+            Keeps call sites concise while enforcing gating rules.
+        Args:
+            category: Category key that gates the log output.
+            msg: Log message template using %-style placeholders.
+            *args: Arguments for lazy formatting.
+            once_key: Optional token for one-shot logging suppression.
+        Returns:
+            None.
+        Side Effects:
+            Writes to the configured logger when enabled.
+        Exceptions:
+            Best-effort guards suppress logging failures.
+        """
+        self._log(category, logging.DEBUG, msg, *args, once_key=once_key)
+
+    def _dbg_exc(
+        self, category: str, msg: str, exc: Optional[BaseException] = None
+    ) -> None:
+        """Emit a debug-level exception log for a category.
+
+        Purpose:
+            Capture exceptions with context when debug logging is enabled.
+        Why:
+            Helps diagnose failures without interrupting workflows.
+        Args:
+            category: Category key that gates the log output.
+            msg: Message describing the exception context.
+            exc: Optional exception to include; uses current traceback if None.
+        Returns:
+            None.
+        Side Effects:
+            Writes to the configured logger when enabled.
+        Exceptions:
+            Best-effort guards suppress logging failures.
+        """
+        if not self._is_debug_category_enabled(category):
+            return
+        try:
+            if exc is not None:
+                _GL260_LOGGER.exception("[%s] %s: %s", category, msg, exc)
+            else:
+                _GL260_LOGGER.exception("[%s] %s", category, msg)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _perf_record(self, category: str, label: str, value: float) -> None:
+        """Record a performance metric sample.
+
+        Purpose:
+            Aggregate timing or counter values for later inspection.
+        Why:
+            Provides cheap profiling while avoiding per-event log spam.
+        Args:
+            category: Category key used for gating and grouping.
+            label: Human-readable metric label.
+            value: Sample value (seconds for timers, count for counters).
+        Returns:
+            None.
+        Side Effects:
+            Updates in-memory performance stats.
+        Exceptions:
+            Best-effort guards suppress aggregation failures.
+        """
+        if not self._debug_enabled:
+            return
+        if not (
+            self._debug_categories.get("perf.timing", False)
+            or self._debug_categories.get(category, False)
+        ):
+            return
+        try:
+            with self._perf_stats_lock:
+                key = (category, label)
+                stats = self._perf_stats.get(key)
+                if stats is None:
+                    stats = {"count": 0, "total": 0.0, "min": value, "max": value}
+                    self._perf_stats[key] = stats
+                stats["count"] = int(stats.get("count", 0)) + 1
+                stats["total"] = float(stats.get("total", 0.0)) + float(value)
+                stats["min"] = (
+                    float(value)
+                    if stats.get("min") is None
+                    else min(float(stats["min"]), float(value))
+                )
+                stats["max"] = (
+                    float(value)
+                    if stats.get("max") is None
+                    else max(float(stats["max"]), float(value))
+                )
+                stats["last"] = float(value)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _perf_count(self, category: str, label: str, delta: float = 1.0) -> None:
+        """Record a counter increment for performance stats.
+
+        Purpose:
+            Aggregate hit/miss or event counters without logging each event.
+        Why:
+            Keeps cache and workflow stats cheap when enabled.
+        Args:
+            category: Category key used for gating and grouping.
+            label: Human-readable metric label.
+            delta: Amount to add to the counter.
+        Returns:
+            None.
+        Side Effects:
+            Updates in-memory performance stats.
+        Exceptions:
+            Best-effort guards suppress aggregation failures.
+        """
+        self._perf_record(category, label, float(delta))
+
+    def _perf_time(
+        self, category: str, label: str, once_key: Optional[str] = None
+    ) -> Any:
+        """Return a context manager that records elapsed time.
+
+        Purpose:
+            Time a code block when performance instrumentation is enabled.
+        Why:
+            Provides cheap timing without overhead when disabled.
+        Args:
+            category: Category key used for gating and grouping.
+            label: Human-readable metric label.
+            once_key: Optional token for one-shot timing suppression.
+        Returns:
+            A context manager that records elapsed time when enabled.
+        Side Effects:
+            Updates in-memory performance stats when enabled.
+        Exceptions:
+            Best-effort guards suppress timing failures.
+        """
+        if not self._debug_enabled:
+            return self._perf_noop
+        if not (
+            self._debug_categories.get("perf.timing", False)
+            or self._debug_categories.get(category, False)
+        ):
+            return self._perf_noop
+        if once_key:
+            token = (category, once_key)
+            if token in self._debug_once:
+                return self._perf_noop
+            self._debug_once.add(token)
+
+        class _PerfTimer:
+            def __init__(self, app: "UnifiedApp", cat: str, lab: str) -> None:
+                """Initialize the timer context.
+
+                Purpose:
+                    Store the timer context parameters for later recording.
+                Why:
+                    Keeps the timing logic encapsulated for perf tracking.
+                Args:
+                    app: UnifiedApp instance that receives the perf record.
+                    cat: Category key for the perf stats.
+                    lab: Label for the perf stats entry.
+                Returns:
+                    None.
+                Side Effects:
+                    Stores references to app and timing metadata.
+                Exceptions:
+                    None.
+                """
+                self._app = app
+                self._cat = cat
+                self._lab = lab
+                self._start = None
+
+            def __enter__(self):
+                """Start timing the context block.
+
+                Purpose:
+                    Capture the start timestamp for elapsed time measurement.
+                Why:
+                    Allows consistent timing with minimal caller overhead.
+                Args:
+                    None.
+                Returns:
+                    Self, enabling 'as' usage in context managers.
+                Side Effects:
+                    Records the start time.
+                Exceptions:
+                    None.
+                """
+                self._start = time.perf_counter()
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                """Stop timing and record the elapsed duration.
+
+                Purpose:
+                    Finalize the timing and store the sample in perf stats.
+                Why:
+                    Ensures timers are aggregated without leaking exceptions.
+                Args:
+                    exc_type: Exception type if raised in the context block.
+                    exc: Exception instance if raised in the context block.
+                    tb: Traceback if raised in the context block.
+                Returns:
+                    False to propagate exceptions from the context block.
+                Side Effects:
+                    Updates performance stats with the elapsed duration.
+                Exceptions:
+                    None.
+                """
+                if self._start is None:
+                    return False
+                elapsed = time.perf_counter() - self._start
+                self._app._perf_record(self._cat, self._lab, elapsed)
+                return False
+
+        return _PerfTimer(self, category, label)
+
+    def _format_performance_stats(self) -> str:
+        """Format aggregated performance stats for display.
+
+        Purpose:
+            Render the current performance counters/timers as readable text.
+        Why:
+            Supports the Developer Tools "Dump Performance Stats" action.
+        Args:
+            None.
+        Returns:
+            Multi-line string of formatted performance stats.
+        Side Effects:
+            None.
+        Exceptions:
+            Best-effort guards suppress formatting failures.
+        """
+        try:
+            with self._perf_stats_lock:
+                items = list(self._perf_stats.items())
+        except Exception:
+            items = []
+        if not items:
+            return "No performance stats captured."
+        lines = []
+        # Iterate over sorted items to apply the per-item logic.
+        for (category, label), stats in sorted(items, key=lambda item: item[0]):
+            count = int(stats.get("count", 0))
+            total = float(stats.get("total", 0.0))
+            min_val = stats.get("min")
+            max_val = stats.get("max")
+            last_val = stats.get("last")
+            lines.append(
+                f"{category} | {label}: "
+                f"count={count} total={total:.6f} "
+                f"min={min_val:.6f} max={max_val:.6f} last={last_val:.6f}"
+            )
+        return "\n".join(lines)
+
+    def _dump_performance_stats(self) -> None:
+        """Dump performance stats to the debug logger and UI.
+
+        Purpose:
+            Provide a quick snapshot of aggregated perf counters/timers.
+        Why:
+            Supports the Developer Tools action for performance inspection.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Logs to the debug logger and shows a messagebox summary.
+        Exceptions:
+            Best-effort guards suppress UI failures.
+        """
+        body = self._format_performance_stats()
+        self._dbg("perf.timing", "Performance stats dump:\n%s", body, once_key=None)
+        try:
+            messagebox.showinfo("Performance Stats", body)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _dump_debug_settings(self) -> None:
+        """Dump debug settings to the debug logger and UI.
+
+        Purpose:
+            Show the current debug enable state and category toggles.
+        Why:
+            Helps developers confirm which categories are active.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Logs to the debug logger and shows a messagebox summary.
+        Exceptions:
+            Best-effort guards suppress UI failures.
+        """
+        categories = [
+            f"{name}={bool(self._debug_categories.get(name, False))}"
+            for name in DEBUG_CATEGORIES
+        ]
+        lines = [
+            f"debug_enabled={bool(self._debug_enabled)}",
+            f"debug_file_logging_enabled={bool(self._debug_file_logging_enabled)}",
+            "categories: " + ", ".join(categories),
+        ]
+        body = "\n".join(lines)
+        self._dbg("ui.events", "Debug settings dump:\n%s", body, once_key=None)
+        try:
+            messagebox.showinfo("Debug Settings", body)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _clear_debug_once_guards(self) -> None:
+        """Clear one-shot debug suppression tokens.
+
+        Purpose:
+            Reset the once-only debug guard cache for renewed logging.
+        Why:
+            Allows repeated debug output after it was suppressed once.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Clears the in-memory once-key cache.
+        Exceptions:
+            Best-effort guards suppress UI failures.
+        """
+        try:
+            self._debug_once.clear()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        self._dbg("ui.events", "Debug once-guards cleared.")
+
     def _apply_concurrency_controls(self) -> None:
         """Apply concurrency controls.
         Used to apply concurrency controls changes to live state."""
@@ -30300,14 +31080,22 @@ class UnifiedApp(tk.Tk):
         ).grid(row=0, column=4, sticky="ew", padx=(0, 0))
 
     def _log_plot_tab_debug(self, message: str):
-        """Perform log plot tab debug.
-        Used to keep the workflow logic localized and testable."""
-        if getattr(self, "_plot_tab_debug", False):
-            try:
-                print(f"[PlotTabs] {message}")
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
+        """Emit plot tab debug output.
+
+        Purpose:
+            Send plot tab lifecycle messages to the debug logger.
+        Why:
+            Helps trace plot tab refresh behavior without ad-hoc prints.
+        Args:
+            message: Debug message describing the plot tab event.
+        Returns:
+            None.
+        Side Effects:
+            Writes to the debug logger when plotting.render is enabled.
+        Exceptions:
+            Best-effort guards suppress logging failures.
+        """
+        self._dbg("plotting.render", "%s", message)
 
     def _finalize_matplotlib_canvas_layout(
         self,
@@ -39529,8 +40317,21 @@ class UnifiedApp(tk.Tk):
             self._refresh_combined_preview_now()
 
     def _refresh_combined_preview_now(self) -> None:
-        """Refresh combined preview now.
-        Used to sync combined preview now with current settings."""
+        """Refresh the combined preview immediately.
+
+        Purpose:
+            Force a combined plot refresh for the active preview tab.
+        Why:
+            Keeps combined plot layout changes visible without manual reloads.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Triggers a plot refresh and logs debug/perf timing when enabled.
+        Exceptions:
+            Best-effort guards suppress UI refresh failures.
+        """
         if getattr(self, "_combined_preview_after_id", None) is not None:
             self._combined_preview_after_id = None
 
@@ -39555,9 +40356,10 @@ class UnifiedApp(tk.Tk):
         except Exception:
             start_fig = None
         start_fig_id = id(start_fig) if start_fig is not None else None
-        print(f"DEBUG: COMBINED_REFRESH start fig_id={start_fig_id}")
+        self._dbg("plotting.render", "Combined preview refresh start fig_id=%s", start_fig_id)
         try:
-            self._force_plot_refresh(combined_tab, combined_canvas)
+            with self._perf_time("plotting.render", "combined_preview_refresh"):
+                self._force_plot_refresh(combined_tab, combined_canvas)
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
@@ -39566,7 +40368,7 @@ class UnifiedApp(tk.Tk):
         except Exception:
             end_fig = None
         end_fig_id = id(end_fig) if end_fig is not None else None
-        print(f"DEBUG: COMBINED_REFRESH end fig_id={end_fig_id}")
+        self._dbg("plotting.render", "Combined preview refresh end fig_id=%s", end_fig_id)
 
     def _open_combined_layout_tuner(self) -> None:
         """Open combined layout tuner.
@@ -44772,15 +45574,41 @@ class UnifiedApp(tk.Tk):
     def _recompute_cycle_analysis(
         self, auto_detect=True, ignore_min_drop=False, *, preserve_view=False
     ):
-        """Perform recompute cycle analysis.
-        Used to keep the workflow logic localized and testable."""
+        """Recompute cycle analysis for the current selection.
+
+        Purpose:
+            Trigger cycle analysis recomputation and refresh the UI summary.
+        Why:
+            Keeps cycle plots and summaries in sync with user inputs/markers.
+        Args:
+            auto_detect: When True, allow automatic peak/trough detection.
+            ignore_min_drop: When True, ignore minimum drop thresholds.
+            preserve_view: When True, keep current axis limits.
+        Returns:
+            None.
+        Side Effects:
+            Updates cycle analysis plots, schedules worker jobs, and logs debug.
+        Exceptions:
+            Best-effort guards suppress UI refresh failures.
+        """
 
         if not self._cycle_ready():
+            self._dbg(
+                "cycle.interaction",
+                "Cycle analysis recompute skipped: cycle not ready",
+            )
 
             return
 
         auto_detect = bool(auto_detect and self.auto_detect_cycles.get())
         manual_only = not auto_detect
+        self._dbg(
+            "cycle.interaction",
+            "Cycle analysis recompute start auto_detect=%s manual_only=%s preserve_view=%s",
+            auto_detect,
+            manual_only,
+            preserve_view,
+        )
 
         if (
             getattr(self, "_cycle_canvas", None) is None
@@ -45037,6 +45865,12 @@ class UnifiedApp(tk.Tk):
             )
 
         self._task_runner.submit("cycle_analysis", worker, _on_ok, _on_err)
+        self._dbg(
+            "cycle.interaction",
+            "Cycle analysis job submitted job_id=%s auto_detect=%s",
+            job_id,
+            auto_detect,
+        )
 
     def _compute_cycle_segmentation(
         self,
@@ -45430,37 +46264,69 @@ class UnifiedApp(tk.Tk):
         manual_only: bool = False,
         data_ctx: Optional[Dict[str, Any]] = None,
     ):
-        """Compute cycle analysis worker.
-        Used to derive cycle analysis worker for analysis or plotting."""
+        """Compute cycle analysis in a worker context.
 
-        segmentation = self._compute_cycle_segmentation(
-            xv,
-            yv,
-            mask,
-            prom,
-            dist,
-            wid,
-            min_cycle_drop,
+        Purpose:
+            Perform cycle segmentation and metrics computation off the UI thread.
+        Why:
+            Keeps heavy analysis work from blocking UI responsiveness.
+        Args:
+            xv: X-axis values array.
+            yv: Y-axis values array.
+            mask: Boolean mask for selected range.
+            z_arr: Optional temperature array.
+            prom: Peak prominence.
+            dist: Peak distance.
+            wid: Peak width.
+            min_cycle_drop: Minimum drop threshold.
+            auto_detect: Enable automatic peak detection.
+            ignore_min_drop: Ignore minimum drop threshold.
+            peak_finder: Peak detection callable.
+            snapshot: Snapshot dict of cycle state.
+            manual_only: When True, only manual markers are used.
+            data_ctx: Optional prepared data context.
+        Returns:
+            Dict of cycle analysis results and summaries.
+        Side Effects:
+            Records performance timing when enabled.
+        Exceptions:
+            Exceptions propagate to the worker error handler.
+        """
+        self._dbg(
+            "cycle.analysis",
+            "Cycle analysis compute start auto_detect=%s manual_only=%s",
             auto_detect,
-            ignore_min_drop,
-            peak_finder,
-            snapshot,
-            manual_only=manual_only,
+            manual_only,
         )
-        metrics = self._compute_cycle_metrics_from_segmentation(
-            segmentation,
-            xv,
-            yv,
-            z_arr,
-            prom,
-            dist,
-            wid,
-            min_cycle_drop,
-            ignore_min_drop,
-            data_ctx=data_ctx,
-        )
+        with self._perf_time("cycle.analysis", "cycle_analysis_compute"):
+            segmentation = self._compute_cycle_segmentation(
+                xv,
+                yv,
+                mask,
+                prom,
+                dist,
+                wid,
+                min_cycle_drop,
+                auto_detect,
+                ignore_min_drop,
+                peak_finder,
+                snapshot,
+                manual_only=manual_only,
+            )
+            metrics = self._compute_cycle_metrics_from_segmentation(
+                segmentation,
+                xv,
+                yv,
+                z_arr,
+                prom,
+                dist,
+                wid,
+                min_cycle_drop,
+                ignore_min_drop,
+                data_ctx=data_ctx,
+            )
 
-        return dict(
+        result = dict(
             auto_peaks=segmentation.get("auto_peaks", set()),
             auto_troughs=segmentation.get("auto_troughs", set()),
             plot_peaks=segmentation.get("plot_peaks"),
@@ -45478,6 +46344,12 @@ class UnifiedApp(tk.Tk):
             cycle_transfer=metrics.get("cycle_transfer") or [],
             cycle_context=metrics.get("cycle_context") or {},
         )
+        self._dbg(
+            "cycle.analysis",
+            "Cycle analysis compute done cycles=%s",
+            len(result.get("cycles") or []),
+        )
+        return result
 
     def _apply_cycle_analysis_result(
         self,
@@ -45491,11 +46363,38 @@ class UnifiedApp(tk.Tk):
         preserve_view,
         pending_limits,
     ):
-        """Apply cycle analysis result.
-        Used to apply cycle analysis result changes to live state."""
+        """Apply cycle analysis results to the UI state.
+
+        Purpose:
+            Update plots and summaries after cycle analysis completes.
+        Why:
+            Keeps the Cycle Analysis tab synchronized with background results.
+        Args:
+            job_id: Cycle analysis job identifier.
+            result: Result payload or error dict from the worker.
+            xv: X-axis values array.
+            yv: Y-axis values array.
+            mask: Boolean mask for selected range.
+            z_arr: Optional temperature array.
+            ignore_min_drop: Ignore minimum drop threshold.
+            preserve_view: When True, keep current axis limits.
+            pending_limits: Optional cached axis limits to restore.
+        Returns:
+            None.
+        Side Effects:
+            Updates plot artists, summary text, and debug logs.
+        Exceptions:
+            Best-effort guards suppress UI update failures.
+        """
 
         if job_id != self._cycle_active_job:
 
+            self._dbg(
+                "cycle.interaction",
+                "Cycle analysis result ignored (stale) job_id=%s active=%s",
+                job_id,
+                self._cycle_active_job,
+            )
             return  # stale result from an older job
 
         xlim_pending, ylim_pending = (None, None)
@@ -45534,6 +46433,13 @@ class UnifiedApp(tk.Tk):
         if not isinstance(result, dict) or "error" in result:
 
             err = result.get("error") if isinstance(result, dict) else None
+            if err is not None:
+                self._dbg_exc("cycle.analysis", "Cycle analysis failed", err)
+            else:
+                self._dbg(
+                    "cycle.analysis",
+                    "Cycle analysis failed with unknown error.",
+                )
 
             msg = "Cycle analysis failed."
 
@@ -47301,8 +48207,25 @@ class UnifiedApp(tk.Tk):
         return cycle_legends[0]
 
     def _debug_dump_cycle_legend(self, fig: Figure, tag: str) -> None:
-        """Dump combined cycle legend identity/geometry for debug tracing."""
+        """Dump combined cycle legend identity/geometry for debug tracing.
+
+        Purpose:
+            Emit detailed legend metadata for combined cycle legend debugging.
+        Why:
+            Supports diagnosing legend placement and persistence issues.
+        Args:
+            fig: Figure containing the combined plot.
+            tag: Debug tag to identify the call site or phase.
+        Returns:
+            None.
+        Side Effects:
+            Writes to the debug logger when plotting.legends is enabled.
+        Exceptions:
+            Best-effort guards suppress diagnostic failures.
+        """
         if fig is None:
+            return
+        if not self._is_debug_category_enabled("plotting.legends"):
             return
         try:
             fig_id = id(fig)
@@ -47323,7 +48246,12 @@ class UnifiedApp(tk.Tk):
             }
         except Exception:
             fig_legend_ids = set()
-        print(f"DEBUG: LEGENDS_FOUND tag={tag} count={len(legends)}")
+        self._dbg(
+            "plotting.legends",
+            "Legends found tag=%s count=%s",
+            tag,
+            len(legends),
+        )
         # Iterate over legends to apply the per-item logic.
         for lg in legends:
             parent = "unknown"
@@ -47337,9 +48265,13 @@ class UnifiedApp(tk.Tk):
                 labels = self._legend_texts(lg)
             except Exception:
                 labels = []
-            print(
-                "DEBUG: LEGEND_CANDIDATE "
-                f"tag={tag} legend_id={id(lg)} parent={parent} labels={labels}"
+            self._dbg(
+                "plotting.legends",
+                "Legend candidate tag=%s legend_id=%s parent=%s labels=%s",
+                tag,
+                id(lg),
+                parent,
+                labels,
             )
         legend = None
         try:
@@ -47347,15 +48279,23 @@ class UnifiedApp(tk.Tk):
         except Exception:
             legend = None
         if legend is None:
-            print(
-                "DEBUG: CYCLE_LEGEND_DUMP "
-                f"tag={tag} fig_id={fig_id} canvas_id={canvas_id} "
-                "legend_id=None parent=None loc=None"
+            self._dbg(
+                "plotting.legends",
+                "Cycle legend dump tag=%s fig_id=%s canvas_id=%s legend_id=None parent=None loc=None",
+                tag,
+                fig_id,
+                canvas_id,
             )
-            print(f"DEBUG: CYCLE_LEGEND_LABELS tag={tag} labels=[]")
-            print(
-                "DEBUG: CYCLE_LEGEND_GEOM "
-                f"tag={tag} bbox_to_anchor=None bbox_px=None axpos=None renderer=None"
+            self._dbg(
+                "plotting.legends",
+                "Cycle legend labels tag=%s labels=%s",
+                tag,
+                [],
+            )
+            self._dbg(
+                "plotting.legends",
+                "Cycle legend geom tag=%s bbox_to_anchor=None bbox_px=None axpos=None renderer=None",
+                tag,
             )
             return
         parent = "unknown"
@@ -47373,12 +48313,22 @@ class UnifiedApp(tk.Tk):
             labels = self._legend_texts(legend)
         except Exception:
             labels = []
-        print(
-            "DEBUG: CYCLE_LEGEND_DUMP "
-            f"tag={tag} fig_id={fig_id} canvas_id={canvas_id} "
-            f"legend_id={id(legend)} parent={parent} loc={legend_loc}"
+        self._dbg(
+            "plotting.legends",
+            "Cycle legend dump tag=%s fig_id=%s canvas_id=%s legend_id=%s parent=%s loc=%s",
+            tag,
+            fig_id,
+            canvas_id,
+            id(legend),
+            parent,
+            legend_loc,
         )
-        print(f"DEBUG: CYCLE_LEGEND_LABELS tag={tag} labels={labels}")
+        self._dbg(
+            "plotting.legends",
+            "Cycle legend labels tag=%s labels=%s",
+            tag,
+            labels,
+        )
         try:
             bbox_to_anchor = legend.get_bbox_to_anchor()
         except Exception:
@@ -47417,10 +48367,14 @@ class UnifiedApp(tk.Tk):
                 axpos = (pos.x0, pos.y0, pos.width, pos.height)
             except Exception:
                 axpos = None
-        print(
-            "DEBUG: CYCLE_LEGEND_GEOM "
-            f"tag={tag} bbox_to_anchor={bbox_to_anchor} "
-            f"bbox_px={bbox_px} axpos={axpos} renderer={renderer_label}"
+        self._dbg(
+            "plotting.legends",
+            "Cycle legend geom tag=%s bbox_to_anchor=%s bbox_px=%s axpos=%s renderer=%s",
+            tag,
+            bbox_to_anchor,
+            bbox_px,
+            axpos,
+            renderer_label,
         )
 
     def _combined_cycle_legend_capture_enabled(
@@ -48094,7 +49048,9 @@ class UnifiedApp(tk.Tk):
                     and cycle_capture_enabled
                     and (source != "drag" or cycle_drag_capture_enabled)
                 ):
-                    if source == "drag":
+                    if source == "drag" and self._is_debug_category_enabled(
+                        "plotting.legends"
+                    ):
                         try:
                             fig_id = id(fig)
                         except Exception:
@@ -48128,14 +49084,20 @@ class UnifiedApp(tk.Tk):
                             bbox_repr = repr(bbox_anchor_obj)
                         except Exception:
                             bbox_repr = None
-                        print(
-                            "DEBUG: CAPTURE_PRE "
-                            f"fig_id={fig_id} canvas_id={canvas_id} "
-                            f"legend_id={legend_id} loc={loc_value} "
-                            f"loc_is_tuple={loc_is_tuple} "
-                            f"bbox_anchor_obj={bbox_anchor_obj} "
-                            f"bbox_anchor_type={bbox_anchor_type} "
-                            f"bbox_bounds={bbox_bounds} bbox_repr={bbox_repr}"
+                        self._dbg(
+                            "plotting.legends",
+                            "Capture pre fig_id=%s canvas_id=%s legend_id=%s "
+                            "loc=%s loc_is_tuple=%s bbox_anchor_obj=%s "
+                            "bbox_anchor_type=%s bbox_bounds=%s bbox_repr=%s",
+                            fig_id,
+                            canvas_id,
+                            legend_id,
+                            loc_value,
+                            loc_is_tuple,
+                            bbox_anchor_obj,
+                            bbox_anchor_type,
+                            bbox_bounds,
+                            bbox_repr,
                         )
                     if source == "drag" and loc_tuple is not None:
                         persist_value = bool(
@@ -48157,11 +49119,12 @@ class UnifiedApp(tk.Tk):
                                 float(anchor_loc[1]),
                             )
                             anchor_space_to_store = "axes"
-                        print(
-                            "DEBUG: CAPTURE_PERSIST_WRITE "
-                            f"persist={persist_value} mode=loc_tuple "
-                            f"loc={loc_tuple_to_store} "
-                            f"space={anchor_space_to_store}"
+                        self._dbg(
+                            "plotting.legends",
+                            "Capture persist write persist=%s mode=loc_tuple loc=%s space=%s",
+                            persist_value,
+                            loc_tuple_to_store,
+                            anchor_space_to_store,
                         )
                     # Capture cycle legend placement only when persistence is allowed.
                     self._combined_cycle_legend_anchor = anchor_loc
@@ -48258,16 +49221,19 @@ class UnifiedApp(tk.Tk):
                                 )
                             )
                             if loc_is_tuple:
-                                print(
-                                    "DEBUG: CAPTURE_PERSIST_WRITE "
-                                    f"persist={persist_value} mode=loc_tuple "
-                                    f"loc={loc_value}"
+                                self._dbg(
+                                    "plotting.legends",
+                                    "Capture persist write persist=%s mode=loc_tuple loc=%s",
+                                    persist_value,
+                                    loc_value,
                                 )
                             else:
-                                print(
-                                    "DEBUG: CAPTURE_PERSIST_WRITE "
-                                    f"persist={persist_value} mode=dxdy "
-                                    f"dx={offsets[0]} dy={offsets[1]}"
+                                self._dbg(
+                                    "plotting.legends",
+                                    "Capture persist write persist=%s mode=dxdy dx=%s dy=%s",
+                                    persist_value,
+                                    offsets[0],
+                                    offsets[1],
                                 )
                         settings["combined_cycle_legend_ref_dx_px"] = offsets[0]
                         settings["combined_cycle_legend_ref_dy_px"] = offsets[1]
@@ -48275,9 +49241,11 @@ class UnifiedApp(tk.Tk):
                         if source == "drag":
                             # Drag capture implies persistence for the updated offsets.
                             settings["combined_cycle_legend_persist_position"] = True
-                            print(
-                                "DEBUG: persist_write "
-                                f"dx={offsets[0]} dy={offsets[1]} persist=True"
+                            self._dbg(
+                                "plotting.legends",
+                                "Persist write dx=%s dy=%s persist=True",
+                                offsets[0],
+                                offsets[1],
                             )
                             try:
                                 self._debug_dump_cycle_legend(
@@ -48288,9 +49256,12 @@ class UnifiedApp(tk.Tk):
                                 # the workflow.
                                 pass
                         # Debug: confirm capture source and offsets for persistence.
-                        print(
-                            "DEBUG: Combined cycle legend capture "
-                            f"source={source} dx_px={offsets[0]} dy_px={offsets[1]}"
+                        self._dbg(
+                            "plotting.legends",
+                            "Combined cycle legend capture source=%s dx_px=%s dy_px=%s",
+                            source,
+                            offsets[0],
+                            offsets[1],
                         )
                     updated = True
             except Exception:
@@ -48385,9 +49356,13 @@ class UnifiedApp(tk.Tk):
             stored_loc = None
             stored_loc_tuple = None
         defer_cycle_drag_enable = bool(stored_mode == "loc_tuple")
-        print(
-            f"DEBUG: apply_saved_anchor persist={persist} "
-            f"dx={saved_dx} dy={saved_dy} fig_id={id(fig)}"
+        self._dbg(
+            "plotting.legends",
+            "Apply saved anchor persist=%s dx=%s dy=%s fig_id=%s",
+            persist,
+            saved_dx,
+            saved_dy,
+            id(fig),
         )
         if defer_saved_anchor and (
             saved_offsets is not None
@@ -48430,9 +49405,10 @@ class UnifiedApp(tk.Tk):
             getattr(lg, "_combined_cycle_legend", False) is True for lg in legends
         )
         if expect_cycle_legend and not has_cycle_legend:
-            print(
-                "WARN: Combined cycle legend not discovered for draggability; "
-                "check legend creation/markers."
+            self._log(
+                "plotting.legends",
+                logging.WARNING,
+                "Combined cycle legend not discovered for draggability; check legend creation/markers.",
             )
         main_legend = None
         # Iterate over legends to apply the per-item logic.
@@ -48549,14 +49525,17 @@ class UnifiedApp(tk.Tk):
                 pass
         canvas_type = type(canvas).__name__ if canvas is not None else "None"
         canvas_id = id(canvas) if canvas is not None else None
-        print(
-            "DEBUG: legend tracking canvas "
-            f"type={canvas_type} id={canvas_id}"
+        self._dbg(
+            "plotting.legends",
+            "Legend tracking canvas type=%s id=%s",
+            canvas_type,
+            canvas_id,
         )
         if canvas is None or not isinstance(canvas, FigureCanvasTkAgg):
-            print(
-                "WARN: Combined legend tracking skipped; "
-                "canvas is not FigureCanvasTkAgg."
+            self._log(
+                "plotting.legends",
+                logging.WARNING,
+                "Combined legend tracking skipped; canvas is not FigureCanvasTkAgg.",
             )
             return
         try:
@@ -48686,11 +49665,15 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 stored_dx = None
                 stored_dy = None
-            print(
-                "DEBUG: APPLY_PRE "
-                f"fig_id={id(fig)} persist={persist} mode={stored_mode} "
-                f"stored_loc={stored_loc_tuple} stored_dx={stored_dx} "
-                f"stored_dy={stored_dy}"
+            self._dbg(
+                "plotting.legends",
+                "Apply pre fig_id=%s persist=%s mode=%s stored_loc=%s stored_dx=%s stored_dy=%s",
+                id(fig),
+                persist,
+                stored_mode,
+                stored_loc_tuple,
+                stored_dx,
+                stored_dy,
             )
             applied = False
             if stored_mode == "loc_tuple" and stored_loc_tuple is not None:
@@ -48751,12 +49734,14 @@ class UnifiedApp(tk.Tk):
                     bbox_bounds = bbox_anchor_obj.bounds
                 except Exception:
                     bbox_bounds = None
-            print(
-                "DEBUG: APPLY_POST "
-                f"legend_id={legend_id} loc={loc_post} "
-                f"loc_is_tuple={loc_is_tuple} "
-                f"bbox_anchor_type={bbox_anchor_type} "
-                f"bbox_bounds={bbox_bounds}"
+            self._dbg(
+                "plotting.legends",
+                "Apply post legend_id=%s loc=%s loc_is_tuple=%s bbox_anchor_type=%s bbox_bounds=%s",
+                legend_id,
+                loc_post,
+                loc_is_tuple,
+                bbox_anchor_type,
+                bbox_bounds,
             )
             if applied:
                 if (
@@ -48914,11 +49899,12 @@ class UnifiedApp(tk.Tk):
                     legend_id = id(cycle_legend)
                 except Exception:
                     legend_id = None
-                print(
-                    "DEBUG: PRESS_CAPTURE "
-                    f"legend_loc={pre_loc} "
-                    f"is_tuple={self._cycle_leg_pre_click_is_tuple} "
-                    f"legend_id={legend_id}"
+                self._dbg(
+                    "plotting.legends",
+                    "Press capture legend_loc=%s is_tuple=%s legend_id=%s",
+                    pre_loc,
+                    self._cycle_leg_pre_click_is_tuple,
+                    legend_id,
                 )
             if cycle_legend is not None and event_x is not None and event_y is not None:
                 contains = False
@@ -49066,10 +50052,13 @@ class UnifiedApp(tk.Tk):
                 event_x = getattr(_event, "x", None)
                 event_y = getattr(_event, "y", None)
                 event_inaxes = getattr(_event, "inaxes", None)
-                print(
-                    "DEBUG: button_release_event fired "
-                    f"fig_id={id(fig)} x={event_x} y={event_y} "
-                    f"inaxes={event_inaxes}"
+                self._dbg(
+                    "plotting.legends",
+                    "Button release fired fig_id=%s x=%s y=%s inaxes=%s",
+                    id(fig),
+                    event_x,
+                    event_y,
+                    event_inaxes,
                 )
                 drag_active = bool(getattr(self, "_cycle_leg_drag_active", False))
                 drag_moved = bool(getattr(self, "_cycle_leg_drag_moved", False))
@@ -49089,9 +50078,11 @@ class UnifiedApp(tk.Tk):
                         )
                     except Exception:
                         legend_loc = getattr(cycle_legend, "_loc", None)
-                    print(
-                        "DEBUG: NONDRAG_RETURN "
-                        f"legend_loc={legend_loc} legend_id={legend_id}"
+                    self._dbg(
+                        "plotting.legends",
+                        "Non-drag return legend_loc=%s legend_id=%s",
+                        legend_loc,
+                        legend_id,
                     )
                     pre_loc = getattr(self, "_cycle_leg_pre_click_loc", None)
                     pre_is_tuple = bool(
@@ -49110,18 +50101,22 @@ class UnifiedApp(tk.Tk):
                             cycle_legend.set_loc(tuple(map(float, pre_loc)))
                             if fig.canvas is not None:
                                 fig.canvas.draw_idle()
-                            print(
-                                "DEBUG: NONDRAG_RESTORE "
-                                f"from={legend_loc} to={pre_loc} "
-                                f"legend_id={legend_id}"
+                            self._dbg(
+                                "plotting.legends",
+                                "Non-drag restore from=%s to=%s legend_id=%s",
+                                legend_loc,
+                                pre_loc,
+                                legend_id,
                             )
                         except Exception:
                             # Best-effort guard; ignore failures to avoid interrupting
                             # the workflow.
                             pass
-                    print(
-                        "DEBUG: SKIP_PERSIST reason=not_drag "
-                        f"cycle_leg_drag_active={drag_active} moved={drag_moved}"
+                    self._dbg(
+                        "plotting.legends",
+                        "Skip persist reason=not_drag cycle_leg_drag_active=%s moved=%s",
+                        drag_active,
+                        drag_moved,
                     )
                     return
                 try:
@@ -49156,10 +50151,26 @@ class UnifiedApp(tk.Tk):
                 "button_release_event": release_cid,
             }
             self._combined_legend_cid = release_cid
-            print(f"DEBUG: connect draw_event cid={draw_cid}")
-            print(f"DEBUG: connect button_press_event cid={press_cid}")
-            print(f"DEBUG: connect button_release_event cid={release_cid}")
-            print(f"DEBUG: connect motion_notify_event cid={motion_cid}")
+            self._dbg(
+                "plotting.legends",
+                "Connect draw_event cid=%s",
+                draw_cid,
+            )
+            self._dbg(
+                "plotting.legends",
+                "Connect button_press_event cid=%s",
+                press_cid,
+            )
+            self._dbg(
+                "plotting.legends",
+                "Connect button_release_event cid=%s",
+                release_cid,
+            )
+            self._dbg(
+                "plotting.legends",
+                "Connect motion_notify_event cid=%s",
+                motion_cid,
+            )
             if getattr(self, "_combined_cycle_legend_pending_apply", False):
                 # Ensure a post-bind draw so pending offsets can apply.
                 try:
@@ -49438,10 +50449,22 @@ class UnifiedApp(tk.Tk):
         return False
 
     def _debug_series_flow(self, stage: str, message: str) -> None:
-        """Perform debug series flow.
-        Used to keep the workflow logic localized and testable."""
-        if not DEBUG_SERIES_FLOW:
-            return
+        """Emit series-flow debug output with one-shot guards.
+
+        Purpose:
+            Track column/series lifecycle events for debugging.
+        Why:
+            Provides lightweight tracing of apply/refresh flows.
+        Args:
+            stage: Stage identifier for the series workflow.
+            message: Detail message for the current stage.
+        Returns:
+            None.
+        Side Effects:
+            Writes to the debug logger when ui.events is enabled.
+        Exceptions:
+            Best-effort guards suppress logging failures.
+        """
         apply_id = getattr(self, "_series_flow_apply_id", 0)
         seen = getattr(self, "_series_flow_debug_seen", set())
         token = (apply_id, stage)
@@ -49449,11 +50472,13 @@ class UnifiedApp(tk.Tk):
             return
         seen.add(token)
         self._series_flow_debug_seen = seen
-        try:
-            print(f"[SeriesFlow {apply_id}] {stage} {message}")
-        except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-            pass
+        self._dbg(
+            "ui.events",
+            "SeriesFlow %s %s %s",
+            apply_id,
+            stage,
+            message,
+        )
 
     def _mark_columns_dirty(
         self, reason: str = "", *, allow_during_apply: bool = False
@@ -60484,103 +61509,135 @@ class UnifiedApp(tk.Tk):
         str,
         SolubilitySpeciationResult,
     ]:
-        """Execute solubility job.
-        Used to execute solubility job and coordinate results."""
-        math_logger = SolubilityMathLogger(enabled=capture_math)
-        params = solver_inputs.params
-        result = self._solve_base_speciation(model, params, model_options, math_logger)
-        (
-            result,
-            params,
-            measurement_warning,
-            closed_system_result,
-            measurement_scale,
-        ) = self._apply_measurement_calibration(
-            model,
-            solver_inputs,
-            result,
-            params,
-            math_logger,
-            model_options,
+        """Execute the solubility job and coordinate results.
+
+        Purpose:
+            Run the advanced speciation workflow end-to-end for a solver request.
+        Why:
+            Centralizes speciation, calibration, sweeps, and guidance assembly.
+        Args:
+            solver_inputs: Prepared inputs for the solver run.
+            model: Speciation model implementation to use.
+            model_options: Optional model options overrides.
+            enabled_axes: Sensitivity axes enable flags.
+            tracking_entries: Per-step tracking entries for output assembly.
+            cycle_summary: Cycle summary payload for guidance.
+            mode_context: Mode metadata for summary rendering.
+            default_guidance: Fallback guidance text.
+            capture_math: Enable math logger capture when True.
+        Returns:
+            Tuple of summary text, structured payload, guidance text, and result.
+        Side Effects:
+            Records debug/perf output and updates math logger sections.
+        Exceptions:
+            Exceptions propagate to the caller for worker handling.
+        """
+        model_key = getattr(model, "key", None)
+        self._dbg(
+            "speciation.engine",
+            "Speciation job start mode=%s model=%s capture_math=%s",
+            solver_inputs.mode_key,
+            model_key,
+            capture_math,
         )
-        forced_result, forced_error = self._solve_forced_ph(
-            model, params, solver_inputs, math_logger, model_options
-        )
-        sweep_model = model
-        sweep_params = params
-        if solver_inputs.mode_key == "contaminated_bicarb_diagnostic":
-            inventory_mol = (
-                params.total_inorganic_carbon_mol
-                if params.total_inorganic_carbon_mol is not None
-                else params.total_moles()
+        with self._perf_time("speciation.engine", "speciation_job"):
+            math_logger = SolubilityMathLogger(enabled=capture_math)
+            params = solver_inputs.params
+            result = self._solve_base_speciation(
+                model, params, model_options, math_logger
             )
-            sweep_params = replace(
+            (
+                result,
                 params,
-                mass_na_hco3_g=inventory_mol * SOL_MW_NAHCO3,
-                headspace_pco2_atm=None,
-                headspace_kh_m_per_atm=None,
+                measurement_warning,
+                closed_system_result,
+                measurement_scale,
+            ) = self._apply_measurement_calibration(
+                model,
+                solver_inputs,
+                result,
+                params,
+                math_logger,
+                model_options,
             )
-            try:
-                sweep_model = get_speciation_model("aqion_closed")
-            except KeyError:
-                sweep_model = model
-        sweep_data = sweep_model.generate_ph_sweep(
-            sweep_params,
-            solver_inputs.sweep_low,
-            solver_inputs.sweep_high,
-            solver_inputs.sweep_steps,
-            math_logger=math_logger,
-            model_options=model_options,
-        )
-        sensitivity_rows = model.generate_sensitivity_rows(
-            params,
-            enabled_axes,
-            math_logger=math_logger,
-            model_options=model_options,
-        )
-        reproc_guidance: Optional[Dict[str, Any]] = None
-        measured_headspace_pressure_psi, measured_headspace_pco2_atm = (
-            _timeline_headspace_measurement(cycle_summary.get("timeline") or [])
-        )
-        if solver_inputs.mode_key == "contaminated_bicarb_diagnostic":
-            reaction_guidance = analyze_contaminated_bicarb_diagnostic(
-                params=params,
-                result=result,
-                forced_result=forced_result,
-                diagnostic=solver_inputs.diagnostic_data,
-                math_logger=math_logger,
+            forced_result, forced_error = self._solve_forced_ph(
+                model, params, solver_inputs, math_logger, model_options
             )
-            reproc_guidance = analyze_reprocessing_workflow(
-                params=params,
-                result=result,
-                forced_result=forced_result,
-                failing_ph=solver_inputs.failing_ph,
-                forced_ph=(
-                    solver_inputs.forced_target
-                    if solver_inputs.forced_target is not None
-                    else solver_inputs.reaction_target_ph
-                ),
-                solvent_basis=solver_inputs.solvent_basis,
-                solvent_basis_value=solver_inputs.solvent_basis_value,
-                diagnostic_data=solver_inputs.diagnostic_data,
+            sweep_model = model
+            sweep_params = params
+            if solver_inputs.mode_key == "contaminated_bicarb_diagnostic":
+                inventory_mol = (
+                    params.total_inorganic_carbon_mol
+                    if params.total_inorganic_carbon_mol is not None
+                    else params.total_moles()
+                )
+                sweep_params = replace(
+                    params,
+                    mass_na_hco3_g=inventory_mol * SOL_MW_NAHCO3,
+                    headspace_pco2_atm=None,
+                    headspace_kh_m_per_atm=None,
+                )
+                try:
+                    sweep_model = get_speciation_model("aqion_closed")
+                except KeyError:
+                    sweep_model = model
+            sweep_data = sweep_model.generate_ph_sweep(
+                sweep_params,
+                solver_inputs.sweep_low,
+                solver_inputs.sweep_high,
+                solver_inputs.sweep_steps,
                 math_logger=math_logger,
                 model_options=model_options,
-                measured_headspace_pco2_atm=measured_headspace_pco2_atm,
-                measured_headspace_pressure_psi=measured_headspace_pressure_psi,
             )
-        else:
-            reaction_guidance = analyze_bicarbonate_reaction(
-                naoh_mass_g=solver_inputs.reaction_naoh_mass,
-                co2_charged_g=solver_inputs.reaction_co2_g,
-                solution_volume_l=solver_inputs.reaction_solution_volume,
-                measured_ph=solver_inputs.reaction_final_ph,
-                slurry_ph=solver_inputs.reaction_slurry_ph,
-                target_ph=solver_inputs.reaction_target_ph,
-                temperature_c=params.temperature_c,
-                use_temp_adjusted_constants=params.use_temperature_adjusted_constants,
-                ionic_strength_cap=params.ionic_strength_cap,
+            sensitivity_rows = model.generate_sensitivity_rows(
+                params,
+                enabled_axes,
                 math_logger=math_logger,
+                model_options=model_options,
             )
+            reproc_guidance: Optional[Dict[str, Any]] = None
+            measured_headspace_pressure_psi, measured_headspace_pco2_atm = (
+                _timeline_headspace_measurement(cycle_summary.get("timeline") or [])
+            )
+            if solver_inputs.mode_key == "contaminated_bicarb_diagnostic":
+                reaction_guidance = analyze_contaminated_bicarb_diagnostic(
+                    params=params,
+                    result=result,
+                    forced_result=forced_result,
+                    diagnostic=solver_inputs.diagnostic_data,
+                    math_logger=math_logger,
+                )
+                reproc_guidance = analyze_reprocessing_workflow(
+                    params=params,
+                    result=result,
+                    forced_result=forced_result,
+                    failing_ph=solver_inputs.failing_ph,
+                    forced_ph=(
+                        solver_inputs.forced_target
+                        if solver_inputs.forced_target is not None
+                        else solver_inputs.reaction_target_ph
+                    ),
+                    solvent_basis=solver_inputs.solvent_basis,
+                    solvent_basis_value=solver_inputs.solvent_basis_value,
+                    diagnostic_data=solver_inputs.diagnostic_data,
+                    math_logger=math_logger,
+                    model_options=model_options,
+                    measured_headspace_pco2_atm=measured_headspace_pco2_atm,
+                    measured_headspace_pressure_psi=measured_headspace_pressure_psi,
+                )
+            else:
+                reaction_guidance = analyze_bicarbonate_reaction(
+                    naoh_mass_g=solver_inputs.reaction_naoh_mass,
+                    co2_charged_g=solver_inputs.reaction_co2_g,
+                    solution_volume_l=solver_inputs.reaction_solution_volume,
+                    measured_ph=solver_inputs.reaction_final_ph,
+                    slurry_ph=solver_inputs.reaction_slurry_ph,
+                    target_ph=solver_inputs.reaction_target_ph,
+                    temperature_c=params.temperature_c,
+                    use_temp_adjusted_constants=params.use_temperature_adjusted_constants,
+                    ionic_strength_cap=params.ionic_strength_cap,
+                    math_logger=math_logger,
+                )
         if reproc_guidance:
             reaction_guidance = reaction_guidance or {}
             summary_parts: List[str] = []
@@ -60660,6 +61717,12 @@ class UnifiedApp(tk.Tk):
         summary = summary + "\n\n=== CO2 Dosing Guidance ===\n" + co2_guidance
         if planner_context:
             summary += "\n\nPlan inputs:\n" + "\n".join(planner_context)
+        self._dbg(
+            "speciation.results",
+            "Speciation job done summary_len=%s forced_error=%s",
+            len(summary),
+            forced_error,
+        )
         return summary, payload, co2_guidance, result
 
     def _solve_base_speciation(
@@ -60669,14 +61732,41 @@ class UnifiedApp(tk.Tk):
         model_options: Optional[ModelOptions],
         math_logger: SolubilityMathLogger,
     ) -> SolubilitySpeciationResult:
-        """Solve base speciation.
-        Used to run the solver for base speciation workflows."""
-        return model.solve(
-            params,
-            model_options=model_options,
-            math_logger=math_logger,
-            math_section="Speciation",
+        """Solve base speciation with the selected model.
+
+        Purpose:
+            Execute the core speciation solver for the current inputs.
+        Why:
+            Provides the baseline speciation result used by downstream steps.
+        Args:
+            model: Speciation model implementation to use.
+            params: Solubility input parameters.
+            model_options: Optional model options overrides.
+            math_logger: Math logger for optional step capture.
+        Returns:
+            SolubilitySpeciationResult from the model solver.
+        Side Effects:
+            Records perf timing and debug logs when enabled.
+        Exceptions:
+            Exceptions propagate to the caller after being logged.
+        """
+        model_key = getattr(model, "key", None)
+        self._dbg(
+            "speciation.solver",
+            "Base speciation solve start model=%s",
+            model_key,
         )
+        try:
+            with self._perf_time("speciation.solver", "base_speciation"):
+                return model.solve(
+                    params,
+                    model_options=model_options,
+                    math_logger=math_logger,
+                    math_section="Speciation",
+                )
+        except Exception as exc:
+            self._dbg_exc("speciation.solver", "Base speciation solve failed", exc)
+            raise
 
     def _apply_measurement_calibration(
         self,
@@ -60693,8 +61783,26 @@ class UnifiedApp(tk.Tk):
         Optional[SolubilitySpeciationResult],
         Optional[float],
     ]:
-        """Apply measurement calibration.
-        Used to apply measurement calibration changes to live state."""
+        """Apply measurement calibration when diagnostics are provided.
+
+        Purpose:
+            Adjust speciation using measured slurry pH diagnostics.
+        Why:
+            Aligns model output with measured conditions for diagnostics.
+        Args:
+            model: Speciation model implementation to use.
+            solver_inputs: Solver inputs including diagnostic payloads.
+            result: Current speciation result to adjust.
+            params: Current solubility parameters.
+            math_logger: Math logger for optional step capture.
+            model_options: Optional model options overrides.
+        Returns:
+            Tuple of (result, params, warning, closed_system_result, scale).
+        Side Effects:
+            Records perf timing and debug logs when enabled.
+        Exceptions:
+            Exceptions are caught and returned as warnings.
+        """
         measurement_warning: Optional[str] = None
         closed_system_result: Optional[SolubilitySpeciationResult] = None
         measurement_scale: Optional[float] = None
@@ -60704,6 +61812,11 @@ class UnifiedApp(tk.Tk):
             and diagnostic
             and diagnostic.get("slurry_ph") is not None
         ):
+            self._dbg(
+                "speciation.chemistry",
+                "Measurement calibration start mode=%s",
+                solver_inputs.mode_key,
+            )
             try:
                 try:
                     closed_model = get_speciation_model("aqion_closed")
@@ -60715,20 +61828,30 @@ class UnifiedApp(tk.Tk):
                     )
                 except Exception:
                     closed_system_result = result
-                measurement_result, measurement_params, measurement_scale = (
-                    solubility_speciation_calibrated_to_measurement(
-                        params,
-                        float(diagnostic.get("slurry_ph")),
-                        measured_alkalinity_meq=diagnostic.get("slurry_alk_meq_l"),
-                        math_logger=math_logger,
-                        model_options=model_options,
+                with self._perf_time(
+                    "speciation.chemistry", "measurement_calibration"
+                ):
+                    measurement_result, measurement_params, measurement_scale = (
+                        solubility_speciation_calibrated_to_measurement(
+                            params,
+                            float(diagnostic.get("slurry_ph")),
+                            measured_alkalinity_meq=diagnostic.get(
+                                "slurry_alk_meq_l"
+                            ),
+                            math_logger=math_logger,
+                            model_options=model_options,
+                        )
                     )
-                )
                 result = measurement_result
                 params = measurement_params
             except Exception as exc:
                 measurement_warning = (
                     f"Measurement-calibrated speciation skipped: {exc}"
+                )
+                self._dbg_exc(
+                    "speciation.chemistry",
+                    "Measurement calibration failed",
+                    exc,
                 )
         return (
             result,
@@ -60749,8 +61872,25 @@ class UnifiedApp(tk.Tk):
         Optional[SolubilitySpeciationResult],
         Optional[str],
     ]:
-        """Solve forced pH.
-        Used to run the solver for forced pH workflows."""
+        """Solve speciation at a forced pH target.
+
+        Purpose:
+            Run the forced-pH solver pass when a target pH is provided.
+        Why:
+            Supplies forced-pH results for guidance and diagnostics.
+        Args:
+            model: Speciation model implementation to use.
+            params: Solubility input parameters.
+            solver_inputs: Solver inputs containing target pH values.
+            math_logger: Math logger for optional step capture.
+            model_options: Optional model options overrides.
+        Returns:
+            Tuple of (forced_result, forced_error).
+        Side Effects:
+            Records perf timing and debug logs when enabled.
+        Exceptions:
+            Exceptions are caught and returned as error strings.
+        """
         forced_result: Optional[SolubilitySpeciationResult] = None
         forced_error: Optional[str] = None
         forced_target = (
@@ -60764,15 +61904,26 @@ class UnifiedApp(tk.Tk):
         )
         if forced_target is not None:
             try:
-                forced_result = model.solve_forced_ph(
-                    params,
+                self._dbg(
+                    "speciation.solver",
+                    "Forced pH solve start target=%s",
                     forced_target,
-                    math_logger=math_logger,
-                    math_section="Forced pH Speciation",
-                    model_options=model_options,
                 )
+                with self._perf_time("speciation.solver", "forced_ph_speciation"):
+                    forced_result = model.solve_forced_ph(
+                        params,
+                        forced_target,
+                        math_logger=math_logger,
+                        math_section="Forced pH Speciation",
+                        model_options=model_options,
+                    )
             except Exception as exc:
                 forced_error = f"Forced-pH speciation skipped: {exc}"
+                self._dbg_exc(
+                    "speciation.solver",
+                    "Forced pH speciation failed",
+                    exc,
+                )
         return forced_result, forced_error
 
     def _build_planner_context(
@@ -63568,6 +64719,7 @@ class UnifiedApp(tk.Tk):
         Side Effects:
             - Writes a temporary PDF file to disk.
             - Closes the Matplotlib figure after export.
+            - Records debug/performance output when enabled.
         Exceptions:
             - Best-effort; returns None if export fails.
         """
@@ -63594,9 +64746,12 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+        self._dbg("report.export", "Final report page export start path=%s", tmp_path)
         try:
-            fig.savefig(tmp_path, format="pdf", dpi=self._get_export_dpi())
-        except Exception:
+            with self._perf_time("report.export", "final_report_page_pdf"):
+                fig.savefig(tmp_path, format="pdf", dpi=self._get_export_dpi())
+        except Exception as exc:
+            self._dbg_exc("report.export", "Final report page export failed", exc)
             try:
                 os.remove(tmp_path)
             except Exception:
@@ -65236,6 +66391,11 @@ class UnifiedApp(tk.Tk):
         results: List[Dict[str, Any]] = []
         if not sequence:
             return results
+        self._dbg(
+            "report.figures",
+            "Final report build pages start entries=%s",
+            len(sequence),
+        )
         counters = {
             "page_number": 0,
             "figure_number": 0,
@@ -65244,21 +66404,45 @@ class UnifiedApp(tk.Tk):
             "section_tables": {},
         }
         last_group: Optional[str] = None
-        # Iterate over sequence to apply the per-item logic.
-        for entry in sequence:
-            page_info, last_group = self._final_report_build_page_entry(
-                entry, state, counters, last_group
-            )
-            if page_info is None:
-                continue
-            results.append(page_info)
+        with self._perf_time("report.figures", "final_report_build_pages"):
+            # Iterate over sequence to apply the per-item logic.
+            for entry in sequence:
+                page_info, last_group = self._final_report_build_page_entry(
+                    entry, state, counters, last_group
+                )
+                if page_info is None:
+                    continue
+                results.append(page_info)
+        self._dbg(
+            "report.figures",
+            "Final report build pages done pages=%s",
+            len(results),
+        )
         return results
 
     def _generate_final_report_png(self) -> None:
-        """Generate final report PNG.
-        Used to produce final report PNG outputs for analysis or export."""
+        """Generate the Final Report summary PNG.
+
+        Purpose:
+            Export a summary PNG representing the final report configuration.
+        Why:
+            Provides a lightweight visual artifact for sharing or records.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Writes a PNG file to disk and updates settings persistence.
+        Exceptions:
+            Best-effort guards suppress export failures.
+        """
         state = self._collect_final_report_state_from_ui()
         sections = state.get("selected_sections") or []
+        self._dbg(
+            "report.build",
+            "Final report PNG generation start sections=%s",
+            len(sections),
+        )
         if not sections:
             try:
                 messagebox.showwarning(
@@ -65286,74 +66470,78 @@ class UnifiedApp(tk.Tk):
         )
         if not path:
             return
-        width, height = self._compute_output_dimensions("final_report_png", 8.5, 11.0)
-        fig = Figure(figsize=(width, height))
-        ax = fig.add_subplot(111)
-        ax.axis("off")
-        fig.patch.set_facecolor("white")
-        ax.set_facecolor("white")
-        fig.text(
-            0.5,
-            0.92,
-            title,
-            ha="center",
-            va="top",
-            fontsize=20,
-            weight="bold",
-        )
-        structured = getattr(self, "_sol_last_structured", None)
-        highlights = {}
-        if structured is not None:
-            highlights = getattr(structured, "highlights", {}) or {}
-        metrics = []
-        highlight_meta = getattr(self, "_sol_highlight_meta", {})
-        # Iterate over items from highlight_meta to apply the per-item logic.
-        for key, label in highlight_meta.items():
-            value = highlights.get(key)
-            if value:
-                metrics.append(f"{label}: {value}")
-        if not metrics and highlights:
-            # Iterate over items from highlights to apply the per-item logic.
-            for key, value in highlights.items():
-                metrics.append(f"{key.replace('_', ' ').title()}: {value}")
-        if not metrics:
-            metrics.append("No key metrics available.")
-        fig.text(
-            0.02,
-            0.78,
-            "Key metrics:\n" + "\n".join(metrics[:4]),
-            ha="left",
-            va="top",
-            fontsize=10,
-        )
-        narrative = state.get("narrative", "").strip()
-        snippet = narrative if len(narrative) <= 300 else narrative[:300] + "..."
-        fig.text(
-            0.02,
-            0.56,
-            "Narrative:\n" + (snippet or "No narrative provided."),
-            ha="left",
-            va="top",
-            fontsize=10,
-        )
-        sections_text = "\n".join(
-            f"{idx+1}. {FINAL_REPORT_SECTION_METADATA.get(section_id, {}).get('label', section_id)}"
-            # Iterate to apply the per-item logic.
-            for idx, section_id in enumerate(sections)
-        )
-        fig.text(
-            0.02,
-            0.34,
-            "Sections:\n" + sections_text,
-            ha="left",
-            va="top",
-            fontsize=10,
-        )
-        dpi = self._get_export_dpi()
-        try:
-            fig.savefig(path, dpi=dpi)
-        finally:
-            plt.close(fig)
+        with self._perf_time("report.export", "final_report_png_export"):
+            width, height = self._compute_output_dimensions(
+                "final_report_png", 8.5, 11.0
+            )
+            fig = Figure(figsize=(width, height))
+            ax = fig.add_subplot(111)
+            ax.axis("off")
+            fig.patch.set_facecolor("white")
+            ax.set_facecolor("white")
+            fig.text(
+                0.5,
+                0.92,
+                title,
+                ha="center",
+                va="top",
+                fontsize=20,
+                weight="bold",
+            )
+            structured = getattr(self, "_sol_last_structured", None)
+            highlights = {}
+            if structured is not None:
+                highlights = getattr(structured, "highlights", {}) or {}
+            metrics = []
+            highlight_meta = getattr(self, "_sol_highlight_meta", {})
+            # Iterate over items from highlight_meta to apply the per-item logic.
+            for key, label in highlight_meta.items():
+                value = highlights.get(key)
+                if value:
+                    metrics.append(f"{label}: {value}")
+            if not metrics and highlights:
+                # Iterate over items from highlights to apply the per-item logic.
+                for key, value in highlights.items():
+                    metrics.append(f"{key.replace('_', ' ').title()}: {value}")
+            if not metrics:
+                metrics.append("No key metrics available.")
+            fig.text(
+                0.02,
+                0.78,
+                "Key metrics:\n" + "\n".join(metrics[:4]),
+                ha="left",
+                va="top",
+                fontsize=10,
+            )
+            narrative = state.get("narrative", "").strip()
+            snippet = narrative if len(narrative) <= 300 else narrative[:300] + "..."
+            fig.text(
+                0.02,
+                0.56,
+                "Narrative:\n" + (snippet or "No narrative provided."),
+                ha="left",
+                va="top",
+                fontsize=10,
+            )
+            sections_text = "\n".join(
+                f"{idx+1}. {FINAL_REPORT_SECTION_METADATA.get(section_id, {}).get('label', section_id)}"
+                # Iterate to apply the per-item logic.
+                for idx, section_id in enumerate(sections)
+            )
+            fig.text(
+                0.02,
+                0.34,
+                "Sections:\n" + sections_text,
+                ha="left",
+                va="top",
+                fontsize=10,
+            )
+            dpi = self._get_export_dpi()
+            try:
+                fig.savefig(path, dpi=dpi)
+            finally:
+                plt.close(fig)
+        self._dbg("report.export", "Final report PNG saved path=%s", path)
         try:
             messagebox.showinfo(
                 "Final Report PNG", f"Final report summary PNG saved to {path}"
@@ -65410,6 +66598,11 @@ class UnifiedApp(tk.Tk):
         """
         state = self._collect_final_report_state_from_ui()
         sections = state.get("selected_sections") or []
+        self._dbg(
+            "report.build",
+            "Final report PDF generation start sections=%s",
+            len(sections),
+        )
         if not sections:
             try:
                 messagebox.showwarning(
@@ -65453,53 +66646,54 @@ class UnifiedApp(tk.Tk):
         temp_paths: List[Path] = []
         report_paths: List[Path] = []
         try:
-            sequence = self._final_report_compute_layout_sequence(state)
-            if not sequence:
-                raise RuntimeError("Final report layout could not be assembled.")
-            counters = {
-                "page_number": 0,
-                "figure_number": 0,
-                "table_number": 0,
-                "section_figures": {},
-                "section_tables": {},
-            }
-            last_group: Optional[str] = None
-            # Iterate over sequence to apply the per-item logic.
-            for entry in sequence:
-                section_id = entry.get("section_id")
-                page_type = entry.get("page_type", "text")
-                if section_id in FINAL_REPORT_EXCLUDED_SECTIONS:
-                    continue
-                page_info, last_group = self._final_report_build_page_entry(
-                    entry, state, counters, last_group
-                )
-                if page_info is None:
-                    continue
-                if page_info.get("combined_failed"):
-                    failure_reason = (
-                        page_info.get("combined_failure_reason")
-                        or "Combined plot could not be generated for this run."
+            with self._perf_time("report.export", "final_report_pdf_export"):
+                sequence = self._final_report_compute_layout_sequence(state)
+                if not sequence:
+                    raise RuntimeError("Final report layout could not be assembled.")
+                counters = {
+                    "page_number": 0,
+                    "figure_number": 0,
+                    "table_number": 0,
+                    "section_figures": {},
+                    "section_tables": {},
+                }
+                last_group: Optional[str] = None
+                # Iterate over sequence to apply the per-item logic.
+                for entry in sequence:
+                    section_id = entry.get("section_id")
+                    page_type = entry.get("page_type", "text")
+                    if section_id in FINAL_REPORT_EXCLUDED_SECTIONS:
+                        continue
+                    page_info, last_group = self._final_report_build_page_entry(
+                        entry, state, counters, last_group
                     )
-                    if not self._final_report_confirm_degraded_combined(
-                        failure_reason
-                    ):
-                        return
-                    continue
-                fig = page_info["figure"]
-                page_path = self._final_report_export_page_pdf(fig, export_profile)
-                if page_path is None:
-                    raise RuntimeError("Failed to export a report page.")
-                report_paths.append(page_path)
-                temp_paths.append(page_path)
+                    if page_info is None:
+                        continue
+                    if page_info.get("combined_failed"):
+                        failure_reason = (
+                            page_info.get("combined_failure_reason")
+                            or "Combined plot could not be generated for this run."
+                        )
+                        if not self._final_report_confirm_degraded_combined(
+                            failure_reason
+                        ):
+                            return
+                        continue
+                    fig = page_info["figure"]
+                    page_path = self._final_report_export_page_pdf(fig, export_profile)
+                    if page_path is None:
+                        raise RuntimeError("Failed to export a report page.")
+                    report_paths.append(page_path)
+                    temp_paths.append(page_path)
 
-            if not report_paths:
-                raise RuntimeError("No report sections were exported.")
+                if not report_paths:
+                    raise RuntimeError("No report sections were exported.")
 
-            ok, merge_error = self._merge_final_report_pdfs(path, report_paths)
-            if not ok:
-                raise RuntimeError(
-                    merge_error or "Failed to stitch the final report PDF."
-                )
+                ok, merge_error = self._merge_final_report_pdfs(path, report_paths)
+                if not ok:
+                    raise RuntimeError(
+                        merge_error or "Failed to stitch the final report PDF."
+                    )
         except Exception as exc:
             try:
                 messagebox.showerror(
@@ -65523,6 +66717,12 @@ class UnifiedApp(tk.Tk):
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+        self._dbg(
+            "report.export",
+            "Final report PDF saved path=%s pages=%s",
+            path,
+            len(report_paths),
+        )
 
     def _final_report_preview_clear_figures(self) -> None:
         """Clear figures.
@@ -69190,11 +70390,23 @@ class UnifiedApp(tk.Tk):
         )
 
     def _log_render_cache(self, message: str) -> None:
-        """Render cache.
-        Used by log workflows to render cache."""
+        """Record render cache status for debug output.
+
+        Purpose:
+            Capture cache hit/miss messages for diagnostics.
+        Why:
+            Makes render cache behavior observable without ad-hoc prints.
+        Args:
+            message: Cache status message to record and optionally log.
+        Returns:
+            None.
+        Side Effects:
+            Updates last cache status and logs when cache.render is enabled.
+        Exceptions:
+            Best-effort guards suppress logging failures.
+        """
         self._last_render_cache_status = message
-        if DEBUG_RENDER_CACHE:
-            print(message)
+        self._dbg("cache.render", "%s", message)
 
     def _build_series_payload(
         self,
@@ -69402,7 +70614,22 @@ class UnifiedApp(tk.Tk):
         snapshot: Optional[Dict[str, Any]] = None,
     ) -> Tuple[DataFingerprint, Dict[str, Any]]:
         """Resolve prepared series and return the cache fingerprint.
-        Used to reuse prepared data across preview and export renders."""
+
+        Purpose:
+            Retrieve or build prepared series data for rendering workflows.
+        Why:
+            Avoids repeated dataframe processing by caching prepared payloads.
+        Args:
+            apply_globals: When True, update module-level globals from payload.
+            perf: Optional performance diagnostics accumulator.
+            snapshot: Optional snapshot payload for thread-safe access.
+        Returns:
+            Tuple of DataFingerprint and prepared payload dict.
+        Side Effects:
+            Updates render cache, module-level globals, and perf counters.
+        Exceptions:
+            Best-effort guards suppress cache and apply failures.
+        """
         if snapshot is not None:
             return self._resolve_prepared_data_context_snapshot(snapshot, perf=perf)
         # Prepared-series cache is keyed by fingerprint to avoid reprocessing
@@ -69418,6 +70645,7 @@ class UnifiedApp(tk.Tk):
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
             self._log_render_cache("Render cache: prepared data hit.")
+            self._perf_count("cache.render", "prepared.hit")
             if perf_start is not None:
                 stages = perf.setdefault("stages", {})
                 stages["prepared"] = {
@@ -69476,6 +70704,7 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
         self._log_render_cache("Render cache: prepared data miss.")
+        self._perf_count("cache.render", "prepared.miss")
         if perf_start is not None:
             stages = perf.setdefault("stages", {})
             stages["prepared"] = {
@@ -69487,13 +70716,28 @@ class UnifiedApp(tk.Tk):
     def _resolve_prepared_data_context_snapshot(
         self, snapshot: Dict[str, Any], *, perf: Optional[Dict[str, Any]] = None
     ) -> Tuple[DataFingerprint, Dict[str, Any]]:
-        """Resolve prepared data context from snapshot.
-        Used to keep Tk access on the UI thread."""
+        """Resolve prepared data context from a snapshot.
+
+        Purpose:
+            Build or retrieve prepared data without touching Tk state.
+        Why:
+            Enables background workers to reuse prepared payloads safely.
+        Args:
+            snapshot: Snapshot dict of UI state and column selections.
+            perf: Optional performance diagnostics accumulator.
+        Returns:
+            Tuple of DataFingerprint and prepared payload dict.
+        Side Effects:
+            Updates render cache and perf counters.
+        Exceptions:
+            Best-effort guards suppress cache failures.
+        """
         perf_start = time.perf_counter() if perf is not None else None
         fingerprint = self._build_data_fingerprint_from_snapshot(snapshot)
         cached = self._render_cache.get_prepared(fingerprint)
         if cached is not None:
             self._log_render_cache("Render cache: prepared data hit.")
+            self._perf_count("cache.render", "prepared.hit")
             if perf_start is not None:
                 stages = perf.setdefault("stages", {})
                 stages["prepared"] = {
@@ -69540,6 +70784,7 @@ class UnifiedApp(tk.Tk):
 
         self._render_cache.set_prepared(fingerprint, payload)
         self._log_render_cache("Render cache: prepared data miss.")
+        self._perf_count("cache.render", "prepared.miss")
         if perf_start is not None:
             stages = perf.setdefault("stages", {})
             stages["prepared"] = {
@@ -69620,7 +70865,23 @@ class UnifiedApp(tk.Tk):
         snapshot: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Resolve cycle segmentation and overlay context for plots.
-        Used to supply cycle markers/summary data to render pipelines."""
+
+        Purpose:
+            Build or retrieve cycle overlay data for plotting workflows.
+        Why:
+            Reuses cached cycle segmentation and metrics to speed rendering.
+        Args:
+            data_ctx: Prepared series data context.
+            data_fingerprint: Cache fingerprint for prepared series.
+            perf: Optional performance diagnostics accumulator.
+            snapshot: Optional snapshot payload for worker-safe access.
+        Returns:
+            Tuple of cycle summary dict and overlay payload dict.
+        Side Effects:
+            Updates render cache and performance counters.
+        Exceptions:
+            Best-effort guards suppress cache failures.
+        """
         series_map = data_ctx.get("series") or {}
         series_np = data_ctx.get("series_np") or {}
         x_values = series_np.get("x", series_map.get("x"))
@@ -69803,6 +71064,12 @@ class UnifiedApp(tk.Tk):
             if seg_cached and metrics_cached
             else ("seg_hit" if seg_cached else "miss")
         )
+        if cache_state == "hit":
+            self._perf_count("cache.render", "cycle.hit")
+        elif cache_state == "seg_hit":
+            self._perf_count("cache.render", "cycle.seg_hit")
+        else:
+            self._perf_count("cache.render", "cycle.miss")
 
         if not isinstance(seg_cached, dict):
             peak_finder = _get_peak_finder()
@@ -71860,9 +73127,11 @@ class UnifiedApp(tk.Tk):
         perf_run: Optional[Dict[str, Any]] = None,
     ) -> Optional[Figure]:
         """Update the combined triple-axis display figure with reuse when possible.
-        Exists to keep interactive rendering fast by reusing axes/lines, while still
-        rebuilding when structure or overlay data changes demand it.
 
+        Purpose:
+            Refresh the combined plot display with reuse or rebuild when needed.
+        Why:
+            Keeps interactive rendering fast while honoring overlay/legend changes.
         Args:
             config: Mapping of combined plot configuration values for display.
             args: Plot argument tuple (time/axis ranges, tick settings, titles).
@@ -71871,14 +73140,11 @@ class UnifiedApp(tk.Tk):
             render_ctx: Optional RenderContext with prepared data/overlays/styles.
                 Required on rebuild so cycle overlays and legends are preserved.
             perf_run: Optional performance accumulator updated with timing data.
-
         Returns:
             The updated Matplotlib Figure, or None if inputs are incomplete.
-
         Side Effects:
             Mutates figure artists, updates cached combined plot/layout state,
             and schedules a canvas redraw when available.
-
         Exceptions:
             Internal rendering errors are caught and ignored to avoid breaking
             the UI; returns None when required inputs are missing.
@@ -71928,50 +73194,57 @@ class UnifiedApp(tk.Tk):
             or state.get("structure_sig") != structure_sig
             or force_overlay_rebuild
         ):
-            fig = build_combined_triple_axis_figure(
-                *base_args,
-                deriv_axis_offset=config.get("deriv_offset"),
-                legend_wrap=config.get("wrap_enabled"),
-                legend_rows=config.get("legend_rows_value"),
-                legend_alignment=config.get("legend_alignment_value"),
-                legend_label_gap_pts=config.get("legend_gap_value"),
-                xlabel_tick_gap_pts=config.get("xlabel_tick_gap_value"),
-                legend_bottom_margin_pts=config.get("legend_margin_value"),
-                left_pad_pct=config.get("left_padding_pct"),
-                right_pad_pct=config.get("right_padding_pct"),
-                export_pad_pts=config.get("export_pad_pts"),
-                title_pad_pts=config.get("title_pad_pts"),
-                suptitle_pad_pts=config.get("suptitle_pad_pts"),
-                suptitle_y=config.get("suptitle_y_value"),
-                top_margin_pct=config.get("top_margin_pct"),
-                suptitle_fontsize=config.get("suptitle_font_value"),
-                title_fontsize=config.get("title_font_value"),
-                label_fontsize_override=config.get("label_font_value"),
-                tick_fontsize_override=config.get("tick_font_value"),
-                legend_fontsize_override=config.get("legend_font_value"),
-                cycle_legend_fontsize_override=config.get("cycle_legend_font_value"),
-                font_family=config.get("font_family_value"),
-                axis_label_overrides=config.get("axis_label_overrides"),
-                labelpad_overrides=config.get("labelpad_overrides"),
-                left_dataset_key=config.get("left_key"),
-                right_dataset_key=config.get("right_key"),
-                third_dataset_key=config.get("third_key"),
-                show_cycle_markers_on_core_plots=config.get("show_cycle_markers"),
-                show_cycle_legend_on_core_plots=config.get("show_cycle_legend"),
-                include_moles_in_core_plot_legend=config.get("include_moles_core"),
-                legend_anchor=config.get("legend_anchor"),
-                cycle_legend_anchor=config.get("cycle_legend_anchor"),
-                legend_loc=config.get("legend_loc"),
-                cycle_legend_loc=config.get("cycle_legend_loc"),
-                cycle_legend_anchor_space=config.get("cycle_legend_anchor_space"),
-                baseline_margins=config.get("baseline_margins"),
-                legend_anchor_y=config.get("legend_anchor_y"),
-                xlabel_pad_pts=config.get("xlabel_pad_value"),
-                # Render context is mandatory on rebuilds so overlays/legends persist.
-                render_ctx=render_ctx,
-                mode="display",
-                fig_size=fig_size,
+            self._dbg(
+                "plotting.render",
+                "Combined display rebuild structure_changed=%s overlay_rebuild=%s",
+                state.get("structure_sig") != structure_sig,
+                force_overlay_rebuild,
             )
+            with self._perf_time("plotting.render", "combined_display_rebuild"):
+                fig = build_combined_triple_axis_figure(
+                    *base_args,
+                    deriv_axis_offset=config.get("deriv_offset"),
+                    legend_wrap=config.get("wrap_enabled"),
+                    legend_rows=config.get("legend_rows_value"),
+                    legend_alignment=config.get("legend_alignment_value"),
+                    legend_label_gap_pts=config.get("legend_gap_value"),
+                    xlabel_tick_gap_pts=config.get("xlabel_tick_gap_value"),
+                    legend_bottom_margin_pts=config.get("legend_margin_value"),
+                    left_pad_pct=config.get("left_padding_pct"),
+                    right_pad_pct=config.get("right_padding_pct"),
+                    export_pad_pts=config.get("export_pad_pts"),
+                    title_pad_pts=config.get("title_pad_pts"),
+                    suptitle_pad_pts=config.get("suptitle_pad_pts"),
+                    suptitle_y=config.get("suptitle_y_value"),
+                    top_margin_pct=config.get("top_margin_pct"),
+                    suptitle_fontsize=config.get("suptitle_font_value"),
+                    title_fontsize=config.get("title_font_value"),
+                    label_fontsize_override=config.get("label_font_value"),
+                    tick_fontsize_override=config.get("tick_font_value"),
+                    legend_fontsize_override=config.get("legend_font_value"),
+                    cycle_legend_fontsize_override=config.get("cycle_legend_font_value"),
+                    font_family=config.get("font_family_value"),
+                    axis_label_overrides=config.get("axis_label_overrides"),
+                    labelpad_overrides=config.get("labelpad_overrides"),
+                    left_dataset_key=config.get("left_key"),
+                    right_dataset_key=config.get("right_key"),
+                    third_dataset_key=config.get("third_key"),
+                    show_cycle_markers_on_core_plots=config.get("show_cycle_markers"),
+                    show_cycle_legend_on_core_plots=config.get("show_cycle_legend"),
+                    include_moles_in_core_plot_legend=config.get("include_moles_core"),
+                    legend_anchor=config.get("legend_anchor"),
+                    cycle_legend_anchor=config.get("cycle_legend_anchor"),
+                    legend_loc=config.get("legend_loc"),
+                    cycle_legend_loc=config.get("cycle_legend_loc"),
+                    cycle_legend_anchor_space=config.get("cycle_legend_anchor_space"),
+                    baseline_margins=config.get("baseline_margins"),
+                    legend_anchor_y=config.get("legend_anchor_y"),
+                    xlabel_pad_pts=config.get("xlabel_pad_value"),
+                    # Render context is mandatory on rebuilds so overlays/legends persist.
+                    render_ctx=render_ctx,
+                    mode="display",
+                    fig_size=fig_size,
+                )
             if fig is None:
                 return None
             self._combined_plot_state = {
@@ -72928,7 +74201,26 @@ class UnifiedApp(tk.Tk):
         perf_run: Optional[Dict[str, Any]] = None,
     ) -> Optional[Figure]:
         """Build the combined triple-axis figure from state or render context.
-        Used by preview/export pipelines to produce consistent combined plots."""
+
+        Purpose:
+            Produce the combined triple-axis figure for preview/export workflows.
+        Why:
+            Centralizes combined plot assembly while honoring reuse and caching.
+        Args:
+            args: Optional plot argument tuple for axis limits/ticks/titles.
+            fig_size: Optional (width, height) in inches for display rendering.
+            mode: "display" or "export" to control layout behavior.
+            reuse: When True, attempt to reuse existing figure artists.
+            canvas: Optional Tk canvas used for sizing and draw operations.
+            render_ctx: Optional RenderContext for prepared data/overlays.
+            perf_run: Optional performance diagnostics accumulator.
+        Returns:
+            The combined Matplotlib Figure, or None if inputs are invalid.
+        Side Effects:
+            May update combined plot state, settings snapshots, and log debug/perf.
+        Exceptions:
+            Errors are caught to avoid breaking UI flows.
+        """
 
         try:
             existing_state = (
@@ -72940,14 +74232,29 @@ class UnifiedApp(tk.Tk):
         except Exception:
             existing_fig = None
         existing_fig_id = id(existing_fig) if existing_fig is not None else None
-        print(f"DEBUG: COMBINED_BUILD start fig_id={existing_fig_id}")
+        self._dbg("plotting.render", "Combined build start fig_id=%s", existing_fig_id)
 
         def _debug_build_end(fig: Optional[Figure]) -> None:
+            """Log the combined build end marker.
+
+            Purpose:
+                Emit a debug marker after combined build completion.
+            Why:
+                Helps correlate build timing with render events.
+            Args:
+                fig: Figure returned by the build path.
+            Returns:
+                None.
+            Side Effects:
+                Writes to the debug logger when plotting.render is enabled.
+            Exceptions:
+                Best-effort guards suppress logging failures.
+            """
             try:
                 fig_id = id(fig) if fig is not None else None
             except Exception:
                 fig_id = None
-            print(f"DEBUG: COMBINED_BUILD end fig_id={fig_id}")
+            self._dbg("plotting.render", "Combined build end fig_id=%s", fig_id)
 
         data_ctx = render_ctx.data_ctx if render_ctx else {}
         style_ctx = render_ctx.style_ctx if render_ctx else {}
@@ -73045,14 +74352,15 @@ class UnifiedApp(tk.Tk):
 
         perf_start = time.perf_counter() if perf_run is not None else None
         if reuse and mode == "display":
-            fig = self._update_combined_triple_axis_display(
-                config,
-                args,
-                fig_size,
-                canvas,
-                render_ctx=render_ctx,
-                perf_run=perf_run,
-            )
+            with self._perf_time("plotting.render", "combined_refresh"):
+                fig = self._update_combined_triple_axis_display(
+                    config,
+                    args,
+                    fig_size,
+                    canvas,
+                    render_ctx=render_ctx,
+                    perf_run=perf_run,
+                )
             if perf_start is not None and perf_run is not None:
                 stages = perf_run.setdefault("stages", {})
                 combined_stage = stages.setdefault("combined", {})
@@ -73101,49 +74409,50 @@ class UnifiedApp(tk.Tk):
         profile_legend_anchor_y = config["legend_anchor_y"]
         xlabel_pad_value = config["xlabel_pad_value"]
 
-        fig = build_combined_triple_axis_figure(
-            *base_args,
-            deriv_axis_offset=deriv_offset,
-            legend_wrap=wrap_enabled,
-            legend_rows=legend_rows_value,
-            legend_alignment=legend_alignment_value,
-            legend_label_gap_pts=legend_gap_value,
-            xlabel_tick_gap_pts=xlabel_tick_gap_value,
-            legend_bottom_margin_pts=legend_margin_value,
-            left_pad_pct=left_padding_pct,
-            right_pad_pct=right_padding_pct,
-            export_pad_pts=export_pad_pts,
-            title_pad_pts=title_pad_pts,
-            suptitle_pad_pts=suptitle_pad_pts,
-            suptitle_y=suptitle_y_value,
-            top_margin_pct=top_margin_pct,
-            suptitle_fontsize=suptitle_font_value,
-            title_fontsize=title_font_value,
-            label_fontsize_override=label_font_value,
-            tick_fontsize_override=tick_font_value,
-            legend_fontsize_override=legend_font_value,
-            cycle_legend_fontsize_override=config.get("cycle_legend_font_value"),
-            font_family=font_family_value,
-            axis_label_overrides=axis_label_overrides,
-            labelpad_overrides=labelpad_overrides,
-            left_dataset_key=left_key,
-            right_dataset_key=right_key,
-            third_dataset_key=third_key,
-            show_cycle_markers_on_core_plots=show_cycle_markers,
-            show_cycle_legend_on_core_plots=show_cycle_legend,
-            include_moles_in_core_plot_legend=include_moles_core,
-            legend_anchor=legend_anchor,
-            cycle_legend_anchor=cycle_legend_anchor,
-            legend_loc=legend_loc,
-            cycle_legend_loc=cycle_legend_loc,
-            cycle_legend_anchor_space=cycle_legend_anchor_space,
-            baseline_margins=profile_margins,
-            legend_anchor_y=profile_legend_anchor_y,
-            xlabel_pad_pts=xlabel_pad_value,
-            mode=mode,
-            fig_size=fig_size,
-            render_ctx=render_ctx,
-        )
+        with self._perf_time("plotting.render", "combined_build"):
+            fig = build_combined_triple_axis_figure(
+                *base_args,
+                deriv_axis_offset=deriv_offset,
+                legend_wrap=wrap_enabled,
+                legend_rows=legend_rows_value,
+                legend_alignment=legend_alignment_value,
+                legend_label_gap_pts=legend_gap_value,
+                xlabel_tick_gap_pts=xlabel_tick_gap_value,
+                legend_bottom_margin_pts=legend_margin_value,
+                left_pad_pct=left_padding_pct,
+                right_pad_pct=right_padding_pct,
+                export_pad_pts=export_pad_pts,
+                title_pad_pts=title_pad_pts,
+                suptitle_pad_pts=suptitle_pad_pts,
+                suptitle_y=suptitle_y_value,
+                top_margin_pct=top_margin_pct,
+                suptitle_fontsize=suptitle_font_value,
+                title_fontsize=title_font_value,
+                label_fontsize_override=label_font_value,
+                tick_fontsize_override=tick_font_value,
+                legend_fontsize_override=legend_font_value,
+                cycle_legend_fontsize_override=config.get("cycle_legend_font_value"),
+                font_family=font_family_value,
+                axis_label_overrides=axis_label_overrides,
+                labelpad_overrides=labelpad_overrides,
+                left_dataset_key=left_key,
+                right_dataset_key=right_key,
+                third_dataset_key=third_key,
+                show_cycle_markers_on_core_plots=show_cycle_markers,
+                show_cycle_legend_on_core_plots=show_cycle_legend,
+                include_moles_in_core_plot_legend=include_moles_core,
+                legend_anchor=legend_anchor,
+                cycle_legend_anchor=cycle_legend_anchor,
+                legend_loc=legend_loc,
+                cycle_legend_loc=cycle_legend_loc,
+                cycle_legend_anchor_space=cycle_legend_anchor_space,
+                baseline_margins=profile_margins,
+                legend_anchor_y=profile_legend_anchor_y,
+                xlabel_pad_pts=xlabel_pad_value,
+                mode=mode,
+                fig_size=fig_size,
+                render_ctx=render_ctx,
+            )
         if fig is not None:
             try:
                 fig._gl260_expect_cycle_legend = bool(show_cycle_legend)
@@ -73163,10 +74472,11 @@ class UnifiedApp(tk.Tk):
                     layout_start = (
                         time.perf_counter() if perf_run is not None else None
                     )
-                    if mode == "export":
-                        layout_mgr.solve()
-                    else:
-                        layout_mgr.solve(max_passes=1, allow_draw=False)
+                    with self._perf_time("plotting.layout", "combined_layout"):
+                        if mode == "export":
+                            layout_mgr.solve()
+                        else:
+                            layout_mgr.solve(max_passes=1, allow_draw=False)
                     if perf_run is not None and layout_start is not None:
                         stages = perf_run.setdefault("stages", {})
                         combined_stage = stages.setdefault("combined", {})

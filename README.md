@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.9.12)
+# GL-260 Data Analysis and Plotter (v2.10.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.9.12`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.10.0`.
 
 ## Table of Contents
 - [Part I - Changelog / Ledger](#part-i---changelog--ledger)
@@ -954,11 +954,34 @@ The app keeps the UI responsive with a dedicated task runner:
 - Used for column application, cycle analysis, solubility solver runs, and diagnostics.
 
 Developer tools (Tools -> Developer Tools) provide:
+- Enable Debug Logging (global toggle).
+- Enable Debug File Logging (rotating log file in the working directory).
+- Debug Categories submenu (per-subsystem toggles).
+- Dump Debug Settings, Clear Debug Once-Guards, and Dump Performance Stats.
 - Performance Diagnostics with stage-level timings (data prep, cycle context, combined render, embed).
 - Concurrency Controls for background task worker tuning.
 - Free-threading & GIL controls with environment readiness checks.
 - Dependency free-threading audit and regression checks.
 - Timeline table export validation.
+
+#### Debug Logging and Performance Stats
+The debug/logging framework is centralized and off by default. Use the following workflow:
+
+1) Tools -> Developer Tools -> Enable Debug Logging to turn on debug output.
+2) Tools -> Developer Tools -> Debug Categories to enable specific subsystems.
+3) Optional: Enable Debug File Logging to capture logs in `gl260_debug.log`.
+4) Use Dump Debug Settings to verify active categories, and Clear Debug Once-Guards to re-emit one-shot logs.
+5) Use Dump Performance Stats to view aggregated timing/counter metrics.
+
+Initial debug categories:
+- Core/Infrastructure: `ui.events`, `cache.render`, `perf.timing`
+- Plotting: `plotting.render`, `plotting.layout`, `plotting.legends`
+- Cycle Analysis: `cycle.analysis`, `cycle.interaction`
+- Final Report: `report.build`, `report.figures`, `report.export`
+- Speciation Engine: `speciation.engine`, `speciation.solver`, `speciation.chemistry`, `speciation.results`
+- IO: `io.excel`, `io.files`
+
+Performance stats are aggregated (count/total/min/max/last) and gated behind `perf.timing` (or the relevant subsystem category). These include combined plot build/refresh, render cache hits/misses, cycle analysis compute, final report build/export, and speciation solver timing.
 
 Warnings:
 - Free-threading and concurrency tuning are expert tools. Changing defaults can impact stability or responsiveness and should be tested on representative datasets.
