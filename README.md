@@ -1,12 +1,13 @@
-# GL-260 Data Analysis and Plotter (v2.9.11)
+# GL-260 Data Analysis and Plotter (v2.9.12)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.9.11`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.9.12`.
 
 ## Table of Contents
 - [Part I - Changelog / Ledger](#part-i---changelog--ledger)
+  - [v2.9.12 Combined Single-Pass Render](#v2912-combined-single-pass-render)
   - [v2.9.11 Combined Cycle Legend Anchor Space Persistence](#v2911-combined-cycle-legend-anchor-space-persistence)
   - [v2.9.10 Combined Cycle Legend Refresh Redraw](#v2910-combined-cycle-legend-refresh-redraw)
   - [v2.9.8 Combined Cycle Legend Persistence Apply](#v298-combined-cycle-legend-persistence-apply)
@@ -49,6 +50,10 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [License](#license)
 
 ## Part I - Changelog / Ledger
+
+### v2.9.12 Combined Single-Pass Render
+- Combined Triple-Axis Generate/Refresh now defers rendering until canvas geometry is ready, applies saved legend anchors before the first draw, and performs a single draw for the display.
+- A loading cursor is shown and render controls are disabled while the combined plot finalizes.
 
 ### v2.9.11 Combined Cycle Legend Anchor Space Persistence
 - Combined triple-axis cycle legend persistence now captures axes-space anchors in axes coordinates and reapplies them with the reference axis transform to prevent refresh drift.
@@ -751,6 +756,10 @@ Persistence:
 
 #### 1) Conceptual Overview
 The combined triple-axis plot unifies pressure, temperature, and derivative or auxiliary traces in a single figure. It exists to show cycle context, pressure changes, temperature response, and derived behavior in one aligned timeline, enabling direct interpretation of cycle structure and thermal response without cross-plot alignment errors.
+
+Rendering Behavior:
+- Display renders for the combined plot defer until the canvas reports stable geometry so the first visible draw uses final DPI/size and persisted legend anchors.
+- A loading cursor is shown and render controls are disabled while the combined plot finalizes.
 
 #### 2) Axis Architecture
 - X axis: elapsed time (stitched when multi-sheet mode is enabled).

@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.9.11
+# Version: v2.9.12
 # Date: 2026-02-03
 
 import os
@@ -132,6 +132,7 @@ from typing import (
     Optional,
     Sequence,
     Set,
+    Self,
     Tuple,
     Union,
 )
@@ -7925,7 +7926,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.9.11"
+APP_VERSION = "v2.9.12"
 
 AUTO_TITLE_SOURCE_FULL = "full_dataset"
 AUTO_TITLE_SOURCE_CURRENT = "current_view"
@@ -27833,6 +27834,181 @@ class UnifiedApp(tk.Tk):
 
             self.after(300, _notify_settings_reset)
 
+    @property
+    def root(self) -> Self:
+        """Return the Tk root for UI helpers.
+
+        Purpose:
+            Provide a stable root alias for helper utilities that expect self.root.
+        Why:
+            Some shared UI helpers are written to reference a root attribute, so this
+            property keeps those helpers compatible without changing their logic.
+        Inputs:
+            None.
+        Outputs:
+            The UnifiedApp instance (Tk root).
+        Side Effects:
+            None.
+        Exceptions:
+            None.
+        """
+        return self
+
+    def _with_loading_cursor(self, fn, *, widget=None):
+        """Run a function with a loading cursor and temporarily disabled UI controls.
+
+        Purpose:
+            Wrap render work so the cursor and control states reflect in-progress work.
+        Why:
+            Ensures the cursor is visible before heavy rendering begins and provides
+            explicit feedback while the deferred render completes.
+        Inputs:
+            fn: Callable to execute once the UI is idle.
+            widget: Optional Tk widget to scope the cursor change (defaults to root).
+        Outputs:
+            None.
+        Side Effects:
+            Disables render controls, sets a watch cursor, schedules fn on idle, and
+            restores cursor/control state afterward.
+        Exceptions:
+            Cursor update failures are swallowed; controls are restored in a finally.
+        """
+        root = self.root
+        w = widget if widget is not None else root
+        prev = w.cget("cursor") if "cursor" in w.keys() else ""
+
+        def _run():
+            try:
+                fn()
+            finally:
+                try:
+                    w.configure(cursor=prev)
+                except Exception:
+                    pass
+                self._set_render_controls_enabled(True)
+
+        try:
+            w.configure(cursor="watch")
+        except Exception:
+            pass
+
+        self._set_render_controls_enabled(False)
+        root.update_idletasks()
+        root.after_idle(_run)
+
+    def _set_render_controls_enabled(self, enabled: bool) -> None:
+        """Enable or disable render-related UI controls.
+
+        Purpose:
+            Temporarily lock render controls during combined plot rendering.
+        Why:
+            Disabling controls prevents overlapping render requests and ensures
+            loading feedback remains consistent.
+        Inputs:
+            enabled: True to enable controls, False to disable them.
+        Outputs:
+            None.
+        Side Effects:
+            Updates widget state for render-related controls and tracks what was
+            disabled so pre-disabled controls are restored accurately.
+        Exceptions:
+            Widget lookup and state changes are guarded to avoid UI interruption.
+        """
+        enabled = bool(enabled)
+        if enabled:
+            disabled_controls = list(
+                getattr(self, "_render_controls_disabled", []) or []
+            )
+            self._render_controls_disabled = []
+            # Iterate over disabled_controls to restore only what we changed.
+            for widget in disabled_controls:
+                try:
+                    if widget is None or not widget.winfo_exists():
+                        continue
+                except Exception:
+                    continue
+                try:
+                    if hasattr(widget, "state"):
+                        widget.state(["!disabled"])
+                    else:
+                        widget.configure(state="normal")
+                except Exception:
+                    # Best-effort guard; ignore failures.
+                    pass
+            return
+
+        controls: list[Any] = []
+        generate_btn = getattr(self, "_plot_select_generate_btn", None)
+        if generate_btn is not None:
+            controls.append(generate_btn)
+
+        tabs = list(getattr(self, "_plot_tabs", []) or [])
+        seen_controls: set[int] = set()
+        for tab in tabs:
+            if getattr(tab, "_plot_key", None) != "fig_combined" and getattr(
+                tab, "_plot_id", None
+            ) != "fig_combined_triple_axis":
+                continue
+            pending = []
+            try:
+                pending = list(tab.winfo_children())
+            except Exception:
+                pending = []
+            # Walk tab descendants to capture toolbar buttons and toggles.
+            while pending:
+                widget = pending.pop()
+                try:
+                    pending.extend(widget.winfo_children())
+                except Exception:
+                    pass
+                if not isinstance(
+                    widget,
+                    (
+                        ttk.Button,
+                        ttk.Checkbutton,
+                        ttk.Radiobutton,
+                        tk.Button,
+                        tk.Checkbutton,
+                        tk.Radiobutton,
+                    ),
+                ):
+                    continue
+                widget_id = id(widget)
+                if widget_id in seen_controls:
+                    continue
+                seen_controls.add(widget_id)
+                controls.append(widget)
+            break
+
+        disabled_controls = []
+        # Iterate over controls to disable only those currently enabled.
+        for widget in controls:
+            try:
+                if widget is None or not widget.winfo_exists():
+                    continue
+            except Exception:
+                continue
+            is_disabled = False
+            try:
+                if hasattr(widget, "instate"):
+                    is_disabled = bool(widget.instate(["disabled"]))
+                else:
+                    is_disabled = str(widget.cget("state")) == "disabled"
+            except Exception:
+                is_disabled = False
+            if is_disabled:
+                continue
+            try:
+                if hasattr(widget, "state"):
+                    widget.state(["disabled"])
+                else:
+                    widget.configure(state="disabled")
+                disabled_controls.append(widget)
+            except Exception:
+                # Best-effort guard; ignore failures.
+                pass
+        self._render_controls_disabled = disabled_controls
+
     def _set_combined_render_busy(self, busy: bool) -> None:
         """Set combined render busy state.
         Purpose: Apply a lightweight UI busy indicator during combined plot renders.
@@ -30172,12 +30348,12 @@ class UnifiedApp(tk.Tk):
                 widget = canvas.get_tk_widget()
             except Exception:
                 widget = None
-        if widget is not None:
-            try:
-                widget.update_idletasks()
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
+            if widget is not None:
+                try:
+                    widget.update_idletasks()
+                except Exception:
+                    # Best-effort guard; ignore failures.
+                    pass
 
         if not keep_export_size and widget is not None:
             widget_w, widget_h = _measure(widget)
@@ -30295,51 +30471,180 @@ class UnifiedApp(tk.Tk):
             force_draw=False,
         )
 
-    def _finalize_combined_plot_display(self, frame, canvas) -> None:
-        """Perform finalize combined plot display.
-        Used to keep the workflow logic localized and testable."""
+    def _finalize_combined_plot_display(
+        self,
+        frame,
+        canvas,
+        *,
+        placement_state: dict[str, Any] | None = None,
+    ) -> None:
+        """Finalize the combined plot display with a deferred single-pass draw.
+
+        Purpose:
+            Apply final sizing, legend anchors, and tracking before drawing the
+            combined plot once.
+        Why:
+            Combined plots depend on stable geometry; deferring avoids an initial
+            incorrect render and ensures the first visible draw is correct.
+        Inputs:
+            frame: Plot tab frame hosting the combined plot.
+            canvas: FigureCanvasTkAgg bound to the combined figure.
+            placement_state: Optional plot element placement state to restore.
+        Outputs:
+            None.
+        Side Effects:
+            Defers render until widget geometry is ready, applies saved legend
+            anchors, registers drag tracking, retargets annotation controllers,
+            and triggers a single draw_idle.
+        Exceptions:
+            Errors are caught defensively to keep UI workflows responsive.
+        """
         if canvas is None:
             return
         fig = getattr(canvas, "figure", None)
         if fig is None:
             return
         plot_id = getattr(frame, "_plot_id", None)
-        placement_state = self._capture_plot_element_placement_state(plot_id)
-        if plot_id:
-            try:
-                _apply_layout_profile_to_figure(fig, plot_id, "display")
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
+        if placement_state is None and plot_id:
+            placement_state = self._capture_plot_element_placement_state(plot_id)
         widget = None
         try:
             widget = canvas.get_tk_widget()
         except Exception:
             widget = None
-        self._finalize_matplotlib_canvas_layout(
-            canvas=canvas,
-            fig=fig,
-            tk_widget=widget,
-            keep_export_size=False,
-            trigger_resize_event=True,
-            force_draw=True,
-        )
-        try:
-            self._register_combined_legend_tracking(fig)
-        except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-            pass
-        if plot_id:
+        if widget is not None:
             try:
-                self._retarget_plot_annotation_controller(plot_id, fig, canvas)
+                widget.update_idletasks()
             except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                # Best-effort guard; ignore failures.
                 pass
             try:
-                self._restore_plot_element_placement_state(plot_id, placement_state)
+                width_px = int(widget.winfo_width())
+                height_px = int(widget.winfo_height())
             except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                width_px = 0
+                height_px = 0
+            if width_px <= 2 or height_px <= 2:
+                # Defer combined render until Tk geometry is stable.
+                try:
+                    self.after(
+                        50,
+                        lambda: self._finalize_combined_plot_display(
+                            frame,
+                            canvas,
+                            placement_state=placement_state,
+                        ),
+                    )
+                except Exception:
+                    self.after_idle(
+                        lambda: self._finalize_combined_plot_display(
+                            frame,
+                            canvas,
+                            placement_state=placement_state,
+                        )
+                    )
+                return
+
+        def _render():
+            """Perform deferred combined render.
+
+            Purpose:
+                Apply final geometry and legend anchoring before the single draw.
+            Why:
+                Combined plots must render once with final DPI/size and anchors.
+            Inputs:
+                None.
+            Outputs:
+                None.
+            Side Effects:
+                Updates figure size/DPI, applies anchors, registers legend tracking,
+                restores placement state, and schedules draw_idle.
+            Exceptions:
+                Errors are caught to keep the UI responsive.
+            """
+            try:
+                dpi = float(getattr(fig, "dpi", plt.rcParams.get("figure.dpi", 100.0)))
+                if not math.isfinite(dpi) or dpi <= 0.0:
+                    dpi = 100.0
+            except Exception:
+                dpi = 100.0
+            target_width = None
+            target_height = None
+            if widget is not None:
+                try:
+                    widget.update_idletasks()
+                except Exception:
+                    # Best-effort guard; ignore failures.
+                    pass
+                try:
+                    target_width = max(int(widget.winfo_width()), 1)
+                    target_height = max(int(widget.winfo_height()), 1)
+                except Exception:
+                    target_width = None
+                    target_height = None
+            if target_width is None or target_height is None:
+                try:
+                    fig_size = self._compute_target_figsize_inches()
+                except Exception:
+                    fig_size = (11.0, 8.5)
+                target_width = max(int(fig_size[0] * dpi), 1)
+                target_height = max(int(fig_size[1] * dpi), 1)
+            try:
+                fig.set_dpi(dpi)
+                fig.set_size_inches(
+                    max(target_width / dpi, 1.0),
+                    max(target_height / dpi, 1.0),
+                    forward=False,
+                )
+            except Exception:
+                # Best-effort guard; ignore failures.
                 pass
+            if plot_id:
+                try:
+                    _apply_layout_profile_to_figure(fig, plot_id, "display")
+                except Exception:
+                    # Best-effort guard; ignore failures.
+                    pass
+            try:
+                self._apply_combined_saved_legend_anchors(fig)
+            except Exception:
+                # Best-effort guard; ignore failures.
+                pass
+            try:
+                self._register_combined_legend_tracking(
+                    fig,
+                    force_draw=False,
+                    defer_saved_anchor=False,
+                )
+            except Exception:
+                # Best-effort guard; ignore failures.
+                pass
+            if plot_id:
+                try:
+                    self._retarget_plot_annotation_controller(plot_id, fig, canvas)
+                except Exception:
+                    # Best-effort guard; ignore failures.
+                    pass
+                if placement_state:
+                    try:
+                        self._restore_plot_element_placement_state(
+                            plot_id, placement_state
+                        )
+                    except Exception:
+                        # Best-effort guard; ignore failures.
+                        pass
+            try:
+                frame._combined_render_ready = True
+            except Exception:
+                # Best-effort guard; ignore failures.
+                pass
+            try:
+                canvas.draw_idle()
+            except Exception:
+                # Best-effort guard; ignore failures.
+                pass
+
+        self._with_loading_cursor(_render, widget=widget)
 
     def _finalize_plot_refresh(self, canvas, fig) -> None:
         """Refresh value.
@@ -30423,7 +30728,7 @@ class UnifiedApp(tk.Tk):
             try:
                 widget.update_idletasks()
             except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                # Best-effort guard; ignore failures.
                 pass
             try:
                 w = widget.winfo_width()
@@ -30474,8 +30779,9 @@ class UnifiedApp(tk.Tk):
             None.
 
         Side Effects:
-            Captures combined legend anchors before rebuild when enabled, replaces figures,
-            rebinds plot element controllers, and redraws the canvas.
+            Captures combined legend anchors before rebuild when enabled, defers
+            combined refresh until geometry is ready, replaces figures, rebinds
+            plot element controllers, and schedules a redraw.
 
         Exceptions:
             Internal errors are caught and ignored to keep UI responsive.
@@ -30484,6 +30790,63 @@ class UnifiedApp(tk.Tk):
         plot_id = self._plot_key_to_plot_id(plot_key)
         if not plot_id:
             plot_id = getattr(frame, "_plot_id", None)
+        combined_widget = None
+        combined_size = None
+        if plot_key == "fig_combined":
+            try:
+                frame._combined_render_ready = False
+            except Exception:
+                # Best-effort guard; ignore failures.
+                pass
+            try:
+                self.nb.select(frame)
+            except Exception:
+                # Best-effort guard; ignore failures.
+                pass
+            # Ensure geometry is settled before rebuilding the combined figure.
+            try:
+                frame.update_idletasks()
+                self.nb.update_idletasks()
+            except Exception:
+                # Best-effort guard; ignore failures.
+                pass
+            try:
+                combined_widget = canvas.get_tk_widget()
+            except Exception:
+                combined_widget = None
+            if combined_widget is not None:
+                try:
+                    combined_widget.update_idletasks()
+                except Exception:
+                    # Best-effort guard; ignore failures.
+                    pass
+                try:
+                    width_px = int(combined_widget.winfo_width())
+                    height_px = int(combined_widget.winfo_height())
+                except Exception:
+                    width_px = 0
+                    height_px = 0
+                if width_px <= 2 or height_px <= 2:
+                    # Defer combined refresh until widget geometry is ready.
+                    try:
+                        self.after(
+                            50,
+                            lambda: self._force_plot_refresh(
+                                frame,
+                                canvas,
+                                capture_combined_legend=capture_combined_legend,
+                            ),
+                        )
+                    except Exception:
+                        self.after_idle(
+                            lambda: self._force_plot_refresh(
+                                frame,
+                                canvas,
+                                capture_combined_legend=capture_combined_legend,
+                            )
+                        )
+                    return
+                combined_size = (max(width_px, 1), max(height_px, 1))
         if (
             plot_key == "fig_combined"
             and capture_combined_legend
@@ -30499,29 +30862,32 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
         try:
-            self._refresh_canvas_display(frame, canvas, trigger_resize=True)
+            if plot_key != "fig_combined":
+                self._refresh_canvas_display(frame, canvas, trigger_resize=True)
         except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            # Best-effort guard; ignore failures.
             pass
         placement_state = self._capture_plot_element_placement_state(plot_id)
         fig_size = None
         if plot_key == "fig_combined":
             try:
-                widget = canvas.get_tk_widget()
-                widget.update_idletasks()
-                width_px = max(int(widget.winfo_width()), 1)
-                height_px = max(int(widget.winfo_height()), 1)
+                if combined_size is None:
+                    widget = canvas.get_tk_widget()
+                    widget.update_idletasks()
+                    width_px = max(int(widget.winfo_width()), 1)
+                    height_px = max(int(widget.winfo_height()), 1)
+                    combined_size = (width_px, height_px)
                 dpi = float(getattr(canvas.figure, "dpi", 100.0))
                 if not math.isfinite(dpi) or dpi <= 0:
                     dpi = 100.0
                 fig_size = (
-                    max(width_px / dpi, 1.0),
-                    max(height_px / dpi, 1.0),
+                    max((combined_size[0] if combined_size else 1) / dpi, 1.0),
+                    max((combined_size[1] if combined_size else 1) / dpi, 1.0),
                 )
             except Exception:
                 fig_size = self._compute_target_figsize_inches()
 
-        new_fig: Optional[Figure] = None
+        new_fig: Figure | None = None
         if plot_key in {"fig1", "fig2", "fig_peaks"}:
             new_fig = self.render_plot(plot_key, target="display", plot_id=plot_id)
         elif plot_key == "fig_combined":
@@ -30537,9 +30903,16 @@ class UnifiedApp(tk.Tk):
             if fig is None:
                 return
             try:
-                self._finalize_plot_refresh(canvas, fig)
+                if plot_key == "fig_combined":
+                    self._finalize_combined_plot_display(
+                        frame,
+                        canvas,
+                        placement_state=placement_state,
+                    )
+                else:
+                    self._finalize_plot_refresh(canvas, fig)
             except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                # Best-effort guard; ignore failures.
                 pass
             return
 
@@ -30560,28 +30933,43 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
 
-        try:
-            self._install_refreshed_figure_and_finalize(frame, canvas, new_fig)
-        except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-            pass
-        if plot_id:
-            try:
-                self._retarget_plot_annotation_controller(plot_id, new_fig, canvas)
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-            try:
-                self._restore_plot_element_placement_state(plot_id, placement_state)
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
         if plot_key == "fig_combined":
             try:
-                self._register_combined_legend_tracking(new_fig)
+                new_fig.set_canvas(canvas)
+            except Exception:
+                # Best-effort guard; ignore failures.
+                pass
+            try:
+                canvas.figure = new_fig
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+            try:
+                self._finalize_combined_plot_display(
+                    frame,
+                    canvas,
+                    placement_state=placement_state,
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        else:
+            try:
+                self._install_refreshed_figure_and_finalize(frame, canvas, new_fig)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            if plot_id:
+                try:
+                    self._retarget_plot_annotation_controller(plot_id, new_fig, canvas)
+                except Exception:
+                    # Best-effort guard; ignore failures.
+                    pass
+                try:
+                    self._restore_plot_element_placement_state(plot_id, placement_state)
+                except Exception:
+                    # Best-effort guard; ignore failures.
+                    pass
         if plot_id:
             try:
                 self._set_plot_dirty_flags(
@@ -30965,7 +31353,7 @@ class UnifiedApp(tk.Tk):
         try:
             artist._gl260_plot_element = element
         except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            # Best-effort guard; ignore failures.
             pass
         return artist
 
@@ -34157,12 +34545,31 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
-    def _add_plot_tab(self, title, fig, *, plot_key: Optional[str] = None):
-        """Perform add plot tab.
-        Used to keep the workflow logic localized and testable."""
+    def _add_plot_tab(self, title, fig, *, plot_key: str | None = None):
+        """Add a plot tab and embed the provided figure.
+
+        Purpose:
+            Create a plot tab with toolbar controls and a Matplotlib canvas.
+        Why:
+            The UI renders plots into tabs so users can switch between figures
+            without losing per-plot controls or annotations.
+        Inputs:
+            title: Tab title string.
+            fig: Matplotlib Figure to embed.
+            plot_key: Optional plot key used to tag plot metadata and routing.
+        Outputs:
+            The created tab frame.
+        Side Effects:
+            Creates Tk widgets, binds canvas resize handlers, registers plot
+            controllers, and schedules display refresh logic.
+        Exceptions:
+            Widget and canvas errors are caught to avoid UI interruption.
+        """
 
         frame = ttk.Frame(self.nb)
         frame._plot_key = plot_key
+        if plot_key == "fig_combined":
+            frame._combined_render_ready = False
 
         self._log_plot_tab_debug(f"Creating tab frame for '{title}'")
 
@@ -34828,11 +35235,30 @@ class UnifiedApp(tk.Tk):
 
         # Closure captures _add_plot_tab local context to keep helper logic scoped and invoked directly within _add_plot_tab.
         def _schedule_canvas_sync(_event=None):
-            """Schedule canvas sync.
-            Used to queue canvas sync without blocking the UI."""
+            """Schedule a canvas sync on idle.
+
+            Purpose:
+                Queue a lightweight refresh of the canvas display on idle.
+            Why:
+                Canvas geometry can change during layout; syncing on idle keeps
+                the UI responsive while avoiding redundant refresh work.
+            Inputs:
+                _event: Optional Tk event payload (unused).
+            Outputs:
+                None.
+            Side Effects:
+                Schedules a deferred refresh of the canvas display.
+            Exceptions:
+                Errors are caught to avoid interrupting the UI loop.
+            """
 
             if refresh_state["scheduled"]:
 
+                return
+            if plot_key == "fig_combined" and not getattr(
+                frame, "_combined_render_ready", False
+            ):
+                # Combined plots defer the first draw; skip premature sync.
                 return
 
             refresh_state["scheduled"] = True
@@ -34865,7 +35291,8 @@ class UnifiedApp(tk.Tk):
 
         _schedule_canvas_sync()
 
-        canvas.draw()
+        if plot_key != "fig_combined":
+            canvas.draw()
 
         # Closure captures _add_plot_tab local context to keep helper logic scoped and invoked directly within _add_plot_tab.
         def _finalize_tab_display():
@@ -47069,8 +47496,115 @@ class UnifiedApp(tk.Tk):
             try:
                 self._register_combined_legend_tracking(fig)
             except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                # Best-effort guard; ignore failures.
                 pass
+
+    def _apply_combined_saved_legend_anchors(
+        self, fig: Figure | None
+    ) -> None:
+        """Apply saved combined legend anchors before display draw.
+
+        Purpose:
+            Apply persisted cycle legend anchors prior to the first visible draw.
+        Why:
+            Combined legend anchors must be applied before rendering to avoid
+            a transient incorrect legend placement.
+        Inputs:
+            fig: Matplotlib Figure containing the combined plot legends.
+        Outputs:
+            None.
+        Side Effects:
+            Updates the combined cycle legend position, clears pending anchor
+            application state, and marks anchors as applied.
+        Exceptions:
+            Errors are caught defensively to keep UI workflows responsive.
+        """
+        if fig is None:
+            return
+        cycle_legend = self._get_combined_cycle_legend(fig)
+        if cycle_legend is None:
+            return
+        stored_mode = None
+        stored_loc = None
+        stored_anchor_space = None
+        try:
+            stored_mode = settings.get("combined_cycle_legend_anchor_mode")
+            stored_loc = settings.get("combined_cycle_legend_loc")
+            stored_anchor_space = settings.get("combined_cycle_legend_anchor_space")
+        except Exception:
+            stored_mode = None
+            stored_loc = None
+            stored_anchor_space = None
+        if stored_anchor_space not in {"axes", "figure"}:
+            stored_anchor_space = None
+        normalized_loc = _normalize_legend_loc_value(stored_loc)
+        stored_loc_tuple = None
+        if isinstance(normalized_loc, tuple):
+            try:
+                stored_loc_tuple = (float(normalized_loc[0]), float(normalized_loc[1]))
+            except Exception:
+                stored_loc_tuple = None
+        applied = False
+        if stored_mode == "loc_tuple" and stored_loc_tuple is not None:
+            ref_axis = self._combined_cycle_reference_axis(fig)
+            try:
+                if stored_anchor_space == "axes" and ref_axis is not None:
+                    cycle_legend.set_bbox_to_anchor(
+                        (0.0, 0.0, 1.0, 1.0), transform=ref_axis.transAxes
+                    )
+                else:
+                    cycle_legend.set_bbox_to_anchor(
+                        (0.0, 0.0, 1.0, 1.0), transform=fig.transFigure
+                    )
+                cycle_legend.set_loc(
+                    (float(stored_loc_tuple[0]), float(stored_loc_tuple[1]))
+                )
+                applied = True
+            except Exception:
+                applied = False
+        else:
+            offsets = _combined_cycle_axis_offset_values()
+            if offsets is not None:
+                ref_axis = self._combined_cycle_reference_axis(fig)
+                if ref_axis is not None:
+                    loc_value = _resolve_combined_cycle_legend_loc()
+                    original_canvas = getattr(fig, "canvas", None)
+                    agg_canvas = None
+                    try:
+                        agg_canvas = FigureCanvasAgg(fig)
+                        agg_canvas.draw()
+                    except Exception:
+                        agg_canvas = None
+                    try:
+                        applied = _apply_cycle_legend_axis_offset(
+                            fig,
+                            cycle_legend,
+                            ref_axis,
+                            settings.get("combined_cycle_legend_ref_corner"),
+                            offsets[0],
+                            offsets[1],
+                            loc_value,
+                            allow_draw=False,
+                        )
+                    finally:
+                        if (
+                            original_canvas is not None
+                            and getattr(original_canvas, "figure", None) is fig
+                        ):
+                            try:
+                                fig.set_canvas(original_canvas)
+                            except Exception:
+                                # Best-effort guard; ignore failures.
+                                pass
+        if applied:
+            try:
+                fig._cycle_legend_anchor_applied = True  # type: ignore[attr-defined]
+            except Exception:
+                # Best-effort guard; ignore failures.
+                pass
+            self._combined_cycle_legend_pending_apply = False
+            self._combined_cycle_legend_pending_fig_id = None
+            self._combined_cycle_legend_pending_offsets = None
 
     def _sync_combined_cycle_legend_controls(
         self, *, refresh_display: bool = True
@@ -47779,7 +48313,13 @@ class UnifiedApp(tk.Tk):
 
     # CRITICAL: This function MUST exist exactly once.
     # Do NOT duplicate or redefine below — this WILL break legend persistence.
-    def _register_combined_legend_tracking(self, fig: Figure | None) -> None:
+    def _register_combined_legend_tracking(
+        self,
+        fig: Figure | None,
+        *,
+        force_draw: bool = True,
+        defer_saved_anchor: bool = True,
+    ) -> None:
         """Register draggable legend tracking for combined plots.
 
         Purpose:
@@ -47790,6 +48330,8 @@ class UnifiedApp(tk.Tk):
 
         Args:
             fig: Matplotlib Figure with combined legends to monitor.
+            force_draw: When True, allow an initial draw to ensure a renderer exists.
+            defer_saved_anchor: When True, queue saved anchors for post-draw apply.
 
         Returns:
             None.
@@ -47797,19 +48339,26 @@ class UnifiedApp(tk.Tk):
         Side Effects:
             Enables legend dragging, recenters the main legend when centering
             is enabled, wires a canvas callback, and persists cycle anchors via
-            _capture_combined_legend_anchor_from_fig. Queues persisted cycle
-            offsets for post-draw application when available.
+            _capture_combined_legend_anchor_from_fig. Optionally queues persisted
+            cycle offsets for post-draw application when requested.
 
         Exceptions:
             Internal errors are caught to avoid breaking the UI.
         """
         if fig is None:
             return
-        try:
-            fig._cycle_legend_anchor_applied = False  # type: ignore[attr-defined]
-        except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-            pass
+        if defer_saved_anchor:
+            try:
+                fig._cycle_legend_anchor_applied = False
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        else:
+            try:
+                fig._cycle_legend_anchor_applied = True
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
         self._cycle_leg_drag_active = False
         self._cycle_leg_drag_moved = False
         self._cycle_leg_drag_start_xy = None
@@ -47840,8 +48389,9 @@ class UnifiedApp(tk.Tk):
             f"DEBUG: apply_saved_anchor persist={persist} "
             f"dx={saved_dx} dy={saved_dy} fig_id={id(fig)}"
         )
-        if saved_offsets is not None or (
-            stored_mode == "loc_tuple" and stored_loc_tuple is not None
+        if defer_saved_anchor and (
+            saved_offsets is not None
+            or (stored_mode == "loc_tuple" and stored_loc_tuple is not None)
         ):
             self._combined_cycle_legend_pending_apply = True
             self._combined_cycle_legend_pending_fig_id = id(fig)
@@ -47851,7 +48401,7 @@ class UnifiedApp(tk.Tk):
             self._combined_cycle_legend_pending_fig_id = None
             self._combined_cycle_legend_pending_offsets = None
         try:
-            if fig.canvas is not None:
+            if force_draw and defer_saved_anchor and fig.canvas is not None:
                 fig.canvas.draw()
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting
