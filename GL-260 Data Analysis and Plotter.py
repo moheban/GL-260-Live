@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.10.1
+# Version: v2.10.2
 # Date: 2026-02-04
 
 import os
@@ -7929,7 +7929,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.10.1"
+APP_VERSION = "v2.10.2"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -65865,15 +65865,79 @@ class UnifiedApp(tk.Tk):
                 pass
         return "Cycle analysis summary is not available."
 
+    def _final_report_cycle_duration_column_header(
+        self, payload: Optional[Dict[str, Any]]
+    ) -> str:
+        """Resolve a unit-bearing Duration column header for cycle statistics.
+
+        Purpose:
+            Build the Final Report cycle-statistics Duration header with explicit units.
+        Why:
+            Keeps the table header aligned with the internal x-axis units used by
+            `duration_x` without changing cycle duration values or rounding behavior.
+        Args:
+            payload: Cycle transfer payload containing `cycle_context` and/or
+                `cycle_transfer` row metadata with the x-axis label.
+        Returns:
+            A display header string like `Duration (days)` or `Duration (hours)`.
+        Side Effects:
+            None.
+        Exceptions:
+            Parsing failures are handled defensively by returning a generic
+            `Duration (x-axis units)` label.
+        """
+        if not payload:
+            return "Duration (x-axis units)"
+        x_label = ""
+        cycle_context = payload.get("cycle_context") or {}
+        if isinstance(cycle_context, dict):
+            x_label = str(cycle_context.get("x_label") or "").strip()
+        if not x_label:
+            cycle_rows = payload.get("cycle_transfer") or []
+            if cycle_rows:
+                # Fall back to per-row metadata when cycle_context is unavailable.
+                x_label = str((cycle_rows[0] or {}).get("x_label") or "").strip()
+        unit = ""
+        if x_label:
+            match = re.search(r"\(([^()]+)\)\s*$", x_label)
+            if match:
+                unit = match.group(1).strip()
+            else:
+                x_label_lower = x_label.lower()
+                # Use known elapsed-time units when they appear in the axis label.
+                for candidate in ELAPSED_TIME_UNITS:
+                    if candidate in x_label_lower:
+                        unit = candidate
+                        break
+        if not unit:
+            unit = "x-axis units"
+        return f"Duration ({unit})"
+
     def _final_report_get_cycle_stats_rows(
         self,
     ) -> Tuple[List[Dict[str, Any]], List[str]]:
-        """Return cycle stats rows.
-        Used by final report workflows to return cycle stats rows."""
+        """Return cycle statistics rows and column labels for Final Report tables.
+
+        Purpose:
+            Assemble cycle statistics table data for Final Report rendering.
+        Why:
+            Centralizes report table preparation so on-screen previews and exports
+            use the same data rows and headers, including the Duration unit label.
+        Args:
+            None.
+        Returns:
+            A tuple of (`rows`, `columns`) where `rows` contains formatted cycle
+            statistics dictionaries and `columns` defines table display order.
+        Side Effects:
+            None.
+        Exceptions:
+            Missing payload data returns an empty table instead of raising.
+        """
         payload = getattr(self, "_cycle_last_transfer_payload", None)
         rows = []
         if not payload:
             return rows, []
+        duration_header = self._final_report_cycle_duration_column_header(payload)
         # Iterate over payload.get("cycle_transfer", []) to apply the per-item logic.
         for entry in payload.get("cycle_transfer", []):
             delta = entry.get("delta_pressure_psi")
@@ -65882,7 +65946,7 @@ class UnifiedApp(tk.Tk):
                 {
                     "Cycle": entry.get("cycle_id") or "",
                     "ΔP (PSI)": f"{delta:.2f}" if delta is not None else "",
-                    "Duration": f"{duration:.3f}" if duration is not None else "",
+                    duration_header: f"{duration:.3f}" if duration is not None else "",
                     "Peak PSI": (
                         f"{entry.get('peak_pressure_psi', ''):.2f}"
                         if entry.get("peak_pressure_psi") is not None
@@ -65908,7 +65972,7 @@ class UnifiedApp(tk.Tk):
         columns = [
             "Cycle",
             "ΔP (PSI)",
-            "Duration",
+            duration_header,
             "Peak PSI",
             "Trough PSI",
             "Mean T (°C)",

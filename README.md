@@ -1,12 +1,34 @@
-# GL-260 Data Analysis and Plotter (v2.10.1)
+# GL-260 Data Analysis and Plotter (v2.10.2)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.10.1`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.10.2`.
 
 ## Table of Contents
-- [Part I - Changelog / Ledger](#part-i---changelog--ledger)
+- [Part I - Complete User Manual](#part-i---complete-user-manual)
+  - [Program Overview and Philosophy](#program-overview-and-philosophy)
+  - [Intended Audience](#intended-audience)
+  - [Repository Layout](#repository-layout)
+  - [Installation and Requirements](#installation-and-requirements)
+  - [Running the Application](#running-the-application)
+  - [Architecture and Data Flow](#architecture-and-data-flow)
+  - [Quickstart Workflow (Linear)](#quickstart-workflow-linear)
+  - [UI and Navigation Guide](#ui-and-navigation-guide)
+  - [Plotting Architecture Details](#plotting-architecture-details)
+  - [Plot Elements and Annotations System](#plot-elements-and-annotations-system)
+  - [Combined Triple-Axis Plot Technical Documentation](#combined-triple-axis-plot-technical-documentation)
+  - [Interactive Cycle Analysis - Scientific and Operational Guide](#interactive-cycle-analysis---scientific-and-operational-guide)
+  - [Advanced Solubility and Equilibrium Engine](#advanced-solubility-and-equilibrium-engine)
+  - [Final Report System - Export and PDF Assembly](#final-report-system---export-and-pdf-assembly)
+  - [Preferences and Configuration System](#preferences-and-configuration-system)
+  - [Performance and Developer Tools](#performance-and-developer-tools)
+  - [Troubleshooting and FAQ](#troubleshooting-and-faq)
+  - [Power User and Advanced Workflows](#power-user-and-advanced-workflows)
+- [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
+- [License](#license)
+- [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v2.10.2 README Restructure (User Manual First)](#v2102-readme-restructure-user-manual-first)
   - [v2.10.1 Final Report Preview Window Auto-Sizing](#v2101-final-report-preview-window-auto-sizing)
   - [v2.9.12 Combined Single-Pass Render](#v2912-combined-single-pass-render)
   - [v2.9.11 Combined Cycle Legend Anchor Space Persistence](#v2911-combined-cycle-legend-anchor-space-persistence)
@@ -28,231 +50,8 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
   - [v2.0.2 Update Highlights](#v202-update-highlights)
   - [v2.0.1 Update Highlights](#v201-update-highlights)
   - [Legacy Change Highlights (v1.x and earlier)](#legacy-change-highlights-v1x-and-earlier)
-- [Part II - Complete User Manual](#part-ii---complete-user-manual)
-  - [Program Overview and Philosophy](#program-overview-and-philosophy)
-  - [Intended Audience](#intended-audience)
-  - [Repository Layout](#repository-layout)
-  - [Installation and Requirements](#installation-and-requirements)
-  - [Running the Application](#running-the-application)
-  - [Architecture and Data Flow](#architecture-and-data-flow)
-  - [Quickstart Workflow (Linear)](#quickstart-workflow-linear)
-  - [UI and Navigation Guide](#ui-and-navigation-guide)
-  - [Plotting Architecture Details](#plotting-architecture-details)
-  - [Plot Elements and Annotations System](#plot-elements-and-annotations-system)
-  - [Combined Triple-Axis Plot Technical Documentation](#combined-triple-axis-plot-technical-documentation)
-  - [Interactive Cycle Analysis - Scientific and Operational Guide](#interactive-cycle-analysis---scientific-and-operational-guide)
-  - [Advanced Solubility and Equilibrium Engine](#advanced-solubility-and-equilibrium-engine)
-  - [Final Report System - Export and PDF Assembly](#final-report-system---export-and-pdf-assembly)
-  - [Preferences and Configuration System](#preferences-and-configuration-system)
-  - [Performance and Developer Tools](#performance-and-developer-tools)
-  - [Troubleshooting and FAQ](#troubleshooting-and-faq)
-  - [Power User and Advanced Workflows](#power-user-and-advanced-workflows)
-- [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
-- [License](#license)
 
-## Part I - Changelog / Ledger
-
-### v2.10.1 Final Report Preview Window Auto-Sizing
-- Final Report live preview now uses a preview-only DPI baseline (screen-fit clamped) so 100% preview zoom is display-reasonable and no longer tied to export DPI.
-- Opening the Live Final Report Preview now auto-sizes the window to the rendered page image, clamps to screen bounds, and centers once at open.
-- Preview auto-sizing is one-time per window open, so user manual resizing remains in control after the initial render.
-
-### v2.9.12 Combined Single-Pass Render
-- Combined Triple-Axis Generate/Refresh now defers rendering until canvas geometry is ready, applies saved legend anchors before the first draw, and performs a single draw for the display.
-- A loading cursor is shown and render controls are disabled while the combined plot finalizes.
-
-### v2.9.11 Combined Cycle Legend Anchor Space Persistence
-- Combined triple-axis cycle legend persistence now captures axes-space anchors in axes coordinates and reapplies them with the reference axis transform to prevent refresh drift.
-- Legacy figure-anchored cycle legend positions continue to restore without regression.
-
-### v2.9.10 Combined Cycle Legend Refresh Redraw
-- Combined triple-axis cycle legend now renders at the saved dragged location immediately after Refresh/regenerate without requiring a click.
-
-### v2.9.8 Combined Cycle Legend Persistence Apply
-- Combined triple-axis cycle legend persistence now applies saved offsets post-draw to ensure stable placement across refresh/regenerate.
-- Drag capture explicitly marks persistence and records a debug persist-write line when offsets are saved.
-
-### v2.9.6 Combined Cycle Legend Tracking Debug
-- Combined triple-axis legend tracking now logs the active Tk canvas identity and event connection IDs so drag-release wiring can be verified in terminal output.
-- Button release events emit a mandatory debug line on every mouse-up, confirming drag releases are detected.
-- Auto-capture no longer overwrites persisted cycle legend offsets; stored offsets are reapplied when persistence is enabled.
-
-### v2.9.3 Combined Legend Isolation
-- Main and cycle legends in the combined plot are now fully independent; only the cycle legend persists its dragged position across Refresh/Regenerate when persistence is enabled.
-- Cycle legend drag capture is gated to explicitly tagged cycle legends and only wired when cycle dragging is enabled, preventing cross-talk with the main legend.
-- Cycle legend offsets are reapplied before layout solve; main legend centering is re-applied after layout solve for consistent placement.
-- Main legend dragging remains optional and session-only; Center Plot Legend is no longer disabled by drag.
-
-### v2.9.1 Combined Cycle Legend Controls
-- Added a Plot Settings -> Cycle Legend (Combined Plot) subsection with drag enable/lock/persist/reset and clamp-on-capture controls.
-- Cycle legend drag placement now persists across display refresh/regeneration when persistence is enabled; lock prevents accidental moves.
-- Center Plot Legend applies only to the main legend; cycle legend placement remains independent.
-- Closing generated plot tabs explicitly returns focus to the Plot Settings tab.
-
-### v2.9.0 Combined Legend Persistence
-- Combined triple-axis cycle legend positions persist in the display view across Refresh/regeneration, tab switches, and app restarts.
-- Display legend dragging now captures anchors on mouse release, keeping export preview and final exports aligned with the on-screen placement.
-- Manual main-legend drags are session-only; Center Plot Legend remains in control of default centering.
-- Closing a generated plot tab now returns focus to the Plot Settings tab.
-
-### v2.6.0 Final Report Tab Scrolling
-- The entire Final Report tab is now vertically scrollable to keep every control accessible on smaller windows.
-- The scroll container wraps the full tab layout without changing report generation, layout order, or export behavior.
-- Mousewheel scrolling stays within the Final Report tab while text widgets keep their native scrolling.
-
-### v2.5.0 Final Report Pipeline Hardening
-- Final Report layout now reserves header/caption/footer bands before layout, eliminating overlaps with section headers and group labels.
-- Combined Triple-Axis report pages skip tight_layout and fit existing axes into the content rect; Preserve Export Layout reuses export rendering for complex plots.
-- Added Fit Mode selector: Preserve Export Layout (default) and Report Layout (legacy).
-- Added per-section header/caption toggles, caption placement (Same Page / Next Page), and a Render Selected Page Preview action.
-- Tables are centered, wrapped, and dynamically sized with style presets (Compact / Normal / Large).
-- Safe Margins preset adds extra spacing for tighter layouts.
-
-### v2.4.0 Performance and Responsiveness
-- Combined triple-axis plot preview now uses a two-phase render (background data prep + UI-thread figure build) to keep the UI responsive.
-- Display renders reuse the combined figure when structure is unchanged; export renders always rebuild for deterministic output.
-- Added performance diagnostics in Developer Tools -> Performance Diagnostics... with stage-level timings for prepared data, cycle context, combined render, and embed.
-- Combined plot cycle context is skipped when cycle overlays are disabled to avoid unnecessary work.
-- Output invariance: plot appearance, export results, and analysis semantics are unchanged by these performance updates.
-
-### v2.3.0 Documentation Pass
-- Added a comprehensive commenting system with docstrings on every function and loop-level intent notes.
-- Documented high-risk subsystems (combined triple-axis plots, layout editor, plot elements, solubility workflows, caching).
-- Improves reviewability, debugging safety, and future change confidence by explaining design rationale and data flow.
-
-### v2.2.0 Update Highlights
-- Added Process Profiles (Profiles -> Manage Profiles...) to save, restore, import, and export full workspace snapshots.
-- Profiles live in `profiles/` as JSON; dataset paths are optional and trigger a relink prompt when missing.
-- Columns tab: Apply Column Selection button + indicator now sit next to Per-Sheet Column Mapping, left-aligned.
-- Combined triple-axis plot tab: redundant Clear Elements toolbar button removed (use Plot Elements -> Clear All).
-- Final Report tab: Generate Final Report and new Report Preview buttons are left-aligned.
-
-### v2.1.1 Update Highlights
-- Final Report PDFs stitch exported PDF artifacts per section in the selected order for deterministic output.
-- Final Report section ordering is state-driven; preview and generation respect the reorderable list.
-- Final Report generation requires applied columns and blocks (or prompts) if the combined plot export fails.
-
-### v2.1.0 Update Highlights
-- Final Report PDF now stitches the Combined Triple-Axis export into the report instead of re-rendering it.
-- Combined Triple-Axis Plot is the authoritative report plot and is always appended when generation succeeds.
-- Cycle Analysis plot and cycle speciation timeline plot are interactive-only and excluded from Final Report exports.
-- Plot generation is unified to the bottom action bar with a single Generate Plot control and a single Apply Column Selection button + status indicator.
-- Plot Settings tab no longer includes redundant plot-generation buttons.
-
-### v2.0.4 Update Highlights
-- Final Report plot pages are built from the export pipeline (same layout rules, legend sizing, and full-page sizing as manual exports).
-- Combined Triple-Axis Plot is included in the default report section order and selected by default.
-- Older Final Report settings auto-migrate `selected_sections` to insert `combined_plot` after Figure 2.
-- Final Report Preview thumbnails are derived from export-grade figures so preview and output match.
-
-### v2.0.3 Update Highlights
-- Final Report plots now use the export-grade pipeline (layout profiles, legend sizing, Agg finalization) for visual parity with manual exports.
-- Combined Triple-Axis report pages default to landscape (11x8.5) with preflight validation and descriptive fallback text when data is missing.
-- Final Report generation is hardened against invalid state and report text normalizes CO2 subscripts to mathtext to avoid glyph warnings.
-
-### v2.0.2 Update Highlights
-- Plot selection defaults to Combined Triple-Axis Plot only on first launch (no saved settings).
-- Plot selection checkbox states persist across restarts.
-
-### v2.0.1 Update Highlights
-- Added File -> Import GL-260 CSV... for direct ingestion of raw Graphtec CSV exports into a new Excel sheet.
-- New modal CSV import dialog provides channel mapping, sheet naming/handling, and preprocessing controls.
-- Derived columns (elapsed time, first derivative, smoothed derivative, moving average) are computed in Python and written as values.
-- Generated sheets match the existing schema and are immediately usable by Columns, plotting, and cycle analysis.
-
-### Legacy Change Highlights (v1.x and earlier)
-All versions earlier than v2.0.0 are treated as legacy. Highlights are grouped here for reference.
-
-#### v1.8.9 Update Highlights
-- Bottom action bar now supports selective plot generation with per-plot checkboxes and a single Generate Plot action (no forced full rebuild).
-- Cycle Analysis UI is reorganized into Manual Workflow + Advanced/Recompute, with undo/redo, marker import/export, summary copy, and per-cycle CSV export.
-- Final Report output fixes: captions render once, figure/table numbers are independent of page numbers, no cropping, and tables auto-fit within margins.
-
-#### v1.8.8 Update Highlights
-- Starting Material Settings now include a display name and optional note for the material reacting with the selected gas.
-- CO2/13CO2 has been removed from starting-material presets; gas identity lives only in the VDW Gas Model selection.
-- Conversion estimates now explicitly report the gas used for uptake and the starting material label from the new field.
-
-#### v1.8.7 Update Highlights
-- Cycle Analysis Summary is unified across auto/mixed/manual-only paths with a single builder.
-- Summary now verifies the exact gas model inputs used (preset label, V, a, b, MW, SciPy availability).
-- Gas uptake mass is always shown; conversion estimates only appear when starting material mass, MW, and stoichiometry are configured.
-- New Summary Formatting controls (compact, diagnostics, per-cycle gas mass, conversion estimate readiness) are persisted.
-- Starting material defaults are blank to avoid CO2/13CO2 wording unless explicitly configured.
-
-#### v1.8.6 Update Highlights
-- Added Auto Title support in Plot Settings -> Titles with render-time resolution for Preview/Refresh/Export.
-- Introduced managed Data Type lists (combobox + Manage Types dialog with add/rename/delete/reorder).
-- Added template editor with placeholder validation and a day-count mode selector (date diff vs inclusive).
-- Auto Title sources include full dataset or current view range, with deterministic fallback to full dataset when mapping is not possible.
-
-#### v1.8.5 Update Highlights
-- Combined cycle legend drag placement now persists from the embedded plot or Plot Preview into exports (PNG/SVG/PDF).
-- Peak/trough marker size changes propagate to the embedded plot, Plot Preview, and exports without stale cache reuse.
-- Main and cycle legend size adjustments now persist in settings across preview open/close and export cycles.
-
-#### v1.8.4 Update Highlights
-- Plot Settings closes without a redraw when no values change.
-- Combined plot layout tuning is accessed via Plot Settings -> Combined Plot Layout Tuner.
-- Save As stays visible in narrow plot tabs by keeping it separate from export checkboxes.
-- Main legend anchor/loc is re-applied after sizing for stable placement on refresh/export.
-- Refresh button label shortened to Refresh.
-
-#### v1.8.1 Update Highlights
-- Added a Cycle Analysis Plot Settings control for Peak / Trough Marker Size (pts^2) to adjust marker area.
-
-#### v1.8.0 Update Highlights
-- Unified render pipeline for initial render, Refresh, Plot Preview, and export (no split paths).
-- Refresh always builds a new figure while reusing cached prepared data and cycle metrics when the dataset is unchanged.
-- Deterministic overlay gating for markers, cycle legend, and moles summary; moles summary appends to the main legend when the cycle legend is off.
-- Manual vs auto marker sourcing is enforced (auto off uses manual-only markers; auto on supports manual add/remove overrides).
-- Plot Elements controllers are fully rebound on figure swaps so add/select/drag stays reliable after refresh and layout edits.
-
-#### v1.7.4 Update Highlights
-- Columns set to None are omitted from plots and legends (combined, core, export).
-- Main vs cycle legend sizing is now independent, with plot-aware controls.
-- Peak and trough marker shapes are configurable alongside size/color.
-- Cycle Analysis reserves top margin to avoid title overlap on refresh/resize.
-- Apply VDW now refreshes Cycle Analysis and shows a dirty/applied indicator.
-
-#### v1.7.1 Update Highlights
-- Plot elements remain interactive after Refresh on the combined triple-axis tab (placement + drag stay armed).
-- Refresh now retargets plot annotations after a deterministic install/draw/finalize pipeline.
-
-#### v1.7.0 Update Highlights
-- Plot Elements workflow updated with explicit placement arming and clearer add-status feedback.
-- Plot Elements editor keeps add defaults and provides a tighter edit/apply/revert loop.
-
-#### v1.6.8 Update Highlights
-- Combined triple-axis plots keep clean breaks between stitched sheets in the display window.
-- Plot element placement works across all element types in the combined plot view.
-- Span + Label selections respect the configured appearance color immediately and the textbox is draggable.
-
-Additional internal change summaries:
-- v1.6.3:
-  - Plot Preview/export now reflects manual Cycle Analysis edits correctly.
-- v1.6.2:
-  - Fixed combined plot xlabel spacing.
-  - Fixed cycle legend dragged position persistence across refresh/preview.
-- v1.6.0:
-  - Added a Layout Editor for per-plot layout adjustments (title/suptitle positions, legend anchors/loc, axis label padding).
-  - Added persisted layout profiles (`settings["layout_profiles"]`) for per-plot display/export layout state, including margins and legend anchors.
-  - Expanded combined plot layout controls with per-mode margins and legend anchor offsets.
-- v1.5.0.4:
-  - Plot Elements placement and live update fixes.
-  - Restored drag placement for spans and axes routing refresh after plot rebuilds.
-- v1.5.0.0:
-  - Free-threading readiness helpers and Developer Tools GIL controls.
-  - Unified `TkTaskRunner` for background tasks.
-  - Dependency audit tooling and session warning.
-  - VS Code interpreter prompts for GIL-disabled requests.
-- v1.4.0.8:
-  - Persisted multi-sheet selected sheets to `settings.json`.
-  - Plot Elements opens a dedicated annotations Toplevel per plot.
-  - Treeview selection recursion fix in annotations editor.
-  - Layout fixes for the annotations Toplevel.
-
-## Part II - Complete User Manual
+## Part I - Complete User Manual
 
 ### Program Overview and Philosophy
 GL-260 Data Analysis and Plotter is designed for reproducible, end-to-end analysis of GL-260 pressure and temperature datasets. The application emphasizes:
@@ -1020,3 +819,209 @@ Warnings:
 
 ### License
 Apache-2.0. See `LICENSE`.
+
+## Part II - Changelog / Ledger
+
+### v2.10.2 README Restructure (User Manual First)
+- Reordered README so the Complete User Manual appears before the Changelog / Ledger.
+- Updated version strings to v2.10.2.
+
+### v2.10.1 Final Report Preview Window Auto-Sizing
+- Final Report live preview now uses a preview-only DPI baseline (screen-fit clamped) so 100% preview zoom is display-reasonable and no longer tied to export DPI.
+- Opening the Live Final Report Preview now auto-sizes the window to the rendered page image, clamps to screen bounds, and centers once at open.
+- Preview auto-sizing is one-time per window open, so user manual resizing remains in control after the initial render.
+
+### v2.9.12 Combined Single-Pass Render
+- Combined Triple-Axis Generate/Refresh now defers rendering until canvas geometry is ready, applies saved legend anchors before the first draw, and performs a single draw for the display.
+- A loading cursor is shown and render controls are disabled while the combined plot finalizes.
+
+### v2.9.11 Combined Cycle Legend Anchor Space Persistence
+- Combined triple-axis cycle legend persistence now captures axes-space anchors in axes coordinates and reapplies them with the reference axis transform to prevent refresh drift.
+- Legacy figure-anchored cycle legend positions continue to restore without regression.
+
+### v2.9.10 Combined Cycle Legend Refresh Redraw
+- Combined triple-axis cycle legend now renders at the saved dragged location immediately after Refresh/regenerate without requiring a click.
+
+### v2.9.8 Combined Cycle Legend Persistence Apply
+- Combined triple-axis cycle legend persistence now applies saved offsets post-draw to ensure stable placement across refresh/regenerate.
+- Drag capture explicitly marks persistence and records a debug persist-write line when offsets are saved.
+
+### v2.9.6 Combined Cycle Legend Tracking Debug
+- Combined triple-axis legend tracking now logs the active Tk canvas identity and event connection IDs so drag-release wiring can be verified in terminal output.
+- Button release events emit a mandatory debug line on every mouse-up, confirming drag releases are detected.
+- Auto-capture no longer overwrites persisted cycle legend offsets; stored offsets are reapplied when persistence is enabled.
+
+### v2.9.3 Combined Legend Isolation
+- Main and cycle legends in the combined plot are now fully independent; only the cycle legend persists its dragged position across Refresh/Regenerate when persistence is enabled.
+- Cycle legend drag capture is gated to explicitly tagged cycle legends and only wired when cycle dragging is enabled, preventing cross-talk with the main legend.
+- Cycle legend offsets are reapplied before layout solve; main legend centering is re-applied after layout solve for consistent placement.
+- Main legend dragging remains optional and session-only; Center Plot Legend is no longer disabled by drag.
+
+### v2.9.1 Combined Cycle Legend Controls
+- Added a Plot Settings -> Cycle Legend (Combined Plot) subsection with drag enable/lock/persist/reset and clamp-on-capture controls.
+- Cycle legend drag placement now persists across display refresh/regeneration when persistence is enabled; lock prevents accidental moves.
+- Center Plot Legend applies only to the main legend; cycle legend placement remains independent.
+- Closing generated plot tabs explicitly returns focus to the Plot Settings tab.
+
+### v2.9.0 Combined Legend Persistence
+- Combined triple-axis cycle legend positions persist in the display view across Refresh/regeneration, tab switches, and app restarts.
+- Display legend dragging now captures anchors on mouse release, keeping export preview and final exports aligned with the on-screen placement.
+- Manual main-legend drags are session-only; Center Plot Legend remains in control of default centering.
+- Closing a generated plot tab now returns focus to the Plot Settings tab.
+
+### v2.6.0 Final Report Tab Scrolling
+- The entire Final Report tab is now vertically scrollable to keep every control accessible on smaller windows.
+- The scroll container wraps the full tab layout without changing report generation, layout order, or export behavior.
+- Mousewheel scrolling stays within the Final Report tab while text widgets keep their native scrolling.
+
+### v2.5.0 Final Report Pipeline Hardening
+- Final Report layout now reserves header/caption/footer bands before layout, eliminating overlaps with section headers and group labels.
+- Combined Triple-Axis report pages skip tight_layout and fit existing axes into the content rect; Preserve Export Layout reuses export rendering for complex plots.
+- Added Fit Mode selector: Preserve Export Layout (default) and Report Layout (legacy).
+- Added per-section header/caption toggles, caption placement (Same Page / Next Page), and a Render Selected Page Preview action.
+- Tables are centered, wrapped, and dynamically sized with style presets (Compact / Normal / Large).
+- Safe Margins preset adds extra spacing for tighter layouts.
+
+### v2.4.0 Performance and Responsiveness
+- Combined triple-axis plot preview now uses a two-phase render (background data prep + UI-thread figure build) to keep the UI responsive.
+- Display renders reuse the combined figure when structure is unchanged; export renders always rebuild for deterministic output.
+- Added performance diagnostics in Developer Tools -> Performance Diagnostics... with stage-level timings for prepared data, cycle context, combined render, and embed.
+- Combined plot cycle context is skipped when cycle overlays are disabled to avoid unnecessary work.
+- Output invariance: plot appearance, export results, and analysis semantics are unchanged by these performance updates.
+
+### v2.3.0 Documentation Pass
+- Added a comprehensive commenting system with docstrings on every function and loop-level intent notes.
+- Documented high-risk subsystems (combined triple-axis plots, layout editor, plot elements, solubility workflows, caching).
+- Improves reviewability, debugging safety, and future change confidence by explaining design rationale and data flow.
+
+### v2.2.0 Update Highlights
+- Added Process Profiles (Profiles -> Manage Profiles...) to save, restore, import, and export full workspace snapshots.
+- Profiles live in `profiles/` as JSON; dataset paths are optional and trigger a relink prompt when missing.
+- Columns tab: Apply Column Selection button + indicator now sit next to Per-Sheet Column Mapping, left-aligned.
+- Combined triple-axis plot tab: redundant Clear Elements toolbar button removed (use Plot Elements -> Clear All).
+- Final Report tab: Generate Final Report and new Report Preview buttons are left-aligned.
+
+### v2.1.1 Update Highlights
+- Final Report PDFs stitch exported PDF artifacts per section in the selected order for deterministic output.
+- Final Report section ordering is state-driven; preview and generation respect the reorderable list.
+- Final Report generation requires applied columns and blocks (or prompts) if the combined plot export fails.
+
+### v2.1.0 Update Highlights
+- Final Report PDF now stitches the Combined Triple-Axis export into the report instead of re-rendering it.
+- Combined Triple-Axis Plot is the authoritative report plot and is always appended when generation succeeds.
+- Cycle Analysis plot and cycle speciation timeline plot are interactive-only and excluded from Final Report exports.
+- Plot generation is unified to the bottom action bar with a single Generate Plot control and a single Apply Column Selection button + status indicator.
+- Plot Settings tab no longer includes redundant plot-generation buttons.
+
+### v2.0.4 Update Highlights
+- Final Report plot pages are built from the export pipeline (same layout rules, legend sizing, and full-page sizing as manual exports).
+- Combined Triple-Axis Plot is included in the default report section order and selected by default.
+- Older Final Report settings auto-migrate `selected_sections` to insert `combined_plot` after Figure 2.
+- Final Report Preview thumbnails are derived from export-grade figures so preview and output match.
+
+### v2.0.3 Update Highlights
+- Final Report plots now use the export-grade pipeline (layout profiles, legend sizing, Agg finalization) for visual parity with manual exports.
+- Combined Triple-Axis report pages default to landscape (11x8.5) with preflight validation and descriptive fallback text when data is missing.
+- Final Report generation is hardened against invalid state and report text normalizes CO2 subscripts to mathtext to avoid glyph warnings.
+
+### v2.0.2 Update Highlights
+- Plot selection defaults to Combined Triple-Axis Plot only on first launch (no saved settings).
+- Plot selection checkbox states persist across restarts.
+
+### v2.0.1 Update Highlights
+- Added File -> Import GL-260 CSV... for direct ingestion of raw Graphtec CSV exports into a new Excel sheet.
+- New modal CSV import dialog provides channel mapping, sheet naming/handling, and preprocessing controls.
+- Derived columns (elapsed time, first derivative, smoothed derivative, moving average) are computed in Python and written as values.
+- Generated sheets match the existing schema and are immediately usable by Columns, plotting, and cycle analysis.
+
+### Legacy Change Highlights (v1.x and earlier)
+All versions earlier than v2.0.0 are treated as legacy. Highlights are grouped here for reference.
+
+#### v1.8.9 Update Highlights
+- Bottom action bar now supports selective plot generation with per-plot checkboxes and a single Generate Plot action (no forced full rebuild).
+- Cycle Analysis UI is reorganized into Manual Workflow + Advanced/Recompute, with undo/redo, marker import/export, summary copy, and per-cycle CSV export.
+- Final Report output fixes: captions render once, figure/table numbers are independent of page numbers, no cropping, and tables auto-fit within margins.
+
+#### v1.8.8 Update Highlights
+- Starting Material Settings now include a display name and optional note for the material reacting with the selected gas.
+- CO2/13CO2 has been removed from starting-material presets; gas identity lives only in the VDW Gas Model selection.
+- Conversion estimates now explicitly report the gas used for uptake and the starting material label from the new field.
+
+#### v1.8.7 Update Highlights
+- Cycle Analysis Summary is unified across auto/mixed/manual-only paths with a single builder.
+- Summary now verifies the exact gas model inputs used (preset label, V, a, b, MW, SciPy availability).
+- Gas uptake mass is always shown; conversion estimates only appear when starting material mass, MW, and stoichiometry are configured.
+- New Summary Formatting controls (compact, diagnostics, per-cycle gas mass, conversion estimate readiness) are persisted.
+- Starting material defaults are blank to avoid CO2/13CO2 wording unless explicitly configured.
+
+#### v1.8.6 Update Highlights
+- Added Auto Title support in Plot Settings -> Titles with render-time resolution for Preview/Refresh/Export.
+- Introduced managed Data Type lists (combobox + Manage Types dialog with add/rename/delete/reorder).
+- Added template editor with placeholder validation and a day-count mode selector (date diff vs inclusive).
+- Auto Title sources include full dataset or current view range, with deterministic fallback to full dataset when mapping is not possible.
+
+#### v1.8.5 Update Highlights
+- Combined cycle legend drag placement now persists from the embedded plot or Plot Preview into exports (PNG/SVG/PDF).
+- Peak/trough marker size changes propagate to the embedded plot, Plot Preview, and exports without stale cache reuse.
+- Main and cycle legend size adjustments now persist in settings across preview open/close and export cycles.
+
+#### v1.8.4 Update Highlights
+- Plot Settings closes without a redraw when no values change.
+- Combined plot layout tuning is accessed via Plot Settings -> Combined Plot Layout Tuner.
+- Save As stays visible in narrow plot tabs by keeping it separate from export checkboxes.
+- Main legend anchor/loc is re-applied after sizing for stable placement on refresh/export.
+- Refresh button label shortened to Refresh.
+
+#### v1.8.1 Update Highlights
+- Added a Cycle Analysis Plot Settings control for Peak / Trough Marker Size (pts^2) to adjust marker area.
+
+#### v1.8.0 Update Highlights
+- Unified render pipeline for initial render, Refresh, Plot Preview, and export (no split paths).
+- Refresh always builds a new figure while reusing cached prepared data and cycle metrics when the dataset is unchanged.
+- Deterministic overlay gating for markers, cycle legend, and moles summary; moles summary appends to the main legend when the cycle legend is off.
+- Manual vs auto marker sourcing is enforced (auto off uses manual-only markers; auto on supports manual add/remove overrides).
+- Plot Elements controllers are fully rebound on figure swaps so add/select/drag stays reliable after refresh and layout edits.
+
+#### v1.7.4 Update Highlights
+- Columns set to None are omitted from plots and legends (combined, core, export).
+- Main vs cycle legend sizing is now independent, with plot-aware controls.
+- Peak and trough marker shapes are configurable alongside size/color.
+- Cycle Analysis reserves top margin to avoid title overlap on refresh/resize.
+- Apply VDW now refreshes Cycle Analysis and shows a dirty/applied indicator.
+
+#### v1.7.1 Update Highlights
+- Plot elements remain interactive after Refresh on the combined triple-axis tab (placement + drag stay armed).
+- Refresh now retargets plot annotations after a deterministic install/draw/finalize pipeline.
+
+#### v1.7.0 Update Highlights
+- Plot Elements workflow updated with explicit placement arming and clearer add-status feedback.
+- Plot Elements editor keeps add defaults and provides a tighter edit/apply/revert loop.
+
+#### v1.6.8 Update Highlights
+- Combined triple-axis plots keep clean breaks between stitched sheets in the display window.
+- Plot element placement works across all element types in the combined plot view.
+- Span + Label selections respect the configured appearance color immediately and the textbox is draggable.
+
+Additional internal change summaries:
+- v1.6.3:
+  - Plot Preview/export now reflects manual Cycle Analysis edits correctly.
+- v1.6.2:
+  - Fixed combined plot xlabel spacing.
+  - Fixed cycle legend dragged position persistence across refresh/preview.
+- v1.6.0:
+  - Added a Layout Editor for per-plot layout adjustments (title/suptitle positions, legend anchors/loc, axis label padding).
+  - Added persisted layout profiles (`settings["layout_profiles"]`) for per-plot display/export layout state, including margins and legend anchors.
+  - Expanded combined plot layout controls with per-mode margins and legend anchor offsets.
+- v1.5.0.4:
+  - Plot Elements placement and live update fixes.
+  - Restored drag placement for spans and axes routing refresh after plot rebuilds.
+- v1.5.0.0:
+  - Free-threading readiness helpers and Developer Tools GIL controls.
+  - Unified `TkTaskRunner` for background tasks.
+  - Dependency audit tooling and session warning.
+  - VS Code interpreter prompts for GIL-disabled requests.
+- v1.4.0.8:
+  - Persisted multi-sheet selected sheets to `settings.json`.
+  - Plot Elements opens a dedicated annotations Toplevel per plot.
+  - Treeview selection recursion fix in annotations editor.
+  - Layout fixes for the annotations Toplevel.
