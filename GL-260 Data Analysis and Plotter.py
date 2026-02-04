@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.10.0
-# Date: 2026-02-03
+# Version: v2.10.1
+# Date: 2026-02-04
 
 import os
 import sys
@@ -7929,7 +7929,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.10.0"
+APP_VERSION = "v2.10.1"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -7994,6 +7994,14 @@ DEBUG_RENDER_CACHE = True
 DEBUG_TITLE_FONT_RESOLVE = False
 DEBUG_ANNOTATIONS_INTERACTION = False
 DEFAULT_EXPORT_DPI = EXPORT_DPI
+FINAL_REPORT_PREVIEW_BASE_DPI = 150.0
+FINAL_REPORT_PREVIEW_MIN_DPI = 48.0
+FINAL_REPORT_PREVIEW_BASE_SCREEN_WIDTH_RATIO = 0.84
+FINAL_REPORT_PREVIEW_BASE_SCREEN_HEIGHT_RATIO = 0.82
+FINAL_REPORT_PREVIEW_WINDOW_MAX_SCREEN_RATIO = 0.92
+FINAL_REPORT_PREVIEW_WINDOW_SCREEN_MARGIN_PX = 24
+FINAL_REPORT_PREVIEW_MIN_WINDOW_WIDTH = 640
+FINAL_REPORT_PREVIEW_MIN_WINDOW_HEIGHT = 480
 PLANNING_DEFAULT_STOP_PH = 8.25
 PLANNING_DEFAULT_STOP_CO2_ADDED_G = 2000.0
 PLANNING_PH_TARGET = PLANNING_DEFAULT_STOP_PH
@@ -26883,6 +26891,7 @@ class UnifiedApp(tk.Tk):
         self._final_report_preview_caption_label: Optional[ttk.Label] = None
         self._final_report_preview_zoom_combo_var: Optional[tk.StringVar] = None
         self._final_report_preview_save_button: Optional[ttk.Button] = None
+        self._final_report_preview_needs_initial_geometry = False
         self._final_report_preview_after_id: Optional[str] = None
         self._final_report_combined_failure_reason: Optional[str] = None
         self._combined_export_artifact: Optional[Dict[str, Any]] = None
@@ -66759,9 +66768,147 @@ class UnifiedApp(tk.Tk):
                 )
             )
 
+    def _final_report_preview_effective_dpi(self, fig: Figure) -> float:
+        """Purpose: Compute preview-only DPI for the current Final Report page.
+        Why: Keep preview zoom screen-reasonable without changing export DPI behavior.
+        Args:
+            fig (Figure): Matplotlib page figure used for preview rendering.
+        Returns:
+            float: Effective preview DPI after applying base-DPI and screen-fit clamps.
+        Side Effects:
+            - None.
+        Exceptions:
+            - Best-effort guards fall back to defaults when figure/screen metrics fail.
+        """
+        zoom_factor = self._final_report_preview_zoom_value / 100.0
+        base_dpi = float(FINAL_REPORT_PREVIEW_BASE_DPI)
+        screen_width = 0
+        screen_height = 0
+        preview_window = getattr(self, "_final_report_preview_window", None)
+        try:
+            if preview_window is not None and preview_window.winfo_exists():
+                screen_width = int(preview_window.winfo_screenwidth())
+                screen_height = int(preview_window.winfo_screenheight())
+            else:
+                screen_width = int(self.winfo_screenwidth())
+                screen_height = int(self.winfo_screenheight())
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            screen_width = 0
+            screen_height = 0
+        try:
+            fig_width_in, fig_height_in = fig.get_size_inches()
+        except Exception:
+            fig_width_in = 0.0
+            fig_height_in = 0.0
+        if (
+            screen_width > 0
+            and screen_height > 0
+            and fig_width_in > 0
+            and fig_height_in > 0
+        ):
+            # Clamp 100% preview against current display so preview zoom tracks a
+            # screen-native baseline instead of export DPI.
+            screen_fit_dpi = min(
+                (screen_width * FINAL_REPORT_PREVIEW_BASE_SCREEN_WIDTH_RATIO)
+                / fig_width_in,
+                (screen_height * FINAL_REPORT_PREVIEW_BASE_SCREEN_HEIGHT_RATIO)
+                / fig_height_in,
+            )
+            if math.isfinite(screen_fit_dpi) and screen_fit_dpi > 0:
+                base_dpi = min(base_dpi, screen_fit_dpi)
+        base_dpi = max(FINAL_REPORT_PREVIEW_MIN_DPI, base_dpi)
+        return max(1.0, base_dpi * zoom_factor)
+
+    def _final_report_preview_apply_initial_geometry(
+        self, image_width: int, image_height: int
+    ) -> None:
+        """Purpose: Apply one-time preview window geometry from rendered image size.
+        Why: Open the preview window at a usable page-sized geometry without
+            resize loops.
+        Args:
+            image_width (int): Rendered preview page width in pixels.
+            image_height (int): Rendered preview page height in pixels.
+        Returns:
+            None.
+        Side Effects:
+            - Updates the preview toplevel geometry once, clamped to screen bounds.
+            - Centers the preview window on the current display.
+            - Clears the one-time auto-size latch after geometry is applied.
+        Exceptions:
+            - Best-effort guards keep preview rendering alive if geometry probing fails.
+        """
+        if not getattr(self, "_final_report_preview_needs_initial_geometry", False):
+            return
+        window = getattr(self, "_final_report_preview_window", None)
+        canvas = getattr(self, "_final_report_preview_canvas", None)
+        try:
+            if (
+                window is None
+                or canvas is None
+                or not window.winfo_exists()
+                or image_width <= 0
+                or image_height <= 0
+            ):
+                return
+            try:
+                window.update_idletasks()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            # Measure non-canvas chrome/controls so the page image is fully visible.
+            non_canvas_width = max(
+                0, int(window.winfo_reqwidth()) - int(canvas.winfo_reqwidth())
+            )
+            non_canvas_height = max(
+                0, int(window.winfo_reqheight()) - int(canvas.winfo_reqheight())
+            )
+            target_width = int(image_width + non_canvas_width)
+            target_height = int(image_height + non_canvas_height)
+            screen_width = int(window.winfo_screenwidth())
+            screen_height = int(window.winfo_screenheight())
+            max_width = max(
+                FINAL_REPORT_PREVIEW_MIN_WINDOW_WIDTH,
+                int(screen_width * FINAL_REPORT_PREVIEW_WINDOW_MAX_SCREEN_RATIO)
+                - (FINAL_REPORT_PREVIEW_WINDOW_SCREEN_MARGIN_PX * 2),
+            )
+            max_height = max(
+                FINAL_REPORT_PREVIEW_MIN_WINDOW_HEIGHT,
+                int(screen_height * FINAL_REPORT_PREVIEW_WINDOW_MAX_SCREEN_RATIO)
+                - (FINAL_REPORT_PREVIEW_WINDOW_SCREEN_MARGIN_PX * 2),
+            )
+            clamped_width = max(
+                FINAL_REPORT_PREVIEW_MIN_WINDOW_WIDTH, min(target_width, max_width)
+            )
+            clamped_height = max(
+                FINAL_REPORT_PREVIEW_MIN_WINDOW_HEIGHT, min(target_height, max_height)
+            )
+            pos_x = max(0, (screen_width - clamped_width) // 2)
+            pos_y = max(0, (screen_height - clamped_height) // 2)
+            window.geometry(f"{clamped_width}x{clamped_height}+{pos_x}+{pos_y}")
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        finally:
+            self._final_report_preview_needs_initial_geometry = False
+
     def _final_report_preview_render_current_page(self) -> None:
-        """Render current page.
-        Used by final report preview workflows to render current page."""
+        """Purpose: Render the current Final Report preview page into the
+            preview canvas.
+        Why: Keep page navigation and zoom changes synchronized with a single
+            preview render.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            - Writes a rendered page image into the preview canvas.
+            - Updates page labels, caption text, save button state, and nav controls.
+            - Applies one-time initial preview window geometry when opening the window.
+        Exceptions:
+            - Render/encode failures are swallowed to avoid interrupting the UI
+              workflow.
+        """
         pages = self._final_report_preview_pages
         if not pages:
             canvas = self._final_report_preview_canvas
@@ -66783,8 +66930,7 @@ class UnifiedApp(tk.Tk):
         info = pages[index]
         fig = info["figure"]
         buffer = io.BytesIO()
-        zoom_factor = self._final_report_preview_zoom_value / 100.0
-        dpi = max(1.0, self._get_export_dpi() * zoom_factor)
+        dpi = self._final_report_preview_effective_dpi(fig)
         try:
             fig.savefig(buffer, format="png", dpi=dpi)
         except Exception:
@@ -66794,12 +66940,13 @@ class UnifiedApp(tk.Tk):
         encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
         photo = tk.PhotoImage(data=encoded)
         self._final_report_preview_photo = photo
+        width = photo.width()
+        height = photo.height()
+        self._final_report_preview_apply_initial_geometry(width, height)
         canvas = self._final_report_preview_canvas
         if canvas is not None:
             canvas.delete("all")
             canvas.create_image(0, 0, anchor="nw", image=photo)
-            width = photo.width()
-            height = photo.height()
             canvas.configure(scrollregion=(0, 0, width, height))
             canvas.xview_moveto(0)
             canvas.yview_moveto(0)
@@ -67043,9 +67190,13 @@ class UnifiedApp(tk.Tk):
         window = tk.Toplevel(self)
         window.title("Live Final Report Preview")
         window.transient(self)
-        window.minsize(640, 480)
+        window.minsize(
+            FINAL_REPORT_PREVIEW_MIN_WINDOW_WIDTH,
+            FINAL_REPORT_PREVIEW_MIN_WINDOW_HEIGHT,
+        )
         window.protocol("WM_DELETE_WINDOW", self._close_final_report_preview_window)
         self._final_report_preview_window = window
+        self._final_report_preview_needs_initial_geometry = True
 
         container = ttk.Frame(window, padding=8)
         container.pack(fill="both", expand=True)
@@ -67136,6 +67287,7 @@ class UnifiedApp(tk.Tk):
         self._final_report_preview_caption_label = None
         self._final_report_preview_zoom_combo_var = None
         self._final_report_preview_save_button = None
+        self._final_report_preview_needs_initial_geometry = False
         self._final_report_preview_clear_figures()
 
     def _final_report_table_caption(self, section_id: str) -> str:

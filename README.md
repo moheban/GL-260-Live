@@ -1,12 +1,13 @@
-# GL-260 Data Analysis and Plotter (v2.10.0)
+# GL-260 Data Analysis and Plotter (v2.10.1)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.10.0`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.10.1`.
 
 ## Table of Contents
 - [Part I - Changelog / Ledger](#part-i---changelog--ledger)
+  - [v2.10.1 Final Report Preview Window Auto-Sizing](#v2101-final-report-preview-window-auto-sizing)
   - [v2.9.12 Combined Single-Pass Render](#v2912-combined-single-pass-render)
   - [v2.9.11 Combined Cycle Legend Anchor Space Persistence](#v2911-combined-cycle-legend-anchor-space-persistence)
   - [v2.9.10 Combined Cycle Legend Refresh Redraw](#v2910-combined-cycle-legend-refresh-redraw)
@@ -50,6 +51,11 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [License](#license)
 
 ## Part I - Changelog / Ledger
+
+### v2.10.1 Final Report Preview Window Auto-Sizing
+- Final Report live preview now uses a preview-only DPI baseline (screen-fit clamped) so 100% preview zoom is display-reasonable and no longer tied to export DPI.
+- Opening the Live Final Report Preview now auto-sizes the window to the rendered page image, clamps to screen bounds, and centers once at open.
+- Preview auto-sizing is one-time per window open, so user manual resizing remains in control after the initial render.
 
 ### v2.9.12 Combined Single-Pass Render
 - Combined Triple-Axis Generate/Refresh now defers rendering until canvas geometry is ready, applies saved legend anchors before the first draw, and performs a single draw for the display.
@@ -875,6 +881,7 @@ Report pipeline:
 - Uses export-grade plots and tables for deterministic output.
 - Stitches PDF artifacts per section in the selected order.
 - Reuses the combined plot export when Preserve Export Layout is selected.
+- Live Final Report preview uses preview-only DPI scaling and opens at a page-sized, screen-clamped centered window for faster visual review.
 
 Section ordering and inclusion:
 - Section selection and ordering are state-driven and persisted in settings.
