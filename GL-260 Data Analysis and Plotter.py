@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.11.1
+# Version: v2.11.2
 # Date: 2026-02-05
 
 import os
@@ -7929,7 +7929,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.11.1"
+APP_VERSION = "v2.11.2"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -31325,6 +31325,200 @@ class UnifiedApp(tk.Tk):
             force_draw=False,
         )
 
+    def _install_combined_loading_overlay(self, frame, widget) -> None:
+        """Install a loading overlay over the combined plot canvas.
+
+        Purpose:
+            Display a blocking overlay so the initial combined render is hidden.
+        Why:
+            The first combined draw can occur before geometry settles; hiding it
+            prevents users from seeing the unstable layout.
+        Inputs:
+            frame: Plot tab frame hosting the combined plot.
+            widget: Tk widget returned by the FigureCanvasTkAgg.
+        Outputs:
+            None.
+        Side Effects:
+            Creates and places overlay widgets, stores overlay references on the frame.
+        Exceptions:
+            Overlay creation errors are caught to avoid UI interruption.
+        """
+        if frame is None or widget is None:
+            return
+        overlay = getattr(frame, "_combined_loading_overlay", None)
+        if overlay is not None:
+            try:
+                if overlay.winfo_exists():
+                    overlay.lift()
+                    return
+            except Exception:
+                overlay = None
+        try:
+            base_bg = frame.cget("background")
+        except Exception:
+            base_bg = None
+        if not base_bg:
+            try:
+                base_bg = self.cget("background")
+            except Exception:
+                base_bg = None
+        try:
+            overlay = tk.Frame(frame, background=base_bg)
+        except Exception:
+            overlay = tk.Frame(frame)
+        try:
+            overlay.place(
+                in_=widget, relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0
+            )
+        except Exception:
+            try:
+                overlay.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
+            except Exception:
+                return
+        try:
+            label = ttk.Label(overlay, text="Loading combined plot...")
+            label.place(relx=0.5, rely=0.5, anchor="center")
+        except Exception:
+            label = None
+        try:
+            overlay.lift()
+        except Exception:
+            # Best-effort guard; ignore failures.
+            pass
+        frame._combined_loading_overlay = overlay
+        frame._combined_loading_label = label
+
+    def _clear_combined_loading_overlay(self, frame) -> None:
+        """Clear the combined plot loading overlay if present.
+
+        Purpose:
+            Remove the blocking overlay once the stable render is ready.
+        Why:
+            Users should only see the final, correctly scaled combined plot.
+        Inputs:
+            frame: Plot tab frame hosting the combined plot.
+        Outputs:
+            None.
+        Side Effects:
+            Destroys overlay widgets and clears stored references.
+        Exceptions:
+            Overlay removal errors are guarded to keep the UI responsive.
+        """
+        if frame is None:
+            return
+        overlay = getattr(frame, "_combined_loading_overlay", None)
+        if overlay is None:
+            return
+        try:
+            overlay.place_forget()
+        except Exception:
+            # Best-effort guard; ignore failures.
+            pass
+        try:
+            overlay.destroy()
+        except Exception:
+            # Best-effort guard; ignore failures.
+            pass
+        frame._combined_loading_overlay = None
+        frame._combined_loading_label = None
+
+    def _schedule_combined_auto_refresh(self, frame, canvas) -> None:
+        """Schedule the one-time combined auto refresh after initial render.
+
+        Purpose:
+            Trigger a programmatic refresh using the same path as the Refresh button.
+        Why:
+            The refresh path applies stable geometry, ensuring the first visible
+            render matches the manual Refresh output.
+        Inputs:
+            frame: Plot tab frame hosting the combined plot.
+            canvas: FigureCanvasTkAgg displaying the figure.
+        Outputs:
+            None.
+        Side Effects:
+            Updates auto-refresh state, schedules an idle callback, and invokes refresh.
+        Exceptions:
+            Errors are caught to avoid UI interruption.
+        """
+        if frame is None or canvas is None:
+            return
+        state = getattr(frame, "_combined_auto_refresh_state", None)
+        # Only schedule once per tab creation to prevent refresh recursion.
+        if state not in (None, "pending"):
+            return
+        frame._combined_auto_refresh_state = "scheduled"
+        after_id = getattr(frame, "_combined_auto_refresh_after_id", None)
+        # Avoid duplicate idle callbacks if one is already queued.
+        if after_id is not None:
+            return
+
+        def _run():
+            """Trigger the combined auto refresh once layout is idle.
+
+            Purpose:
+                Enter the auto-refresh phase and invoke the shared refresh path.
+            Why:
+                Combined plots must use the manual refresh path for stable sizing.
+            Inputs:
+                None.
+            Outputs:
+                None.
+            Side Effects:
+                Updates auto-refresh state and rebuilds the combined plot.
+            Exceptions:
+                Errors are caught to avoid breaking the UI loop.
+            """
+            frame._combined_auto_refresh_after_id = None
+            if getattr(frame, "_combined_auto_refresh_state", None) != "scheduled":
+                return
+            try:
+                if not frame.winfo_exists():
+                    self._clear_combined_loading_overlay(frame)
+                    return
+            except Exception:
+                return
+            try:
+                widget = canvas.get_tk_widget()
+                if widget is not None and not widget.winfo_exists():
+                    self._clear_combined_loading_overlay(frame)
+                    return
+            except Exception:
+                # Best-effort guard; ignore failures.
+                pass
+            frame._combined_auto_refresh_state = "refreshing"
+            # Use the same refresh path as the Refresh button.
+            self._force_plot_refresh(frame, canvas, capture_combined_legend=True)
+
+        try:
+            frame._combined_auto_refresh_after_id = self.after_idle(_run)
+        except Exception:
+            _run()
+
+    def _complete_combined_auto_refresh(self, frame) -> None:
+        """Complete the combined auto refresh and reveal the plot.
+
+        Purpose:
+            Finalize auto refresh state and remove the loading overlay.
+        Why:
+            Ensures the first visible combined plot uses the refresh path output.
+        Inputs:
+            frame: Plot tab frame hosting the combined plot.
+        Outputs:
+            None.
+        Side Effects:
+            Updates auto-refresh state and clears the loading overlay.
+        Exceptions:
+            Errors are caught to avoid UI interruption.
+        """
+        if frame is None:
+            return
+        if getattr(frame, "_combined_auto_refresh_state", None) != "refreshing":
+            return
+        # Mark completion so the auto-refresh only runs once.
+        frame._combined_auto_refresh_state = "done"
+        frame._combined_auto_refresh_after_id = None
+        self._clear_combined_loading_overlay(frame)
+
     def _finalize_combined_plot_display(
         self,
         frame,
@@ -31336,10 +31530,11 @@ class UnifiedApp(tk.Tk):
 
         Purpose:
             Apply final sizing, legend anchors, and tracking before drawing the
-            combined plot once.
+            combined plot once, then schedule the auto refresh if needed.
         Why:
             Combined plots depend on stable geometry; deferring avoids an initial
-            incorrect render and ensures the first visible draw is correct.
+            incorrect render, and the auto refresh aligns with the manual Refresh
+            render path before the overlay is removed.
         Inputs:
             frame: Plot tab frame hosting the combined plot.
             canvas: FigureCanvasTkAgg bound to the combined figure.
@@ -31349,7 +31544,7 @@ class UnifiedApp(tk.Tk):
         Side Effects:
             Defers render until widget geometry is ready, applies saved legend
             anchors, registers drag tracking, retargets annotation controllers,
-            and triggers a single draw_idle.
+            schedules a one-time auto refresh, and triggers a single draw_idle.
         Exceptions:
             Errors are caught defensively to keep UI workflows responsive.
         """
@@ -31497,6 +31692,13 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures.
                 pass
+            auto_state = getattr(frame, "_combined_auto_refresh_state", None)
+            if auto_state == "pending":
+                # Initial render complete; schedule the one-time auto refresh.
+                self._schedule_combined_auto_refresh(frame, canvas)
+            elif auto_state == "refreshing":
+                # Auto refresh completed; reveal the stabilized render.
+                self._complete_combined_auto_refresh(frame)
 
         self._with_loading_cursor(_render, widget=widget)
 
@@ -35415,7 +35617,8 @@ class UnifiedApp(tk.Tk):
             The created tab frame.
         Side Effects:
             Creates Tk widgets, binds canvas resize handlers, registers plot
-            controllers, and schedules display refresh logic.
+            controllers, schedules display refresh logic, and initializes the
+            combined plot loading/auto-refresh state when applicable.
         Exceptions:
             Widget and canvas errors are caught to avoid UI interruption.
         """
@@ -35424,6 +35627,10 @@ class UnifiedApp(tk.Tk):
         frame._plot_key = plot_key
         if plot_key == "fig_combined":
             frame._combined_render_ready = False
+            frame._combined_auto_refresh_state = "pending"
+            frame._combined_auto_refresh_after_id = None
+            frame._combined_loading_overlay = None
+            frame._combined_loading_label = None
 
         self._log_plot_tab_debug(f"Creating tab frame for '{title}'")
 
@@ -35475,6 +35682,10 @@ class UnifiedApp(tk.Tk):
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+
+        if plot_key == "fig_combined":
+            # Hide the initial combined render behind a loading overlay.
+            self._install_combined_loading_overlay(frame, widget)
 
         fig_size = None
         try:

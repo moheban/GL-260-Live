@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.11.1)
+# GL-260 Data Analysis and Plotter (v2.11.2)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.11.1`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.11.2`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v2.11.2 Combined Plot Auto Refresh Overlay](#v2112-combined-plot-auto-refresh-overlay)
   - [v2.11.1 Plot Preview Combined Legend Tracking Restore](#v2111-plot-preview-combined-legend-tracking-restore)
   - [v2.11.0 New Profile Workflow + Suptitle Label Update](#v2110-new-profile-workflow--suptitle-label-update)
   - [v2.10.2 README Restructure (User Manual First)](#v2102-readme-restructure-user-manual-first)
@@ -304,6 +305,7 @@ Purpose: preview the combined plot, manage overlays, and export the triple-axis 
 
 Key controls:
 - Generate Plot and Refresh actions (from the bottom action bar).
+- Combined plots show a brief loading overlay on first generation while an automatic refresh produces the stabilized layout.
 - Close Plot removes the generated figure tab and returns focus to Plot Settings.
 - Plot Elements editor for adding annotations and overlays.
 - Export controls (PNG/SVG/PDF) with output size profiles and DPI.
@@ -836,6 +838,10 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v2.11.2 Combined Plot Auto Refresh Overlay
+- Combined Triple-Axis first render is hidden behind a loading overlay while an automatic refresh applies the final layout and font scaling.
+- The first visible combined plot now matches the manual Refresh output without requiring user action.
 
 ### v2.11.1 Plot Preview Combined Legend Tracking Restore
 - Plot Preview no longer alters Combined Triple-Axis legend drag callbacks; closing preview restores combined legend interactivity without a manual Refresh.
