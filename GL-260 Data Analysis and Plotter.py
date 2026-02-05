@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.11.0
+# Version: v2.11.1
 # Date: 2026-02-05
 
 import os
@@ -7929,7 +7929,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.11.0"
+APP_VERSION = "v2.11.1"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -36188,10 +36188,31 @@ class UnifiedApp(tk.Tk):
         return frame
 
     def _open_plot_preview(
-        self, plot_key: Optional[str], plot_id: Optional[str], title: str
+        self, plot_key: str | None, plot_id: str | None, title: str
     ) -> None:
-        """Open plot preview.
-        Used by UI actions to open plot preview."""
+        """Open plot preview for the combined plot.
+
+        Purpose:
+            Build and display an export-grade combined plot preview window.
+        Why:
+            Users need to verify the export layout without mutating the live
+            combined plot or its interactive handlers.
+
+        Args:
+            plot_key: Plot key requested for preview; only combined is supported.
+            plot_id: Plot identifier for the combined plot.
+            title: Title text from the invoking button (unused here).
+
+        Returns:
+            None.
+
+        Side Effects:
+            Creates a preview window, renders a combined plot figure, and
+            temporarily stores the preview figure reference.
+
+        Exceptions:
+            Errors are caught and reported via message boxes to keep the UI stable.
+        """
         if plot_key != "fig_combined":
             return
         try:
@@ -36251,10 +36272,13 @@ class UnifiedApp(tk.Tk):
                 try:
                     win.after_cancel(after_id)
                 except Exception:
-                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    # Best-effort guard; ignore failures to avoid interrupting
+                    # the workflow.
                     pass
 
-            # Closure captures _schedule_preview_finalize state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _schedule_preview_finalize.
+            # Closure captures _schedule_preview_finalize state for callback wiring,
+            # kept nested to scope the handler, and invoked by bindings set in
+            # _schedule_preview_finalize.
             def _apply_finalize():
                 """Apply finalize.
                 Used to apply finalize changes to live state."""
@@ -36298,17 +36322,33 @@ class UnifiedApp(tk.Tk):
             force_draw=True,
         )
 
-        try:
-            self._register_combined_legend_tracking(fig)
-        except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-            pass
+        # Plot Preview is view-only; avoid registering combined legend tracking
+        # here because it would disconnect the live combined canvas callbacks.
 
         close_state = {"closed": False}
 
         def _close(_event=None):
-            """Close value.
-            Used by UI actions to close value safely."""
+            """Close the plot preview window safely.
+
+            Purpose:
+                Tear down the preview window and restore combined legend tracking.
+            Why:
+                Preview teardown must not leave the live combined plot without
+                its draggable legend callbacks.
+
+            Args:
+                _event: Optional Tk event payload from close/destroy events.
+
+            Returns:
+                None.
+
+            Side Effects:
+                Closes the preview figure, clears preview references, restores
+                combined legend tracking, and schedules a combined redraw.
+
+            Exceptions:
+                Errors are caught to avoid interrupting the UI workflow.
+            """
             if _event is not None and getattr(_event, "widget", None) is not win:
                 return
             if close_state["closed"]:
@@ -36337,6 +36377,26 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+            try:
+                tabs = list(getattr(self, "_plot_tabs", []) or [])
+                has_combined_tab = any(
+                    getattr(tab, "_plot_key", None) == "fig_combined"
+                    or getattr(tab, "_plot_id", None) == "fig_combined_triple_axis"
+                    for tab in tabs
+                )
+            except Exception:
+                has_combined_tab = False
+            if has_combined_tab:
+                try:
+                    # Restore combined legend tracking after preview teardown.
+                    self._refresh_combined_legend_tracking()
+                    combined_canvas = getattr(self, "_combined_legend_canvas", None)
+                    if isinstance(combined_canvas, FigureCanvasTkAgg):
+                        combined_canvas.draw_idle()
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting
+                    # the workflow.
+                    pass
             try:
                 if _event is None:
                     win.destroy()

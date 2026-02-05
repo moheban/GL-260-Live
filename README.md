@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.11.0)
+# GL-260 Data Analysis and Plotter (v2.11.1)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.11.0`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.11.1`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v2.11.1 Plot Preview Combined Legend Tracking Restore](#v2111-plot-preview-combined-legend-tracking-restore)
   - [v2.11.0 New Profile Workflow + Suptitle Label Update](#v2110-new-profile-workflow--suptitle-label-update)
   - [v2.10.2 README Restructure (User Manual First)](#v2102-readme-restructure-user-manual-first)
   - [v2.10.1 Final Report Preview Window Auto-Sizing](#v2101-final-report-preview-window-auto-sizing)
@@ -596,6 +597,7 @@ Rendering Behavior:
 
 #### 6) Export and Layout Pipeline
 - Preview rendering favors responsiveness, while export rendering rebuilds figures for deterministic output.
+- Plot Preview is view-only and does not change Combined plot legend interactivity.
 - Output DPI and size profiles are applied uniformly across plot exports.
 - Combined plot exports are reused by the Final Report when Preserve Export Layout is selected.
 - Layout profiles ensure consistent margins and legend placement across preview and export.
@@ -834,6 +836,9 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v2.11.1 Plot Preview Combined Legend Tracking Restore
+- Plot Preview no longer alters Combined Triple-Axis legend drag callbacks; closing preview restores combined legend interactivity without a manual Refresh.
 
 ### v2.11.0 New Profile Workflow + Suptitle Label Update
 - Added a New Profile button in the Profiles Manager for creating clean, dataset-optional profiles.
