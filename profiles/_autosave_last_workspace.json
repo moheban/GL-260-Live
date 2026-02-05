@@ -1,28 +1,65 @@
 {
-  "created_at": "2026-01-30 08:25:53",
+  "created_at": "2026-02-05 09:42:39",
   "description": "Autosave before loading a profile.",
   "payload": {
     "column_assignments": {
       "dt": "Date & Time",
       "x": "__GL260_ELAPSED_DAYS_STITCHED__",
       "y1": "Reactor Pressure (PSI)",
-      "y2": "Smoothed First Derivative",
-      "y3": "None",
+      "y2": "First Derivative Moving Average",
+      "y3": "Manifold Pressure (PSI)",
       "z": "Internal Reactor Temperature",
-      "z2": "None"
+      "z2": "External Reactor Temperature"
     },
-    "dataset_path": "C:/Users/mmoheban/Local Documents/Aaron PR-24751 Sodium Acetate GL-260 Data.xlsx",
+    "dataset_path": "C:/Users/mmoheban/Local Documents/Python/PR-24301 Sodium Bicarbonate MPT/PR-24301 CLM-441-MPT Sodium Bicarbonate GL-260 Data.xlsx",
     "final_report_settings": {
       "combined_plot_title_override": "",
+      "fit_mode": "Preserve Export Layout",
       "font_scale": 1.0,
       "global_layout_mode": "plots_landscape_pages",
       "margin_in": 0.75,
       "narrative": "",
       "profile_key": "final_report_png",
+      "safe_margin_preset": "Normal",
+      "section_caption_enabled": {
+        "combined_plot": false,
+        "cycle_plot": false,
+        "cycle_stats_table": false,
+        "cycle_timeline_plot": false,
+        "cycle_timeline_table": false,
+        "fig1": false,
+        "fig2": false,
+        "key_metrics": false
+      },
+      "section_caption_placement": {
+        "combined_plot": "Same Page",
+        "cycle_plot": "Same Page",
+        "cycle_stats_table": "Same Page",
+        "cycle_timeline_plot": "Same Page",
+        "cycle_timeline_table": "Same Page",
+        "fig1": "Same Page",
+        "fig2": "Same Page",
+        "key_metrics": "Same Page"
+      },
+      "section_header_enabled": {
+        "co2_dosing_guidance": false,
+        "combined_plot": false,
+        "cycle_plot": false,
+        "cycle_stats_table": false,
+        "cycle_summary": false,
+        "cycle_timeline_plot": false,
+        "cycle_timeline_table": false,
+        "fig1": false,
+        "fig2": false,
+        "key_metrics": false,
+        "math_preview": false,
+        "planner_narrative": false,
+        "predicted_ph_callouts": false,
+        "sol_summary": false
+      },
       "section_order": [
         "combined_plot",
-        "cycle_stats_table",
-        "cycle_summary"
+        "cycle_stats_table"
       ],
       "section_orientation": {
         "combined_plot": "landscape",
@@ -33,11 +70,11 @@
       },
       "selected_sections": [
         "combined_plot",
-        "cycle_stats_table",
-        "cycle_summary"
+        "cycle_stats_table"
       ],
       "show_page_numbers": true,
       "show_section_headers": true,
+      "table_style_preset": "Normal",
       "title": "GL-260 Final Report"
     },
     "layout_profiles": {
@@ -62,7 +99,7 @@
             "bottom": 0.2,
             "left": 0.098,
             "right": 0.9,
-            "top": 0.911
+            "top": 0.88
           },
           "suptitle_xy": null,
           "title_xy": null,
@@ -88,7 +125,7 @@
             "bottom": 0.2,
             "left": 0.098,
             "right": 0.9,
-            "top": 0.911
+            "top": 0.88
           },
           "suptitle_xy": null,
           "title_xy": null,
@@ -243,47 +280,6 @@
           "xlabel_pad_pts": null
         },
         "mirror_detached_labelpad": false
-      },
-      "plot_tab_figure_3_cycle_analysis": {
-        "display": {
-          "axis_labelpads": {},
-          "cycle_legend_anchor": null,
-          "cycle_legend_loc": null,
-          "detached_labelpad": null,
-          "detached_spine_offset": null,
-          "legend_anchor": null,
-          "legend_anchor_y": null,
-          "legend_loc": null,
-          "margins": {
-            "bottom": 0.12,
-            "left": 0.08,
-            "right": 0.97,
-            "top": 0.92
-          },
-          "suptitle_xy": null,
-          "title_xy": null,
-          "xlabel_pad_pts": null
-        },
-        "export": {
-          "axis_labelpads": {},
-          "cycle_legend_anchor": null,
-          "cycle_legend_loc": null,
-          "detached_labelpad": null,
-          "detached_spine_offset": null,
-          "legend_anchor": null,
-          "legend_anchor_y": null,
-          "legend_loc": null,
-          "margins": {
-            "bottom": 0.184,
-            "left": 0.08,
-            "right": 0.97,
-            "top": 0.92
-          },
-          "suptitle_xy": null,
-          "title_xy": null,
-          "xlabel_pad_pts": null
-        },
-        "mirror_detached_labelpad": false
       }
     },
     "multi_sheet_enabled": true,
@@ -335,8 +331,7 @@
           "visible": true,
           "zorder": 11.0
         }
-      ],
-      "plot_tab_figure_3_cycle_analysis": []
+      ]
     },
     "plot_settings": {
       "auto_deriv_ticks": true,
@@ -350,24 +345,26 @@
         "time": true
       },
       "axis_pad_pct": 5.0,
-      "combined_center_plot_legend": true,
+      "combined_center_plot_legend": false,
       "combined_cycle_legend_anchor": [
-        0.21543212103354423,
-        0.25477820858252137
+        0.6108533905140316,
+        0.8035065590105199
       ],
-      "combined_cycle_legend_anchor_mode": "axis_offset",
+      "combined_cycle_legend_anchor_mode": "loc_tuple",
       "combined_cycle_legend_anchor_space": "axes",
+      "combined_cycle_legend_clamp_to_axes": true,
       "combined_cycle_legend_draggable": true,
+      "combined_cycle_legend_enable_drag": true,
       "combined_cycle_legend_fontsize": 10.0,
       "combined_cycle_legend_loc": [
-        0.16886251779540357,
-        0.3130323147856754
+        0.6108533905140316,
+        0.8035065590105199
       ],
       "combined_cycle_legend_loc_choice": "upper right",
+      "combined_cycle_legend_lock_position": false,
+      "combined_cycle_legend_persist_position": true,
       "combined_cycle_legend_ref_axis": "main",
       "combined_cycle_legend_ref_corner": "center",
-      "combined_cycle_legend_ref_dx_px": 28.976124444444167,
-      "combined_cycle_legend_ref_dy_px": -405.7006458333334,
       "combined_deriv_axis_label": "First Derivative Moving Average (\u0394PSI/\u0394hour)",
       "combined_deriv_axis_offset": 1.12,
       "combined_deriv_labelpad": 15.0,
@@ -378,7 +375,7 @@
       "combined_legend_alignment": "center",
       "combined_legend_anchor": [
         0.500695952816758,
-        0.047780325395754976
+        0.047695606644581015
       ],
       "combined_legend_bottom_margin_pts": 2.0,
       "combined_legend_fontsize": 10.0,
@@ -386,18 +383,19 @@
       "combined_legend_loc": 8,
       "combined_legend_rows": 1,
       "combined_legend_wrap": true,
+      "combined_main_legend_enable_drag": false,
       "combined_primary_axis_label": "",
       "combined_primary_labelpad": 3.0,
       "combined_right_pad_pct": 6.0,
       "combined_suptitle_fontsize": 18.0,
       "combined_suptitle_pad_pts": 0.0,
-      "combined_suptitle_y": 1.0,
+      "combined_suptitle_y": 0.99,
       "combined_temp_axis_label": "Temperature (\u00b0C)",
       "combined_temp_labelpad": 15.0,
       "combined_tick_fontsize": 12.0,
       "combined_title_center_reference": "axes_union",
       "combined_title_fontsize": 16.0,
-      "combined_title_pad_pts": 0.0,
+      "combined_title_pad_pts": 20.0,
       "combined_top_margin_pct": 5.0,
       "combined_x_axis_label": "",
       "combined_xlabel_tick_gap_pts": 5.0,
@@ -418,13 +416,13 @@
       },
       "deriv_major_tick": 200.0,
       "deriv_minor_tick": 100.0,
-      "deriv_y_max": 30.0,
-      "deriv_y_min": -30.0,
+      "deriv_y_max": 100.0,
+      "deriv_y_min": -100.0,
       "enable_deriv_axis": true,
       "enable_temp_axis": true,
       "include_moles_in_core_plot_legend": false,
-      "max_time": 0.75,
-      "max_y": 1300.0,
+      "max_time": 7.86,
+      "max_y": 1152.93,
       "min_cycle_drop": -10.0,
       "min_time": -0.02,
       "min_y": 0.0,
@@ -467,22 +465,28 @@
       "scatter_size": 20.0,
       "show_cycle_legend_on_core_plots": true,
       "show_cycle_markers_on_core_plots": true,
-      "suptitle_text": "PR-24751 Sodium Acetate",
+      "suptitle_text": "PR-24301 CLM-441-MPT Sodium Bicarbonate Batch 2 of 2",
       "temp_major_tick": 5.0,
       "temp_minor_tick": 2.5,
-      "title_text": "Day 0 Pressure Test",
-      "twin_y_max": 60.0,
-      "twin_y_min": 0.0,
+      "title_text": "Reaction Day 1-6 1/13-1/19",
+      "twin_y_max": 42.53,
+      "twin_y_min": 13.38,
       "x_major_tick": 0.2,
       "x_minor_tick": 0.05,
       "y_major_tick": 50.0,
       "y_minor_tick": 5.0
     },
-    "selected_sheet": "Day 0 Pressure Test",
+    "selected_sheet": "Day 0 Gasket Pressure Test",
     "selected_sheets": [
-      "Day 0 Pressure Test"
+      "Batch 2 Rxn Day 1",
+      "Batch 2 Rxn Day 2",
+      "Batch 2 Rxn Day 3",
+      "Batch 2 Rxn Day 3.1",
+      "Batch 2 Rxn Day 3.2-7",
+      "Batch 2 Rxn Day 7-7.1",
+      "Batch 2 Rxn Day 7.2-8"
     ]
   },
   "profile_version": 1,
-  "updated_at": "2026-01-30 08:25:53"
+  "updated_at": "2026-02-05 09:42:39"
 }

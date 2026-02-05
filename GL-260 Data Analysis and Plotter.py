@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.10.2
-# Date: 2026-02-04
+# Version: v2.11.0
+# Date: 2026-02-05
 
 import os
 import sys
@@ -7929,7 +7929,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.10.2"
+APP_VERSION = "v2.11.0"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -26958,33 +26958,41 @@ class UnifiedApp(tk.Tk):
         )
 
         # Scatter plot preferences
-        self.scatter_enabled = tk.BooleanVar(
-            value=bool(
-                settings.get("scatter_enabled", DEFAULT_SCATTER_SETTINGS["enabled"])
-            )
+        scatter_enabled_default = bool(
+            settings.get("scatter_enabled", DEFAULT_SCATTER_SETTINGS["enabled"])
         )
-        self.scatter_marker = tk.StringVar(
-            value=settings.get("scatter_marker", DEFAULT_SCATTER_SETTINGS["marker"])
+        self.scatter_enabled = tk.BooleanVar(value=scatter_enabled_default)
+        self._register_var_default(self.scatter_enabled, scatter_enabled_default)
+        scatter_marker_default = settings.get(
+            "scatter_marker", DEFAULT_SCATTER_SETTINGS["marker"]
         )
-        self.scatter_size = tk.DoubleVar(
-            value=settings.get("scatter_size", DEFAULT_SCATTER_SETTINGS["size"])
+        self.scatter_marker = tk.StringVar(value=scatter_marker_default)
+        self._register_var_default(self.scatter_marker, scatter_marker_default)
+        scatter_size_default = settings.get(
+            "scatter_size", DEFAULT_SCATTER_SETTINGS["size"]
         )
-        self.scatter_color = tk.StringVar(
-            value=settings.get("scatter_color", DEFAULT_SCATTER_SETTINGS["color"])
+        self.scatter_size = tk.DoubleVar(value=scatter_size_default)
+        self._register_var_default(self.scatter_size, scatter_size_default)
+        scatter_color_default = settings.get(
+            "scatter_color", DEFAULT_SCATTER_SETTINGS["color"]
         )
-        self.scatter_alpha = tk.DoubleVar(
-            value=settings.get("scatter_alpha", DEFAULT_SCATTER_SETTINGS["alpha"])
+        self.scatter_color = tk.StringVar(value=scatter_color_default)
+        self._register_var_default(self.scatter_color, scatter_color_default)
+        scatter_alpha_default = settings.get(
+            "scatter_alpha", DEFAULT_SCATTER_SETTINGS["alpha"]
         )
-        self.scatter_edgecolor = tk.StringVar(
-            value=settings.get(
-                "scatter_edgecolor", DEFAULT_SCATTER_SETTINGS["edgecolor"]
-            )
+        self.scatter_alpha = tk.DoubleVar(value=scatter_alpha_default)
+        self._register_var_default(self.scatter_alpha, scatter_alpha_default)
+        scatter_edgecolor_default = settings.get(
+            "scatter_edgecolor", DEFAULT_SCATTER_SETTINGS["edgecolor"]
         )
-        self.scatter_linewidth = tk.DoubleVar(
-            value=settings.get(
-                "scatter_linewidth", DEFAULT_SCATTER_SETTINGS["linewidth"]
-            )
+        self.scatter_edgecolor = tk.StringVar(value=scatter_edgecolor_default)
+        self._register_var_default(self.scatter_edgecolor, scatter_edgecolor_default)
+        scatter_linewidth_default = settings.get(
+            "scatter_linewidth", DEFAULT_SCATTER_SETTINGS["linewidth"]
         )
+        self.scatter_linewidth = tk.DoubleVar(value=scatter_linewidth_default)
+        self._register_var_default(self.scatter_linewidth, scatter_linewidth_default)
         self._scatter_pref_window = None
         self._data_columns_pref_window = None
         self._per_sheet_mapping_window = None
@@ -27492,21 +27500,21 @@ class UnifiedApp(tk.Tk):
         self.deriv_y_max = tk.DoubleVar(value=deriv_y_max_default)
         self._register_var_default(self.deriv_y_max, deriv_y_max_default)
 
-        self.auto_time_ticks = tk.BooleanVar(
-            value=settings.get("auto_time_ticks", initial_auto_time_ticks)
-        )
+        auto_time_default = settings.get("auto_time_ticks", initial_auto_time_ticks)
+        self.auto_time_ticks = tk.BooleanVar(value=auto_time_default)
+        self._register_var_default(self.auto_time_ticks, auto_time_default)
 
-        self.auto_y_ticks = tk.BooleanVar(
-            value=settings.get("auto_y_ticks", initial_auto_y_ticks)
-        )
+        auto_y_default = settings.get("auto_y_ticks", initial_auto_y_ticks)
+        self.auto_y_ticks = tk.BooleanVar(value=auto_y_default)
+        self._register_var_default(self.auto_y_ticks, auto_y_default)
 
-        self.auto_temp_ticks = tk.BooleanVar(
-            value=settings.get("auto_temp_ticks", initial_auto_temp_ticks)
-        )
+        auto_temp_default = settings.get("auto_temp_ticks", initial_auto_temp_ticks)
+        self.auto_temp_ticks = tk.BooleanVar(value=auto_temp_default)
+        self._register_var_default(self.auto_temp_ticks, auto_temp_default)
 
-        self.auto_deriv_ticks = tk.BooleanVar(
-            value=settings.get("auto_deriv_ticks", initial_auto_deriv_ticks)
-        )
+        auto_deriv_default = settings.get("auto_deriv_ticks", initial_auto_deriv_ticks)
+        self.auto_deriv_ticks = tk.BooleanVar(value=auto_deriv_default)
+        self._register_var_default(self.auto_deriv_ticks, auto_deriv_default)
 
         self._pending_cycle_tab_focus = False
         self._cycle_focus_after_id = None
@@ -27516,22 +27524,34 @@ class UnifiedApp(tk.Tk):
         self.include_moles_legend = tk.BooleanVar(
             value=settings.get("include_moles_legend", initial_include_moles_legend)
         )
+        show_cycle_markers_default = settings.get(
+            "show_cycle_markers_on_core_plots",
+            initial_show_cycle_markers_on_core,
+        )
         self.show_cycle_markers_on_core = tk.BooleanVar(
-            value=settings.get(
-                "show_cycle_markers_on_core_plots",
-                initial_show_cycle_markers_on_core,
-            )
+            value=show_cycle_markers_default
+        )
+        self._register_var_default(
+            self.show_cycle_markers_on_core, show_cycle_markers_default
+        )
+        show_cycle_legend_default = settings.get(
+            "show_cycle_legend_on_core_plots", initial_show_cycle_legend_on_core
         )
         self.show_cycle_legend_on_core = tk.BooleanVar(
-            value=settings.get(
-                "show_cycle_legend_on_core_plots", initial_show_cycle_legend_on_core
-            )
+            value=show_cycle_legend_default
+        )
+        self._register_var_default(
+            self.show_cycle_legend_on_core, show_cycle_legend_default
+        )
+        include_moles_default = settings.get(
+            "include_moles_in_core_plot_legend",
+            initial_include_moles_core_legend,
         )
         self.include_moles_core_legend = tk.BooleanVar(
-            value=settings.get(
-                "include_moles_in_core_plot_legend",
-                initial_include_moles_core_legend,
-            )
+            value=include_moles_default
+        )
+        self._register_var_default(
+            self.include_moles_core_legend, include_moles_default
         )
         self.core_legend_fontsize = tk.DoubleVar(
             value=initial_core_legend_fontsize
@@ -27550,8 +27570,11 @@ class UnifiedApp(tk.Tk):
             settings.get("combined_y_third_key", initial_combined_third_key),
         )
         self.combined_y_left_key = tk.StringVar(value=left_key)
+        self._register_var_default(self.combined_y_left_key, left_key)
         self.combined_y_right_key = tk.StringVar(value=right_key)
+        self._register_var_default(self.combined_y_right_key, right_key)
         self.combined_y_third_key = tk.StringVar(value=third_key)
+        self._register_var_default(self.combined_y_third_key, third_key)
         self._combined_left_display_var = tk.StringVar()
         self._combined_right_display_var = tk.StringVar()
         self._combined_third_display_var = tk.StringVar()
@@ -27660,13 +27683,17 @@ class UnifiedApp(tk.Tk):
         self.deriv_min_tick = tk.DoubleVar(value=deriv_min_default)
         self._register_var_default(self.deriv_min_tick, deriv_min_default)
 
-        self.enable_temp_axis = tk.BooleanVar(
-            value=settings.get("enable_temp_axis", initial_enable_temp_axis)
+        enable_temp_default = settings.get(
+            "enable_temp_axis", initial_enable_temp_axis
         )
+        self.enable_temp_axis = tk.BooleanVar(value=enable_temp_default)
+        self._register_var_default(self.enable_temp_axis, enable_temp_default)
 
-        self.enable_deriv_axis = tk.BooleanVar(
-            value=settings.get("enable_deriv_axis", initial_enable_deriv_axis)
+        enable_deriv_default = settings.get(
+            "enable_deriv_axis", initial_enable_deriv_axis
         )
+        self.enable_deriv_axis = tk.BooleanVar(value=enable_deriv_default)
+        self._register_var_default(self.enable_deriv_axis, enable_deriv_default)
 
         self.combined_deriv_axis_offset = tk.DoubleVar(
             value=initial_combined_deriv_axis_offset
@@ -27724,6 +27751,9 @@ class UnifiedApp(tk.Tk):
         )
         self.combined_font_family = tk.StringVar(value=initial_combined_font_family)
         self.combined_legend_wrap = tk.BooleanVar(value=initial_combined_legend_wrap)
+        self._register_var_default(
+            self.combined_legend_wrap, initial_combined_legend_wrap
+        )
         self.combined_legend_rows = tk.IntVar(value=initial_combined_legend_rows)
         self.combined_legend_label_gap = tk.DoubleVar(
             value=initial_combined_legend_gap_pts
@@ -27748,6 +27778,9 @@ class UnifiedApp(tk.Tk):
         )
         self.center_combined_plot_legend = tk.BooleanVar(
             value=initial_combined_center_plot_legend
+        )
+        self._register_var_default(
+            self.center_combined_plot_legend, initial_combined_center_plot_legend
         )
         self.combined_cycle_legend_enable_drag = tk.BooleanVar(
             value=initial_combined_cycle_legend_enable_drag
@@ -27870,11 +27903,13 @@ class UnifiedApp(tk.Tk):
             initial_combined_main_legend_enable_drag,
         )
 
-        self.title_text = tk.StringVar(value=settings.get("title_text", initial_title))
+        title_default = settings.get("title_text", initial_title)
+        self.title_text = tk.StringVar(value=title_default)
+        self._register_var_default(self.title_text, title_default)
 
-        self.suptitle_text = tk.StringVar(
-            value=settings.get("suptitle_text", initial_suptitle)
-        )
+        suptitle_default = settings.get("suptitle_text", initial_suptitle)
+        self.suptitle_text = tk.StringVar(value=suptitle_default)
+        self._register_var_default(self.suptitle_text, suptitle_default)
 
         self.auto_title_enabled_var = tk.BooleanVar(
             value=initial_auto_title_enabled
@@ -27923,6 +27958,14 @@ class UnifiedApp(tk.Tk):
         self.axis_auto_pressure = tk.BooleanVar(value=axis_auto_defaults["pressure"])
         self.axis_auto_temp = tk.BooleanVar(value=axis_auto_defaults["temperature"])
         self.axis_auto_deriv = tk.BooleanVar(value=axis_auto_defaults["derivative"])
+        self._register_var_default(self.axis_auto_time, axis_auto_defaults["time"])
+        self._register_var_default(
+            self.axis_auto_pressure, axis_auto_defaults["pressure"]
+        )
+        self._register_var_default(self.axis_auto_temp, axis_auto_defaults["temperature"])
+        self._register_var_default(
+            self.axis_auto_deriv, axis_auto_defaults["derivative"]
+        )
 
         self._register_var_default(
             self.combined_deriv_axis_offset, initial_combined_deriv_axis_offset
@@ -27982,6 +28025,20 @@ class UnifiedApp(tk.Tk):
         # Build UI
 
         self._build_ui()
+
+        fig1_var = getattr(self, "_plot_select_fig1_var", None)
+        if fig1_var is not None:
+            self._register_var_default(fig1_var, bool(fig1_var.get()))
+        fig2_var = getattr(self, "_plot_select_fig2_var", None)
+        if fig2_var is not None:
+            self._register_var_default(fig2_var, bool(fig2_var.get()))
+        combined_var = getattr(self, "_plot_select_combined_var", None)
+        if combined_var is not None:
+            self._register_var_default(combined_var, bool(combined_var.get()))
+
+        self._startup_profile_plot_settings = (
+            self._capture_startup_profile_plot_settings()
+        )
 
         self._initial_tab_shown = False
         self._initial_tab_after_id = None
@@ -34591,7 +34648,7 @@ class UnifiedApp(tk.Tk):
             elements.append(
                 {
                     "kind": "suptitle",
-                    "label": "Suptitle",
+                    "label": "Suptitle (Job Information)",
                     "handle": handle,
                     "handle_px": handle_px,
                     "base_handle_display": display_xy,
@@ -37947,8 +38004,21 @@ class UnifiedApp(tk.Tk):
         return listbox.get(selection[0])
 
     def _open_profile_manager(self) -> None:
-        """Open profile manager.
-        Used by UI actions to open profile manager."""
+        """Open the Profiles Manager dialog.
+
+        Purpose:
+            Present the profile list and profile actions in a modal dialog.
+        Why:
+            Centralizes profile creation, load, and maintenance workflows.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Creates Tk widgets, binds callbacks, and captures dialog references.
+        Exceptions:
+            Best-effort guards keep UI focus and window creation resilient.
+        """
         existing = getattr(self, "_profile_manager_window", None)
         if existing is not None and existing.winfo_exists():
             try:
@@ -38007,6 +38077,11 @@ class UnifiedApp(tk.Tk):
         button_frame.grid(row=1, column=2, sticky="n", padx=(12, 0))
         ttk.Button(
             button_frame,
+            text="New Profile",
+            command=self._profile_new_blank,
+        ).pack(fill="x", pady=2)
+        ttk.Button(
+            button_frame,
             text="Save Current As...",
             command=self._profile_save_current_as,
         ).pack(fill="x", pady=2)
@@ -38051,6 +38126,626 @@ class UnifiedApp(tk.Tk):
         ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
         self._refresh_profile_listbox()
+
+    def _profile_new_blank(self) -> None:
+        """Create a new blank profile from startup-default workspace state.
+
+        Purpose:
+            Start a fresh analysis session and persist it as a profile snapshot.
+        Why:
+            Prevents stale state from leaking when switching to a new dataset.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Clears the workspace, prompts the user, applies settings, and writes
+            a profile document to disk.
+        Exceptions:
+            Best-effort guards prevent UI interruptions from blocking the workflow.
+        """
+        parent = getattr(self, "_profile_manager_window", None) or self
+        if not messagebox.askyesno(
+            "New Profile",
+            "Creating a new profile clears the current workspace. Continue?",
+            parent=parent,
+        ):
+            return
+        self._autosave_last_workspace()
+        self._reset_workspace_to_startup_defaults()
+        config = self._prompt_new_profile_configuration(parent)
+        if not config:
+            return
+        profile_name = config.get("profile_name")
+        if not profile_name:
+            return
+        path = self._profile_path(profile_name)
+        if path is None:
+            return
+        created_at = config.get("created_at")
+        doc = self._build_profile_document(
+            include_dataset_path=False,
+            created_at=created_at,
+        )
+        payload = doc.get("payload")
+        if isinstance(payload, dict):
+            # Flag new profiles as dataset-optional to avoid relink prompts.
+            payload["dataset_required"] = False
+        if self._write_profile_document(path, doc):
+            self._refresh_profile_listbox(select_name=profile_name)
+
+    def _prompt_new_profile_configuration(
+        self, parent: tk.Misc
+    ) -> dict[str, Any] | None:
+        """Prompt for new profile configuration values.
+
+        Purpose:
+            Collect job-specific parameters before saving a blank profile.
+        Why:
+            New profiles should capture gas model and starting material inputs
+            alongside the new suptitle metadata.
+        Args:
+            parent: Parent window used to scope the modal dialog.
+        Returns:
+            A configuration dict on success, or None if canceled.
+        Side Effects:
+            Creates a modal dialog, validates inputs, and applies values to state.
+        Exceptions:
+            Best-effort guards keep dialog flow resilient to UI errors.
+        """
+        window = tk.Toplevel(parent)
+        window.title("New Profile Configuration")
+        window.transient(parent)
+        window.resizable(False, False)
+        window.grab_set()
+
+        result: dict[str, Any] = {"config": None}
+
+        def _format_float(value: Any) -> str:
+            """Format a numeric value for entry defaults.
+
+            Purpose:
+                Normalize numeric defaults for dialog entry widgets.
+            Why:
+                Keeps initial field values readable and consistent.
+            Args:
+                value: Value to format as a string.
+            Returns:
+                String representation or an empty string on failure.
+            Side Effects:
+                None.
+            Exceptions:
+                Returns an empty string when conversion fails.
+            """
+            try:
+                return f"{float(value)}"
+            except Exception:
+                return ""
+
+        def _parse_float(value: str, label: str) -> Optional[float]:
+            """Parse a float input with user-facing validation.
+
+            Purpose:
+                Validate numeric fields before applying them to the workspace.
+            Why:
+                Ensures dialog inputs are numeric before running apply routines.
+            Args:
+                value: Raw string from the entry widget.
+                label: Human-readable label for error messaging.
+            Returns:
+                Parsed float, or None when validation fails.
+            Side Effects:
+                Shows a message box on invalid input.
+            Exceptions:
+                None; invalid values return None.
+            """
+            try:
+                parsed = float(value)
+            except Exception:
+                messagebox.showerror(
+                    "Invalid Input",
+                    f"Please enter a valid {label}.",
+                    parent=window,
+                )
+                return None
+            if not math.isfinite(parsed):
+                messagebox.showerror(
+                    "Invalid Input",
+                    f"{label} must be a finite number.",
+                    parent=window,
+                )
+                return None
+            return parsed
+
+        profile_name_var = tk.StringVar(value="")
+        suptitle_var = tk.StringVar(value=str(self.suptitle_text.get() or ""))
+
+        gas_preset_var = tk.StringVar(value=str(self.v_gas.get() or ""))
+        volume_var = tk.StringVar(value=_format_float(self.v_volume.get()))
+        vdw_a_var = tk.StringVar(value=_format_float(self.v_a.get()))
+        vdw_b_var = tk.StringVar(value=_format_float(self.v_b.get()))
+        gas_molar_mass_var = tk.StringVar(
+            value=_format_float(self.v_gas_molar_mass.get())
+        )
+
+        product_preset_var = tk.StringVar(
+            value=str(self.v_product_preset.get() or "")
+        )
+        product_molar_mass_var = tk.StringVar(
+            value=_format_float(self.v_product_molar_mass.get())
+        )
+        starting_mass_var = tk.StringVar(
+            value=_format_float(self.v_starting_mass.get())
+        )
+        stoich_var = tk.StringVar(value=_format_float(self.v_starting_stoich.get()))
+
+        container = ttk.Frame(window, padding=12)
+        container.grid(row=0, column=0, sticky="nsew")
+        window.grid_rowconfigure(0, weight=1)
+        window.grid_columnconfigure(0, weight=1)
+
+        info_frame = ttk.Labelframe(container, text="Profile Info")
+        info_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        info_frame.grid_columnconfigure(1, weight=1)
+
+        ttk.Label(info_frame, text="Profile name").grid(
+            row=0, column=0, sticky="w", padx=6, pady=4
+        )
+        name_entry = ttk.Entry(info_frame, textvariable=profile_name_var)
+        name_entry.grid(row=0, column=1, sticky="ew", padx=6, pady=4)
+        ttk.Label(info_frame, text="Suptitle (Job Information)").grid(
+            row=1, column=0, sticky="w", padx=6, pady=4
+        )
+        ttk.Entry(info_frame, textvariable=suptitle_var).grid(
+            row=1, column=1, sticky="ew", padx=6, pady=4
+        )
+
+        vdw_frame = ttk.Labelframe(container, text="Gas Model (Van der Waals)")
+        vdw_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        vdw_frame.grid_columnconfigure(1, weight=1)
+
+        ttk.Label(vdw_frame, text="Preset").grid(
+            row=0, column=0, sticky="w", padx=6, pady=4
+        )
+        gas_combo = ttk.Combobox(
+            vdw_frame,
+            textvariable=gas_preset_var,
+            state="readonly",
+            values=list(GAS_PRESETS.keys()),
+        )
+        gas_combo.grid(row=0, column=1, sticky="ew", padx=6, pady=4)
+
+        ttk.Label(vdw_frame, text="Vessel Volume (L)").grid(
+            row=1, column=0, sticky="w", padx=6, pady=4
+        )
+        ttk.Entry(vdw_frame, textvariable=volume_var).grid(
+            row=1, column=1, sticky="ew", padx=6, pady=4
+        )
+        ttk.Label(vdw_frame, text="VDW a (L^2*atm/mol^2)").grid(
+            row=2, column=0, sticky="w", padx=6, pady=4
+        )
+        ttk.Entry(vdw_frame, textvariable=vdw_a_var).grid(
+            row=2, column=1, sticky="ew", padx=6, pady=4
+        )
+        ttk.Label(vdw_frame, text="VDW b (L/mol)").grid(
+            row=3, column=0, sticky="w", padx=6, pady=4
+        )
+        ttk.Entry(vdw_frame, textvariable=vdw_b_var).grid(
+            row=3, column=1, sticky="ew", padx=6, pady=4
+        )
+        ttk.Label(vdw_frame, text="Gaseous Reagent Molar Mass (g/mol)").grid(
+            row=4, column=0, sticky="w", padx=6, pady=4
+        )
+        ttk.Entry(vdw_frame, textvariable=gas_molar_mass_var).grid(
+            row=4, column=1, sticky="ew", padx=6, pady=4
+        )
+
+        reagent_frame = ttk.Labelframe(container, text="Starting Material")
+        reagent_frame.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        reagent_frame.grid_columnconfigure(1, weight=1)
+
+        ttk.Label(reagent_frame, text="Preset").grid(
+            row=0, column=0, sticky="w", padx=6, pady=4
+        )
+        product_combo = ttk.Combobox(
+            reagent_frame,
+            textvariable=product_preset_var,
+            state="readonly",
+            values=list(PRODUCT_PRESETS.keys()),
+        )
+        product_combo.grid(row=0, column=1, sticky="ew", padx=6, pady=4)
+
+        ttk.Label(reagent_frame, text="Starting Material Molar Mass (g/mol)").grid(
+            row=1, column=0, sticky="w", padx=6, pady=4
+        )
+        ttk.Entry(reagent_frame, textvariable=product_molar_mass_var).grid(
+            row=1, column=1, sticky="ew", padx=6, pady=4
+        )
+        ttk.Label(reagent_frame, text="Starting Material Mass (g)").grid(
+            row=2, column=0, sticky="w", padx=6, pady=4
+        )
+        ttk.Entry(reagent_frame, textvariable=starting_mass_var).grid(
+            row=2, column=1, sticky="ew", padx=6, pady=4
+        )
+        ttk.Label(reagent_frame, text="Stoichiometry (mol gas per mol starting)").grid(
+            row=3, column=0, sticky="w", padx=6, pady=4
+        )
+        ttk.Entry(reagent_frame, textvariable=stoich_var).grid(
+            row=3, column=1, sticky="ew", padx=6, pady=4
+        )
+
+        buttons = ttk.Frame(container)
+        buttons.grid(row=3, column=0, sticky="e", pady=(4, 0))
+
+        def _close_window() -> None:
+            """Close the configuration dialog safely.
+
+            Purpose:
+                Release modal grabs and destroy the dialog window.
+            Why:
+                Ensures the UI unblocks cleanly after dialog completion.
+            Args:
+                None.
+            Returns:
+                None.
+            Side Effects:
+                Releases grabs and destroys the dialog window.
+            Exceptions:
+                Best-effort guards suppress Tk errors during cleanup.
+            """
+            try:
+                window.grab_release()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            try:
+                window.destroy()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        def _cancel() -> None:
+            """Cancel the dialog and return no configuration.
+
+            Purpose:
+                Exit the dialog without applying any changes.
+            Why:
+                Allows users to abandon profile creation safely.
+            Args:
+                None.
+            Returns:
+                None.
+            Side Effects:
+                Clears the result payload and closes the dialog.
+            Exceptions:
+                None.
+            """
+            result["config"] = None
+            _close_window()
+
+        def _sync_gas_preset(*_) -> None:
+            """Sync VDW fields when the gas preset selection changes.
+
+            Purpose:
+                Auto-populate VDW inputs based on the selected gas preset.
+            Why:
+                Reduces manual entry and keeps preset defaults consistent.
+            Args:
+                *_: Tk callback args (unused).
+            Returns:
+                None.
+            Side Effects:
+                Updates VDW field variables.
+            Exceptions:
+                Best-effort guards avoid interrupting the dialog flow.
+            """
+            choice = gas_preset_var.get()
+            preset = GAS_PRESETS.get(choice)
+            if preset:
+                vdw_a_var.set(_format_float(preset.get("a")))
+                vdw_b_var.set(_format_float(preset.get("b")))
+            override = self._gas_preset_overrides.get(choice) or {}
+            molar = override.get("molar_mass")
+            if molar is None and preset is not None:
+                molar = preset.get("molar_mass")
+            try:
+                molar_val = float(molar)
+            except (TypeError, ValueError):
+                molar_val = None
+            if molar_val is not None and math.isfinite(molar_val) and molar_val > 0.0:
+                gas_molar_mass_var.set(_format_float(molar_val))
+
+        def _sync_product_preset(*_) -> None:
+            """Sync starting material fields when the preset changes.
+
+            Purpose:
+                Auto-populate starting material molar mass from presets.
+            Why:
+                Keeps preset values consistent while allowing overrides.
+            Args:
+                *_: Tk callback args (unused).
+            Returns:
+                None.
+            Side Effects:
+                Updates the molar mass field variable.
+            Exceptions:
+                Best-effort guards avoid interrupting the dialog flow.
+            """
+            preset_key = product_preset_var.get()
+            preset = PRODUCT_PRESETS.get(preset_key)
+            if preset:
+                product_molar_mass_var.set(_format_float(preset.get("molar_mass")))
+
+        def _confirm() -> None:
+            """Validate inputs and apply the configuration to the workspace.
+
+            Purpose:
+                Ensure dialog inputs are valid before saving a new profile.
+            Why:
+                Prevents invalid or incomplete profiles from being persisted.
+            Args:
+                None.
+            Returns:
+                None.
+            Side Effects:
+                Applies validated configuration to live state and closes the dialog.
+            Exceptions:
+                None.
+            """
+            raw_name = (profile_name_var.get() or "").strip()
+            safe_name = self._sanitize_profile_name(raw_name)
+            if not safe_name:
+                messagebox.showerror(
+                    "New Profile",
+                    "Profile name cannot be empty.",
+                    parent=window,
+                )
+                return
+            profile_path = self._profile_path(safe_name)
+            if profile_path is None:
+                return
+            created_at = None
+            if profile_path.exists():
+                if not messagebox.askyesno(
+                    "Overwrite Profile?",
+                    f"A profile named '{safe_name}' already exists. Overwrite it?",
+                    parent=window,
+                ):
+                    return
+                existing = self._read_profile_document(profile_path)
+                if isinstance(existing, dict):
+                    created_at = existing.get("created_at")
+
+            vessel_volume = _parse_float(volume_var.get(), "vessel volume (L)")
+            if vessel_volume is None:
+                return
+            vdw_a = _parse_float(vdw_a_var.get(), "VDW a")
+            if vdw_a is None:
+                return
+            vdw_b = _parse_float(vdw_b_var.get(), "VDW b")
+            if vdw_b is None:
+                return
+            gas_molar_mass = _parse_float(
+                gas_molar_mass_var.get(), "gaseous reagent molar mass (g/mol)"
+            )
+            if gas_molar_mass is None:
+                return
+            product_molar_mass = _parse_float(
+                product_molar_mass_var.get(),
+                "starting material molar mass (g/mol)",
+            )
+            if product_molar_mass is None:
+                return
+            starting_mass = _parse_float(
+                starting_mass_var.get(), "starting material mass (g)"
+            )
+            if starting_mass is None:
+                return
+            stoich_ratio = _parse_float(
+                stoich_var.get(),
+                "stoichiometry (mol gas per mol starting)",
+            )
+            if stoich_ratio is None:
+                return
+
+            gas_preset = gas_preset_var.get()
+            if gas_preset not in GAS_PRESETS:
+                gas_preset = next(iter(GAS_PRESETS))
+            product_preset = product_preset_var.get()
+            if product_preset not in PRODUCT_PRESETS:
+                product_preset = next(iter(PRODUCT_PRESETS))
+
+            config = {
+                "profile_name": safe_name,
+                "created_at": created_at,
+                "suptitle_text": (suptitle_var.get() or "").strip(),
+                "gas_preset": gas_preset,
+                "vessel_volume": vessel_volume,
+                "vdw_a": vdw_a,
+                "vdw_b": vdw_b,
+                "gas_molar_mass": gas_molar_mass,
+                "product_preset": product_preset,
+                "product_molar_mass": product_molar_mass,
+                "starting_mass": starting_mass,
+                "stoich_ratio": stoich_ratio,
+            }
+            if not self._apply_new_profile_configuration(config):
+                return
+            result["config"] = config
+            _close_window()
+
+        gas_preset_var.trace_add("write", _sync_gas_preset)
+        product_preset_var.trace_add("write", _sync_product_preset)
+        _sync_gas_preset()
+        _sync_product_preset()
+
+        ttk.Button(buttons, text="Cancel", command=_cancel).pack(side="right")
+        ttk.Button(buttons, text="Create Profile", command=_confirm).pack(
+            side="right", padx=(0, 8)
+        )
+
+        window.bind("<Escape>", lambda _event: _cancel())
+        window.bind("<Return>", lambda _event: _confirm())
+        window.protocol("WM_DELETE_WINDOW", _cancel)
+        try:
+            name_entry.focus_set()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+        window.wait_window()
+        return result.get("config")
+
+    def _apply_new_profile_configuration(self, config: dict[str, Any]) -> bool:
+        """Apply new profile configuration values to the live workspace.
+
+        Purpose:
+            Persist dialog inputs into Tk variables and settings using existing
+            validation workflows.
+        Why:
+            Ensures New Profile values are validated consistently with the rest
+            of the application.
+        Args:
+            config: Dictionary of validated configuration values.
+        Returns:
+            True if the configuration was applied successfully, otherwise False.
+        Side Effects:
+            Updates Tk variables, settings, and triggers apply routines.
+        Exceptions:
+            Best-effort guards prevent validation errors from crashing the UI.
+        """
+        def _float_matches(expected: float, actual: Any) -> bool:
+            """Compare floats with a small tolerance.
+
+            Purpose:
+                Validate that applied settings match dialog inputs.
+            Why:
+                Guards against invalid inputs that failed validation.
+            Args:
+                expected: Expected float value.
+                actual: Actual value read from settings.
+            Returns:
+                True when values are within tolerance.
+            Side Effects:
+                None.
+            Exceptions:
+                Returns False when values cannot be coerced safely.
+            """
+            try:
+                actual_val = float(actual)
+            except Exception:
+                return False
+            if not math.isfinite(actual_val):
+                return False
+            return abs(float(expected) - actual_val) <= 1e-6
+
+        suptitle_value = str(config.get("suptitle_text") or "")
+        self.suptitle_text.set(suptitle_value)
+        settings["suptitle_text"] = suptitle_value
+
+        gas_preset = config.get("gas_preset") or self.v_gas.get()
+        if gas_preset not in GAS_PRESETS:
+            gas_preset = next(iter(GAS_PRESETS))
+        self.v_gas.set(gas_preset)
+        self.v_volume.set(float(config.get("vessel_volume", 0.0)))
+        self.v_a.set(float(config.get("vdw_a", 0.0)))
+        self.v_b.set(float(config.get("vdw_b", 0.0)))
+        self.v_gas_molar_mass.set(float(config.get("gas_molar_mass", 0.0)))
+        self.v_starting_mass.set(float(config.get("starting_mass", 0.0)))
+        self._apply_vdw()
+
+        product_preset = config.get("product_preset") or self.v_product_preset.get()
+        if product_preset not in PRODUCT_PRESETS:
+            product_preset = next(iter(PRODUCT_PRESETS))
+        self.v_product_preset.set(product_preset)
+        self.v_product_molar_mass.set(float(config.get("product_molar_mass", 0.0)))
+        self.v_starting_mass.set(float(config.get("starting_mass", 0.0)))
+        self.v_starting_stoich.set(float(config.get("stoich_ratio", 0.0)))
+        self._apply_product_settings()
+
+        if settings.get("vdw_gas") != gas_preset:
+            messagebox.showerror(
+                "New Profile",
+                "Gas preset could not be applied. Check your inputs and try again.",
+                parent=self,
+            )
+            return False
+        if not _float_matches(config["vessel_volume"], settings.get("vessel_volume")):
+            messagebox.showerror(
+                "New Profile",
+                "Vessel volume could not be applied. Check your inputs and try again.",
+                parent=self,
+            )
+            return False
+        if not _float_matches(config["vdw_a"], settings.get("vdw_a")):
+            messagebox.showerror(
+                "New Profile",
+                "VDW a could not be applied. Check your inputs and try again.",
+                parent=self,
+            )
+            return False
+        if not _float_matches(config["vdw_b"], settings.get("vdw_b")):
+            messagebox.showerror(
+                "New Profile",
+                "VDW b could not be applied. Check your inputs and try again.",
+                parent=self,
+            )
+            return False
+        if not _float_matches(
+            config["gas_molar_mass"], settings.get("vdw_gas_molar_mass")
+        ):
+            messagebox.showerror(
+                "New Profile",
+                "Gas molar mass could not be applied. Check your inputs and try again.",
+                parent=self,
+            )
+            return False
+        if settings.get("starting_material_preset") != product_preset:
+            messagebox.showerror(
+                "New Profile",
+                (
+                    "Starting material preset could not be applied. "
+                    "Check your inputs and try again."
+                ),
+                parent=self,
+            )
+            return False
+        if not _float_matches(
+            config["product_molar_mass"],
+            settings.get("starting_material_mw_g_mol"),
+        ):
+            messagebox.showerror(
+                "New Profile",
+                "Starting material molar mass could not be applied.",
+                parent=self,
+            )
+            return False
+        if not _float_matches(
+            config["starting_mass"], settings.get("starting_material_mass_g")
+        ):
+            messagebox.showerror(
+                "New Profile",
+                "Starting material mass could not be applied.",
+                parent=self,
+            )
+            return False
+        if not _float_matches(
+            config["stoich_ratio"],
+            settings.get("stoich_mol_gas_per_mol_starting"),
+        ):
+            messagebox.showerror(
+                "New Profile",
+                "Stoichiometry could not be applied. Check your inputs and try again.",
+                parent=self,
+            )
+            return False
+
+        try:
+            self._update_auto_title_preview()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        return True
 
     def _build_profile_document(
         self,
@@ -38359,6 +39054,162 @@ class UnifiedApp(tk.Tk):
                 snapshot[key] = copy.deepcopy(value)
         return snapshot
 
+    def _capture_startup_profile_plot_settings(self) -> dict[str, Any]:
+        """Capture startup plot settings for new profile resets.
+
+        Purpose:
+            Snapshot plot/cycle settings in their startup-default state.
+        Why:
+            New Profile must reset to a clean baseline that mirrors a fresh launch.
+        Args:
+            None.
+        Returns:
+            A plot settings payload compatible with profile save/load routines.
+        Side Effects:
+            None.
+        Exceptions:
+            Best-effort guards fall back to safe defaults on lookup failures.
+        """
+        payload: dict[str, Any] = {}
+
+        payload["plot_generation_selection"] = {
+            "fig1": bool(
+                self._default_value_from_var(
+                    getattr(self, "_plot_select_fig1_var", None), False
+                )
+            ),
+            "fig2": bool(
+                self._default_value_from_var(
+                    getattr(self, "_plot_select_fig2_var", None), False
+                )
+            ),
+            "fig_combined": bool(
+                self._default_value_from_var(
+                    getattr(self, "_plot_select_combined_var", None), True
+                )
+            ),
+        }
+
+        payload["axis_auto_range"] = {
+            "time": bool(self._default_value_from_var(self.axis_auto_time, True)),
+            "pressure": bool(
+                self._default_value_from_var(self.axis_auto_pressure, True)
+            ),
+            "temperature": bool(
+                self._default_value_from_var(self.axis_auto_temp, True)
+            ),
+            "derivative": bool(
+                self._default_value_from_var(self.axis_auto_deriv, True)
+            ),
+        }
+
+        key_map = (
+            ("axis_pad_pct", "axis_pad_pct"),
+            ("min_time", "min_time"),
+            ("max_time", "max_time"),
+            ("min_y", "min_y"),
+            ("max_y", "max_y"),
+            ("twin_y_min", "twin_y_min"),
+            ("twin_y_max", "twin_y_max"),
+            ("deriv_y_min", "deriv_y_min"),
+            ("deriv_y_max", "deriv_y_max"),
+            ("auto_time_ticks", "auto_time_ticks"),
+            ("auto_y_ticks", "auto_y_ticks"),
+            ("auto_temp_ticks", "auto_temp_ticks"),
+            ("auto_deriv_ticks", "auto_deriv_ticks"),
+            ("x_major_tick", "xmaj_tick"),
+            ("x_minor_tick", "xmin_tick"),
+            ("y_major_tick", "ymaj_tick"),
+            ("y_minor_tick", "ymin_tick"),
+            ("temp_major_tick", "temp_maj_tick"),
+            ("temp_minor_tick", "temp_min_tick"),
+            ("deriv_major_tick", "deriv_maj_tick"),
+            ("deriv_minor_tick", "deriv_min_tick"),
+            ("title_text", "title_text"),
+            ("suptitle_text", "suptitle_text"),
+            ("enable_temp_axis", "enable_temp_axis"),
+            ("enable_deriv_axis", "enable_deriv_axis"),
+            ("min_cycle_drop", "min_cycle_drop"),
+            ("peak_prominence", "pk_prominence"),
+            ("peak_distance", "pk_distance"),
+            ("peak_width", "pk_width"),
+            ("show_cycle_markers_on_core_plots", "show_cycle_markers_on_core"),
+            ("show_cycle_legend_on_core_plots", "show_cycle_legend_on_core"),
+            ("include_moles_in_core_plot_legend", "include_moles_core_legend"),
+            ("scatter_enabled", "scatter_enabled"),
+            ("scatter_marker", "scatter_marker"),
+            ("scatter_size", "scatter_size"),
+            ("scatter_color", "scatter_color"),
+            ("scatter_alpha", "scatter_alpha"),
+            ("scatter_edgecolor", "scatter_edgecolor"),
+            ("scatter_linewidth", "scatter_linewidth"),
+            ("core_legend_fontsize", "core_legend_fontsize"),
+            ("core_cycle_legend_fontsize", "core_cycle_legend_fontsize"),
+            ("combined_y_left_key", "combined_y_left_key"),
+            ("combined_y_right_key", "combined_y_right_key"),
+            ("combined_y_third_key", "combined_y_third_key"),
+            ("combined_center_plot_legend", "center_combined_plot_legend"),
+        )
+        # Iterate over the key map to ensure every profile-scoped setting is included.
+        for key, attr in key_map:
+            payload[key] = self._default_value_from_var(getattr(self, attr, None))
+
+        stored_series = getattr(self, "_stored_scatter_series", None)
+        payload["scatter_series"] = (
+            copy.deepcopy(stored_series) if isinstance(stored_series, dict) else {}
+        )
+
+        payload["cycle_trace"] = (
+            copy.deepcopy(cycle_trace_settings)
+            if isinstance(cycle_trace_settings, dict)
+            else {}
+        )
+
+        combined_defaults = {
+            key: copy.deepcopy(value)
+            # Iterate to apply the per-item logic.
+            for key, value in settings.items()
+            if key.startswith("combined_")
+        }
+        # Ensure optional combined-legend persistence keys are explicitly cleared.
+        for key in (
+            "combined_legend_anchor",
+            "combined_legend_loc",
+            "combined_cycle_legend_anchor",
+            "combined_cycle_legend_loc",
+            "combined_cycle_legend_anchor_space",
+            "combined_cycle_legend_anchor_mode",
+            "combined_cycle_legend_ref_dx_px",
+            "combined_cycle_legend_ref_dy_px",
+            "combined_cycle_legend_markerscale",
+        ):
+            combined_defaults.setdefault(key, copy.deepcopy(settings.get(key)))
+        payload.update(combined_defaults)
+
+        return payload
+
+    def _default_profile_plot_settings_payload(self) -> dict[str, Any]:
+        """Return the startup-default plot settings payload for a new profile.
+
+        Purpose:
+            Provide a deterministic baseline plot settings payload for resets.
+        Why:
+            New Profile must discard the current session state and restore
+            startup defaults.
+        Args:
+            None.
+        Returns:
+            A deep-copied plot settings payload for profile application.
+        Side Effects:
+            None.
+        Exceptions:
+            Falls back to a fresh snapshot if the startup payload is unavailable.
+        """
+        startup_payload = getattr(self, "_startup_profile_plot_settings", None)
+        if isinstance(startup_payload, dict):
+            return copy.deepcopy(startup_payload)
+        return copy.deepcopy(self._capture_startup_profile_plot_settings())
+
     def _serialize_workspace_state(self, include_dataset_path: bool) -> Dict[str, Any]:
         """Perform serialize workspace state.
         Used to keep the workflow logic localized and testable."""
@@ -38379,13 +39230,32 @@ class UnifiedApp(tk.Tk):
             payload["dataset_path"] = self.file_path
         return payload
 
-    def _deserialize_workspace_state(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Perform deserialize workspace state.
-        Used to keep the workflow logic localized and testable."""
+    def _deserialize_workspace_state(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Deserialize a profile payload into normalized workspace state.
+
+        Purpose:
+            Normalize profile payloads into a predictable workspace state dict.
+        Why:
+            Ensures profile load paths can reliably reset the UI and data model.
+        Args:
+            payload: Profile payload dictionary to parse.
+        Returns:
+            A normalized state dict used by profile restore logic.
+        Side Effects:
+            None.
+        Exceptions:
+            Returns an empty dict for invalid payloads instead of raising.
+        """
         if not isinstance(payload, dict):
             return {}
-        state: Dict[str, Any] = {
+        dataset_required = payload.get("dataset_required")
+        if dataset_required is None:
+            dataset_required = True
+        state: dict[str, Any] = {
             "dataset_path": payload.get("dataset_path"),
+            "dataset_required": bool(dataset_required),
             "multi_sheet_enabled": bool(payload.get("multi_sheet_enabled", False)),
             "selected_sheet": str(payload.get("selected_sheet") or ""),
             "selected_sheets": [
@@ -38714,6 +39584,55 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
+    def _reset_workspace_to_startup_defaults(self) -> None:
+        """Reset the workspace to startup-default state for New Profile.
+
+        Purpose:
+            Clear dataset-bound state and restore plot/cycle/report defaults.
+        Why:
+            New Profile must begin from a clean baseline identical to a fresh launch.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Clears datasets and caches, updates settings, refreshes UI state, and
+            resets annotations and report configuration.
+        Exceptions:
+            Best-effort guards prevent UI reset failures from interrupting the flow.
+        """
+        self._clear_workspace_state()
+
+        default_plot_settings = self._default_profile_plot_settings_payload()
+        self._apply_profile_plot_settings(default_plot_settings)
+
+        settings["final_report"] = copy.deepcopy(FINAL_REPORT_DEFAULT_STATE)
+        try:
+            self._apply_final_report_state_to_ui(settings["final_report"])
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            self._refresh_final_report_preview()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+        # Clear annotation UI state so new profiles do not inherit stale defaults.
+        settings["annotations_ui"] = _normalize_annotations_ui({})
+        settings["plot_elements"] = _normalize_plot_elements({})
+        self._plot_elements = settings["plot_elements"]
+        try:
+            self._annotation_store = AnnotationStore(settings)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+        # Reset cycle marker undo stacks to match a fresh session.
+        self._cycle_marker_undo_stack = []
+        self._cycle_marker_redo_stack = []
+        self._cycle_marker_undo_lock = False
+
     def _resolve_profile_dataset_path(self, path: Optional[str]) -> Optional[str]:
         """Resolve profile dataset path.
         Used to compute profile dataset path before rendering or export."""
@@ -38785,21 +39704,49 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
-    def _restore_workspace_from_profile(self, profile_doc: Dict[str, Any]) -> None:
-        """Perform restore workspace from profile.
-        Used to keep the workflow logic localized and testable."""
+    def _restore_workspace_from_profile(self, profile_doc: dict[str, Any]) -> None:
+        """Restore the workspace from a stored profile document.
+
+        Purpose:
+            Load a profile payload and rehydrate workspace state consistently.
+        Why:
+            Profiles are the persistence boundary for long-lived analysis sessions.
+        Args:
+            profile_doc: Profile document containing metadata and payload state.
+        Returns:
+            None.
+        Side Effects:
+            Clears current workspace, updates settings/UI, and may prompt for data.
+        Exceptions:
+            Best-effort guards prevent restore failures from crashing the UI.
+        """
         payload = profile_doc.get("payload")
         state = self._deserialize_workspace_state(payload or {})
         if not state:
             messagebox.showerror("Load Profile", "Profile payload is invalid.")
             return
-        dataset_path = self._resolve_profile_dataset_path(state.get("dataset_path"))
-        if not dataset_path:
-            return
-        state["dataset_path"] = dataset_path
+        dataset_required = bool(state.get("dataset_required", True))
+        if dataset_required:
+            dataset_path = self._resolve_profile_dataset_path(state.get("dataset_path"))
+            if not dataset_path:
+                return
+            state["dataset_path"] = dataset_path
 
         self._clear_workspace_state()
         self._apply_profile_plot_settings(state.get("plot_settings") or {})
+
+        if not dataset_required:
+            self._profile_restore_pending = {
+                "plot_elements": state.get("plot_elements") or {},
+                "layout_profiles": state.get("layout_profiles") or {},
+                "final_report_settings": state.get("final_report_settings") or {},
+            }
+            try:
+                self._finalize_profile_restore()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            return
 
         self.file_path = dataset_path
         settings["last_file_path"] = self.file_path
@@ -38886,8 +39833,22 @@ class UnifiedApp(tk.Tk):
         self._apply_column_selection(auto_refresh_axes=True)
 
     def _open_plot_settings_dialog(self, plot_id: Optional[str] = None) -> None:
-        """Open plot settings dialog.
-        Used by UI actions to open plot settings dialog."""
+        """Open the plot settings dialog for the selected plot.
+
+        Purpose:
+            Present per-plot layout, spacing, and legend controls in a modal window.
+        Why:
+            Keeps advanced plot layout tuning scoped to a dedicated dialog without
+            overcrowding the main Plot Settings tab.
+        Args:
+            plot_id: Optional plot identifier; defaults to the combined plot if omitted.
+        Returns:
+            None.
+        Side Effects:
+            Builds Tk dialog widgets, binds callbacks, and may update staged values.
+        Exceptions:
+            Best-effort guards keep dialog creation resilient to UI errors.
+        """
         plot_id = plot_id or "fig_combined_triple_axis"
         is_combined = plot_id == "fig_combined_triple_axis"
         is_core = plot_id in {"fig_pressure_temp", "fig_pressure_derivative"}
@@ -39262,7 +40223,10 @@ class UnifiedApp(tk.Tk):
                 textvariable=stage_vars["combined_title_pad_pts"],
                 width=8,
             ).grid(row=9, column=1, sticky="w", pady=2)
-            ttk.Label(spacing_frame, text="Suptitle padding (pt)").grid(
+            ttk.Label(
+                spacing_frame,
+                text="Suptitle (Job Information) padding (pt)",
+            ).grid(
                 row=10, column=0, sticky="w", padx=(0, 6), pady=2
             )
             ttk.Entry(
@@ -39270,7 +40234,7 @@ class UnifiedApp(tk.Tk):
                 textvariable=stage_vars["combined_suptitle_pad_pts"],
                 width=8,
             ).grid(row=10, column=1, sticky="w", pady=2)
-            ttk.Label(spacing_frame, text="Suptitle Y (0-1)").grid(
+            ttk.Label(spacing_frame, text="Suptitle (Job Information) Y (0-1)").grid(
                 row=11, column=0, sticky="w", padx=(0, 6), pady=2
             )
             ttk.Entry(
@@ -39388,7 +40352,7 @@ class UnifiedApp(tk.Tk):
             ttk.Entry(
                 font_frame, textvariable=stage_vars["combined_font_family"], width=18
             ).grid(row=0, column=1, sticky="w", pady=2)
-            ttk.Label(font_frame, text="Suptitle size").grid(
+            ttk.Label(font_frame, text="Suptitle (Job Information) size").grid(
                 row=1, column=0, sticky="w", padx=(0, 6), pady=2
             )
             ttk.Entry(
@@ -42170,8 +43134,22 @@ class UnifiedApp(tk.Tk):
     # UI Builders
 
     def _build_tab_plot(self):
-        """Build tab plot.
-        Used to assemble tab plot during UI or plot setup."""
+        """Build the Plot Settings tab UI.
+
+        Purpose:
+            Assemble the Plot Settings tab widgets and bindings.
+        Why:
+            Centralizes plot configuration controls so titles, ranges, and
+            cycle-related preferences remain visible and consistent.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Creates Tk widgets, binds callbacks, and stores widget references.
+        Exceptions:
+            Best-effort guards in callbacks prevent UI failures from bubbling up.
+        """
 
         f = self.tab_plot
         f.grid_rowconfigure(0, weight=1)
@@ -42255,7 +43233,7 @@ class UnifiedApp(tk.Tk):
         lf_titles.grid_columnconfigure(1, weight=1)
         lf_titles.grid_columnconfigure(2, weight=0)
 
-        ttk.Label(lf_titles, text="Suptitle").grid(
+        ttk.Label(lf_titles, text="Suptitle (Job Information)").grid(
             row=0, column=0, sticky="w", padx=6, pady=4
         )
 
@@ -50779,6 +51757,36 @@ class UnifiedApp(tk.Tk):
         """Return default value.
         Used by register var workflows to return value."""
         self._var_defaults[id(var)] = default
+
+    def _default_value_from_var(
+        self, var: tk.Variable | None, fallback: Any = None
+    ) -> Any:
+        """Return a stored default value for a Tk variable.
+
+        Purpose:
+            Resolve the startup default for a Tk variable when resetting state.
+        Why:
+            New Profile resets must use the original defaults, not the current values.
+        Args:
+            var: Tk variable to resolve.
+            fallback: Value to use when no default is available.
+        Returns:
+            The stored default value or the fallback when unavailable.
+        Side Effects:
+            None.
+        Exceptions:
+            Returns the fallback when the variable cannot be read safely.
+        """
+        if var is None:
+            return copy.deepcopy(fallback)
+        var_id = id(var)
+        if var_id in self._var_defaults:
+            return copy.deepcopy(self._var_defaults[var_id])
+        try:
+            return copy.deepcopy(var.get())
+        except Exception:
+            # Best-effort guard; fall back to provided default.
+            return copy.deepcopy(fallback)
 
     def _safe_get_var(self, var, cast=float):
         """Return var.

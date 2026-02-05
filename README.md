@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.10.2)
+# GL-260 Data Analysis and Plotter (v2.11.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.10.2`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.11.0`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v2.11.0 New Profile Workflow + Suptitle Label Update](#v2110-new-profile-workflow--suptitle-label-update)
   - [v2.10.2 README Restructure (User Manual First)](#v2102-readme-restructure-user-manual-first)
   - [v2.10.1 Final Report Preview Window Auto-Sizing](#v2101-final-report-preview-window-auto-sizing)
   - [v2.9.12 Combined Single-Pass Render](#v2912-combined-single-pass-render)
@@ -258,9 +259,9 @@ Actions:
 Purpose: control plot ranges, axes, style, cycle detection parameters, and combined-plot settings.
 
 Titles
-- Suptitle (manual) and Title (manual) text fields.
+- Suptitle (Job Information) (manual) and Title (manual) text fields.
 - Auto-generate Title toggle:
-  - When ON, manual Title is ignored during rendering; Suptitle remains manual.
+  - When ON, manual Title is ignored during rendering; Suptitle (Job Information) remains manual.
   - Use Copy Auto Title -> Manual Title to explicitly overwrite the manual Title.
 - Data Type combobox with Manage Types...:
   - Add/rename/delete/reorder types; no empty names or duplicates (case-insensitive).
@@ -731,7 +732,19 @@ Process Profiles store and restore full workspace snapshots, including dataset s
 
 Profiles are stored in `profiles/` as `profiles/<profile_name>.json`. The manager supports Save Current As..., Load, Overwrite, Rename, Delete, Export, and Import. Export writes the selected profile to a JSON file; Import brings a JSON profile into the `profiles/` folder.
 
-The Include dataset file path option determines whether the Excel path is saved with the profile. If a profile does not include a path (or the file is missing), the app prompts you to relink the dataset before loading. The current workspace is auto-backed up to `profiles/_autosave_last_workspace.json` before a profile load.
+Use New Profile to start a clean workspace without inheriting prior dataset or plot state. New Profile clears the workspace to startup defaults, then opens a single configuration dialog that captures:
+- Profile name
+- Suptitle (Job Information)
+- Gas Model preset (VDW)
+- Vessel volume
+- VDW a and b
+- Gas molar mass
+- Starting material preset
+- Starting material molar mass
+- Starting material mass
+- Stoichiometric ratio
+
+The Include dataset file path option determines whether the Excel path is saved with the profile. If a profile does not include a path (or the file is missing), the app prompts you to relink the dataset before loading. New Profile saves a dataset-optional profile that loads without a relink prompt. The current workspace is auto-backed up to `profiles/_autosave_last_workspace.json` before a profile load.
 
 #### Saved Output Profiles and Export Sizes
 Export functions are unified by shared output size profiles and DPI settings.
@@ -821,6 +834,12 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v2.11.0 New Profile Workflow + Suptitle Label Update
+- Added a New Profile button in the Profiles Manager for creating clean, dataset-optional profiles.
+- New Profile resets the workspace to startup defaults and uses a single configuration dialog for gas model, vessel volume, starting material, and suptitle inputs.
+- New profiles load without prompting for dataset relinking.
+- Plot Settings UI labels now use "Suptitle (Job Information)" for clarity.
 
 ### v2.10.2 README Restructure (User Manual First)
 - Reordered README so the Complete User Manual appears before the Changelog / Ledger.
