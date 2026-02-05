@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.11.7)
+# GL-260 Data Analysis and Plotter (v2.11.8)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.11.7`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.11.8`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v2.11.8 Combined Auto Refresh Second Pass](#v2118-combined-auto-refresh-second-pass)
   - [v2.11.7 Forced Refresh Finalize Before Reveal](#v2117-forced-refresh-finalize-before-reveal)
   - [v2.11.6 Async Display Settings Application](#v2116-async-display-settings-application)
   - [v2.11.5 Async Plot Rendering and Immediate Tabs](#v2115-async-plot-rendering-and-immediate-tabs)
@@ -573,6 +574,7 @@ The combined triple-axis plot unifies pressure, temperature, and derivative or a
 
 Rendering Behavior:
 - Display renders for the combined plot defer until the canvas reports stable geometry so the first visible draw uses final DPI/size and persisted legend anchors.
+- Auto-refresh runs two forced refresh passes (using the Refresh path) before the loading overlay is cleared to fully settle margins and layout.
 - A loading cursor is shown and render controls are disabled while the combined plot finalizes.
 
 #### 2) Axis Architecture
@@ -843,6 +845,10 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v2.11.8 Combined Auto Refresh Second Pass
+- Combined Triple-Axis auto-refresh now runs two forced refresh passes (via the Refresh-button path) before clearing the loading overlay.
+- The loading splash remains visible until the second pass completes, so margins/layout match a manual Refresh on first reveal.
 
 ### v2.11.7 Forced Refresh Finalize Before Reveal
 - Combined Triple-Axis forced refresh now runs the same synchronous finalize pass (layout solve + draw) before clearing the loading overlay.

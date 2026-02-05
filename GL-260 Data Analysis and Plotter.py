@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.11.7
+# Version: v2.11.8
 # Date: 2026-02-05
 
 import os
@@ -7929,7 +7929,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.11.7"
+APP_VERSION = "v2.11.8"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -31435,14 +31435,16 @@ class UnifiedApp(tk.Tk):
             Trigger a programmatic refresh using the same path as the Refresh button.
         Why:
             The refresh path applies stable geometry, ensuring the first visible
-            render matches the manual Refresh output.
+            render matches the manual Refresh output. Combined plots additionally
+            require a second forced refresh pass before the overlay is cleared.
         Inputs:
             frame: Plot tab frame hosting the plot.
             canvas: FigureCanvasTkAgg displaying the figure.
         Outputs:
             None.
         Side Effects:
-            Updates auto-refresh state, schedules an idle callback, and invokes refresh.
+            Updates auto-refresh state, seeds combined refresh phase tracking,
+            schedules an idle callback, and invokes refresh.
         Exceptions:
             Errors are caught to avoid UI interruption.
         """
@@ -31457,6 +31459,11 @@ class UnifiedApp(tk.Tk):
         if not getattr(frame, "_plot_initial_render_complete", False):
             return
         frame._plot_auto_refresh_state = "scheduled"
+        if getattr(frame, "_plot_key", None) == "fig_combined":
+            # Combined plots need two auto-refresh phases to stabilize layout.
+            frame._plot_auto_refresh_phase = 1
+        else:
+            frame._plot_auto_refresh_phase = None
         after_id = getattr(frame, "_plot_auto_refresh_after_id", None)
         # Avoid duplicate idle callbacks if one is already queued.
         if after_id is not None:
@@ -31511,13 +31518,15 @@ class UnifiedApp(tk.Tk):
         Purpose:
             Finalize auto refresh state and remove the loading overlay.
         Why:
-            Ensures the first visible plot uses the refresh path output.
+            Ensures the first visible plot uses the refresh path output. Combined
+            plots require two refresh passes to fully settle margins before reveal.
         Inputs:
             frame: Plot tab frame hosting the plot.
         Outputs:
             None.
         Side Effects:
-            Updates auto-refresh state and clears the loading overlay.
+            Updates auto-refresh state, optionally schedules a second refresh
+            pass for combined plots, and clears the loading overlay on completion.
         Exceptions:
             Errors are caught to avoid UI interruption.
         """
@@ -31525,10 +31534,72 @@ class UnifiedApp(tk.Tk):
             return
         if getattr(frame, "_plot_auto_refresh_state", None) != "refreshing":
             return
+        plot_key = getattr(frame, "_plot_key", None)
+        phase = getattr(frame, "_plot_auto_refresh_phase", None)
+        after_id = getattr(frame, "_plot_auto_refresh_after_id", None)
+        if plot_key == "fig_combined":
+            if phase == 1:
+                frame._plot_auto_refresh_phase = 2
+
+                def _run_second_pass():
+                    """Trigger the second combined refresh pass before reveal.
+
+                    Purpose:
+                        Run the same refresh path a second time for combined plots.
+                    Why:
+                        Combined layouts need two passes to fully stabilize margins.
+                    Inputs:
+                        None.
+                    Outputs:
+                        None.
+                    Side Effects:
+                        Invokes the shared refresh path and keeps the overlay visible.
+                    Exceptions:
+                        Errors are caught to avoid breaking the UI loop.
+                    """
+                    frame._plot_auto_refresh_after_id = None
+                    if getattr(frame, "_plot_auto_refresh_state", None) != "refreshing":
+                        return
+                    if getattr(frame, "_plot_auto_refresh_phase", None) != 2:
+                        return
+                    try:
+                        if not frame.winfo_exists():
+                            self._clear_plot_loading_overlay(frame)
+                            return
+                    except Exception:
+                        return
+                    _, canvas = self._find_plot_tab_canvas(plot_key)
+                    if canvas is None:
+                        # Fail closed: avoid leaving the overlay stuck if the canvas
+                        # is gone.
+                        frame._plot_auto_refresh_state = "done"
+                        frame._plot_auto_refresh_after_id = None
+                        frame._plot_auto_refresh_in_progress = False
+                        frame._plot_auto_refresh_phase = None
+                        self._clear_plot_loading_overlay(frame)
+                        return
+                    # Use the same refresh path as the Refresh button.
+                    self._force_plot_refresh(
+                        frame,
+                        canvas,
+                        capture_combined_legend=True,
+                    )
+
+                try:
+                    frame._plot_auto_refresh_after_id = self.after_idle(
+                        _run_second_pass
+                    )
+                except Exception:
+                    _run_second_pass()
+                return
+            if phase == 2 and after_id is not None:
+                # Second pass is queued; keep the overlay until it completes.
+                return
         # Mark completion so the auto-refresh only runs once.
         frame._plot_auto_refresh_state = "done"
         frame._plot_auto_refresh_after_id = None
         frame._plot_auto_refresh_in_progress = False
+        frame._plot_auto_refresh_phase = None
         self._clear_plot_loading_overlay(frame)
 
     def _finalize_combined_plot_display(
@@ -35817,6 +35888,7 @@ class UnifiedApp(tk.Tk):
         frame = ttk.Frame(self.nb)
         frame._plot_key = plot_key
         frame._plot_auto_refresh_state = "pending"
+        frame._plot_auto_refresh_phase = None
         frame._plot_auto_refresh_enabled = bool(auto_refresh)
         frame._plot_auto_refresh_after_id = None
         frame._plot_auto_refresh_in_progress = False
