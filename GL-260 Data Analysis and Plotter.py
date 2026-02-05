@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.11.4
+# Version: v2.11.5
 # Date: 2026-02-05
 
 import os
@@ -7929,7 +7929,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.11.4"
+APP_VERSION = "v2.11.5"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -26670,6 +26670,7 @@ class UnifiedApp(tk.Tk):
         task_workers = dev_worker_threads if dev_parallel_enabled else 1
         self._task_runner = TkTaskRunner(self, max_workers=task_workers)
         self._combined_render_runner = TkTaskRunner(self, max_workers=1)
+        self._core_render_task_id: Optional[int] = None
         self._combined_render_task_id: Optional[int] = None
         self._combined_render_busy = False
         self._combined_render_cursor = None
@@ -31447,6 +31448,8 @@ class UnifiedApp(tk.Tk):
         """
         if frame is None or canvas is None:
             return
+        if not getattr(frame, "_plot_auto_refresh_enabled", True):
+            return
         state = getattr(frame, "_plot_auto_refresh_state", None)
         # Only schedule once per tab creation to prevent refresh recursion.
         if state not in (None, "pending"):
@@ -31708,8 +31711,9 @@ class UnifiedApp(tk.Tk):
                 pass
             auto_state = getattr(frame, "_plot_auto_refresh_state", None)
             if auto_state == "pending":
-                # Initial render complete; schedule the one-time auto refresh.
-                self._schedule_plot_auto_refresh(frame, canvas)
+                # Initial render complete; schedule the one-time auto refresh if enabled.
+                if getattr(frame, "_plot_auto_refresh_enabled", True):
+                    self._schedule_plot_auto_refresh(frame, canvas)
             elif auto_state == "refreshing":
                 # Auto refresh completed; reveal the stabilized render.
                 self._complete_plot_auto_refresh(frame)
@@ -31778,6 +31782,111 @@ class UnifiedApp(tk.Tk):
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+
+    def _install_rendered_plot_in_tab(
+        self,
+        frame,
+        canvas,
+        plot_key: str,
+        fig: Figure,
+        *,
+        placement_state: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Install a rendered figure into an existing plot tab.
+
+        Purpose:
+            Swap a newly rendered figure into its target tab/canvas.
+        Why:
+            Async rendering must reuse tabs to keep UI state and overlays intact.
+        Inputs:
+            frame: Plot tab frame hosting the canvas.
+            canvas: FigureCanvasTkAgg instance to update.
+            plot_key: Plot key identifier (e.g., "fig1", "fig_combined").
+            fig: Rendered Matplotlib Figure to install.
+            placement_state: Optional plot element placement state to restore.
+        Outputs:
+            None.
+        Side Effects:
+            Updates figure bindings, refreshes canvas display, retargets plot
+            annotations, restores placement state, updates dirty flags, and
+            clears loading overlays after render completion.
+        Exceptions:
+            Errors are caught to avoid interrupting UI workflows.
+        """
+        if frame is None or canvas is None or fig is None:
+            return
+        plot_id = self._plot_key_to_plot_id(plot_key)
+        if not plot_id:
+            plot_id = getattr(frame, "_plot_id", None)
+        if plot_id:
+            try:
+                self._teardown_layout_editor(plot_id, apply_changes=False)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            try:
+                _apply_layout_profile_to_figure(fig, plot_id, "display")
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            try:
+                self._apply_plot_elements(fig, plot_id)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        if plot_key == "fig_combined":
+            try:
+                fig.set_canvas(canvas)
+            except Exception:
+                # Best-effort guard; ignore failures.
+                pass
+            try:
+                canvas.figure = fig
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            try:
+                self._finalize_combined_plot_display(
+                    frame, canvas, placement_state=placement_state
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        else:
+            try:
+                self._install_refreshed_figure_and_finalize(frame, canvas, fig)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            if plot_id:
+                try:
+                    self._retarget_plot_annotation_controller(plot_id, fig, canvas)
+                except Exception:
+                    # Best-effort guard; ignore failures.
+                    pass
+                if placement_state:
+                    try:
+                        self._restore_plot_element_placement_state(
+                            plot_id, placement_state
+                        )
+                    except Exception:
+                        # Best-effort guard; ignore failures.
+                        pass
+        if plot_id:
+            try:
+                self._set_plot_dirty_flags(
+                    plot_id,
+                    dirty_data=False,
+                    dirty_layout=False,
+                    dirty_elements=False,
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        if getattr(frame, "_plot_auto_refresh_state", None) == "refreshing":
+            self._complete_plot_auto_refresh(frame)
+        else:
+            self._clear_plot_loading_overlay(frame)
 
     def _compute_target_figsize_inches(self):
         """Compute target figsize inches.
@@ -31850,8 +31959,8 @@ class UnifiedApp(tk.Tk):
 
         Side Effects:
             Captures combined legend anchors before rebuild when enabled, defers
-            combined refresh until geometry is ready, replaces figures, rebinds
-            plot element controllers, and schedules a redraw.
+            combined refresh until geometry is ready, starts background compute,
+            and schedules UI-thread rendering/overlay updates.
 
         Exceptions:
             Internal errors are caught and ignored to keep UI responsive.
@@ -31970,18 +32079,36 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 fig_size = self._compute_target_figsize_inches()
 
-        new_fig: Figure | None = None
-        if plot_key in {"fig1", "fig2", "fig_peaks"}:
-            new_fig = self.render_plot(plot_key, target="display", plot_id=plot_id)
-        elif plot_key == "fig_combined":
-            new_fig = self.render_plot(
-                "fig_combined",
-                target="display",
-                plot_id=plot_id,
-                fig_size=fig_size,
-            )
-
-        if new_fig is None:
+        try:
+            if plot_key in {"fig1", "fig2", "fig_peaks"}:
+                snapshot = self._capture_plot_render_snapshot(
+                    fig_size=None,
+                    plot_id=plot_id or "",
+                    target="display",
+                )
+                self._start_core_render_async(
+                    snapshot,
+                    [plot_key],
+                    warn_on_failure=False,
+                    placement_states={plot_key: placement_state},
+                )
+                return
+            if plot_key == "fig_combined":
+                snapshot = self._capture_plot_render_snapshot(
+                    fig_size=fig_size,
+                    plot_id=plot_id or "fig_combined_triple_axis",
+                    target="display",
+                )
+                self._start_combined_render_async(
+                    snapshot,
+                    warn_on_failure=False,
+                    frame=frame,
+                    canvas=canvas,
+                    placement_state=placement_state,
+                )
+                return
+        except Exception:
+            # Best-effort fallback: keep the existing figure visible.
             fig = getattr(canvas, "figure", None)
             if fig is None:
                 return
@@ -32005,79 +32132,6 @@ class UnifiedApp(tk.Tk):
                     # Best-effort guard; ignore failures.
                     pass
             return
-
-        if plot_id:
-            try:
-                self._teardown_layout_editor(plot_id, apply_changes=False)
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-            try:
-                _apply_layout_profile_to_figure(new_fig, plot_id, "display")
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-            try:
-                self._apply_plot_elements(new_fig, plot_id)
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-
-        if plot_key == "fig_combined":
-            try:
-                new_fig.set_canvas(canvas)
-            except Exception:
-                # Best-effort guard; ignore failures.
-                pass
-            try:
-                canvas.figure = new_fig
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-            try:
-                self._finalize_combined_plot_display(
-                    frame,
-                    canvas,
-                    placement_state=placement_state,
-                )
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-        else:
-            try:
-                self._install_refreshed_figure_and_finalize(frame, canvas, new_fig)
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-            if plot_id:
-                try:
-                    self._retarget_plot_annotation_controller(plot_id, new_fig, canvas)
-                except Exception:
-                    # Best-effort guard; ignore failures.
-                    pass
-                try:
-                    self._restore_plot_element_placement_state(plot_id, placement_state)
-                except Exception:
-                    # Best-effort guard; ignore failures.
-                    pass
-        if plot_id:
-            try:
-                self._set_plot_dirty_flags(
-                    plot_id,
-                    dirty_data=False,
-                    dirty_layout=False,
-                    dirty_elements=False,
-                )
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-        if plot_key != "fig_combined":
-            try:
-                if getattr(frame, "_plot_auto_refresh_state", None) == "refreshing":
-                    self._complete_plot_auto_refresh(frame)
-            except Exception:
-                # Best-effort guard; ignore failures.
-                pass
 
     def _plot_key_to_plot_id(
         self, plot_key: Optional[str], title: Optional[str] = None
@@ -35642,7 +35696,9 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
-    def _add_plot_tab(self, title, fig, *, plot_key: str | None = None):
+    def _add_plot_tab(
+        self, title, fig, *, plot_key: str | None = None, auto_refresh: bool = True
+    ):
         """Add a plot tab and embed the provided figure.
 
         Purpose:
@@ -35654,12 +35710,15 @@ class UnifiedApp(tk.Tk):
             title: Tab title string.
             fig: Matplotlib Figure to embed.
             plot_key: Optional plot key used to tag plot metadata and routing.
+            auto_refresh: When True, schedule the auto-refresh pipeline that
+                stabilizes the first render before removing overlays.
         Outputs:
             The created tab frame.
         Side Effects:
             Creates Tk widgets, binds canvas resize handlers, registers plot
-            controllers, schedules display refresh logic, and initializes plot
-            loading/auto-refresh state for the generated tab.
+            controllers, selects the new tab immediately, schedules display
+            refresh logic (when enabled), and initializes plot loading/auto-
+            refresh state for the generated tab.
         Exceptions:
             Widget and canvas errors are caught to avoid UI interruption.
         """
@@ -35667,9 +35726,11 @@ class UnifiedApp(tk.Tk):
         frame = ttk.Frame(self.nb)
         frame._plot_key = plot_key
         frame._plot_auto_refresh_state = "pending"
+        frame._plot_auto_refresh_enabled = bool(auto_refresh)
         frame._plot_auto_refresh_after_id = None
         frame._plot_auto_refresh_in_progress = False
         frame._plot_initial_render_complete = False
+        frame._plot_render_task_id = None
         frame._plot_loading_overlay = None
         frame._plot_loading_label = None
         if plot_key == "fig_combined":
@@ -35731,6 +35792,19 @@ class UnifiedApp(tk.Tk):
         )
         # Hide the initial render behind a loading overlay until auto-refresh completes.
         self._install_plot_loading_overlay(frame, widget, message=overlay_message)
+        # Select immediately so the loading overlay is visible without delay.
+        try:
+            self.nb.select(frame)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        # Flush pending UI work so the new tab and overlay paint right away.
+        for widget_obj in (self.nb, frame, widget):
+            try:
+                widget_obj.update_idletasks()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
 
         fig_size = None
         try:
@@ -36410,26 +36484,22 @@ class UnifiedApp(tk.Tk):
             Used to keep the workflow logic localized and testable."""
 
             try:
-
-                self.nb.select(frame)
-
+                if plot_key == "fig_combined":
+                    self._finalize_combined_plot_display(frame, canvas)
+                else:
+                    self._refresh_canvas_display(frame, canvas, trigger_resize=True)
+                    try:
+                        frame._plot_initial_render_complete = True
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+                    if getattr(frame, "_plot_auto_refresh_enabled", True):
+                        self._schedule_plot_auto_refresh(frame, canvas)
             except Exception:
-
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
 
-            if plot_key == "fig_combined":
-                self._finalize_combined_plot_display(frame, canvas)
-            else:
-                self._refresh_canvas_display(frame, canvas, trigger_resize=True)
-                try:
-                    frame._plot_initial_render_complete = True
-                except Exception:
-                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                    pass
-                self._schedule_plot_auto_refresh(frame, canvas)
-
-        self.after_idle(_finalize_tab_display)
+        _finalize_tab_display()
 
         self._plot_tabs.append(frame)
 
@@ -36698,9 +36768,26 @@ class UnifiedApp(tk.Tk):
             pass
         _reposition()
 
-    def _render_figures_in_tabs(self, figs: dict, *, clear_existing: bool = True):
+    def _render_figures_in_tabs(
+        self, figs: dict, *, clear_existing: bool = True, auto_refresh: bool = True
+    ):
         """Render figures in tabs.
-        Used to draw figures in tabs for preview or export workflows."""
+
+        Purpose:
+            Embed rendered Matplotlib figures into notebook tabs.
+        Why:
+            Plot previews and exports share a consistent tab-embedding workflow.
+        Inputs:
+            figs: Mapping of plot keys to Matplotlib figures.
+            clear_existing: When True, remove existing plot tabs before adding.
+            auto_refresh: When True, schedule the one-time auto-refresh for each tab.
+        Outputs:
+            None.
+        Side Effects:
+            Creates/destroys tabs, embeds canvases, and may schedule refreshes.
+        Exceptions:
+            Errors are caught to avoid interrupting the UI.
+        """
 
         # figs may contain 'fig1', 'fig2', 'fig_peaks'
 
@@ -36723,7 +36810,9 @@ class UnifiedApp(tk.Tk):
             Used to keep the workflow logic localized and testable."""
             if not clear_existing:
                 self._remove_plot_tab_by_title(title)
-            self._add_plot_tab(title, fig, plot_key=plot_key)
+            self._add_plot_tab(
+                title, fig, plot_key=plot_key, auto_refresh=auto_refresh
+            )
 
         if figs.get("fig1"):
             _replace_plot(
@@ -36751,6 +36840,41 @@ class UnifiedApp(tk.Tk):
             elapsed_ms = (time.perf_counter() - perf_start) * 1000.0
             stages = perf_run.setdefault("stages", {})
             stages["embed"] = {"ms": elapsed_ms}
+
+    def _find_plot_tab_canvas(
+        self, plot_key: str
+    ) -> Tuple[Optional[ttk.Frame], Optional[FigureCanvasTkAgg]]:
+        """Find the plot tab and canvas for a plot key.
+
+        Purpose:
+            Locate the active tab/canvas pair tied to a plot key.
+        Why:
+            Async plot rendering needs a stable target without rebuilding tabs.
+        Inputs:
+            plot_key: Plot key identifier (e.g., "fig1", "fig_combined").
+        Outputs:
+            Tuple of (tab frame, canvas) or (None, None) if not found.
+        Side Effects:
+            None.
+        Exceptions:
+            Errors are caught to avoid interrupting plot updates.
+        """
+        try:
+            tabs = list(getattr(self, "_plot_tabs", []) or [])
+            canvases = list(getattr(self, "_canvases", []) or [])
+        except Exception:
+            return None, None
+        # Iterate over indexed tab/canvas pairs to apply the per-item lookup logic.
+        for idx, tab in enumerate(tabs):
+            try:
+                if getattr(tab, "_plot_key", None) != plot_key:
+                    continue
+                canvas = canvases[idx] if idx < len(canvases) else None
+                return tab, canvas
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                continue
+        return None, None
 
     def _remove_plot_tab_by_title(self, title: str):
         """Remove a plot tab by its notebook title.
@@ -72145,6 +72269,72 @@ class UnifiedApp(tk.Tk):
 
         self._prime_cycle_markers_from_cache()
 
+    def _apply_series_payload_from_snapshot(self, payload: Dict[str, Any]) -> None:
+        """Apply series payload values without reading Tk variables.
+
+        Purpose:
+            Update module-level globals using snapshot-provided values.
+        Why:
+            Async render pipelines must avoid reading Tk variables from workers.
+        Inputs:
+            payload: Prepared series payload containing series and metadata.
+        Outputs:
+            None.
+        Side Effects:
+            Updates module-level globals and primes cached cycle markers.
+        Exceptions:
+            Errors are caught to avoid interrupting UI workflows.
+        """
+        if not isinstance(payload, dict):
+            return
+        selected_columns = payload.get("selected_columns") or {}
+        series_map = payload.get("series") or {}
+        globals()["selected_columns"] = selected_columns
+        # Iterate over ("x", "y1", "y2", "y3", "z", "z2") to apply the per-item logic.
+        for key in ("x", "y1", "y2", "y3", "z", "z2"):
+            globals()[key] = series_map.get(key)
+        globals()["cycle_temp_series"] = payload.get("cycle_temp_series")
+        globals()["volume"] = payload.get("volume")
+        globals()["a_const"] = payload.get("a_const")
+        globals()["b_const"] = payload.get("b_const")
+        globals()["starting_mass_g"] = payload.get("starting_mass_g")
+        globals()["starting_material_mass_g"] = payload.get("starting_material_mass_g")
+        starting_display_name = payload.get("starting_material_display_name") or ""
+        globals()["starting_material_display_name"] = starting_display_name
+        globals()["starting_material_display_note"] = payload.get(
+            "starting_material_display_note"
+        )
+        globals()["starting_material_name"] = starting_display_name
+        globals()["product_name"] = payload.get(
+            "product_name", starting_display_name or DEFAULT_STARTING_MATERIAL_NAME
+        )
+        globals()["starting_material_formula"] = payload.get(
+            "starting_material_formula", settings.get("starting_material_formula")
+        )
+        globals()["product_formula"] = payload.get(
+            "product_formula", globals().get("starting_material_formula")
+        )
+        globals()["starting_material_mw_g_mol"] = payload.get("starting_material_mw_g_mol")
+        globals()["product_molar_mass"] = payload.get("product_molar_mass")
+        globals()["stoich_mol_gas_per_mol_starting"] = payload.get(
+            "stoich_mol_gas_per_mol_starting"
+        )
+        globals()["gas_molar_mass"] = payload.get("gas_molar_mass")
+        try:
+            if DEBUG_SERIES_FLOW and getattr(self, "_series_flow_active", False):
+                y1_series = globals().get("y1")
+                y1_none = y1_series is None
+                y1_len = int(len(y1_series)) if y1_series is not None else 0
+                self._debug_series_flow("globals", f"y1_none={y1_none} len={y1_len}")
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            self._prime_cycle_markers_from_cache()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
     def _prepare_series_globals(self, *, skip_ui: bool = False):
         """Prepare series globals.
         Used to assemble series globals inputs for downstream calculations."""
@@ -73472,15 +73662,30 @@ class UnifiedApp(tk.Tk):
 
         return None
 
-    def _capture_combined_render_snapshot(
+    def _capture_plot_render_snapshot(
         self,
         *,
         fig_size: Optional[Tuple[float, float]],
         plot_id: str,
         target: str,
     ) -> Dict[str, Any]:
-        """Capture combined render snapshot.
-        Used to move heavy data prep off the UI thread safely."""
+        """Capture a plot render snapshot for worker-safe computation.
+
+        Purpose:
+            Collect UI state needed for background plot computation.
+        Why:
+            Worker threads must not touch Tk variables directly.
+        Inputs:
+            fig_size: Optional figure size in inches for the render target.
+            plot_id: Plot identifier used for layout/profile context.
+            target: Render target (e.g., "display", "export").
+        Outputs:
+            Snapshot dict with data, layout, and style context.
+        Side Effects:
+            Reads current UI state to build a deterministic snapshot.
+        Exceptions:
+            Errors are caught to avoid interrupting the UI.
+        """
         try:
             file_path = os.path.abspath(self.file_path) if self.file_path else ""
         except Exception:
@@ -73617,9 +73822,52 @@ class UnifiedApp(tk.Tk):
 
         return snapshot
 
-    def _build_combined_render_packet(self, snapshot: Dict[str, Any]) -> RenderPacket:
-        """Build combined render packet.
-        Used to prepare render inputs off the UI thread."""
+    def _capture_combined_render_snapshot(
+        self,
+        *,
+        fig_size: Optional[Tuple[float, float]],
+        plot_id: str,
+        target: str,
+    ) -> Dict[str, Any]:
+        """Capture combined render snapshot.
+
+        Purpose:
+            Provide a combined-plot snapshot for background computation.
+        Why:
+            Combined renders need a worker-safe snapshot of UI state.
+        Inputs:
+            fig_size: Optional figure size in inches for the render target.
+            plot_id: Combined plot identifier for layout context.
+            target: Render target (e.g., "display", "export").
+        Outputs:
+            Snapshot dict suitable for background computation.
+        Side Effects:
+            Delegates to the generic snapshot helper.
+        Exceptions:
+            Errors are caught to avoid interrupting the UI.
+        """
+        return self._capture_plot_render_snapshot(
+            fig_size=fig_size,
+            plot_id=plot_id,
+            target=target,
+        )
+
+    def _compute_combined_plot_data(self, snapshot: Dict[str, Any]) -> RenderPacket:
+        """Compute combined plot data for UI-thread rendering.
+
+        Purpose:
+            Prepare a combined-plot render packet in a worker-safe step.
+        Why:
+            Heavy data prep must not block the UI thread.
+        Inputs:
+            snapshot: Snapshot of UI state and data selections.
+        Outputs:
+            RenderPacket with prepared render context and args.
+        Side Effects:
+            Updates render cache entries and performance counters.
+        Exceptions:
+            Errors propagate to the worker handler for reporting.
+        """
         perf_run = None
         if snapshot.get("perf_enabled"):
             perf_run = {
@@ -73685,29 +73933,324 @@ class UnifiedApp(tk.Tk):
             perf=perf_run,
         )
 
-    def _start_combined_render_async(
-        self, snapshot: Dict[str, Any], *, warn_on_failure: bool
+    def _compute_core_plot_data(self, snapshot: Dict[str, Any]) -> RenderPacket:
+        """Compute core plot data for UI-thread rendering.
+
+        Purpose:
+            Prepare the core plot render context in a worker-safe step.
+        Why:
+            Core plot generation should keep heavy data prep off the UI thread.
+        Inputs:
+            snapshot: Snapshot of UI state and data selections.
+        Outputs:
+            RenderPacket containing the render context and plot arguments.
+        Side Effects:
+            Updates render cache entries and performance counters.
+        Exceptions:
+            Errors propagate to the worker handler for reporting.
+        """
+        data_fingerprint, data_ctx = self._resolve_prepared_data_context(
+            apply_globals=False, perf=None, snapshot=snapshot
+        )
+
+        gates_ctx = snapshot.get("gates_ctx") or {}
+        cycle_ctx, overlay_ctx = self._resolve_cycle_context(
+            data_ctx, data_fingerprint, perf=None, snapshot=snapshot
+        )
+        overlay_ctx = dict(overlay_ctx or {})
+        cycle_overlay = overlay_ctx.get("cycle_overlay")
+        overlay_ctx["markers"] = (
+            cycle_overlay if gates_ctx.get("show_cycle_markers") else None
+        )
+        overlay_ctx["cycle_legend"] = (
+            cycle_overlay if gates_ctx.get("show_cycle_legend") else None
+        )
+        overlay_ctx["moles_summary"] = (
+            overlay_ctx.get("moles_summary")
+            if gates_ctx.get("include_moles")
+            else None
+        )
+
+        render_ctx = RenderContext(
+            data_ctx=data_ctx,
+            cycle_ctx=cycle_ctx,
+            overlay_ctx=overlay_ctx,
+            gates_ctx=gates_ctx,
+            style_ctx=snapshot.get("style_ctx") or {},
+            layout_ctx=snapshot.get("layout_ctx") or {},
+            plot_elements_ctx=snapshot.get("plot_elements_ctx") or {},
+        )
+
+        return RenderPacket(
+            render_ctx=render_ctx,
+            data_fingerprint=data_fingerprint,
+            args=tuple(snapshot.get("args") or ()),
+            fig_size=snapshot.get("fig_size"),
+            plot_id=snapshot.get("plot_id"),
+            target=snapshot.get("target", "display"),
+            perf=None,
+        )
+
+    def _render_core_plot_ui(
+        self,
+        packet: RenderPacket,
+        plot_keys: Sequence[str],
+        *,
+        warn_on_failure: bool,
+        placement_states: Optional[Dict[str, Any]] = None,
+        task_id: Optional[int] = None,
     ) -> None:
-        """Start combined render async.
-        Used to keep the UI responsive during combined renders."""
-        self._set_combined_render_busy(True)
+        """Render core plots on the UI thread from a prepared packet.
+
+        Purpose:
+            Build Matplotlib figures from precomputed render context.
+        Why:
+            UI thread must own Matplotlib rendering and Tk canvas updates.
+        Inputs:
+            packet: RenderPacket computed in the worker phase.
+            plot_keys: Plot keys to render (e.g., "fig1", "fig2").
+            warn_on_failure: Whether to warn when no plots render.
+            placement_states: Optional placement state per plot key.
+            task_id: Optional task identifier for stale-result checks.
+        Outputs:
+            None.
+        Side Effects:
+            Updates globals, installs figures into tabs, and clears overlays.
+        Exceptions:
+            Errors are caught to avoid interrupting UI workflows.
+        """
+        plot_keys_list = [key for key in plot_keys if key]
+        if not plot_keys_list:
+            return
+        try:
+            # Apply snapshot-derived globals on the UI thread for legacy consumers.
+            self._apply_series_payload_from_snapshot(packet.render_ctx.data_ctx)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            figs = main_plotting_function(
+                *packet.args, fig_size=packet.fig_size, render_ctx=packet.render_ctx
+            )
+        except Exception as exc:
+            figs = None
+            if warn_on_failure:
+                try:
+                    messagebox.showwarning(
+                        "Plot Selection",
+                        f"Core plot generation failed due to internal error.\n{exc}",
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+        if not isinstance(figs, dict):
+            for key in plot_keys_list:
+                frame, _ = self._find_plot_tab_canvas(key)
+                if frame is None:
+                    continue
+                if task_id is not None and getattr(
+                    frame, "_plot_render_task_id", None
+                ) != task_id:
+                    continue
+                if getattr(frame, "_plot_auto_refresh_state", None) == "refreshing":
+                    self._complete_plot_auto_refresh(frame)
+                else:
+                    self._clear_plot_loading_overlay(frame)
+            if warn_on_failure:
+                try:
+                    messagebox.showwarning(
+                        "Plot Selection",
+                        "No plots were generated for the current data.",
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            return
+
+        rendered_any = False
+        # Iterate over plot keys to apply the per-item render/update logic.
+        for key in plot_keys_list:
+            fig = figs.get(key)
+            frame, canvas = self._find_plot_tab_canvas(key)
+            if frame is None or canvas is None:
+                continue
+            if task_id is not None and getattr(
+                frame, "_plot_render_task_id", None
+            ) != task_id:
+                continue
+            if fig is None:
+                if getattr(frame, "_plot_auto_refresh_state", None) == "refreshing":
+                    self._complete_plot_auto_refresh(frame)
+                else:
+                    self._clear_plot_loading_overlay(frame)
+                continue
+            placement_state = (
+                placement_states.get(key) if isinstance(placement_states, dict) else None
+            )
+            self._install_rendered_plot_in_tab(
+                frame, canvas, key, fig, placement_state=placement_state
+            )
+            rendered_any = True
+
+        if not rendered_any and warn_on_failure:
+            try:
+                messagebox.showwarning(
+                    "Plot Selection",
+                    "No plots were generated for the current data.",
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+    def _start_core_render_async(
+        self,
+        snapshot: Dict[str, Any],
+        plot_keys: Sequence[str],
+        *,
+        warn_on_failure: bool,
+        placement_states: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Start core plot rendering in a background worker.
+
+        Purpose:
+            Kick off a compute-only worker for core plot data prep.
+        Why:
+            Keeps the UI responsive while heavy computation runs.
+        Inputs:
+            snapshot: Snapshot payload captured on the UI thread.
+            plot_keys: Plot keys to update on completion.
+            warn_on_failure: Whether to warn on render failure.
+            placement_states: Optional placement state per plot key.
+        Outputs:
+            None.
+        Side Effects:
+            Updates render task IDs on tabs and triggers UI-thread rendering.
+        Exceptions:
+            Errors are caught and reported without crashing the UI loop.
+        """
+        plot_keys_list = [key for key in plot_keys if key]
+        if not plot_keys_list:
+            return
+        task_state: Dict[str, Optional[int]] = {"id": None}
 
         def _worker():
-            """Perform worker.
-            Used to keep the workflow logic localized and testable."""
-            return self._build_combined_render_packet(snapshot)
+            """Compute core plot packet in a worker thread."""
+            return self._compute_core_plot_data(snapshot)
 
         def _on_ok(packet):
-            """Handle ok.
-            Used as an event callback for ok."""
-            self._set_combined_render_busy(False)
-            self._finalize_combined_render_packet(
-                packet, warn_on_failure=warn_on_failure
+            """Render core plots on the UI thread after compute completes."""
+            self._render_core_plot_ui(
+                packet,
+                plot_keys_list,
+                warn_on_failure=warn_on_failure,
+                placement_states=placement_states,
+                task_id=task_state["id"],
             )
 
         def _on_err(exc):
-            """Handle err.
-            Used as an event callback for err."""
+            """Handle worker failures and clear loading overlays."""
+            try:
+                print(
+                    "Core plot generation failed in background worker.",
+                    file=sys.stderr,
+                )
+                traceback.print_exception(
+                    type(exc), exc, exc.__traceback__, file=sys.stderr
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            for key in plot_keys_list:
+                frame, _ = self._find_plot_tab_canvas(key)
+                if frame is None:
+                    continue
+                if task_state["id"] is not None and getattr(
+                    frame, "_plot_render_task_id", None
+                ) != task_state["id"]:
+                    continue
+                if getattr(frame, "_plot_auto_refresh_state", None) == "refreshing":
+                    self._complete_plot_auto_refresh(frame)
+                else:
+                    self._clear_plot_loading_overlay(frame)
+            if warn_on_failure:
+                try:
+                    messagebox.showwarning(
+                        "Plot Selection",
+                        "Core plot generation failed due to internal error. "
+                        "See console for details.",
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+
+        task_state["id"] = self._task_runner.submit(
+            "core_plot_render", _worker, _on_ok, _on_err
+        )
+        self._core_render_task_id = task_state["id"]
+        # Tag target tabs so stale results can be ignored safely.
+        for key in plot_keys_list:
+            frame, _ = self._find_plot_tab_canvas(key)
+            if frame is None:
+                continue
+            frame._plot_render_task_id = task_state["id"]
+            frame._plot_auto_refresh_state = "refreshing"
+            frame._plot_auto_refresh_in_progress = True
+            frame._plot_auto_refresh_after_id = None
+
+    def _start_combined_render_async(
+        self,
+        snapshot: Dict[str, Any],
+        *,
+        warn_on_failure: bool,
+        frame: Optional[ttk.Frame] = None,
+        canvas: Optional[FigureCanvasTkAgg] = None,
+        placement_state: Optional[Dict[str, Any]] = None,
+        on_success: Optional[Callable[[Figure], None]] = None,
+    ) -> None:
+        """Start combined render async.
+
+        Purpose:
+            Run combined plot computation in a worker and render on the UI thread.
+        Why:
+            Keeps Tk responsive while combined plot data is prepared.
+        Inputs:
+            snapshot: Snapshot payload captured on the UI thread.
+            warn_on_failure: Whether to warn on render failure.
+            frame: Optional target tab frame to update.
+            canvas: Optional target canvas to update.
+            placement_state: Optional placement state to restore after render.
+            on_success: Optional callback invoked with the rendered figure.
+        Outputs:
+            None.
+        Side Effects:
+            Updates render task IDs, busy state, and target tab overlays.
+        Exceptions:
+            Errors are caught and reported without crashing the UI loop.
+        """
+        self._set_combined_render_busy(True)
+        if frame is None or canvas is None:
+            frame, canvas = self._find_plot_tab_canvas("fig_combined")
+        task_state: Dict[str, Optional[int]] = {"id": None}
+
+        def _worker():
+            """Compute the combined render packet in a worker thread."""
+            return self._compute_combined_plot_data(snapshot)
+
+        def _on_ok(packet):
+            """Render the combined plot on the UI thread after compute completes."""
+            self._set_combined_render_busy(False)
+            self._render_combined_plot_ui(
+                packet,
+                warn_on_failure=warn_on_failure,
+                frame=frame,
+                canvas=canvas,
+                placement_state=placement_state,
+                task_id=task_state["id"],
+                on_success=on_success,
+            )
+
+        def _on_err(exc):
+            """Handle worker failures and clear loading overlays."""
             self._set_combined_render_busy(False)
             try:
                 print(
@@ -73720,6 +74263,14 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+            if frame is not None and (
+                task_state["id"] is None
+                or getattr(frame, "_plot_render_task_id", None) == task_state["id"]
+            ):
+                if getattr(frame, "_plot_auto_refresh_state", None) == "refreshing":
+                    self._complete_plot_auto_refresh(frame)
+                else:
+                    self._clear_plot_loading_overlay(frame)
             if warn_on_failure:
                 try:
                     messagebox.showwarning(
@@ -73731,15 +74282,48 @@ class UnifiedApp(tk.Tk):
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
 
-        self._combined_render_task_id = self._combined_render_runner.submit(
+        task_state["id"] = self._combined_render_runner.submit(
             "combined_render", _worker, _on_ok, _on_err
         )
+        self._combined_render_task_id = task_state["id"]
+        if frame is not None:
+            frame._plot_render_task_id = task_state["id"]
+            frame._plot_auto_refresh_state = "refreshing"
+            frame._plot_auto_refresh_in_progress = True
+            frame._plot_auto_refresh_after_id = None
 
-    def _finalize_combined_render_packet(
-        self, packet: RenderPacket, *, warn_on_failure: bool
+    def _render_combined_plot_ui(
+        self,
+        packet: RenderPacket,
+        *,
+        warn_on_failure: bool,
+        frame: Optional[ttk.Frame] = None,
+        canvas: Optional[FigureCanvasTkAgg] = None,
+        placement_state: Optional[Dict[str, Any]] = None,
+        task_id: Optional[int] = None,
+        on_success: Optional[Callable[[Figure], None]] = None,
     ) -> None:
-        """Finalize combined render packet.
-        Used to assemble and embed the combined figure on the UI thread."""
+        """Render the combined plot on the UI thread from a prepared packet.
+
+        Purpose:
+            Build and install the combined figure after background compute.
+        Why:
+            Matplotlib/Tk operations must occur on the UI thread.
+        Inputs:
+            packet: RenderPacket computed in the worker phase.
+            warn_on_failure: Whether to warn on render failure.
+            frame: Optional target tab frame to update.
+            canvas: Optional target canvas to update.
+            placement_state: Optional plot element placement state to restore.
+            task_id: Optional task identifier for stale-result checks.
+            on_success: Optional callback invoked with the rendered figure.
+        Outputs:
+            None.
+        Side Effects:
+            Installs the combined figure, updates overlays, and records perf data.
+        Exceptions:
+            Errors are caught to avoid interrupting UI workflows.
+        """
         perf_run = packet.perf if isinstance(packet.perf, dict) else None
         self._perf_diag_active_run = perf_run
         try:
@@ -73770,23 +74354,59 @@ class UnifiedApp(tk.Tk):
                     pass
 
             if fig is not None:
-                self._render_figures_in_tabs(
-                    {"fig_combined": fig}, clear_existing=False
-                )
-            elif warn_on_failure:
-                try:
-                    messagebox.showwarning(
-                        "Plot Selection",
-                        (
-                            "Combined plot generation failed due to internal error. "
-                            "See console for details."
-                            if render_error is not None
-                            else "No plots were generated for the current data."
-                        ),
+                target_frame = frame
+                target_canvas = canvas
+                if target_frame is None or target_canvas is None:
+                    target_frame, target_canvas = self._find_plot_tab_canvas(
+                        "fig_combined"
                     )
-                except Exception:
-                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                    pass
+                if (
+                    task_id is not None
+                    and target_frame is not None
+                    and getattr(target_frame, "_plot_render_task_id", None) != task_id
+                ):
+                    return
+                if target_frame is not None and target_canvas is not None:
+                    self._install_rendered_plot_in_tab(
+                        target_frame,
+                        target_canvas,
+                        "fig_combined",
+                        fig,
+                        placement_state=placement_state,
+                    )
+                else:
+                    self._render_figures_in_tabs(
+                        {"fig_combined": fig}, clear_existing=False
+                    )
+                if on_success is not None:
+                    try:
+                        on_success(fig)
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+            else:
+                if frame is not None and (
+                    task_id is None
+                    or getattr(frame, "_plot_render_task_id", None) == task_id
+                ):
+                    if getattr(frame, "_plot_auto_refresh_state", None) == "refreshing":
+                        self._complete_plot_auto_refresh(frame)
+                    else:
+                        self._clear_plot_loading_overlay(frame)
+                if warn_on_failure:
+                    try:
+                        messagebox.showwarning(
+                            "Plot Selection",
+                            (
+                                "Combined plot generation failed due to internal error. "
+                                "See console for details."
+                                if render_error is not None
+                                else "No plots were generated for the current data."
+                            ),
+                        )
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
 
             if perf_run is not None:
                 self._record_performance_run(perf_run)
@@ -73795,7 +74415,20 @@ class UnifiedApp(tk.Tk):
 
     def _generate_selected_plots(self) -> None:
         """Generate selected plots.
-        Used to produce selected plots outputs for analysis or export."""
+
+        Purpose:
+            Create plot tabs and run the selected plot renders asynchronously.
+        Why:
+            Keeps the UI responsive while compute-heavy plot prep runs.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Creates placeholder tabs, starts background workers, and updates tabs.
+        Exceptions:
+            Errors are caught to avoid interrupting the UI workflow.
+        """
 
         fig1_var = getattr(self, "_plot_select_fig1_var", None)
         fig2_var = getattr(self, "_plot_select_fig2_var", None)
@@ -73844,40 +74477,59 @@ class UnifiedApp(tk.Tk):
             )
             return
 
-        figs_to_render: Dict[str, Any] = {}
-        if selections["fig1"] or selections["fig2"]:
-            figs = self.render_plot("core", target="display")
-            if isinstance(figs, dict):
-                if selections["fig1"] and figs.get("fig1") is not None:
-                    figs_to_render["fig1"] = figs["fig1"]
-                if selections["fig2"] and figs.get("fig2") is not None:
-                    figs_to_render["fig2"] = figs["fig2"]
+        # Create placeholder tabs immediately so loading overlays paint right away.
+        placeholder_figs: Dict[str, Any] = {}
+        if selections["fig1"]:
+            placeholder_figs["fig1"] = Figure()
+        if selections["fig2"]:
+            placeholder_figs["fig2"] = Figure()
+        if selections["fig_combined"]:
+            placeholder_figs["fig_combined"] = Figure()
+        if placeholder_figs:
+            self._render_figures_in_tabs(
+                placeholder_figs, clear_existing=False, auto_refresh=False
+            )
 
-        if figs_to_render:
-            self._render_figures_in_tabs(figs_to_render, clear_existing=False)
+        core_keys = [key for key in ("fig1", "fig2") if selections.get(key)]
+        if core_keys:
+            core_snapshot = self._capture_plot_render_snapshot(
+                fig_size=None,
+                plot_id="",
+                target="display",
+            )
+            self._start_core_render_async(
+                core_snapshot,
+                core_keys,
+                warn_on_failure=not bool(selections.get("fig_combined")),
+            )
 
         if selections["fig_combined"]:
             fig_size = self._compute_target_figsize_inches()
-            snapshot = self._capture_combined_render_snapshot(
+            snapshot = self._capture_plot_render_snapshot(
                 fig_size=fig_size,
                 plot_id="fig_combined_triple_axis",
                 target="display",
             )
             self._start_combined_render_async(
-                snapshot, warn_on_failure=not bool(figs_to_render)
+                snapshot, warn_on_failure=not bool(core_keys)
             )
-        elif not figs_to_render:
-            try:
-                messagebox.showwarning(
-                    "Plot Selection", "No plots were generated for the current data."
-                )
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
 
     def update_plots(self, *, include_cycle: bool = True):
         """Update plots.
-        Used to keep plots in sync with current state."""
+
+        Purpose:
+            Refresh core plots to match current settings and data state.
+        Why:
+            Ensures plot tabs stay in sync after parameter changes.
+        Inputs:
+            include_cycle: When True, include the Cycle Analysis plot tab.
+        Outputs:
+            None.
+        Side Effects:
+            Rebuilds plot tabs, starts async rendering, and updates UI tabs.
+        Exceptions:
+            Errors are caught to keep the UI responsive.
+        """
 
         if self.df is None:
 
@@ -73901,24 +74553,24 @@ class UnifiedApp(tk.Tk):
 
         self._save_settings_dict(args)
 
-        figs = self.render_plot("core", target="display")
-
-        if isinstance(figs, dict):
-            if not include_cycle:
-                fig_peaks = figs.get("fig_peaks")
-                if fig_peaks is not None:
-                    try:
-                        plt.close(fig_peaks)
-                    except Exception:
-                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                        pass
-                figs = {
-                    key: figs[key]
-                    # Iterate to apply the per-item logic.
-                    for key in ("fig1", "fig2")
-                    if key in figs and figs[key] is not None
-                }
-            self._render_figures_in_tabs(figs)
+        plot_keys: List[str] = ["fig1", "fig2"]
+        if include_cycle:
+            plot_keys.append("fig_peaks")
+        # Render placeholders first to show loading overlays immediately.
+        placeholder_figs = {key: Figure() for key in plot_keys}
+        self._render_figures_in_tabs(
+            placeholder_figs, clear_existing=True, auto_refresh=False
+        )
+        core_snapshot = self._capture_plot_render_snapshot(
+            fig_size=None,
+            plot_id="",
+            target="display",
+        )
+        self._start_core_render_async(
+            core_snapshot,
+            plot_keys,
+            warn_on_failure=False,
+        )
 
         # Show Cycle Analysis tab only after plots exist
 
@@ -73927,7 +74579,20 @@ class UnifiedApp(tk.Tk):
 
     def generate_fig1_only(self):
         """Generate fig1 only.
-        Used to produce fig1 only outputs for analysis or export."""
+
+        Purpose:
+            Render only the Figure 1 plot on demand.
+        Why:
+            Allows a focused refresh without generating all plots.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Creates a placeholder tab and starts async rendering.
+        Exceptions:
+            Errors are caught to avoid interrupting the UI workflow.
+        """
 
         # Validate
 
@@ -73949,17 +74614,38 @@ class UnifiedApp(tk.Tk):
 
             return
 
-        figs = self.render_plot("core", target="display")
-
-        # Show ONLY Figure 1
-
-        if isinstance(figs, dict) and figs.get("fig1"):
-
-            self._render_figures_in_tabs({"fig1": figs["fig1"]}, clear_existing=False)
+        # Create placeholder tab so the loading overlay is visible immediately.
+        placeholder_figs = {"fig1": Figure()}
+        self._render_figures_in_tabs(
+            placeholder_figs, clear_existing=False, auto_refresh=False
+        )
+        core_snapshot = self._capture_plot_render_snapshot(
+            fig_size=None,
+            plot_id="",
+            target="display",
+        )
+        self._start_core_render_async(
+            core_snapshot,
+            ["fig1"],
+            warn_on_failure=False,
+        )
 
     def generate_fig2_only(self):
         """Generate fig2 only.
-        Used to produce fig2 only outputs for analysis or export."""
+
+        Purpose:
+            Render only the Figure 2 plot on demand.
+        Why:
+            Allows a focused refresh without generating all plots.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Creates a placeholder tab and starts async rendering.
+        Exceptions:
+            Errors are caught to avoid interrupting the UI workflow.
+        """
 
         # Validate
 
@@ -73981,17 +74667,38 @@ class UnifiedApp(tk.Tk):
 
             return
 
-        figs = self.render_plot("core", target="display")
-
-        # Show ONLY Figure 2
-
-        if isinstance(figs, dict) and figs.get("fig2"):
-
-            self._render_figures_in_tabs({"fig2": figs["fig2"]}, clear_existing=False)
+        # Create placeholder tab so the loading overlay is visible immediately.
+        placeholder_figs = {"fig2": Figure()}
+        self._render_figures_in_tabs(
+            placeholder_figs, clear_existing=False, auto_refresh=False
+        )
+        core_snapshot = self._capture_plot_render_snapshot(
+            fig_size=None,
+            plot_id="",
+            target="display",
+        )
+        self._start_core_render_async(
+            core_snapshot,
+            ["fig2"],
+            warn_on_failure=False,
+        )
 
     def generate_combined_plot(self):
         """Generate combined plot.
-        Used to produce combined plot outputs for analysis or export."""
+
+        Purpose:
+            Render the combined triple-axis plot on demand.
+        Why:
+            Provides a focused combined plot render and export trigger.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Creates a placeholder tab, starts async rendering, and may export.
+        Exceptions:
+            Errors are caught to avoid interrupting the UI workflow.
+        """
 
         if self.df is None:
 
@@ -74011,19 +74718,34 @@ class UnifiedApp(tk.Tk):
 
             return
 
+        # Create placeholder tab so the loading overlay is visible immediately.
+        placeholder_figs = {"fig_combined": Figure()}
+        self._render_figures_in_tabs(
+            placeholder_figs, clear_existing=False, auto_refresh=False
+        )
         fig_size = self._compute_target_figsize_inches()
-        fig = self.render_plot(
-            "fig_combined",
-            target="display",
-            plot_id="fig_combined_triple_axis",
+        snapshot = self._capture_plot_render_snapshot(
             fig_size=fig_size,
+            plot_id="fig_combined_triple_axis",
+            target="display",
         )
 
-        if fig is not None:
+        def _export_after_render(_fig: Figure) -> None:
+            """Export the combined plot artifact after the UI render finishes.
 
-            self._render_figures_in_tabs(
-                {"fig_combined": fig}, clear_existing=False
-            )
+            Purpose:
+                Trigger export of the combined plot artifact post-render.
+            Why:
+                Ensures export runs only after the display render completes.
+            Inputs:
+                _fig: Rendered combined plot figure (unused by export logic).
+            Outputs:
+                None.
+            Side Effects:
+                Writes the combined plot artifact to disk via export workflow.
+            Exceptions:
+                Errors are caught to avoid interrupting the UI workflow.
+            """
             try:
                 report_state = settings.get("final_report", {}) or {}
                 export_profile = report_state.get(
@@ -74036,6 +74758,12 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+
+        self._start_combined_render_async(
+            snapshot,
+            warn_on_failure=False,
+            on_success=_export_after_render,
+        )
 
     def _combined_plot_config(
         self, args: Tuple[Any, ...], mode: str

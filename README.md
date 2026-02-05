@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.11.4)
+# GL-260 Data Analysis and Plotter (v2.11.5)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.11.4`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.11.5`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v2.11.5 Async Plot Rendering and Immediate Tabs](#v2115-async-plot-rendering-and-immediate-tabs)
   - [v2.11.4 Plot Tab Auto Refresh Overlay](#v2114-plot-tab-auto-refresh-overlay)
   - [v2.11.2 Combined Plot Auto Refresh Overlay](#v2112-combined-plot-auto-refresh-overlay)
   - [v2.11.1 Plot Preview Combined Legend Tracking Restore](#v2111-plot-preview-combined-legend-tracking-restore)
@@ -307,7 +308,7 @@ Purpose: preview the combined plot, manage overlays, and export the triple-axis 
 
 Key controls:
 - Generate Plot and Refresh actions (from the bottom action bar).
-- Generated plot tabs show a brief loading overlay on first generation while an automatic refresh produces the stabilized layout.
+- Generated plot tabs switch immediately and show a loading overlay while background computation runs; the UI-thread render finishes the stabilized layout.
 - Close Plot removes the generated figure tab and returns focus to Plot Settings.
 - Plot Elements editor for adding annotations and overlays.
 - Export controls (PNG/SVG/PDF) with output size profiles and DPI.
@@ -840,6 +841,11 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v2.11.5 Async Plot Rendering and Immediate Tabs
+- Plot generation now creates and selects new plot tabs immediately, with loading overlays shown right away.
+- Plot data preparation runs in background workers; Matplotlib/Tk rendering stays on the UI thread once computation completes.
+- Combined, Figure 1/2, and Cycle Analysis generation follow the same compute/render split without changing plot output.
 
 ### v2.11.4 Plot Tab Auto Refresh Overlay
 - All generated plot tabs (Figure 1, Figure 2, Combined, and Cycle Analysis) now show a loading overlay on first render while a one-time automatic refresh stabilizes layout and sizing.
