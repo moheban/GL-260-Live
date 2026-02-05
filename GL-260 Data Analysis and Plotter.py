@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.11.2
+# Version: v2.11.3
 # Date: 2026-02-05
 
 import os
@@ -7929,7 +7929,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.11.2"
+APP_VERSION = "v2.11.3"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -43798,11 +43798,23 @@ class UnifiedApp(tk.Tk):
 
         # Controls for refreshing axes and padding
 
-        btn_refresh = ttk.Button(
-            lf_axes, text="Refresh Axis Ranges", command=self._refresh_axis_ranges
-        )
+        axis_button_frame = ttk.Frame(lf_axes)
+        axis_button_frame.grid(row=0, column=2, sticky="e", padx=6, pady=4)
 
-        btn_refresh.grid(row=0, column=2, sticky="e", padx=6, pady=4)
+        btn_refresh = ttk.Button(
+            axis_button_frame,
+            text="Refresh Axis Ranges",
+            command=self._refresh_axis_ranges,
+        )
+        btn_refresh.grid(row=0, column=0, padx=(0, 6))
+
+        # Shortcut only: opens Axis Auto-Range Settings without refreshing ranges.
+        btn_auto_axis_settings = ttk.Button(
+            axis_button_frame,
+            text="Auto-Axis Settings...",
+            command=self._open_axis_range_preferences,
+        )
+        btn_auto_axis_settings.grid(row=0, column=1)
 
         lbl_pad = ttk.Label(lf_axes, text="Span Padding (%)")
 
@@ -43816,6 +43828,10 @@ class UnifiedApp(tk.Tk):
 
         self._attach_tooltip(
             btn_refresh, "Recalculate and apply axis min/max from current data."
+        )
+        self._attach_tooltip(
+            btn_auto_axis_settings,
+            "Open Axis Auto-Range Settings without applying new ranges.",
         )
 
         self._attach_tooltip(

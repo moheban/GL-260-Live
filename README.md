@@ -287,6 +287,7 @@ Axes
 - Combined derivative axis offset (moves the detached derivative spine to avoid label collisions).
 
 Axis Auto-Range Settings
+- Auto-Axis Settings... (next to Refresh Axis Ranges) opens this dialog without applying new ranges.
 - Open Axis Auto-Range Settings... to choose which axes auto-range tools update.
 - Unchecked axes keep manual min/max values, even when Refresh Axis Ranges is used.
 - Span Padding (%) expands Y ranges as a percentage of data span.
