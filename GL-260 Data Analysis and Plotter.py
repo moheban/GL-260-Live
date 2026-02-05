@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.11.6
+# Version: v2.11.7
 # Date: 2026-02-05
 
 import os
@@ -7929,7 +7929,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.11.6"
+APP_VERSION = "v2.11.7"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -31557,7 +31557,9 @@ class UnifiedApp(tk.Tk):
             Defers render until widget geometry is ready, applies display layout
             settings and plot elements, restores legend anchors, registers drag
             tracking, retargets annotation controllers, schedules a one-time
-            auto refresh, and triggers a single draw_idle.
+            auto refresh, and triggers a single draw_idle. When completing a
+            forced refresh, synchronously finalizes layout before clearing the
+            loading overlay.
         Exceptions:
             Errors are caught defensively to keep UI workflows responsive.
         """
@@ -31704,10 +31706,23 @@ class UnifiedApp(tk.Tk):
                 pass
             auto_state = getattr(frame, "_plot_auto_refresh_state", None)
             if auto_state == "pending":
-                # Initial render complete; schedule the one-time auto refresh if enabled.
+                # Initial render complete; schedule auto refresh if enabled.
                 if getattr(frame, "_plot_auto_refresh_enabled", True):
                     self._schedule_plot_auto_refresh(frame, canvas)
             elif auto_state == "refreshing":
+                # Apply the same finalize/draw logic as manual Refresh before revealing.
+                try:
+                    self._finalize_matplotlib_canvas_layout(
+                        canvas=canvas,
+                        fig=fig,
+                        tk_widget=widget,
+                        keep_export_size=False,
+                        trigger_resize_event=True,
+                        force_draw=True,
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures.
+                    pass
                 # Auto refresh completed; reveal the stabilized render.
                 self._complete_plot_auto_refresh(frame)
 
