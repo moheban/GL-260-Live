@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.11.5)
+# GL-260 Data Analysis and Plotter (v2.11.6)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.11.5`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.11.6`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v2.11.6 Async Display Settings Application](#v2116-async-display-settings-application)
   - [v2.11.5 Async Plot Rendering and Immediate Tabs](#v2115-async-plot-rendering-and-immediate-tabs)
   - [v2.11.4 Plot Tab Auto Refresh Overlay](#v2114-plot-tab-auto-refresh-overlay)
   - [v2.11.2 Combined Plot Auto Refresh Overlay](#v2112-combined-plot-auto-refresh-overlay)
@@ -841,6 +842,10 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v2.11.6 Async Display Settings Application
+- Display layout profiles (including margins), plot elements, and annotation controller bindings are now applied through a single helper during initial tab creation and async figure installs before the forced refresh and overlay clear.
+- Async render installs now apply the full display settings stack after attaching the new figure, eliminating first-render margin mismatches across plot types.
 
 ### v2.11.5 Async Plot Rendering and Immediate Tabs
 - Plot generation now creates and selects new plot tabs immediately, with loading overlays shown right away.

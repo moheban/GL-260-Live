@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.11.5
+# Version: v2.11.6
 # Date: 2026-02-05
 
 import os
@@ -7929,7 +7929,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.11.5"
+APP_VERSION = "v2.11.6"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -31554,9 +31554,10 @@ class UnifiedApp(tk.Tk):
         Outputs:
             None.
         Side Effects:
-            Defers render until widget geometry is ready, applies saved legend
-            anchors, registers drag tracking, retargets annotation controllers,
-            schedules a one-time auto refresh, and triggers a single draw_idle.
+            Defers render until widget geometry is ready, applies display layout
+            settings and plot elements, restores legend anchors, registers drag
+            tracking, retargets annotation controllers, schedules a one-time
+            auto refresh, and triggers a single draw_idle.
         Exceptions:
             Errors are caught defensively to keep UI workflows responsive.
         """
@@ -31662,7 +31663,7 @@ class UnifiedApp(tk.Tk):
                 pass
             if plot_id:
                 try:
-                    _apply_layout_profile_to_figure(fig, plot_id, "display")
+                    self._apply_display_settings_for_plot(fig, plot_id, canvas)
                 except Exception:
                     # Best-effort guard; ignore failures.
                     pass
@@ -31680,20 +31681,12 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures.
                 pass
-            if plot_id:
+            if plot_id and placement_state:
                 try:
-                    self._retarget_plot_annotation_controller(plot_id, fig, canvas)
+                    self._restore_plot_element_placement_state(plot_id, placement_state)
                 except Exception:
                     # Best-effort guard; ignore failures.
                     pass
-                if placement_state:
-                    try:
-                        self._restore_plot_element_placement_state(
-                            plot_id, placement_state
-                        )
-                    except Exception:
-                        # Best-effort guard; ignore failures.
-                        pass
             try:
                 frame._combined_render_ready = True
             except Exception:
@@ -31743,9 +31736,30 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
-    def _install_refreshed_figure_and_finalize(self, frame, canvas, new_fig) -> None:
-        """Perform install refreshed figure and finalize.
-        Used to keep the workflow logic localized and testable."""
+    def _install_refreshed_figure_and_finalize(
+        self, frame, canvas, new_fig, *, plot_id: Optional[str] = None
+    ) -> None:
+        """Install a refreshed figure on the canvas and finalize display.
+
+        Purpose:
+            Attach a new figure to the existing canvas and complete the
+            display finalization for a refreshed plot.
+        Why:
+            Async render installs must bind the final figure before refresh
+            so layout profiles and plot elements apply to the correct figure.
+        Inputs:
+            frame: Plot tab frame hosting the canvas.
+            canvas: FigureCanvasTkAgg instance to update.
+            new_fig: Rendered Matplotlib Figure to install.
+            plot_id: Optional plot identifier for applying display settings.
+        Outputs:
+            None.
+        Side Effects:
+            Attaches the figure to the canvas, applies display settings,
+            triggers canvas resize/draw, and finalizes layout.
+        Exceptions:
+            Errors are caught to avoid interrupting UI workflows.
+        """
         if canvas is None or new_fig is None:
             return
         self._log_plot_tab_debug("Installing refreshed figure onto canvas.")
@@ -31759,6 +31773,12 @@ class UnifiedApp(tk.Tk):
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+        if plot_id:
+            try:
+                self._apply_display_settings_for_plot(new_fig, plot_id, canvas)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
         try:
             canvas.resize_event()
         except Exception:
@@ -31824,16 +31844,6 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
-            try:
-                _apply_layout_profile_to_figure(fig, plot_id, "display")
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-            try:
-                self._apply_plot_elements(fig, plot_id)
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
         if plot_key == "fig_combined":
             try:
                 fig.set_canvas(canvas)
@@ -31854,24 +31864,21 @@ class UnifiedApp(tk.Tk):
                 pass
         else:
             try:
-                self._install_refreshed_figure_and_finalize(frame, canvas, fig)
+                self._install_refreshed_figure_and_finalize(
+                    frame,
+                    canvas,
+                    fig,
+                    plot_id=plot_id,
+                )
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
-            if plot_id:
+            if plot_id and placement_state:
                 try:
-                    self._retarget_plot_annotation_controller(plot_id, fig, canvas)
+                    self._restore_plot_element_placement_state(plot_id, placement_state)
                 except Exception:
                     # Best-effort guard; ignore failures.
                     pass
-                if placement_state:
-                    try:
-                        self._restore_plot_element_placement_state(
-                            plot_id, placement_state
-                        )
-                    except Exception:
-                        # Best-effort guard; ignore failures.
-                        pass
         if plot_id:
             try:
                 self._set_plot_dirty_flags(
@@ -32518,6 +32525,75 @@ class UnifiedApp(tk.Tk):
         self._clear_plot_element_artists(fig)
         axes_map = self._resolve_plot_element_axes(fig)
         self._annotation_renderer.render(fig, axes_map, elements or [])
+
+    def _apply_display_settings_for_plot(
+        self,
+        fig: Figure,
+        plot_id: str,
+        canvas: FigureCanvasTkAgg,
+    ) -> None:
+        """Apply display settings for a plot figure.
+
+        Purpose:
+            Centralize the display settings stack for plot figures.
+        Why:
+            Async render installs and initial tab creation must apply layout
+            profiles, plot elements, and annotation bindings before refresh.
+        Inputs:
+            fig: Matplotlib Figure to update for display.
+            plot_id: Plot identifier used for settings lookup.
+            canvas: FigureCanvasTkAgg associated with the display.
+        Outputs:
+            None.
+        Side Effects:
+            Applies layout profiles, re-renders plot elements, and creates or
+            retargets annotation controllers for the figure/canvas pair.
+        Exceptions:
+            Errors are caught to avoid interrupting UI workflows.
+        """
+        if fig is None or not plot_id or canvas is None:
+            return
+        try:
+            _apply_layout_profile_to_figure(fig, plot_id, "display")
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            self._apply_plot_elements(fig, plot_id)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        controller = self._plot_annotation_controllers.get(plot_id)
+        if controller is None:
+            try:
+                axes_map = self._resolve_plot_element_axes(fig)
+            except Exception:
+                axes_map = {}
+            try:
+                axis_labels = self._plot_element_axis_labels(fig)
+            except Exception:
+                axis_labels = {}
+            try:
+                controller = PlotAnnotationsController(
+                    plot_id,
+                    fig,
+                    canvas,
+                    self._annotation_store,
+                    self._annotation_renderer,
+                    axes_map,
+                    axis_labels,
+                    on_elements_changed=self._mark_plot_elements_dirty,
+                )
+                self._plot_annotation_controllers[plot_id] = controller
+            except Exception:
+                controller = None
+        # Create or retarget controllers so annotation bindings follow the final fig/canvas pair.
+        if controller is not None:
+            try:
+                self._retarget_plot_annotation_controller(plot_id, fig, canvas)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
 
     def _retarget_plot_annotation_controller(
         self, plot_id: str, fig: Figure, canvas: FigureCanvasTkAgg
@@ -35832,37 +35908,9 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
 
-        if plot_id:
+        if plot_id and plot_key != "fig_combined":
             try:
-                _apply_layout_profile_to_figure(fig, plot_id, "display")
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-            try:
-                self._apply_plot_elements(fig, plot_id)
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-        if plot_id:
-            try:
-                axes_map = self._resolve_plot_element_axes(fig)
-                axis_labels = self._plot_element_axis_labels(fig)
-                controller = PlotAnnotationsController(
-                    plot_id,
-                    fig,
-                    canvas,
-                    self._annotation_store,
-                    self._annotation_renderer,
-                    axes_map,
-                    axis_labels,
-                    on_elements_changed=self._mark_plot_elements_dirty,
-                )
-                self._plot_annotation_controllers[plot_id] = controller
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-            try:
-                self._retarget_plot_annotation_controller(plot_id, fig, canvas)
+                self._apply_display_settings_for_plot(fig, plot_id, canvas)
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
