@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.12.1)
+# GL-260 Data Analysis and Plotter (v2.12.2)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.12.1`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.12.2`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v2.12.2 Planning Timeline Persistence + Input Stability](#v2122-planning-timeline-persistence--input-stability)
   - [v2.12.0 Data Trace Settings + Combined Splash Hold](#v2120-data-trace-settings--combined-splash-hold)
   - [v2.11.13 Columns Per-Series Line Width Control](#v21113-columns-per-series-line-width-control)
   - [v2.11.12 Combined Splash Refresh Race Hardening](#v21112-combined-splash-refresh-race-hardening)
@@ -706,7 +707,8 @@ The Advanced Solubility and Equilibrium Engine models CO2 dissolution, carbonate
 - Species concentration plots and saturation summaries.
 - pH sweep curves and speciation tables.
 - Cycle speciation timeline plots and tables.
-- Planning workflow timeline plots include a draggable legend so species and pH traces stay labeled in exports.
+- Planning workflow timeline plots include a draggable legend that retains its placement across redraws and exports.
+- Planning workflow inputs persist after each run; NaOH mass and related fields remain unchanged.
 - Headspace/solution partitioning summaries for CO2 uptake.
 
 #### 5) Experimental Use Cases
@@ -874,6 +876,10 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v2.12.2 Planning Timeline Persistence + Input Stability
+- Planning timeline legends are now created once, remain draggable, and keep their placement across redraws and exports.
+- Planning workflow inputs now persist after a run; NaOH mass and related fields no longer reset to defaults.
 
 ### v2.12.0 Data Trace Settings + Combined Splash Hold
 - Added Data Trace Settings... dialog (accessible from generated plot tabs) to manage per-trace color, marker style/size, line style/width, and z-order overrides.

@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.12.1
+# Version: v2.12.2
 # Date: 2026-02-06
 
 import os
@@ -7929,7 +7929,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.12.1"
+APP_VERSION = "v2.12.2"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -54863,6 +54863,32 @@ class UnifiedApp(tk.Tk):
         )
         return var
 
+    def _record_solubility_default(self, key: str, default: Optional[str]) -> None:
+        """Record a solubility input default value.
+        Purpose: Track the default string used for a solubility input field.
+        Why: Input persistence logic needs to detect when a field was reset.
+        Inputs:
+            key (str): Solubility input key to record.
+            default (Optional[str]): Default value (string or None).
+        Outputs:
+            None.
+        Side Effects:
+            - Updates self._solubility_default_values with the recorded default.
+        Exceptions:
+            - Best-effort; ignores errors when updating the cache.
+        """
+        if not key:
+            return
+        defaults = getattr(self, "_solubility_default_values", None)
+        if defaults is None:
+            defaults = {}
+            self._solubility_default_values = defaults
+        try:
+            defaults[key] = "" if default is None else str(default)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
     def _create_persistent_solubility_bool(
         self, key: str, default: bool = False
     ) -> tk.BooleanVar:
@@ -55475,6 +55501,124 @@ class UnifiedApp(tk.Tk):
                     pass
         if cleared:
             self._update_sol_input_prompts()
+
+    def _planning_persist_input_keys(self) -> Set[str]:
+        """Return planning persistence input keys.
+        Purpose: Identify solubility inputs that must persist across Planning runs.
+        Why: Planning projections can refresh UI state; preserve user-entered values.
+        Inputs:
+            None.
+        Outputs:
+            Set[str]: Input keys to capture and restore.
+        Side Effects:
+            None.
+        Exceptions:
+            - Best-effort; returns an empty set on failure.
+        """
+        try:
+            keys: Set[str] = set()
+            planning_meta = SOL_WORKFLOW_TEMPLATES.get("Planning", {}) or {}
+            keys.update(planning_meta.get("input_include_keys") or [])
+            keys.update(
+                key
+                for key, _label, _required in planning_meta.get("input_extra_fields")
+                or []
+            )
+            keys.add("mass_na_hco3_g")
+            keys.add("planning_speciation_ph")
+            keys.update(["headspace_pco2_atm", "headspace_kh_m_per_atm"])
+            analysis_meta = SOL_WORKFLOW_TEMPLATES.get("Analysis", {}) or {}
+            analysis_keys = list(analysis_meta.get("input_include_keys") or [])
+            analysis_keys.extend(
+                key
+                for key, _label, _required in analysis_meta.get("input_extra_fields")
+                or []
+            )
+            for key in analysis_keys:
+                if key == "reaction_co2_charged_g":
+                    continue
+                keys.add(key)
+            return keys
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            return set()
+
+    def _capture_planning_inputs(self) -> None:
+        """Capture Planning inputs for persistence.
+        Purpose: Snapshot solubility inputs before executing a Planning run.
+        Why: Prevent Planning runs from resetting user-entered values to defaults.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            - Updates self._planning_input_cache with captured values.
+            - Sets self._planning_inputs_persisted to True.
+        Exceptions:
+            - Best-effort; ignores capture failures.
+        """
+        vars_map = getattr(self, "_solubility_vars", None)
+        if not vars_map:
+            return
+        cache: Dict[str, str] = {}
+        # Iterate over planned keys to capture the current entry values.
+        for key in self._planning_persist_input_keys():
+            var = vars_map.get(key)
+            if var is None:
+                continue
+            try:
+                cache[key] = var.get()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                continue
+        self._planning_input_cache = cache
+        self._planning_inputs_persisted = True
+
+    def _restore_planning_inputs(self) -> None:
+        """Restore cached Planning inputs after refresh.
+        Purpose: Reapply user-entered Planning values after projection updates.
+        Why: Planning runs can rebuild or refresh widgets and reset defaults.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            - Mutates Tk variables for cached solubility input keys.
+        Exceptions:
+            - Best-effort; ignores restore failures.
+        """
+        cache = getattr(self, "_planning_input_cache", None)
+        if not cache:
+            return
+        vars_map = getattr(self, "_solubility_vars", None)
+        if not vars_map:
+            return
+        defaults = getattr(self, "_solubility_default_values", {}) or {}
+        # Restore only when a field appears reset (empty or default), to avoid
+        # overwriting edits made after the planning run completes.
+        for key in self._planning_persist_input_keys():
+            cached_value = cache.get(key)
+            if cached_value is None:
+                continue
+            var = vars_map.get(key)
+            if var is None:
+                continue
+            try:
+                current_value = var.get()
+            except Exception:
+                current_value = ""
+            cached_str = "" if cached_value is None else str(cached_value)
+            current_str = "" if current_value is None else str(current_value)
+            if not cached_str or current_str == cached_str:
+                continue
+            default_str = "" if defaults.get(key) is None else str(defaults.get(key))
+            if current_str and current_str != default_str:
+                continue
+            try:
+                var.set(cached_str)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
 
     def _on_toggle_sol_helper_pref(self) -> None:
         """Handle toggle sol helper pref.
@@ -56224,6 +56368,7 @@ class UnifiedApp(tk.Tk):
                 row=row_cursor, column=0, sticky="w", padx=(8, 8), pady=2
             )
             var = self._create_persistent_solubility_var(key, default)
+            self._record_solubility_default(key, default)
             entry = ttk.Entry(input_box, textvariable=var)
             entry.grid(row=row_cursor, column=1, sticky="ew", padx=(0, 8), pady=2)
             self._solubility_vars[key] = var
@@ -56405,6 +56550,7 @@ class UnifiedApp(tk.Tk):
                 row=reaction_row, column=0, sticky="w", padx=(8, 8), pady=2
             )
             var = self._create_persistent_solubility_var(key, default)
+            self._record_solubility_default(key, default)
             entry = ttk.Entry(reaction_box, textvariable=var)
             entry.grid(row=reaction_row, column=1, sticky="ew", padx=(0, 8), pady=2)
             self._solubility_vars[key] = var
@@ -56501,6 +56647,7 @@ class UnifiedApp(tk.Tk):
                 row=diag_row, column=0, sticky="w", padx=(8, 8), pady=2
             )
             var = self._create_persistent_solubility_var(key, default)
+            self._record_solubility_default(key, default)
             entry = ttk.Entry(diagnostic_box, textvariable=var)
             entry.grid(row=diag_row, column=1, sticky="ew", padx=(0, 8), pady=2)
             self._solubility_vars[key] = var
@@ -57088,7 +57235,18 @@ class UnifiedApp(tk.Tk):
 
     def _build_tab_solubility_new(self):
         """Build the solubility modeling tab UI.
-        Used to wire the scrollable solubility workflow panel."""
+        Purpose: Construct the scrollable Advanced Solubility workflow layout.
+        Why: Centralize Planning/Analysis/Reprocessing input wiring and defaults.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            - Creates Tk widgets, binds callbacks, and populates solubility state.
+            - Records default values and registers observers for input persistence.
+        Exceptions:
+            - Best-effort; returns early if the tab frame is unavailable.
+        """
         frame = getattr(self, "tab_solubility_new", None)
         if frame is None:
             return
@@ -57359,7 +57517,21 @@ class UnifiedApp(tk.Tk):
             workflow_key: Optional[str] = None,
         ) -> int:
             """Build input grid.
-            Used to assemble input grid during UI or plot setup."""
+            Purpose: Create labeled entry rows for workflow-specific inputs.
+            Why: Reuse consistent input wiring across Planning/Analysis/Reprocessing tabs.
+            Inputs:
+                parent (ttk.Frame): Container to receive the input rows.
+                specs (Sequence[Tuple[str, str, bool]]): Input key/label/required specs.
+                start_row (int): Starting grid row index.
+                workflow_key (Optional[str]): Workflow name for default handling.
+            Outputs:
+                int: Next row index after the grid is populated.
+            Side Effects:
+                - Creates Tk widgets and updates self._solubility_field_meta.
+                - Applies cached Planning inputs or defaults when appropriate.
+            Exceptions:
+                - Best-effort; continues when widget construction fails.
+            """
             parent.grid_columnconfigure(1, weight=1)
             row_cursor = start_row
             # Iterate over specs to apply the per-item logic.
@@ -57381,7 +57553,28 @@ class UnifiedApp(tk.Tk):
                 entry = ttk.Entry(row_frame, textvariable=var, width=18)
                 entry.grid(row=0, column=1, sticky="ew", padx=(0, 12))
                 default_value = SOL_PLANNING_DEFAULTS.get(key)
-                if default_value and not var.get().strip():
+                self._record_solubility_default(key, default_value)
+                try:
+                    current_value = var.get().strip()
+                except Exception:
+                    current_value = ""
+                if workflow_key == "Planning":
+                    # Planning runs can rebuild fields; prefer cached values over defaults.
+                    cached_inputs = getattr(self, "_planning_input_cache", {}) or {}
+                    cached_value = cached_inputs.get(key)
+                    if (
+                        cached_value is not None
+                        and str(cached_value).strip()
+                        and not current_value
+                    ):
+                        var.set(str(cached_value))
+                    elif (
+                        default_value
+                        and not current_value
+                        and not getattr(self, "_planning_inputs_persisted", False)
+                    ):
+                        var.set(default_value)
+                elif default_value and not current_value:
                     var.set(default_value)
                 self._solubility_field_meta[key] = {
                     "label": label,
@@ -57597,6 +57790,7 @@ class UnifiedApp(tk.Tk):
         planning_plot_var = self._create_persistent_solubility_var(
             "planning_speciation_ph", "8.0"
         )
+        self._record_solubility_default("planning_speciation_ph", "8.0")
         self._solubility_vars["planning_speciation_ph"] = planning_plot_var
         self._register_solubility_observer(planning_plot_var)
         self._solubility_field_meta["planning_speciation_ph"] = {
@@ -57661,11 +57855,24 @@ class UnifiedApp(tk.Tk):
 
         # Closure captures _build_tab_solubility_new local context to keep helper logic scoped and invoked directly within _build_tab_solubility_new.
         def _ensure_headspace_var(key: str, default: str) -> tk.StringVar:
-            """Perform ensure headspace var.
-            Used to keep the workflow logic localized and testable."""
+            """Ensure a headspace input variable exists.
+            Purpose: Create or reuse headspace input variables for Planning.
+            Why: Headspace fields must persist and remain observable across refreshes.
+            Inputs:
+                key (str): Headspace input key.
+                default (str): Default string value to apply on first init.
+            Outputs:
+                tk.StringVar: The variable bound to the input field.
+            Side Effects:
+                - Creates a new persistent variable when missing.
+                - Registers observers and records field metadata defaults.
+            Exceptions:
+                - Best-effort; returns existing variables on failure.
+            """
             var = self._solubility_vars.get(key)
             if var is None:
                 var = self._create_persistent_solubility_var(key, default)
+                self._record_solubility_default(key, default)
                 self._solubility_vars[key] = var
                 self._register_solubility_observer(var)
                 self._solubility_field_meta[key] = {
@@ -59382,11 +59589,119 @@ class UnifiedApp(tk.Tk):
             timeline, workflow_key=workflow_key or self._current_solubility_workflow()
         )
 
+    def _collect_planning_timeline_legend_entries(
+        self, axes: Sequence[Any]
+    ) -> Tuple[List[Any], List[str]]:
+        """Collect Planning timeline legend entries.
+        Purpose: Gather unique handles/labels across timeline axes.
+        Why: Planning plots use a consolidated legend for clarity and exports.
+        Inputs:
+            axes (Sequence[Any]): Axes to scan for legend entries.
+        Outputs:
+            Tuple[List[Any], List[str]]: Handles and labels in display order.
+        Side Effects:
+            None.
+        Exceptions:
+            - Best-effort; skips axes that fail to report legend entries.
+        """
+        handles: List[Any] = []
+        labels: List[str] = []
+        # Collect handles across axes so Planning exports are self-explanatory.
+        for axis in axes:
+            try:
+                axis_handles, axis_labels = axis.get_legend_handles_labels()
+            except Exception:
+                continue
+            for handle, label in zip(axis_handles, axis_labels):
+                if not label or label.startswith("_") or label in labels:
+                    continue
+                handles.append(handle)
+                labels.append(label)
+        return handles, labels
+
+    def _planning_timeline_legend_loc(
+        self,
+    ) -> Optional[Union[str, int, Tuple[float, float]]]:
+        """Return Planning timeline legend location.
+        Purpose: Reuse user-dragged legend placement in export figures.
+        Why: Exports should reflect the on-screen legend position.
+        Inputs:
+            None.
+        Outputs:
+            Optional[Union[str, int, Tuple[float, float]]]: Legend loc or None.
+        Side Effects:
+            None.
+        Exceptions:
+            - Best-effort; returns None on lookup failure.
+        """
+        legend = getattr(self, "_planning_timeline_legend", None)
+        if legend is None:
+            return None
+        try:
+            return legend.get_loc()
+        except Exception:
+            return getattr(legend, "_loc", None)
+
+    def _refresh_planning_timeline_legend(
+        self,
+        legend: Any,
+        handles: Sequence[Any],
+        labels: Sequence[str],
+        host_axis: Any,
+    ) -> None:
+        """Refresh Planning timeline legend entries in place.
+        Purpose: Update legend handles/labels without recreating the legend.
+        Why: Preserves drag state and avoids repeated layout registration.
+        Inputs:
+            legend (Any): Existing legend instance to update.
+            handles (Sequence[Any]): Legend handles to display.
+            labels (Sequence[str]): Legend labels to display.
+            host_axis (Any): Axis hosting the legend.
+        Outputs:
+            None.
+        Side Effects:
+            - Reattaches the legend to the axis and updates its entries.
+        Exceptions:
+            - Best-effort; ignores legend update failures.
+        """
+        if legend is None:
+            return
+        try:
+            host_axis.add_artist(legend)
+            host_axis.legend_ = legend
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            legend.set_visible(True)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            markerfirst = getattr(legend, "_markerfirst", True)
+            # Update the legend box in place to preserve drag position.
+            legend._init_legend_box(list(handles), list(labels), markerfirst=markerfirst)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
     def _update_cycle_spec_view(
         self, timeline: Sequence[Dict[str, Any]], *, workflow_key: Optional[str] = None
     ) -> None:
         """Update cycle spec view.
-        Used to keep cycle spec view in sync with current state."""
+        Purpose: Render the cycle timeline plot and associated callouts.
+        Why: Keep the on-screen cycle speciation view aligned with the latest results.
+        Inputs:
+            timeline (Sequence[Dict[str, Any]]): Cycle timeline rows to plot.
+            workflow_key (Optional[str]): Workflow identifier for plot context.
+        Outputs:
+            None.
+        Side Effects:
+            - Clears and redraws axes, legends, and callout widgets.
+            - Updates the Planning legend in place when applicable.
+        Exceptions:
+            - Best-effort; exits early when plot widgets are unavailable.
+        """
         workflow = workflow_key or self._current_solubility_workflow()
         timeline = list(timeline or [])
         reaction_guidance = getattr(self, "_sol_reaction_guidance", {}) or {}
@@ -59705,28 +60020,30 @@ class UnifiedApp(tk.Tk):
             )
         if workflow == "Planning":
             # Planning timeline legend is consolidated and draggable for clarity.
-            handles: List[Any] = []
-            labels: List[str] = []
-            # Collect handles across axes so Planning exports are self-explanatory.
-            for axis in (ax, ax2, ax3):
-                axis_handles, axis_labels = axis.get_legend_handles_labels()
-                for handle, label in zip(axis_handles, axis_labels):
-                    if not label or label.startswith("_") or label in labels:
-                        continue
-                    handles.append(handle)
-                    labels.append(label)
+            handles, labels = self._collect_planning_timeline_legend_entries(
+                (ax, ax2, ax3)
+            )
+            legend = getattr(self, "_planning_timeline_legend", None)
             if handles:
-                legend = ax.legend(
-                    handles=handles, labels=labels, loc="upper left", fontsize=8
-                )
+                if legend is None:
+                    legend = ax.legend(
+                        handles=handles, labels=labels, loc="upper left", fontsize=8
+                    )
+                    self._planning_timeline_legend = legend
+                    _make_legend_draggable(legend)
+                    layout_mgr = getattr(ax.figure, "_gl260_layout_manager", None)
+                    if layout_mgr is not None:
+                        layout_mgr.register_artist("plot_legend", legend)
+                else:
+                    self._refresh_planning_timeline_legend(
+                        legend, handles, labels, ax
+                    )
+            elif legend is not None:
                 try:
-                    legend.set_draggable(True)
+                    legend.set_visible(False)
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
-                layout_mgr = getattr(ax.figure, "_gl260_layout_manager", None)
-                if layout_mgr is not None:
-                    layout_mgr.register_artist("plot_legend", legend)
         elif show_legend:
             ax.legend(loc="upper left", fontsize=8)
             ax2.legend(loc="upper right", fontsize=8)
@@ -64132,7 +64449,20 @@ class UnifiedApp(tk.Tk):
         form_data: Dict[str, Any],
     ) -> None:
         """Handle planning projection result.
-        Used as an event callback for planning projection result."""
+        Purpose: Apply Planning projection results to the UI and cycle timeline.
+        Why: Update status, payload, and downstream plots after the async projection.
+        Inputs:
+            payload (Optional[Dict[str, Any]]): Projection payload, if available.
+            error (Optional[BaseException]): Exception raised by the projection, if any.
+            form_data (Dict[str, Any]): Planning form data used for the run.
+        Outputs:
+            None.
+        Side Effects:
+            - Updates status messages, payload state, and cycle simulations.
+            - Restores cached Planning inputs to prevent default resets.
+        Exceptions:
+            - Best-effort; handles UI update errors without raising.
+        """
         status_var = getattr(self, "_sol_cycle_status_var", None)
         if error is not None:
             if status_var is not None:
@@ -64144,10 +64474,12 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+            self._restore_planning_inputs()
             return
         if payload is None:
             if status_var is not None:
                 status_var.set("Planning projection unavailable.")
+            self._restore_planning_inputs()
             return
         projection_warning = payload.get("projection_warning")
         self._cycle_last_transfer_payload = payload
@@ -64168,6 +64500,7 @@ class UnifiedApp(tk.Tk):
         self._run_cycle_solubility_simulation(
             payload=payload, notify=False, workflow_key=form_data.get("workflow_key")
         )
+        self._restore_planning_inputs()
 
     def _run_solubility_analysis(self) -> None:
         """Run the solubility analysis workflow asynchronously.
@@ -64952,7 +65285,19 @@ class UnifiedApp(tk.Tk):
 
     def _run_planning_scenario(self) -> None:
         """Run planning scenario.
-        Used to execute planning scenario and coordinate results."""
+        Purpose: Trigger the Planning workflow execution from the UI.
+        Why: Capture Planning inputs and run the solver in planning mode.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            - Captures planning input values for persistence.
+            - Updates workflow mode and starts the analysis pipeline.
+        Exceptions:
+            - Best-effort; downstream workflow handles errors.
+        """
+        self._capture_planning_inputs()
         self._run_solubility_workflow("nahco3_dissolution")
 
     def _run_analysis_scenario(self, *, skip_apply: bool = False) -> None:
@@ -66875,7 +67220,19 @@ class UnifiedApp(tk.Tk):
         workflow_key: Optional[str] = None,
     ) -> Optional[Figure]:
         """Build cycle timeline export figure.
-        Used to assemble cycle timeline export figure during UI or plot setup."""
+        Purpose: Assemble the export-grade timeline figure for plots and reports.
+        Why: Ensure exports match the on-screen timeline styling and legend placement.
+        Inputs:
+            page_size (Tuple[float, float]): Target figure size in inches.
+            workflow_key (Optional[str]): Workflow to source timeline data from.
+        Outputs:
+            Optional[Figure]: Matplotlib figure, or None if no timeline data exists.
+        Side Effects:
+            - Creates a new Matplotlib figure and axes.
+            - Applies legend placement from the Planning timeline when available.
+        Exceptions:
+            - Best-effort; returns None when data is missing or invalid.
+        """
         timeline = []
         structured = getattr(self, "_sol_last_structured", None)
         if structured is not None:
@@ -67138,25 +67495,14 @@ class UnifiedApp(tk.Tk):
             )
         if workflow == "Planning":
             # Planning timeline legend is consolidated and draggable for clarity.
-            handles: List[Any] = []
-            labels: List[str] = []
-            # Collect handles across axes so Planning exports are self-explanatory.
-            for axis in (ax, ax2, ax3):
-                axis_handles, axis_labels = axis.get_legend_handles_labels()
-                for handle, label in zip(axis_handles, axis_labels):
-                    if not label or label.startswith("_") or label in labels:
-                        continue
-                    handles.append(handle)
-                    labels.append(label)
+            handles, labels = self._collect_planning_timeline_legend_entries(
+                (ax, ax2, ax3)
+            )
             if handles:
+                legend_loc = self._planning_timeline_legend_loc() or "upper left"
                 legend = ax.legend(
-                    handles=handles, labels=labels, loc="upper left", fontsize=8
+                    handles=handles, labels=labels, loc=legend_loc, fontsize=8
                 )
-                try:
-                    legend.set_draggable(True)
-                except Exception:
-                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                    pass
                 layout_mgr = getattr(fig, "_gl260_layout_manager", None)
                 if layout_mgr is not None:
                     layout_mgr.register_artist("plot_legend", legend)
