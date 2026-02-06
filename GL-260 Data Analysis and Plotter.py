@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.12.2
+# Version: v2.12.3
 # Date: 2026-02-06
 
 import os
@@ -7929,7 +7929,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.12.2"
+APP_VERSION = "v2.12.3"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -59068,25 +59068,43 @@ class UnifiedApp(tk.Tk):
     def _apply_cycle_payload_to_solubility(
         self,
         *,
-        payload: Optional[Dict[str, Any]] = None,
+        payload: dict[str, Any] | None = None,
         notify: bool = False,
         run_simulation: bool = True,
-        workflow_key: Optional[str] = None,
+        workflow_key: str | None = None,
     ) -> bool:
         """Apply cycle payload to solubility.
-        Used to apply cycle payload to solubility changes to live state."""
+        Purpose: Transfer Cycle Analysis payload data into solubility inputs/tracking.
+        Why: Keep Analysis/Planning/Reprocessing workflows synchronized with cycle runs.
+        Inputs:
+            payload (dict[str, Any] | None): Cycle payload to apply (None uses last).
+            notify (bool): When True, show user notifications for applied transfers.
+            run_simulation (bool): When True, run the cycle simulation after applying.
+            workflow_key (str | None): Target workflow key (None uses current).
+        Outputs:
+            bool: True if payload was applied; False if payload was missing/invalid.
+        Side Effects:
+            - Updates solubility Tk variables and cycle tracking state.
+            - Stores payloads for the target workflow.
+            - May trigger simulations or refresh cycle views.
+        Exceptions:
+            - Best-effort; handles notification/UI failures without raising.
+        """
         payload = payload or getattr(self, "_cycle_last_transfer_payload", None)
         if not payload:
             if notify:
                 try:
                     messagebox.showinfo(
                         "Cycle Analysis",
-                        "Run Cycle Analysis before sending results to Advanced Solubility.",
+                        "Run Cycle Analysis before sending results "
+                        "to Advanced Solubility.",
                     )
                 except Exception:
-                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    # Best-effort guard; ignore failures to avoid interrupting the
+                    # workflow.
                     pass
             return False
+        workflow = workflow_key or self._current_solubility_workflow()
 
         moles = payload.get("total_moles_vdw")
         if moles is None:
@@ -59100,7 +59118,8 @@ class UnifiedApp(tk.Tk):
                         "Unable to determine CO2 mass from the last run.",
                     )
                 except Exception:
-                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    # Best-effort guard; ignore failures to avoid interrupting the
+                    # workflow.
                     pass
             return False
 
@@ -59109,9 +59128,18 @@ class UnifiedApp(tk.Tk):
         except Exception:
             co2_g = 0.0
 
+        co2_autofilled = False
         target_var = self._solubility_vars.get("reaction_co2_charged_g")
         if target_var is not None:
-            target_var.set(f"{co2_g:.2f}")
+            try:
+                current_value = target_var.get()
+            except Exception:
+                current_value = ""
+            current_str = "" if current_value is None else str(current_value)
+            # Analysis: preserve user-entered CO2 unless the field is blank.
+            if workflow != "Analysis" or not current_str.strip():
+                target_var.set(f"{co2_g:.2f}")
+                co2_autofilled = True
 
         reaction_naoh_var = self._solubility_vars.get("reaction_naoh_mass_g")
         planning_naoh_var = self._solubility_vars.get("mass_naoh_g")
@@ -59121,7 +59149,14 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 naoh_value = None
             if naoh_value is not None and math.isfinite(naoh_value) and naoh_value > 0:
-                planning_naoh_var.set(f"{naoh_value:.4f}")
+                try:
+                    planning_value = planning_naoh_var.get()
+                except Exception:
+                    planning_value = ""
+                planning_str = "" if planning_value is None else str(planning_value)
+                # Planning: do not overwrite user-entered NaOH mass after a run.
+                if workflow != "Planning" or not planning_str.strip():
+                    planning_naoh_var.set(f"{naoh_value:.4f}")
 
         timestamp = payload.get("timestamp")
         if timestamp:
@@ -59152,10 +59187,12 @@ class UnifiedApp(tk.Tk):
                 try:
                     messagebox.showwarning(
                         "Cycle Analysis",
-                        "Unable to derive CO2 mass for any cycles. Check the analysis results.",
+                        "Unable to derive CO2 mass for any cycles. "
+                        "Check the analysis results.",
                     )
                 except Exception:
-                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    # Best-effort guard; ignore failures to avoid interrupting the
+                    # workflow.
                     pass
             return False
 
@@ -59167,7 +59204,6 @@ class UnifiedApp(tk.Tk):
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
-        workflow = workflow_key or self._current_solubility_workflow()
         self._set_cycle_payload_for_workflow(workflow, payload)
         if run_simulation:
             self._run_cycle_solubility_simulation(
@@ -59179,19 +59215,22 @@ class UnifiedApp(tk.Tk):
             try:
                 messagebox.showinfo(
                     "Cycle Analysis",
-                    f"{len(imported_entries)} cycle entries sent to the Reaction Progress tracker.",
+                    f"{len(imported_entries)} cycle entries sent to the "
+                    "Reaction Progress tracker.",
                 )
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
-            try:
-                messagebox.showinfo(
-                    "Cycle Analysis",
-                    f"Estimated {co2_g:.2f} g CO2 sent to Advanced Solubility.",
-                )
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
+            if co2_autofilled:
+                try:
+                    messagebox.showinfo(
+                        "Cycle Analysis",
+                        f"Estimated {co2_g:.2f} g CO2 sent to Advanced Solubility.",
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the
+                    # workflow.
+                    pass
         return True
 
     def _send_cycle_to_solubility(self) -> None:
@@ -64502,10 +64541,194 @@ class UnifiedApp(tk.Tk):
         )
         self._restore_planning_inputs()
 
+    def _ensure_solubility_loading_overlay(self) -> None:
+        """Ensure solubility loading overlay exists.
+        Purpose: Create the overlay widgets used for solubility job feedback.
+        Why: The Advanced Speciation tab needs a visible splash during heavy work.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            - Creates and stores overlay widgets on the solubility tab.
+            - Initializes overlay label/progress bar references on self.
+        Exceptions:
+            - Best-effort; returns early if the tab or widgets are unavailable.
+        """
+        overlay = getattr(self, "_sol_loading_overlay", None)
+        if overlay is not None:
+            try:
+                if overlay.winfo_exists():
+                    return
+            except Exception:
+                # Best-effort guard; rebuild the overlay if state is unknown.
+                pass
+        frame = getattr(self, "tab_solubility_new", None)
+        if frame is None:
+            return
+        try:
+            base_bg = frame.cget("background")
+        except Exception:
+            base_bg = "#f2f2f2"
+        overlay = tk.Frame(frame, background=base_bg)
+        label = tk.Label(
+            overlay,
+            text="Running speciation...",
+            background=base_bg,
+        )
+        label.pack(pady=(18, 6))
+        bar = ttk.Progressbar(overlay, mode="indeterminate", length=180)
+        bar.pack(pady=(0, 16))
+        overlay.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
+        overlay.place_forget()
+        self._sol_loading_overlay = overlay
+        self._sol_loading_label = label
+        self._sol_loading_bar = bar
+
+    def _show_solubility_loading_overlay(self, message: str) -> None:
+        """Show the solubility loading overlay.
+        Purpose: Display a blocking splash while solubility jobs run.
+        Why: Make background solver work visible and prevent accidental edits.
+        Inputs:
+            message (str): Status text to display on the overlay.
+        Outputs:
+            None.
+        Side Effects:
+            - Displays overlay widgets and starts the indeterminate progress bar.
+        Exceptions:
+            - Best-effort; ignores UI failures to avoid interrupting the workflow.
+        """
+        self._ensure_solubility_loading_overlay()
+        overlay = getattr(self, "_sol_loading_overlay", None)
+        label = getattr(self, "_sol_loading_label", None)
+        bar = getattr(self, "_sol_loading_bar", None)
+        if overlay is None:
+            return
+        try:
+            if label is not None:
+                label.configure(text=str(message))
+            overlay.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
+            overlay.lift()
+            if bar is not None:
+                bar.start(12)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _hide_solubility_loading_overlay(self, *, defer: bool = True) -> None:
+        """Hide the solubility loading overlay.
+        Purpose: Remove the splash after solver UI updates finish.
+        Why: Ensure the overlay is cleared only after main-thread updates complete.
+        Inputs:
+            defer (bool): When True, hide via after_idle to wait for UI updates.
+        Outputs:
+            None.
+        Side Effects:
+            - Stops the indeterminate progress bar and hides the overlay frame.
+        Exceptions:
+            - Best-effort; ignores UI failures to avoid interrupting the workflow.
+        """
+
+        def _do_hide() -> None:
+            """Hide overlay widgets.
+            Purpose: Centralize teardown of overlay widgets after a solver run.
+            Why: Keeps the overlay cleanup consistent across success/error paths.
+            Inputs:
+                None.
+            Outputs:
+                None.
+            Side Effects:
+                - Stops the progress bar and removes the overlay from view.
+            Exceptions:
+                - Best-effort; ignores UI failures to avoid interruption.
+            """
+            overlay = getattr(self, "_sol_loading_overlay", None)
+            bar = getattr(self, "_sol_loading_bar", None)
+            if overlay is None:
+                return
+            try:
+                if bar is not None:
+                    bar.stop()
+                overlay.place_forget()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        if defer:
+            # Defer hide so UI updates from the solver callback complete first.
+            self.after_idle(_do_hide)
+        else:
+            _do_hide()
+
+    def _submit_solubility_job(
+        self,
+        worker: Callable[[], Any],
+        on_ok: Callable[[Any], None] | None,
+        on_err: Callable[[BaseException], None] | None,
+    ) -> None:
+        """Submit a solubility job to a background worker.
+        Purpose: Run heavy solubility calculations off the Tk main thread.
+        Why: Keep the Advanced Speciation tab responsive during solver work.
+        Inputs:
+            worker (Callable[[], Any]): Background callable returning a solver result.
+            on_ok (Callable[[Any], None] | None): Success callback for main thread.
+            on_err (Callable[[BaseException], None] | None): Error callback for main
+                thread.
+        Outputs:
+            None.
+        Side Effects:
+            - Uses TkTaskRunner when available or falls back to threading.Thread.
+            - Schedules callbacks via Tk `after` on the main thread.
+        Exceptions:
+            - Worker exceptions are routed to on_err; no exception is raised here.
+        """
+        runner = getattr(self, "_task_runner", None)
+        if runner is not None and hasattr(runner, "submit"):
+            runner.submit("solubility_solver", worker, on_ok, on_err)
+            return
+
+        def _thread_worker() -> None:
+            """Run solubility worker fallback.
+            Purpose: Execute the solver in a plain thread when no task runner exists.
+            Why: Provide a safe fallback that preserves UI responsiveness.
+            Inputs:
+                None.
+            Outputs:
+                None.
+            Side Effects:
+                - Executes worker in a background thread.
+                - Enqueues UI callbacks via `after` on the Tk main thread.
+            Exceptions:
+                - Captures worker exceptions and routes them to on_err.
+            """
+            try:
+                result = worker()
+            except Exception as exc:
+                if on_err is not None:
+                    self.after(0, lambda exc=exc: on_err(exc))
+                return
+            if on_ok is not None:
+                self.after(0, lambda result=result: on_ok(result))
+
+        # Fallback: run the solver worker in a daemon thread and marshal UI updates.
+        threading.Thread(target=_thread_worker, daemon=True).start()
+
     def _run_solubility_analysis(self) -> None:
         """Run the solubility analysis workflow asynchronously.
-        Used to orchestrate solver execution and UI updates."""
-        form_data: Dict[str, Any] = {}
+        Purpose: Orchestrate solver execution, projection scheduling, and UI updates.
+        Why: Keep the Advanced Speciation tab responsive while running heavy solvers.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            - Updates stored form data, solver state, and summary outputs.
+            - Schedules background solver execution and UI callbacks.
+            - Updates status messages and overlay visibility.
+        Exceptions:
+            - Best-effort; handles input errors without raising.
+        """
+        form_data: dict[str, Any] = {}
         try:
             form_data = self._collect_solubility_form_data()
         except Exception as exc:
@@ -64557,7 +64780,9 @@ class UnifiedApp(tk.Tk):
 
         # Solver pipeline runs in a background worker to keep the UI responsive
         # while capturing structured outputs for plots, summaries, and exports.
-        # Closure captures _run_solubility_analysis state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _run_solubility_analysis.
+        # Closure captures _run_solubility_analysis state for callback wiring,
+        # kept nested to scope the handler, and invoked by bindings set in
+        # _run_solubility_analysis.
         def _worker():
             """Perform worker.
             Used to keep the workflow logic localized and testable."""
@@ -64573,7 +64798,9 @@ class UnifiedApp(tk.Tk):
                 capture_math_snapshot,
             )
 
-        # Closure captures _run_solubility_analysis state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _run_solubility_analysis.
+        # Closure captures _run_solubility_analysis state for callback wiring,
+        # kept nested to scope the handler, and invoked by bindings set in
+        # _run_solubility_analysis.
         def _on_ok(result):
             """Handle ok.
             Used as an event callback for ok."""
@@ -64586,7 +64813,9 @@ class UnifiedApp(tk.Tk):
             self._sol_math_sections = payload.math_sections
             self._update_solubility_summary(summary, structured=payload.to_dict())
 
-        # Closure captures _run_solubility_analysis state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _run_solubility_analysis.
+        # Closure captures _run_solubility_analysis state for callback wiring,
+        # kept nested to scope the handler, and invoked by bindings set in
+        # _run_solubility_analysis.
         def _on_err(exc):
             """Handle err.
             Used as an event callback for err."""
@@ -64604,7 +64833,7 @@ class UnifiedApp(tk.Tk):
 
         # Submit async job so UI progress and callbacks can update when ready.
         self._set_solver_progress(True)
-        self._task_runner.submit("solubility_solver", _worker, _on_ok, _on_err)
+        self._submit_solubility_job(_worker, _on_ok, _on_err)
 
     def _prepare_solver_inputs(
         self, form_data: Dict[str, Any]
@@ -64652,17 +64881,30 @@ class UnifiedApp(tk.Tk):
 
     def _set_solver_progress(self, active: bool) -> None:
         """Set solver progress.
-        Used to persist solver progress into the current state."""
+        Purpose: Update solver status messaging and loading overlay state.
+        Why: Provide clear feedback during long-running solubility calculations.
+        Inputs:
+            active (bool): True while solver work is running; False when complete.
+        Outputs:
+            None.
+        Side Effects:
+            - Updates the solubility context label.
+            - Shows or hides the solubility loading overlay.
+        Exceptions:
+            - Best-effort; ignores UI update failures.
+        """
         label_var = getattr(self, "_sol_context_label_var", None)
-        if label_var is None:
-            return
         if active:
-            label_var.set("Solving speciation - please wait...")
+            if label_var is not None:
+                label_var.set("Solving speciation - please wait...")
+            self._show_solubility_loading_overlay("Running speciation...")
             return
-        workflow_meta = SOL_WORKFLOW_TEMPLATES.get(
-            self._current_solubility_workflow(), {}
-        )
-        label_var.set(workflow_meta.get("label", "Advanced Solubility"))
+        if label_var is not None:
+            workflow_meta = SOL_WORKFLOW_TEMPLATES.get(
+                self._current_solubility_workflow(), {}
+            )
+            label_var.set(workflow_meta.get("label", "Advanced Solubility"))
+        self._hide_solubility_loading_overlay(defer=True)
 
     def _handle_solver_future_result(
         self, future, executor: ThreadPoolExecutor

@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.12.2)
+# GL-260 Data Analysis and Plotter (v2.12.3)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.12.2`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.12.3`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v2.12.3 Input Persistence + Async Speciation Overlay](#v2123-input-persistence--async-speciation-overlay)
   - [v2.12.2 Planning Timeline Persistence + Input Stability](#v2122-planning-timeline-persistence--input-stability)
   - [v2.12.0 Data Trace Settings + Combined Splash Hold](#v2120-data-trace-settings--combined-splash-hold)
   - [v2.11.13 Columns Per-Series Line Width Control](#v21113-columns-per-series-line-width-control)
@@ -709,6 +710,8 @@ The Advanced Solubility and Equilibrium Engine models CO2 dissolution, carbonate
 - Cycle speciation timeline plots and tables.
 - Planning workflow timeline plots include a draggable legend that retains its placement across redraws and exports.
 - Planning workflow inputs persist after each run; NaOH mass and related fields remain unchanged.
+- Analysis workflow preserves manual CO2 charged entries; cycle auto-fill occurs only when the field is blank.
+- Speciation solver runs asynchronously with a loading overlay so the tab remains responsive.
 - Headspace/solution partitioning summaries for CO2 uptake.
 
 #### 5) Experimental Use Cases
@@ -876,6 +879,11 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v2.12.3 Input Persistence + Async Speciation Overlay
+- Analysis workflow now preserves user-entered CO2 charged values; Cycle Analysis auto-fill occurs only when the field is blank.
+- Planning workflow no longer overwrites NaOH mass with analysis defaults after a run; user inputs persist.
+- Advanced Speciation solver runs in a background worker with a loading overlay to keep the tab responsive.
 
 ### v2.12.2 Planning Timeline Persistence + Input Stability
 - Planning timeline legends are now created once, remain draggable, and keep their placement across redraws and exports.
