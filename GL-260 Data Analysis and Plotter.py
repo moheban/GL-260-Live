@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.12.0
+# Version: v2.12.1
 # Date: 2026-02-06
 
 import os
@@ -7929,7 +7929,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.12.0"
+APP_VERSION = "v2.12.1"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -59569,11 +59569,19 @@ class UnifiedApp(tk.Tk):
                 pco2_values.append(float(entry.get("pco2_atm")))
             except Exception:
                 pco2_values.append(float("nan"))
-        species = [
-            ("H2CO3", h2co3_vals, "#55a868"),
-            ("HCO3-", hco3_vals, "#4c72b0"),
-            ("CO3^2-", co3_vals, "#dd8452"),
-        ]
+        show_legend = bool(prefs.get("show_legend"))
+        if workflow == "Planning":
+            species = [
+                ("Carbonic acid (H2CO3)", h2co3_vals, "#55a868"),
+                ("Bicarbonate (HCO3-)", hco3_vals, "#4c72b0"),
+                ("Carbonate (CO3^2-)", co3_vals, "#dd8452"),
+            ]
+        else:
+            species = [
+                ("H2CO3", h2co3_vals, "#55a868"),
+                ("HCO3-", hco3_vals, "#4c72b0"),
+                ("CO3^2-", co3_vals, "#dd8452"),
+            ]
         ax.stackplot(
             xs,
             h2co3_vals,
@@ -59608,7 +59616,7 @@ class UnifiedApp(tk.Tk):
             marker="s",
             linestyle="--",
             linewidth=1.2,
-            label="pCO2 (atm)",
+            label="Headspace pCO2 (atm)" if workflow == "Planning" else "pCO2 (atm)",
         )
         if workflow == "Analysis":
             reference = getattr(self, "_analysis_reference_trace", None) or {}
@@ -59695,7 +59703,31 @@ class UnifiedApp(tk.Tk):
                 ha="center",
                 fontsize=7,
             )
-        if prefs.get("show_legend"):
+        if workflow == "Planning":
+            # Planning timeline legend is consolidated and draggable for clarity.
+            handles: List[Any] = []
+            labels: List[str] = []
+            # Collect handles across axes so Planning exports are self-explanatory.
+            for axis in (ax, ax2, ax3):
+                axis_handles, axis_labels = axis.get_legend_handles_labels()
+                for handle, label in zip(axis_handles, axis_labels):
+                    if not label or label.startswith("_") or label in labels:
+                        continue
+                    handles.append(handle)
+                    labels.append(label)
+            if handles:
+                legend = ax.legend(
+                    handles=handles, labels=labels, loc="upper left", fontsize=8
+                )
+                try:
+                    legend.set_draggable(True)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+                layout_mgr = getattr(ax.figure, "_gl260_layout_manager", None)
+                if layout_mgr is not None:
+                    layout_mgr.register_artist("plot_legend", legend)
+        elif show_legend:
             ax.legend(loc="upper left", fontsize=8)
             ax2.legend(loc="upper right", fontsize=8)
             ax3.legend(loc="center right", fontsize=8)
@@ -66973,11 +67005,19 @@ class UnifiedApp(tk.Tk):
                 pco2_values.append(float("nan"))
         if not xs:
             return None
-        species = [
-            ("H2CO3", h2co3_vals, "#55a868"),
-            ("HCO3-", hco3_vals, "#4c72b0"),
-            ("CO3^2-", co3_vals, "#dd8452"),
-        ]
+        show_legend = bool(prefs.get("show_legend"))
+        if workflow == "Planning":
+            species = [
+                ("Carbonic acid (H2CO3)", h2co3_vals, "#55a868"),
+                ("Bicarbonate (HCO3-)", hco3_vals, "#4c72b0"),
+                ("Carbonate (CO3^2-)", co3_vals, "#dd8452"),
+            ]
+        else:
+            species = [
+                ("H2CO3", h2co3_vals, "#55a868"),
+                ("HCO3-", hco3_vals, "#4c72b0"),
+                ("CO3^2-", co3_vals, "#dd8452"),
+            ]
         ax.stackplot(
             xs,
             h2co3_vals,
@@ -67013,7 +67053,7 @@ class UnifiedApp(tk.Tk):
             marker="s",
             linestyle="--",
             linewidth=1.2,
-            label="pCO2 (atm)",
+            label="Headspace pCO2 (atm)" if workflow == "Planning" else "pCO2 (atm)",
         )
         if workflow == "Analysis":
             reference = getattr(self, "_analysis_reference_trace", None) or {}
@@ -67096,7 +67136,31 @@ class UnifiedApp(tk.Tk):
                 ha="center",
                 fontsize=7,
             )
-        if prefs.get("show_legend"):
+        if workflow == "Planning":
+            # Planning timeline legend is consolidated and draggable for clarity.
+            handles: List[Any] = []
+            labels: List[str] = []
+            # Collect handles across axes so Planning exports are self-explanatory.
+            for axis in (ax, ax2, ax3):
+                axis_handles, axis_labels = axis.get_legend_handles_labels()
+                for handle, label in zip(axis_handles, axis_labels):
+                    if not label or label.startswith("_") or label in labels:
+                        continue
+                    handles.append(handle)
+                    labels.append(label)
+            if handles:
+                legend = ax.legend(
+                    handles=handles, labels=labels, loc="upper left", fontsize=8
+                )
+                try:
+                    legend.set_draggable(True)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+                layout_mgr = getattr(fig, "_gl260_layout_manager", None)
+                if layout_mgr is not None:
+                    layout_mgr.register_artist("plot_legend", legend)
+        elif show_legend:
             ax.legend(loc="upper left", fontsize=8)
             ax2.legend(loc="upper right", fontsize=8)
             ax3.legend(loc="center right", fontsize=8)

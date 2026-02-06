@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.12.0)
+# GL-260 Data Analysis and Plotter (v2.12.1)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.12.0`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.12.1`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -706,6 +706,7 @@ The Advanced Solubility and Equilibrium Engine models CO2 dissolution, carbonate
 - Species concentration plots and saturation summaries.
 - pH sweep curves and speciation tables.
 - Cycle speciation timeline plots and tables.
+- Planning workflow timeline plots include a draggable legend so species and pH traces stay labeled in exports.
 - Headspace/solution partitioning summaries for CO2 uptake.
 
 #### 5) Experimental Use Cases
