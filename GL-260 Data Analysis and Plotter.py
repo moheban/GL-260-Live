@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.11.13
+# Version: v2.12.0
 # Date: 2026-02-06
 
 import os
@@ -7929,7 +7929,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.11.13"
+APP_VERSION = "v2.12.0"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -17586,6 +17586,16 @@ SCATTER_MARKER_CHOICES = [
     "h",
 ]
 
+DATA_TRACE_ZORDER_PRIORITY = OrderedDict(
+    [
+        ("Background", 1.0),
+        ("Normal", 2.0),
+        ("Foreground", 3.0),
+        ("Hero", 5.0),
+    ]
+)
+DATA_TRACE_ZORDER_CHOICES = ["Inherit"] + list(DATA_TRACE_ZORDER_PRIORITY.keys())
+
 LINE_STYLE_MAP = OrderedDict(
     [
         ("solid", "solid"),
@@ -17861,8 +17871,34 @@ def _plot_series(
     scatter_config: Optional[Dict[str, Any]] = None,
     scatter_series_configs: Optional[Dict[str, Any]] = None,
 ):
-    """Perform plot series.
-    Used to keep the workflow logic localized and testable."""
+    """Plot a single data series with optional per-series overrides.
+
+    Purpose:
+        Render a line or scatter series with the correct style precedence.
+    Why:
+        Centralizes per-trace styling so all plot modes stay consistent.
+    Args:
+        ax: Matplotlib Axes receiving the series.
+        x_values: X-axis numeric values.
+        y_values: Y-axis numeric values.
+        label: Legend label for the series.
+        color: Base color for the series when no override is supplied.
+        zorder: Default z-order for the series.
+        line_style: Base line style for line rendering.
+        line_marker: Base marker style for line rendering.
+        line_markersize: Base marker size for line rendering.
+        linewidth: Base line width for line rendering.
+        force_line: When True, force line rendering even if scatter is enabled.
+        series_key: Optional series identifier for per-series overrides.
+        scatter_config: Optional global scatter settings overrides.
+        scatter_series_configs: Optional per-series overrides map.
+    Returns:
+        The Matplotlib artist created for the series.
+    Side Effects:
+        Adds line/scatter artists to the provided Axes.
+    Exceptions:
+        Errors are guarded internally; invalid style inputs fall back to defaults.
+    """
 
     cfg = _get_scatter_config(
         series_key,
@@ -17879,6 +17915,19 @@ def _plot_series(
         except (TypeError, ValueError):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             return default
+
+    series_zorder = zorder
+    if series_key:
+        series_cfgs = (
+            scatter_series_configs
+            if isinstance(scatter_series_configs, dict)
+            else (globals().get("scatter_series_configs") or {})
+        )
+        per_series = series_cfgs.get(series_key)
+        if isinstance(per_series, dict):
+            zorder_override = _coerce_float(per_series.get("zorder"), None)
+            if zorder_override is not None and math.isfinite(zorder_override):
+                series_zorder = zorder_override
 
     if force_line or not cfg.get("enabled"):
         marker_style = line_marker
@@ -17936,7 +17985,7 @@ def _plot_series(
             linewidth=linewidth_style,
             marker=marker_style,
             markersize=markersize_style,
-            zorder=zorder,
+            zorder=series_zorder,
             label=label,
             **line_kwargs,
         )
@@ -17958,7 +18007,7 @@ def _plot_series(
         "marker": marker,
         "s": size_value,
         "alpha": alpha_value,
-        "zorder": zorder,
+        "zorder": series_zorder,
         "label": label,
     }
 
@@ -26996,6 +27045,7 @@ class UnifiedApp(tk.Tk):
         self._register_var_default(self.scatter_linewidth, scatter_linewidth_default)
         self._scatter_pref_window = None
         self._data_columns_pref_window = None
+        self._data_trace_settings_window = None
         self._per_sheet_mapping_window = None
         self._per_sheet_column_map_cache = None
         self._annotation_store = AnnotationStore(settings)
@@ -35944,6 +35994,11 @@ class UnifiedApp(tk.Tk):
         if plot_key == "fig_combined":
             frame._combined_render_ready = False
             frame._post_first_draw_refresh_hold_overlay = True
+            # Track combined overlay refresh readiness and pass counts explicitly.
+            frame._combined_overlay_refresh_count = 0
+            frame._combined_overlay_target_refreshes = 2
+            frame._combined_overlay_ready_seen = False
+            frame._combined_overlay_second_refresh_scheduled = False
 
         self._log_plot_tab_debug(f"Creating tab frame for '{title}'")
 
@@ -36550,6 +36605,12 @@ class UnifiedApp(tk.Tk):
                     command=lambda: self._open_plot_settings_dialog(plot_id),
                 )
                 btn_settings.pack(side="right", padx=6, pady=4)
+                btn_trace_settings = ttk.Button(
+                    topbar,
+                    text="Data Trace Settings...",
+                    command=self._open_data_trace_settings_dialog,
+                )
+                btn_trace_settings.pack(side="right", padx=6, pady=4)
             else:
                 btn_elements = ttk.Button(
                     topbar,
@@ -36565,6 +36626,12 @@ class UnifiedApp(tk.Tk):
                     command=lambda: self._open_plot_settings_dialog(plot_id),
                 )
                 btn_settings.pack(side="right", padx=6, pady=4)
+                btn_trace_settings = ttk.Button(
+                    topbar,
+                    text="Data Trace Settings...",
+                    command=self._open_data_trace_settings_dialog,
+                )
+                btn_trace_settings.pack(side="right", padx=6, pady=4)
 
         save_controls = ttk.Frame(topbar)
 
@@ -37453,8 +37520,21 @@ class UnifiedApp(tk.Tk):
         }
 
     def _sanitize_single_series_config(self, data: Optional[dict]) -> dict:
-        """Sanitize single series config.
-        Used to strip or normalize single series config before use."""
+        """Sanitize a single series config dictionary.
+
+        Purpose:
+            Normalize a per-series style payload before it is used or persisted.
+        Why:
+            Prevents invalid values from leaking into plotting defaults or settings.
+        Args:
+            data: Per-series settings dict (may be None or malformed).
+        Returns:
+            A sanitized dict containing only valid series override keys.
+        Side Effects:
+            None.
+        Exceptions:
+            None. Invalid inputs return an empty dict.
+        """
         result: dict = {}
         if not isinstance(data, dict):
             return result
@@ -37479,6 +37559,11 @@ class UnifiedApp(tk.Tk):
             if canonical:
                 result["linestyle"] = canonical
 
+        if "zorder" in data:
+            zorder_val = _coerce_float(data.get("zorder"))
+            if zorder_val is not None and math.isfinite(zorder_val):
+                result["zorder"] = zorder_val
+
         # Iterate over ("marker", "edgecolor", "alpha", "linewidth") to apply the per-item logic.
         for key in ("marker", "edgecolor", "alpha", "linewidth"):
             if key in data and data[key] not in (None, ""):
@@ -37487,21 +37572,64 @@ class UnifiedApp(tk.Tk):
         return result
 
     def _sanitize_series_settings_dict(self, data: Optional[dict]) -> dict:
-        """Sanitize series settings dict.
-        Used to strip or normalize series settings dict before use."""
+        """Sanitize the full series settings dictionary.
+
+        Purpose:
+            Validate and normalize persisted series settings across all keys.
+        Why:
+            Ensures per-series overrides remain safe and consistent across loads.
+        Args:
+            data: Mapping of series keys to per-series config dictionaries.
+        Returns:
+            A sanitized mapping of series keys to validated override dicts.
+        Side Effects:
+            None.
+        Exceptions:
+            None. Invalid inputs return an empty dict.
+        """
         result: dict = {}
         if isinstance(data, dict):
-            # Iterate over SCATTER_SERIES_KEYS to apply the per-item logic.
+            ordered_keys: List[str] = []
+            seen_keys: set[str] = set()
+            # Preserve the canonical ordering for known series keys first.
             for key in SCATTER_SERIES_KEYS:
+                if key in data:
+                    ordered_keys.append(key)
+                    seen_keys.add(key)
+            # Include any additional series keys stored in settings.
+            for key in data:
+                if key not in seen_keys:
+                    ordered_keys.append(key)
+                    seen_keys.add(key)
+            # Iterate over ordered_keys to apply the per-item logic.
+            for key in ordered_keys:
                 sanitized = self._sanitize_single_series_config(data.get(key))
                 if sanitized:
                     result[key] = sanitized
         return result
 
     def _gather_series_scatter_settings(self) -> dict:
-        """Perform gather series scatter settings.
-        Used to keep the workflow logic localized and testable."""
+        """Gather the active per-series scatter settings.
+
+        Purpose:
+            Build the current series override map used by plot rendering.
+        Why:
+            Consolidates UI inputs and persisted settings into one source of truth.
+        Inputs:
+            None.
+        Outputs:
+            Mapping of series keys to override dictionaries.
+        Side Effects:
+            None.
+        Exceptions:
+            Errors are guarded and result in partial or empty output.
+        """
         configs: dict = {}
+        stored = (
+            self._stored_scatter_series
+            if isinstance(getattr(self, "_stored_scatter_series", None), dict)
+            else {}
+        )
         if getattr(self, "scatter_series_vars", None):
             # Iterate over SCATTER_SERIES_KEYS to apply the per-item logic.
             for key in SCATTER_SERIES_KEYS:
@@ -37545,8 +37673,20 @@ class UnifiedApp(tk.Tk):
                     )
                     if linestyle_value:
                         config["linestyle"] = linestyle_value
+                stored_config = stored.get(key)
+                if isinstance(stored_config, dict):
+                    # Preserve per-series overrides that are not surfaced in the Columns UI.
+                    for extra_key in ("marker", "edgecolor", "alpha", "zorder"):
+                        if extra_key not in config and extra_key in stored_config:
+                            config[extra_key] = stored_config[extra_key]
                 if config:
                     configs[key] = config
+            # Preserve any stored series configs that are not part of the UI key set.
+            for key, value in stored.items():
+                if key in configs or key in SCATTER_SERIES_KEYS:
+                    continue
+                if value:
+                    configs[key] = dict(value)
         if not configs and getattr(self, "_stored_scatter_series", None):
             # Fall back to stored values if the UI has not been initialized yet.
             configs = {
@@ -37556,6 +37696,69 @@ class UnifiedApp(tk.Tk):
                 if value
             }
         return configs
+
+    def _sync_scatter_series_vars(
+        self, series_configs: Mapping[str, Mapping[str, Any]]
+    ) -> None:
+        """Sync scatter series Tk variables with stored settings.
+
+        Purpose:
+            Keep Columns-tab per-series controls aligned with persisted settings.
+        Why:
+            The Data Trace Settings dialog updates settings outside the Columns
+            tab; syncing avoids stale UI values overriding newer choices.
+        Inputs:
+            series_configs: Mapping of series key to sanitized style overrides.
+        Outputs:
+            None.
+        Side Effects:
+            Updates Tkinter StringVar instances for size, linewidth, color, and
+            line style fields when they exist.
+        Exceptions:
+            Errors are guarded to avoid interrupting the UI workflow.
+        """
+        vars_map = getattr(self, "scatter_series_vars", None)
+        if not isinstance(vars_map, dict):
+            return
+        configs = series_configs if isinstance(series_configs, dict) else {}
+        # Iterate over vars_map to apply the per-item logic.
+        for key, field_vars in vars_map.items():
+            if not isinstance(field_vars, dict):
+                continue
+            config = configs.get(key, {})
+            size_var = field_vars.get("size")
+            if size_var is not None:
+                size_val = config.get("size")
+                if (
+                    isinstance(size_val, (int, float))
+                    and math.isfinite(size_val)
+                    and size_val > 0.0
+                ):
+                    size_var.set(f"{float(size_val):g}")
+                else:
+                    size_var.set("")
+            linewidth_var = field_vars.get("linewidth")
+            if linewidth_var is not None:
+                linewidth_val = config.get("linewidth")
+                if (
+                    isinstance(linewidth_val, (int, float))
+                    and math.isfinite(linewidth_val)
+                    and linewidth_val > 0.0
+                ):
+                    linewidth_var.set(f"{float(linewidth_val):g}")
+                else:
+                    linewidth_var.set("")
+            color_var = field_vars.get("color")
+            if color_var is not None:
+                color_val = config.get("color")
+                color_var.set(color_val if isinstance(color_val, str) else "")
+            linestyle_var = field_vars.get("linestyle")
+            if linestyle_var is not None:
+                linestyle_value = _canonicalize_linestyle_name(config.get("linestyle"))
+                if linestyle_value and linestyle_value in LINE_STYLE_CHOICES:
+                    linestyle_var.set(linestyle_value)
+                else:
+                    linestyle_var.set("Default")
 
     def _update_scatter_globals(self) -> None:
         """Update scatter globals.
@@ -38030,6 +38233,576 @@ class UnifiedApp(tk.Tk):
             """Handle close.
             Used as an event callback for close."""
             self._data_columns_pref_window = None
+            _cancel()
+
+        win.protocol("WM_DELETE_WINDOW", _on_close)
+
+    def _data_trace_series_label(self, series_key: str) -> str:
+        """Return a display label for a data-trace series key.
+
+        Purpose:
+            Provide consistent, user-friendly labels in the Data Trace Settings dialog.
+        Why:
+            Series keys are internal identifiers that are not ideal UI labels.
+        Args:
+            series_key: Internal series identifier (e.g., "y1", "z2").
+        Returns:
+            A display-ready label string for the given series key.
+        Side Effects:
+            None.
+        Exceptions:
+            Falls back to the raw key when mapping fails.
+        """
+        label_map = {
+            "y1": "Reactor Pressure",
+            "y3": "Manifold Pressure",
+            "y2": "Derivative (dP/dt)",
+            "z": "Internal Temperature",
+            "z2": "External Temperature",
+        }
+        label = label_map.get(series_key)
+        if label:
+            return label
+        series_labels = getattr(self, "_series_label_map", None)
+        if isinstance(series_labels, dict) and series_key in series_labels:
+            return series_labels.get(series_key, series_key.upper())
+        return series_key.upper()
+
+    def _collect_data_trace_series_keys(self) -> List[str]:
+        """Collect the series keys shown in the Data Trace Settings dialog.
+
+        Purpose:
+            Build a stable list of series rows for the settings dialog.
+        Why:
+            Ensures key core traces always appear while honoring stored extras.
+        Inputs:
+            None.
+        Outputs:
+            Ordered list of series keys to display.
+        Side Effects:
+            None.
+        Exceptions:
+            Returns the base key ordering on error.
+        """
+        base_order = ["y1", "y3", "z", "z2", "y2"]
+        keys: List[str] = []
+        # Keep the canonical ordering for known keys.
+        for key in base_order:
+            if key not in keys:
+                keys.append(key)
+        stored = getattr(self, "_stored_scatter_series", None)
+        if isinstance(stored, dict):
+            extras = [key for key in stored.keys() if key not in keys]
+            # Keep extra keys sorted for deterministic ordering.
+            keys.extend(sorted(extras))
+        return keys
+
+    def _parse_optional_float_entry(
+        self, raw_value: str, *, positive: bool = False
+    ) -> Optional[float]:
+        """Parse an optional float entry from a dialog field.
+
+        Purpose:
+            Convert optional text input into a validated float.
+        Why:
+            Dialog fields use blank entries to mean "inherit defaults".
+        Args:
+            raw_value: User-entered text from a Tk entry.
+            positive: When True, require the value to be > 0.
+        Returns:
+            Parsed float if valid; otherwise None.
+        Side Effects:
+            None.
+        Exceptions:
+            None. Invalid values return None.
+        """
+        if raw_value is None:
+            return None
+        text = str(raw_value).strip()
+        if not text:
+            return None
+        try:
+            value = float(text)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(value):
+            return None
+        if positive and value <= 0.0:
+            return None
+        return value
+
+    def _resolve_zorder_priority_value(self, label: str) -> Optional[float]:
+        """Resolve a priority label into a numeric zorder.
+
+        Purpose:
+            Map user-facing priority choices to safe zorder values.
+        Why:
+            Keeps zorder selection predictable while allowing numeric overrides.
+        Args:
+            label: Priority label selected in the UI.
+        Returns:
+            Numeric zorder for valid labels; otherwise None.
+        Side Effects:
+            None.
+        Exceptions:
+            None. Invalid labels return None.
+        """
+        if not isinstance(label, str):
+            return None
+        choice = label.strip()
+        if not choice or choice == "Inherit":
+            return None
+        return DATA_TRACE_ZORDER_PRIORITY.get(choice)
+
+    def _open_data_trace_settings_dialog(self) -> None:
+        """Open the Data Trace Settings dialog.
+
+        Purpose:
+            Provide a centralized editor for per-series trace styling overrides.
+        Why:
+            Users need consistent, profile-persisted styling controls across plots.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Creates a modal dialog, updates settings on apply, and may refresh plots.
+        Exceptions:
+            Best-effort guards keep the UI resilient to dialog failures.
+        """
+        existing = getattr(self, "_data_trace_settings_window", None)
+        if existing is not None and existing.winfo_exists():
+            try:
+                existing.deiconify()
+                existing.lift()
+                existing.focus_force()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            return
+
+        win = tk.Toplevel(self)
+        win.title("Data Trace Settings")
+        win.transient(self)
+        win.resizable(True, True)
+        self._data_trace_settings_window = win
+        try:
+            win.grab_set()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+        win.grid_rowconfigure(0, weight=1)
+        win.grid_columnconfigure(0, weight=1)
+
+        container = ttk.Frame(win, padding=12)
+        container.grid(row=0, column=0, sticky="nsew")
+        container.grid_columnconfigure(0, weight=1)
+
+        ttk.Label(
+            container,
+            text="Blank fields inherit the default plot styling.",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
+
+        grid = ttk.Frame(container)
+        grid.grid(row=1, column=0, sticky="nsew")
+        grid.grid_columnconfigure(0, weight=0)
+        grid.grid_columnconfigure(1, weight=0)
+        grid.grid_columnconfigure(2, weight=0)
+        grid.grid_columnconfigure(3, weight=0)
+        grid.grid_columnconfigure(4, weight=0)
+        grid.grid_columnconfigure(5, weight=0)
+        grid.grid_columnconfigure(6, weight=0)
+        grid.grid_columnconfigure(7, weight=1)
+
+        headers = [
+            ("Trace", 0),
+            ("Color", 1),
+            ("Marker", 2),
+            ("Marker Size (pt^2)", 3),
+            ("Line Style", 4),
+            ("Line Width (pt)", 5),
+            ("Priority", 6),
+            ("Z-Order Override", 7),
+        ]
+        # Iterate over headers to apply the per-item logic.
+        for label, column in headers:
+            ttk.Label(grid, text=label).grid(
+                row=0, column=column, sticky="w", padx=6, pady=(0, 6)
+            )
+
+        stored = (
+            self._stored_scatter_series
+            if isinstance(getattr(self, "_stored_scatter_series", None), dict)
+            else {}
+        )
+        series_vars: Dict[str, Dict[str, tk.Variable]] = {}
+
+        # Closure captures dialog state for callback wiring, kept nested to scope
+        # the handler, and invoked by bindings set in _open_data_trace_settings_dialog.
+        def _pick_color(target_var: tk.StringVar, display_label: str) -> None:
+            """Select a custom color for a data trace.
+
+            Purpose:
+                Open a color picker and assign the result to the target variable.
+            Why:
+                Provides a consistent color selection workflow for series rows.
+            Inputs:
+                target_var: Tkinter variable receiving the selected color.
+                display_label: Display label used in the picker title.
+            Outputs:
+                None.
+            Side Effects:
+                Updates the provided variable with a hex color string.
+            Exceptions:
+                Errors are caught to avoid interrupting the UI workflow.
+            """
+            initial = (target_var.get() or "").strip() or None
+            try:
+                _, hex_value = colorchooser.askcolor(
+                    color=initial,
+                    parent=win,
+                    title=f"Select Trace Color ({display_label})",
+                )
+            except Exception:
+                hex_value = None
+            if hex_value:
+                target_var.set(str(hex_value).upper())
+
+        for row_offset, series_key in enumerate(
+            self._collect_data_trace_series_keys(), start=1
+        ):
+            config = stored.get(series_key, {})
+            display_label = self._data_trace_series_label(series_key)
+
+            color_val = config.get("color")
+            color_var = tk.StringVar(
+                value=color_val if isinstance(color_val, str) else ""
+            )
+
+            marker_value = config.get("marker")
+            marker_choices = ["Default"] + list(SCATTER_MARKER_CHOICES)
+            if marker_value and marker_value not in marker_choices:
+                marker_choices.append(str(marker_value))
+            marker_var = tk.StringVar(
+                value=str(marker_value) if marker_value else "Default"
+            )
+
+            size_val = config.get("size")
+            size_var = tk.StringVar(
+                value=(
+                    f"{float(size_val):g}"
+                    if isinstance(size_val, (int, float))
+                    and math.isfinite(size_val)
+                    and size_val > 0.0
+                    else ""
+                )
+            )
+
+            linestyle_value = _canonicalize_linestyle_name(config.get("linestyle"))
+            linestyle_display = (
+                linestyle_value
+                if linestyle_value and linestyle_value in LINE_STYLE_CHOICES
+                else "Default"
+            )
+            linestyle_var = tk.StringVar(value=linestyle_display)
+
+            linewidth_val = config.get("linewidth")
+            linewidth_var = tk.StringVar(
+                value=(
+                    f"{float(linewidth_val):g}"
+                    if isinstance(linewidth_val, (int, float))
+                    and math.isfinite(linewidth_val)
+                    and linewidth_val > 0.0
+                    else ""
+                )
+            )
+
+            priority_label = "Inherit"
+            zorder_override_value = ""
+            zorder_val = config.get("zorder")
+            if isinstance(zorder_val, (int, float)) and math.isfinite(zorder_val):
+                matched = False
+                for label, mapped_value in DATA_TRACE_ZORDER_PRIORITY.items():
+                    if math.isclose(float(zorder_val), float(mapped_value)):
+                        priority_label = label
+                        matched = True
+                        break
+                if not matched:
+                    zorder_override_value = f"{float(zorder_val):g}"
+            priority_var = tk.StringVar(value=priority_label)
+            zorder_var = tk.StringVar(value=zorder_override_value)
+
+            series_vars[series_key] = {
+                "color": color_var,
+                "marker": marker_var,
+                "size": size_var,
+                "linestyle": linestyle_var,
+                "linewidth": linewidth_var,
+                "priority": priority_var,
+                "zorder": zorder_var,
+            }
+
+            ttk.Label(grid, text=display_label).grid(
+                row=row_offset, column=0, sticky="w", padx=6, pady=6
+            )
+
+            color_frame = ttk.Frame(grid)
+            color_frame.grid(row=row_offset, column=1, sticky="w", padx=6, pady=6)
+            color_preview = tk.Label(
+                color_frame,
+                width=4,
+                relief="groove",
+                borderwidth=1,
+                text="Auto",
+            )
+            color_preview.grid(row=0, column=0, sticky="w", padx=(0, 4))
+            self._bind_color_preview(color_var, color_preview)
+            ttk.Button(
+                color_frame,
+                text="Pick",
+                command=lambda v=color_var, label=display_label: _pick_color(v, label),
+            ).grid(row=0, column=1, padx=(0, 4))
+            ttk.Button(
+                color_frame,
+                text="Clear",
+                command=lambda v=color_var: v.set(""),
+            ).grid(row=0, column=2)
+
+            marker_frame = ttk.Frame(grid)
+            marker_frame.grid(row=row_offset, column=2, sticky="w", padx=6, pady=6)
+            marker_combo = ttk.Combobox(
+                marker_frame,
+                textvariable=marker_var,
+                values=marker_choices,
+                state="readonly",
+                width=8,
+            )
+            marker_combo.grid(row=0, column=0, sticky="w")
+            ttk.Button(
+                marker_frame,
+                text="Clear",
+                command=lambda v=marker_var: v.set("Default"),
+            ).grid(row=0, column=1, padx=(4, 0))
+
+            size_frame = ttk.Frame(grid)
+            size_frame.grid(row=row_offset, column=3, sticky="w", padx=6, pady=6)
+            ttk.Entry(size_frame, textvariable=size_var, width=8).grid(
+                row=0, column=0, sticky="w"
+            )
+            ttk.Button(
+                size_frame,
+                text="Clear",
+                command=lambda v=size_var: v.set(""),
+            ).grid(row=0, column=1, padx=(4, 0))
+
+            linestyle_frame = ttk.Frame(grid)
+            linestyle_frame.grid(row=row_offset, column=4, sticky="w", padx=6, pady=6)
+            linestyle_combo = ttk.Combobox(
+                linestyle_frame,
+                textvariable=linestyle_var,
+                values=LINE_STYLE_CHOICES,
+                state="readonly",
+                width=14,
+            )
+            linestyle_combo.grid(row=0, column=0, sticky="w")
+            ttk.Button(
+                linestyle_frame,
+                text="Clear",
+                command=lambda v=linestyle_var: v.set("Default"),
+            ).grid(row=0, column=1, padx=(4, 0))
+
+            linewidth_frame = ttk.Frame(grid)
+            linewidth_frame.grid(row=row_offset, column=5, sticky="w", padx=6, pady=6)
+            ttk.Entry(linewidth_frame, textvariable=linewidth_var, width=8).grid(
+                row=0, column=0, sticky="w"
+            )
+            ttk.Button(
+                linewidth_frame,
+                text="Clear",
+                command=lambda v=linewidth_var: v.set(""),
+            ).grid(row=0, column=1, padx=(4, 0))
+
+            priority_combo = ttk.Combobox(
+                grid,
+                textvariable=priority_var,
+                values=DATA_TRACE_ZORDER_CHOICES,
+                state="readonly",
+                width=12,
+            )
+            priority_combo.grid(row=row_offset, column=6, sticky="w", padx=6, pady=6)
+
+            zorder_frame = ttk.Frame(grid)
+            zorder_frame.grid(row=row_offset, column=7, sticky="w", padx=6, pady=6)
+            ttk.Entry(zorder_frame, textvariable=zorder_var, width=10).grid(
+                row=0, column=0, sticky="w"
+            )
+            ttk.Button(
+                zorder_frame,
+                text="Clear",
+                command=lambda v=zorder_var, p=priority_var: (
+                    v.set(""),
+                    p.set("Inherit"),
+                ),
+            ).grid(row=0, column=1, padx=(4, 0))
+
+        ttk.Separator(container).grid(row=2, column=0, sticky="ew", pady=(8, 8))
+
+        button_frame = ttk.Frame(container)
+        button_frame.grid(row=3, column=0, sticky="e")
+
+        # Closure captures _open_data_trace_settings_dialog state for callback wiring.
+        def _apply_updates(close_after: bool = False) -> None:
+            """Apply data trace settings to live state.
+
+            Purpose:
+                Persist dialog edits and refresh plots with updated trace styles.
+            Why:
+                Data trace overrides must apply consistently across plot modes.
+            Inputs:
+                close_after: When True, close the dialog after applying.
+            Outputs:
+                None.
+            Side Effects:
+                Updates settings, syncs Columns UI, saves to disk, and refreshes plots.
+            Exceptions:
+                Errors are caught to avoid interrupting the UI workflow.
+            """
+            updated: Dict[str, Dict[str, Any]] = {}
+            # Iterate over series_vars to apply the per-item logic.
+            for series_key, vars_map in series_vars.items():
+                if not isinstance(vars_map, dict):
+                    continue
+                config: Dict[str, Any] = {}
+                color_var = vars_map.get("color")
+                color_value = (color_var.get() or "").strip() if color_var else ""
+                if color_value:
+                    config["color"] = color_value
+                marker_var = vars_map.get("marker")
+                marker_value = (marker_var.get() or "").strip() if marker_var else ""
+                if marker_value and marker_value != "Default":
+                    if marker_value in SCATTER_MARKER_CHOICES or len(marker_value) > 1:
+                        config["marker"] = marker_value
+                size_var = vars_map.get("size")
+                size_value = (
+                    self._parse_optional_float_entry(size_var.get(), positive=True)
+                    if size_var
+                    else None
+                )
+                if size_value is not None:
+                    config["size"] = size_value
+                linestyle_var = vars_map.get("linestyle")
+                linestyle_value = _canonicalize_linestyle_name(
+                    (linestyle_var.get() or "").strip() if linestyle_var else ""
+                )
+                if linestyle_value:
+                    config["linestyle"] = linestyle_value
+                linewidth_var = vars_map.get("linewidth")
+                linewidth_value = (
+                    self._parse_optional_float_entry(linewidth_var.get(), positive=True)
+                    if linewidth_var
+                    else None
+                )
+                if linewidth_value is not None:
+                    config["linewidth"] = linewidth_value
+
+                zorder_var = vars_map.get("zorder")
+                zorder_override = (
+                    self._parse_optional_float_entry(zorder_var.get())
+                    if zorder_var
+                    else None
+                )
+                if zorder_override is not None:
+                    config["zorder"] = zorder_override
+                else:
+                    priority_var = vars_map.get("priority")
+                    priority_value = (
+                        self._resolve_zorder_priority_value(priority_var.get())
+                        if priority_var
+                        else None
+                    )
+                    if priority_value is not None:
+                        config["zorder"] = priority_value
+                if config:
+                    updated[series_key] = config
+
+            sanitized = self._sanitize_series_settings_dict(updated)
+            settings["scatter_series"] = {
+                key: dict(value) for key, value in sanitized.items()
+            }
+            self._stored_scatter_series = {
+                key: dict(value) for key, value in sanitized.items()
+            }
+            self._sync_scatter_series_vars(self._stored_scatter_series)
+            self._update_scatter_globals()
+            try:
+                _save_settings_to_disk()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            # Refresh any visible plots so style updates are applied immediately.
+            for plot_id in (
+                "fig_pressure_temp",
+                "fig_pressure_derivative",
+                "fig_combined_triple_axis",
+                "fig_cycle_analysis",
+            ):
+                self._refresh_plot_for_plot_id(plot_id)
+
+            if close_after:
+                _cancel()
+
+        ttk.Button(
+            button_frame, text="Apply", command=lambda: _apply_updates(False)
+        ).grid(row=0, column=0, padx=(0, 6))
+        ttk.Button(button_frame, text="OK", command=lambda: _apply_updates(True)).grid(
+            row=0, column=1, padx=(0, 6)
+        )
+
+        # Closure captures _open_data_trace_settings_dialog state for callback wiring.
+        def _cancel() -> None:
+            """Cancel and close the data trace settings dialog.
+
+            Purpose:
+                Close the dialog without applying further changes.
+            Why:
+                Users need a safe exit path that leaves settings untouched.
+            Inputs:
+                None.
+            Outputs:
+                None.
+            Side Effects:
+                Destroys the dialog window and clears the window reference.
+            Exceptions:
+                Errors are caught to avoid interrupting the UI workflow.
+            """
+            try:
+                win.destroy()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            self._data_trace_settings_window = None
+
+        ttk.Button(button_frame, text="Cancel", command=_cancel).grid(row=0, column=2)
+
+        # Closure captures _open_data_trace_settings_dialog state for callback wiring.
+        def _on_close() -> None:
+            """Handle dialog close requests.
+
+            Purpose:
+                Route window-manager close events through the cancel path.
+            Why:
+                Ensures references are cleared and the dialog shuts down safely.
+            Inputs:
+                None.
+            Outputs:
+                None.
+            Side Effects:
+                Clears dialog state and destroys the window.
+            Exceptions:
+                Errors are caught to avoid interrupting the UI workflow.
+            """
+            self._data_trace_settings_window = None
             _cancel()
 
         win.protocol("WM_DELETE_WINDOW", _on_close)
@@ -51283,16 +52056,50 @@ class UnifiedApp(tk.Tk):
         ):
             self._capture_combined_legend_anchor_from_fig(fig, source="auto")
 
-        def _finalize_post_first_draw_overlay(target_frame: ttk.Frame) -> None:
+        def _increment_combined_overlay_refresh_count(target_frame: ttk.Frame) -> int:
+            """Increment the combined overlay refresh count.
+
+            Purpose:
+                Track how many refresh callbacks have actually executed.
+            Why:
+                The overlay should clear only after the second refresh completes.
+            Inputs:
+                target_frame: Plot tab frame hosting the combined plot.
+            Outputs:
+                The updated refresh count value.
+            Side Effects:
+                Updates the frame refresh count attribute.
+            Exceptions:
+                Errors are caught to avoid interrupting the UI workflow.
+            """
+            if target_frame is None:
+                return 0
+            count = getattr(target_frame, "_combined_overlay_refresh_count", 0)
+            try:
+                count = int(count)
+            except Exception:
+                count = 0
+            count += 1
+            try:
+                target_frame._combined_overlay_refresh_count = count
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            return count
+
+        def _finalize_post_first_draw_overlay(
+            target_frame: ttk.Frame, *, force_clear: bool = False
+        ) -> None:
             """Finalize the combined loading overlay after a post-draw refresh.
 
             Purpose:
                 Clear the loading overlay only after the refresh-triggered draw.
             Why:
-                The combined layout stabilizes after the manual Refresh callback
-                completes, so the overlay must remain until that draw finishes.
+                The combined layout stabilizes after multiple refresh passes, so
+                the overlay must remain until the final post-refresh draw finishes.
             Inputs:
                 target_frame: Plot tab frame hosting the combined plot.
+                force_clear: When True, clear even if readiness signals are missing.
             Outputs:
                 None.
             Side Effects:
@@ -51307,6 +52114,30 @@ class UnifiedApp(tk.Tk):
             )
             if not hold_overlay:
                 return
+            refresh_count = getattr(target_frame, "_combined_overlay_refresh_count", 0)
+            try:
+                refresh_count = int(refresh_count)
+            except Exception:
+                refresh_count = 0
+            target_refreshes = getattr(
+                target_frame, "_combined_overlay_target_refreshes", 2
+            )
+            try:
+                target_refreshes = int(target_refreshes)
+            except Exception:
+                target_refreshes = 2
+            if target_refreshes <= 0:
+                target_refreshes = 1
+            ready_seen = bool(
+                getattr(target_frame, "_combined_overlay_ready_seen", False)
+            )
+            if not force_clear:
+                if refresh_count < target_refreshes or not ready_seen:
+                    self._log_plot_tab_debug(
+                        "Combined overlay hold; refresh_count=%s target=%s ready_seen=%s."
+                        % (refresh_count, target_refreshes, ready_seen)
+                    )
+                    return
             try:
                 target_frame._post_first_draw_refresh_hold_overlay = False
             except Exception:
@@ -51321,7 +52152,8 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
             self._log_plot_tab_debug(
-                "Combined auto-refresh overlay cleared after post-refresh draw."
+                "Combined auto-refresh overlay cleared after refresh_count=%s ready_seen=%s."
+                % (refresh_count, ready_seen)
             )
             self._clear_plot_loading_overlay(target_frame)
 
@@ -51347,7 +52179,7 @@ class UnifiedApp(tk.Tk):
                 return
             try:
                 if not target_frame.winfo_exists():
-                    _finalize_post_first_draw_overlay(target_frame)
+                    _finalize_post_first_draw_overlay(target_frame, force_clear=True)
                     return
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
@@ -51365,7 +52197,7 @@ class UnifiedApp(tk.Tk):
                     self._log_plot_tab_debug(
                         "Combined auto-refresh retry limit reached; clearing overlay."
                     )
-                    _finalize_post_first_draw_overlay(target_frame)
+                    _finalize_post_first_draw_overlay(target_frame, force_clear=True)
                     return
 
                 try:
@@ -51438,14 +52270,16 @@ class UnifiedApp(tk.Tk):
                     # Best-effort guard; ignore failures to avoid interrupting
                     # the workflow.
                     pass
+                refresh_count = _increment_combined_overlay_refresh_count(target_frame)
                 self._log_plot_tab_debug(
-                    "Combined auto-refresh invoked after first draw."
+                    "Combined auto-refresh invoked after draw; refresh_count=%s."
+                    % refresh_count
                 )
                 try:
                     refresh_command()
                 except Exception:
                     # Fail closed: avoid leaving the overlay stuck if refresh fails.
-                    _finalize_post_first_draw_overlay(target_frame)
+                    _finalize_post_first_draw_overlay(target_frame, force_clear=True)
 
             tk_widget = None
             try:
@@ -51507,6 +52341,23 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 frame = None
             if frame is not None and getattr(frame, "_plot_key", None) == "fig_combined":
+                renderer_ok = False
+                try:
+                    renderer_ok = canvas.get_renderer() is not None
+                except Exception:
+                    renderer_ok = False
+                if renderer_ok and not getattr(
+                    frame, "_combined_overlay_ready_seen", False
+                ):
+                    try:
+                        frame._combined_overlay_ready_seen = True
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting
+                        # the workflow.
+                        pass
+                    self._log_plot_tab_debug(
+                        "Combined overlay ready signal observed (renderer ok)."
+                    )
                 if not getattr(frame, "_post_first_draw_refresh_done", False):
                     # Schedule the combined Refresh callback after the first draw.
                     try:
@@ -51520,6 +52371,37 @@ class UnifiedApp(tk.Tk):
                 hold_overlay = getattr(
                     frame, "_post_first_draw_refresh_hold_overlay", False
                 )
+                refresh_count = getattr(frame, "_combined_overlay_refresh_count", 0)
+                try:
+                    refresh_count = int(refresh_count)
+                except Exception:
+                    refresh_count = 0
+                target_refreshes = getattr(
+                    frame, "_combined_overlay_target_refreshes", 2
+                )
+                try:
+                    target_refreshes = int(target_refreshes)
+                except Exception:
+                    target_refreshes = 2
+                if target_refreshes <= 0:
+                    target_refreshes = 1
+                if (
+                    hold_overlay
+                    and refresh_count >= 1
+                    and refresh_count < target_refreshes
+                    and not getattr(frame, "_combined_overlay_second_refresh_scheduled", False)
+                ):
+                    try:
+                        frame._combined_overlay_second_refresh_scheduled = True
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting
+                        # the workflow.
+                        pass
+                    self._log_plot_tab_debug(
+                        "Combined auto-refresh scheduling pass 2; refresh_count=%s."
+                        % refresh_count
+                    )
+                    _schedule_post_first_draw_refresh(frame)
                 if (
                     getattr(frame, "_post_first_draw_refresh_invoked", False)
                     and hold_overlay
