@@ -2,8 +2,16 @@
   "created_at": "2026-02-05 09:43:13",
   "description": "",
   "payload": {
-    "column_assignments": {},
-    "dataset_required": false,
+    "column_assignments": {
+      "dt": "Date & Time",
+      "x": "Elapsed Time (days)",
+      "y1": "Reactor Pressure (PSI)",
+      "y2": "First Derivative Moving Average",
+      "y3": "Manifold Pressure (PSI)",
+      "z": "Internal Reactor Temperature",
+      "z2": "External Reactor Temperature"
+    },
+    "dataset_path": "C:/Users/mmoheban/Local Documents/Python/PR-24302 Sodium Bicarbonate MPT/PR-24302 Sodium Bicarbonate GL-260 Data for Analysis.xlsx",
     "final_report_settings": {
       "combined_plot_title_override": "",
       "fit_mode": "Preserve Export Layout",
@@ -89,10 +97,185 @@
       "table_style_preset": "Normal",
       "title": "GL-260 Final Report"
     },
-    "layout_profiles": {},
+    "layout_profiles": {
+      "fig_combined_triple_axis": {
+        "display": {
+          "axis_labelpads": {
+            "primary": 3.0,
+            "right": 15.0,
+            "third": 15.0
+          },
+          "cycle_legend_anchor": null,
+          "cycle_legend_loc": null,
+          "detached_labelpad": 15.0,
+          "detached_spine_offset": 1.12,
+          "legend_anchor": null,
+          "legend_anchor_y": null,
+          "legend_loc": null,
+          "margins": {
+            "bottom": 0.2,
+            "left": 0.125,
+            "right": 0.9,
+            "top": 0.88
+          },
+          "suptitle_xy": null,
+          "title_xy": null,
+          "xlabel_pad_pts": null
+        },
+        "export": {
+          "axis_labelpads": {
+            "primary": 3.0,
+            "right": 15.0,
+            "third": 15.0
+          },
+          "cycle_legend_anchor": null,
+          "cycle_legend_loc": null,
+          "detached_labelpad": 15.0,
+          "detached_spine_offset": 1.12,
+          "legend_anchor": null,
+          "legend_anchor_y": null,
+          "legend_loc": null,
+          "margins": {
+            "bottom": 0.184,
+            "left": 0.125,
+            "right": 0.9,
+            "top": 0.88
+          },
+          "suptitle_xy": null,
+          "title_xy": null,
+          "xlabel_pad_pts": null
+        },
+        "mirror_detached_labelpad": false
+      },
+      "fig_cycle_analysis": {
+        "display": {
+          "axis_labelpads": {},
+          "cycle_legend_anchor": null,
+          "cycle_legend_loc": null,
+          "detached_labelpad": null,
+          "detached_spine_offset": null,
+          "legend_anchor": null,
+          "legend_anchor_y": null,
+          "legend_loc": null,
+          "margins": {
+            "bottom": 0.079,
+            "left": 0.076,
+            "right": 0.97,
+            "top": 0.914
+          },
+          "suptitle_xy": null,
+          "title_xy": null,
+          "xlabel_pad_pts": null
+        },
+        "export": {
+          "axis_labelpads": {},
+          "cycle_legend_anchor": null,
+          "cycle_legend_loc": null,
+          "detached_labelpad": null,
+          "detached_spine_offset": null,
+          "legend_anchor": null,
+          "legend_anchor_y": null,
+          "legend_loc": null,
+          "margins": {
+            "bottom": 0.184,
+            "left": 0.076,
+            "right": 0.97,
+            "top": 0.914
+          },
+          "suptitle_xy": null,
+          "title_xy": null,
+          "xlabel_pad_pts": null
+        },
+        "mirror_detached_labelpad": false
+      },
+      "fig_pressure_derivative": {
+        "display": {
+          "axis_labelpads": {},
+          "cycle_legend_anchor": null,
+          "cycle_legend_loc": null,
+          "detached_labelpad": null,
+          "detached_spine_offset": null,
+          "legend_anchor": null,
+          "legend_anchor_y": null,
+          "legend_loc": null,
+          "margins": {
+            "bottom": 0.143,
+            "left": 0.071,
+            "right": 0.924,
+            "top": 0.91
+          },
+          "suptitle_xy": null,
+          "title_xy": null,
+          "xlabel_pad_pts": null
+        },
+        "export": {
+          "axis_labelpads": {},
+          "cycle_legend_anchor": null,
+          "cycle_legend_loc": null,
+          "detached_labelpad": null,
+          "detached_spine_offset": null,
+          "legend_anchor": null,
+          "legend_anchor_y": null,
+          "legend_loc": null,
+          "margins": {
+            "bottom": 0.184,
+            "left": 0.071,
+            "right": 0.924,
+            "top": 0.91
+          },
+          "suptitle_xy": null,
+          "title_xy": null,
+          "xlabel_pad_pts": null
+        },
+        "mirror_detached_labelpad": false
+      },
+      "fig_pressure_temp": {
+        "display": {
+          "axis_labelpads": {},
+          "cycle_legend_anchor": null,
+          "cycle_legend_loc": null,
+          "detached_labelpad": null,
+          "detached_spine_offset": null,
+          "legend_anchor": null,
+          "legend_anchor_y": null,
+          "legend_loc": null,
+          "margins": {
+            "bottom": 0.143,
+            "left": 0.071,
+            "right": 0.924,
+            "top": 0.91
+          },
+          "suptitle_xy": null,
+          "title_xy": null,
+          "xlabel_pad_pts": null
+        },
+        "export": {
+          "axis_labelpads": {},
+          "cycle_legend_anchor": null,
+          "cycle_legend_loc": null,
+          "detached_labelpad": null,
+          "detached_spine_offset": null,
+          "legend_anchor": null,
+          "legend_anchor_y": null,
+          "legend_loc": null,
+          "margins": {
+            "bottom": 0.184,
+            "left": 0.071,
+            "right": 0.924,
+            "top": 0.91
+          },
+          "suptitle_xy": null,
+          "title_xy": null,
+          "xlabel_pad_pts": null
+        },
+        "mirror_detached_labelpad": false
+      }
+    },
     "multi_sheet_enabled": false,
     "per_sheet_mapping": {},
-    "plot_elements": {},
+    "plot_elements": {
+      "fig_combined_triple_axis": []
+    },
     "plot_settings": {
       "auto_deriv_ticks": true,
       "auto_temp_ticks": true,
@@ -100,15 +283,15 @@
       "auto_y_ticks": true,
       "axis_auto_range": {
         "derivative": false,
-        "pressure": false,
+        "pressure": true,
         "temperature": false,
         "time": true
       },
       "axis_pad_pct": 5.0,
       "combined_center_plot_legend": false,
       "combined_cycle_legend_anchor": [
-        0.6108533905140316,
-        0.8035065590105199
+        0.4549118604804072,
+        0.643537980675803
       ],
       "combined_cycle_legend_anchor_mode": "loc_tuple",
       "combined_cycle_legend_anchor_space": "axes",
@@ -117,8 +300,8 @@
       "combined_cycle_legend_enable_drag": true,
       "combined_cycle_legend_fontsize": 10.0,
       "combined_cycle_legend_loc": [
-        0.6108533905140316,
-        0.8035065590105199
+        0.4549118604804072,
+        0.643537980675803
       ],
       "combined_cycle_legend_loc_choice": "upper right",
       "combined_cycle_legend_lock_position": false,
@@ -126,8 +309,6 @@
       "combined_cycle_legend_persist_position": true,
       "combined_cycle_legend_ref_axis": "main",
       "combined_cycle_legend_ref_corner": "center",
-      "combined_cycle_legend_ref_dx_px": null,
-      "combined_cycle_legend_ref_dy_px": null,
       "combined_deriv_axis_label": "First Derivative Moving Average (\u0394PSI/\u0394hour)",
       "combined_deriv_axis_offset": 1.12,
       "combined_deriv_labelpad": 15.0,
@@ -161,7 +342,7 @@
       "combined_title_pad_pts": 20.0,
       "combined_top_margin_pct": 5.0,
       "combined_x_axis_label": "",
-      "combined_xlabel_tick_gap_pts": 5.0,
+      "combined_xlabel_tick_gap_pts": 10.0,
       "combined_y_left_key": "y1",
       "combined_y_right_key": "z",
       "combined_y_third_key": "y2",
@@ -179,16 +360,16 @@
       },
       "deriv_major_tick": 200.0,
       "deriv_minor_tick": 100.0,
-      "deriv_y_max": 100.0,
-      "deriv_y_min": -100.0,
+      "deriv_y_max": 400.0,
+      "deriv_y_min": -400.0,
       "enable_deriv_axis": true,
       "enable_temp_axis": true,
       "include_moles_in_core_plot_legend": false,
-      "max_time": 7.86,
-      "max_y": 1152.93,
+      "max_time": 0.87,
+      "max_y": 809.01,
       "min_cycle_drop": -10.0,
       "min_time": -0.02,
-      "min_y": 0.0,
+      "min_y": -53.61,
       "peak_distance": 1,
       "peak_prominence": 1.0,
       "peak_width": 1,
@@ -205,23 +386,23 @@
       "scatter_marker": "o",
       "scatter_series": {
         "y1": {
-          "color": "#0080FF",
+          "color": "#D70428",
           "linestyle": "solid"
         },
         "y2": {
-          "color": "#808080",
+          "color": "#969696",
           "linestyle": "solid"
         },
         "y3": {
-          "color": "#00FF00",
+          "color": "#910B6E",
           "linestyle": "solid"
         },
         "z": {
-          "color": "#FF80C0",
+          "color": "#00FFFF",
           "linestyle": "solid"
         },
         "z2": {
-          "color": "#8000FF",
+          "color": "#00FF40",
           "linestyle": "solid"
         }
       },
@@ -239,9 +420,9 @@
       "y_major_tick": 50.0,
       "y_minor_tick": 5.0
     },
-    "selected_sheet": "",
+    "selected_sheet": "Batc h 1 Rxn Day 1",
     "selected_sheets": []
   },
   "profile_version": 1,
-  "updated_at": "2026-02-05 09:43:13"
+  "updated_at": "2026-02-06 10:26:54"
 }

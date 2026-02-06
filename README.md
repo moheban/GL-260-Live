@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.11.11)
+# GL-260 Data Analysis and Plotter (v2.11.12)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.11.11`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.11.12`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v2.11.12 Combined Splash Refresh Race Hardening](#v21112-combined-splash-refresh-race-hardening)
   - [v2.11.11 Combined Post-Draw Refresh Hook](#v21111-combined-post-draw-refresh-hook)
   - [v2.11.10 Combined Auto Refresh Scheduling Fix](#v21110-combined-auto-refresh-scheduling-fix)
   - [v2.11.9 Combined Auto Refresh Overlay Continuity](#v2119-combined-auto-refresh-overlay-continuity)
@@ -848,6 +849,11 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v2.11.12 Combined Splash Refresh Race Hardening
+- Combined post-draw refresh now retries briefly when the refresh callback is not yet wired, keeping the splash overlay visible until the forced auto-refresh actually runs.
+- The combined plot refresh command is assigned before any initial draw/draw_idle can fire, reducing timing races on first render.
+- Overlay cleanup still fails closed after a bounded retry window to avoid stalls if the tab is torn down mid-refresh.
 
 ### v2.11.11 Combined Post-Draw Refresh Hook
 - Combined Triple-Axis now invokes the same Refresh callback as the button exactly once after the first draw_event, guaranteeing stable geometry before the refresh.

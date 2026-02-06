@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.11.11
+# Version: v2.11.12
 # Date: 2026-02-06
 
 import os
@@ -7929,7 +7929,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.11.11"
+APP_VERSION = "v2.11.12"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -35940,6 +35940,7 @@ class UnifiedApp(tk.Tk):
         frame._post_first_draw_refresh_done = False
         frame._post_first_draw_refresh_invoked = False
         frame._post_first_draw_refresh_hold_overlay = False
+        frame._post_first_draw_refresh_retry_count = 0
         if plot_key == "fig_combined":
             frame._combined_render_ready = False
             frame._post_first_draw_refresh_hold_overlay = True
@@ -35983,6 +35984,29 @@ class UnifiedApp(tk.Tk):
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+
+        # Closure captures _add_plot_tab state for callback wiring, kept nested to
+        # scope the handler, and invoked by bindings set in _add_plot_tab.
+        def _refresh_panel():
+            """Refresh the plot panel using the manual Refresh pipeline.
+
+            Purpose:
+                Rebuild the current plot tab using the same Refresh logic.
+            Why:
+                Ensures the manual Refresh callback is reusable for post-draw refreshes.
+            Inputs:
+                None.
+            Outputs:
+                None.
+            Side Effects:
+                Triggers a plot rebuild and display refresh on the existing canvas.
+            Exceptions:
+                Errors are handled by the downstream refresh pipeline.
+            """
+            self._force_plot_refresh(frame, canvas)
+
+        # Assign the refresh command before any draw/draw_idle can run.
+        frame._refresh_command = _refresh_panel
 
         toolbar = NavigationToolbar2Tk(canvas, topbar)  # mount toolbar in the topbar
 
@@ -36501,28 +36525,6 @@ class UnifiedApp(tk.Tk):
         btn_close = ttk.Button(topbar, text="Close Plot", command=_close_this_plot)
 
         btn_close.pack(side="right", padx=6, pady=4)
-
-        # Closure captures _add_plot_tab state for callback wiring, kept nested to scope
-        # the handler, and invoked by bindings set in _add_plot_tab.
-        def _refresh_panel():
-            """Refresh the plot panel using the manual Refresh pipeline.
-
-            Purpose:
-                Rebuild the current plot tab using the same Refresh logic.
-            Why:
-                Ensures the manual Refresh callback is reusable for post-draw refreshes.
-            Inputs:
-                None.
-            Outputs:
-                None.
-            Side Effects:
-                Triggers a plot rebuild and display refresh on the existing canvas.
-            Exceptions:
-                Errors are handled by the downstream refresh pipeline.
-            """
-            self._force_plot_refresh(frame, canvas)
-
-        frame._refresh_command = _refresh_panel
 
         btn_refresh = ttk.Button(
             topbar,
@@ -51278,22 +51280,90 @@ class UnifiedApp(tk.Tk):
             Purpose:
                 Invoke the manual Refresh callback once after the first draw.
             Why:
-                The first draw guarantees renderer and geometry availability.
+                The first draw guarantees renderer and geometry availability, but
+                the refresh command may not be assigned yet, so we retry briefly.
             Inputs:
                 target_frame: Plot tab frame hosting the combined plot.
             Outputs:
                 None.
             Side Effects:
-                Schedules an idle callback to invoke the refresh command.
+                Schedules an idle callback to invoke the refresh command, or a
+                short retry while the refresh callback is still wiring.
             Exceptions:
                 Errors are caught to avoid interrupting the UI loop.
             """
             if target_frame is None:
                 return
+            try:
+                if not target_frame.winfo_exists():
+                    _finalize_post_first_draw_overlay(target_frame)
+                    return
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
             refresh_command = getattr(target_frame, "_refresh_command", None)
             if not callable(refresh_command):
-                _finalize_post_first_draw_overlay(target_frame)
+                retry_count = getattr(
+                    target_frame, "_post_first_draw_refresh_retry_count", 0
+                )
+                if not isinstance(retry_count, int) or retry_count < 0:
+                    retry_count = 0
+                retry_delay_ms = 5
+                retry_limit = 60
+                if retry_count >= retry_limit:
+                    self._log_plot_tab_debug(
+                        "Combined auto-refresh retry limit reached; clearing overlay."
+                    )
+                    _finalize_post_first_draw_overlay(target_frame)
+                    return
+
+                try:
+                    target_frame._post_first_draw_refresh_retry_count = (
+                        retry_count + 1
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting
+                    # the workflow.
+                    pass
+
+                # Retry briefly so the splash overlay stays up until the
+                # refresh command is available.
+                def _retry_post_first_draw_refresh():
+                    """Retry waiting for the combined refresh command.
+
+                    Purpose:
+                        Poll for the refresh command wiring without blocking UI.
+                    Why:
+                        The initial draw can fire before the command assignment.
+                    Inputs:
+                        None.
+                    Outputs:
+                        None.
+                    Side Effects:
+                        Re-enters the post-first-draw refresh scheduler.
+                    Exceptions:
+                        Errors are caught to avoid interrupting the UI loop.
+                    """
+                    _schedule_post_first_draw_refresh(target_frame)
+
+                tk_widget = None
+                try:
+                    tk_widget = canvas.get_tk_widget()
+                except Exception:
+                    tk_widget = None
+                try:
+                    if tk_widget is not None:
+                        tk_widget.after(retry_delay_ms, _retry_post_first_draw_refresh)
+                    else:
+                        self.after(retry_delay_ms, _retry_post_first_draw_refresh)
+                except Exception:
+                    _retry_post_first_draw_refresh()
                 return
+            try:
+                target_frame._post_first_draw_refresh_retry_count = 0
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
 
             def _invoke_refresh():
                 """Invoke the stored Refresh command after the first draw.

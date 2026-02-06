@@ -1,22 +1,22 @@
 {
-  "created_at": "2026-02-05 09:42:39",
+  "created_at": "2026-02-06 09:56:09",
   "description": "Autosave before loading a profile.",
   "payload": {
     "column_assignments": {
       "dt": "Date & Time",
-      "x": "__GL260_ELAPSED_DAYS_STITCHED__",
+      "x": "Elapsed Time (days)",
       "y1": "Reactor Pressure (PSI)",
       "y2": "First Derivative Moving Average",
       "y3": "Manifold Pressure (PSI)",
       "z": "Internal Reactor Temperature",
       "z2": "External Reactor Temperature"
     },
-    "dataset_path": "C:/Users/mmoheban/Local Documents/Python/PR-24301 Sodium Bicarbonate MPT/PR-24301 CLM-441-MPT Sodium Bicarbonate GL-260 Data.xlsx",
+    "dataset_path": "C:/Users/mmoheban/Local Documents/Python/PR-24302 Sodium Bicarbonate MPT/PR-24302 Sodium Bicarbonate GL-260 Data for Analysis.xlsx",
     "final_report_settings": {
       "combined_plot_title_override": "",
       "fit_mode": "Preserve Export Layout",
       "font_scale": 1.0,
-      "global_layout_mode": "plots_landscape_pages",
+      "global_layout_mode": "mixed_pages",
       "margin_in": 0.75,
       "narrative": "",
       "profile_key": "final_report_png",
@@ -58,19 +58,39 @@
         "sol_summary": false
       },
       "section_order": [
+        "fig1",
+        "fig2",
         "combined_plot",
-        "cycle_stats_table"
+        "cycle_summary",
+        "cycle_stats_table",
+        "cycle_timeline_table",
+        "predicted_ph_callouts",
+        "co2_dosing_guidance",
+        "planner_narrative",
+        "key_metrics",
+        "sol_summary",
+        "math_preview"
       ],
       "section_orientation": {
-        "combined_plot": "landscape",
-        "cycle_plot": "landscape",
+        "combined_plot": "inherit",
+        "cycle_plot": "inherit",
         "cycle_timeline_plot": "inherit",
         "fig1": "inherit",
         "fig2": "inherit"
       },
       "selected_sections": [
+        "fig1",
+        "fig2",
         "combined_plot",
-        "cycle_stats_table"
+        "cycle_summary",
+        "cycle_stats_table",
+        "cycle_timeline_table",
+        "predicted_ph_callouts",
+        "co2_dosing_guidance",
+        "planner_narrative",
+        "key_metrics",
+        "sol_summary",
+        "math_preview"
       ],
       "show_page_numbers": true,
       "show_section_headers": true,
@@ -89,21 +109,18 @@
           "cycle_legend_loc": null,
           "detached_labelpad": 15.0,
           "detached_spine_offset": 1.12,
-          "legend_anchor": [
-            0.500695952816758,
-            0.038570186875271625
-          ],
-          "legend_anchor_y": 0.0,
-          "legend_loc": "lower center",
+          "legend_anchor": null,
+          "legend_anchor_y": null,
+          "legend_loc": null,
           "margins": {
             "bottom": 0.2,
-            "left": 0.098,
+            "left": 0.125,
             "right": 0.9,
             "top": 0.88
           },
           "suptitle_xy": null,
           "title_xy": null,
-          "xlabel_pad_pts": -8.64
+          "xlabel_pad_pts": null
         },
         "export": {
           "axis_labelpads": {
@@ -115,21 +132,18 @@
           "cycle_legend_loc": null,
           "detached_labelpad": 15.0,
           "detached_spine_offset": 1.12,
-          "legend_anchor": [
-            0.500695952816758,
-            0.038570186875271625
-          ],
-          "legend_anchor_y": 0.0,
-          "legend_loc": "lower center",
+          "legend_anchor": null,
+          "legend_anchor_y": null,
+          "legend_loc": null,
           "margins": {
-            "bottom": 0.2,
-            "left": 0.098,
+            "bottom": 0.184,
+            "left": 0.125,
             "right": 0.9,
             "top": 0.88
           },
           "suptitle_xy": null,
           "title_xy": null,
-          "xlabel_pad_pts": -8.64
+          "xlabel_pad_pts": null
         },
         "mirror_detached_labelpad": false
       },
@@ -190,10 +204,7 @@
             "right": 0.924,
             "top": 0.91
           },
-          "suptitle_xy": [
-            0.5026101281269066,
-            0.9117588932806324
-          ],
+          "suptitle_xy": null,
           "title_xy": null,
           "xlabel_pad_pts": null
         },
@@ -204,7 +215,7 @@
           "detached_labelpad": null,
           "detached_spine_offset": null,
           "legend_anchor": null,
-          "legend_anchor_y": -0.1,
+          "legend_anchor_y": null,
           "legend_loc": null,
           "margins": {
             "bottom": 0.184,
@@ -220,118 +231,51 @@
       },
       "fig_pressure_temp": {
         "display": {
-          "axis_labelpads": {
-            "x": 10.04
-          },
+          "axis_labelpads": {},
           "cycle_legend_anchor": null,
           "cycle_legend_loc": null,
           "detached_labelpad": null,
           "detached_spine_offset": null,
-          "legend_anchor": [
-            0.4999999999999999,
-            0.02003621613791105
-          ],
+          "legend_anchor": null,
           "legend_anchor_y": null,
-          "legend_loc": "lower center",
+          "legend_loc": null,
           "margins": {
             "bottom": 0.143,
             "left": 0.071,
             "right": 0.924,
             "top": 0.91
           },
-          "suptitle_xy": [
-            0.49688987187309336,
-            0.9854302477183832
-          ],
-          "title_xy": [
-            0.49688987187309336,
-            0.9341455121814045
-          ],
+          "suptitle_xy": null,
+          "title_xy": null,
           "xlabel_pad_pts": null
         },
         "export": {
-          "axis_labelpads": {
-            "x": 10.04
-          },
+          "axis_labelpads": {},
           "cycle_legend_anchor": null,
           "cycle_legend_loc": null,
           "detached_labelpad": null,
           "detached_spine_offset": null,
-          "legend_anchor": [
-            0.4999999999999999,
-            0.02003621613791105
-          ],
+          "legend_anchor": null,
           "legend_anchor_y": null,
-          "legend_loc": "lower center",
+          "legend_loc": null,
           "margins": {
             "bottom": 0.184,
             "left": 0.071,
             "right": 0.924,
             "top": 0.91
           },
-          "suptitle_xy": [
-            0.49688987187309336,
-            0.9854302477183832
-          ],
-          "title_xy": [
-            0.49688987187309336,
-            0.9341455121814045
-          ],
+          "suptitle_xy": null,
+          "title_xy": null,
           "xlabel_pad_pts": null
         },
         "mirror_detached_labelpad": false
       }
     },
-    "multi_sheet_enabled": true,
+    "multi_sheet_enabled": false,
     "per_sheet_mapping": {},
     "plot_elements": {
       "fig_combined_triple_axis": [],
-      "fig_pressure_derivative": [],
-      "fig_pressure_temp": [
-        {
-          "axes_target": "primary",
-          "coord_space": "data",
-          "geometry": {
-            "label_anchor": "center",
-            "label_y_axes": 0.95,
-            "text": "Label",
-            "wrap_width_x": 0.18715841229354535,
-            "x0": 0.8876783444570252,
-            "x1": 1.0748367567505706
-          },
-          "id": "e0a06376-1c9f-44d6-87b0-983334c3e970",
-          "locked": false,
-          "name": "Span + Label 1",
-          "style": {
-            "alpha": 0.9,
-            "bbox_alpha": 0.85,
-            "bbox_boxstyle": "round",
-            "bbox_edgecolor": "none",
-            "bbox_facecolor": "white",
-            "bbox_linestyle": "solid",
-            "bbox_linewidth": 1.0,
-            "bbox_pad": 0.3,
-            "bbox_shadow": false,
-            "bbox_shadow_alpha": 0.35,
-            "bbox_shadow_offset_x": 2.0,
-            "bbox_shadow_offset_y": -2.0,
-            "color": "#000000",
-            "edgecolor": "#cccccc",
-            "facecolor": "#cccccc",
-            "fontfamily": "STIXGeneral",
-            "fontsize": 10.0,
-            "fontweight": "normal",
-            "linestyle": "solid",
-            "linewidth": 1.5,
-            "span_layer": "behind_data",
-            "text_align": "left",
-            "text_valign": "bottom"
-          },
-          "type": "xspan_label",
-          "visible": true,
-          "zorder": 11.0
-        }
-      ]
+      "fig_pressure_temp": []
     },
     "plot_settings": {
       "auto_deriv_ticks": true,
@@ -347,8 +291,8 @@
       "axis_pad_pct": 5.0,
       "combined_center_plot_legend": false,
       "combined_cycle_legend_anchor": [
-        0.6108533905140316,
-        0.8035065590105199
+        0.531149250610047,
+        0.632287397821899
       ],
       "combined_cycle_legend_anchor_mode": "loc_tuple",
       "combined_cycle_legend_anchor_space": "axes",
@@ -357,11 +301,12 @@
       "combined_cycle_legend_enable_drag": true,
       "combined_cycle_legend_fontsize": 10.0,
       "combined_cycle_legend_loc": [
-        0.6108533905140316,
-        0.8035065590105199
+        0.531149250610047,
+        0.632287397821899
       ],
-      "combined_cycle_legend_loc_choice": "upper right",
+      "combined_cycle_legend_loc_choice": "upper left",
       "combined_cycle_legend_lock_position": false,
+      "combined_cycle_legend_markerscale": null,
       "combined_cycle_legend_persist_position": true,
       "combined_cycle_legend_ref_axis": "main",
       "combined_cycle_legend_ref_corner": "center",
@@ -398,7 +343,7 @@
       "combined_title_pad_pts": 20.0,
       "combined_top_margin_pct": 5.0,
       "combined_x_axis_label": "",
-      "combined_xlabel_tick_gap_pts": 5.0,
+      "combined_xlabel_tick_gap_pts": 10.0,
       "combined_y_left_key": "y1",
       "combined_y_right_key": "z",
       "combined_y_third_key": "y2",
@@ -421,11 +366,11 @@
       "enable_deriv_axis": true,
       "enable_temp_axis": true,
       "include_moles_in_core_plot_legend": false,
-      "max_time": 7.86,
-      "max_y": 1152.93,
+      "max_time": 0.96,
+      "max_y": 1346.55,
       "min_cycle_drop": -10.0,
       "min_time": -0.02,
-      "min_y": 0.0,
+      "min_y": -62.45,
       "peak_distance": 1,
       "peak_prominence": 1.0,
       "peak_width": 1,
@@ -465,10 +410,10 @@
       "scatter_size": 20.0,
       "show_cycle_legend_on_core_plots": true,
       "show_cycle_markers_on_core_plots": true,
-      "suptitle_text": "PR-24301 CLM-441-MPT Sodium Bicarbonate Batch 2 of 2",
+      "suptitle_text": "PR-24302 CLM-441-MPT Sodium Bicarbonate Batch 1 of 2",
       "temp_major_tick": 5.0,
       "temp_minor_tick": 2.5,
-      "title_text": "Reaction Day 1-6 1/13-1/19",
+      "title_text": "Pressure Test Day 0",
       "twin_y_max": 42.53,
       "twin_y_min": 13.38,
       "x_major_tick": 0.2,
@@ -476,17 +421,9 @@
       "y_major_tick": 50.0,
       "y_minor_tick": 5.0
     },
-    "selected_sheet": "Day 0 Gasket Pressure Test",
-    "selected_sheets": [
-      "Batch 2 Rxn Day 1",
-      "Batch 2 Rxn Day 2",
-      "Batch 2 Rxn Day 3",
-      "Batch 2 Rxn Day 3.1",
-      "Batch 2 Rxn Day 3.2-7",
-      "Batch 2 Rxn Day 7-7.1",
-      "Batch 2 Rxn Day 7.2-8"
-    ]
+    "selected_sheet": "Day 0 Pressure Test",
+    "selected_sheets": []
   },
   "profile_version": 1,
-  "updated_at": "2026-02-05 09:42:39"
+  "updated_at": "2026-02-06 09:56:09"
 }
