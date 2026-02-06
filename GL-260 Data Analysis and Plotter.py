@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.11.10
+# Version: v2.11.11
 # Date: 2026-02-06
 
 import os
@@ -7929,7 +7929,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.11.10"
+APP_VERSION = "v2.11.11"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -31634,10 +31634,10 @@ class UnifiedApp(tk.Tk):
             Defers render until widget geometry is ready, applies display layout
             settings and plot elements, restores legend anchors, registers drag
             tracking, retargets annotation controllers, triggers a single
-            draw_idle, and schedules the one-time auto refresh after the first
-            successful draw. When completing a forced refresh, synchronously
-            finalizes layout before delegating overlay removal to the auto-refresh
-            completion handler.
+            draw_idle, and defers the one-shot combined refresh until the first
+            draw_event can invoke the manual Refresh callback. When completing a
+            forced refresh, synchronously finalizes layout before deferring
+            overlay removal to the post-refresh draw handler.
         Exceptions:
             Errors are caught defensively to keep UI workflows responsive.
         """
@@ -31646,6 +31646,7 @@ class UnifiedApp(tk.Tk):
         fig = getattr(canvas, "figure", None)
         if fig is None:
             return
+        plot_key = getattr(frame, "_plot_key", None)
         plot_id = getattr(frame, "_plot_id", None)
         if placement_state is None and plot_id:
             placement_state = self._capture_plot_element_placement_state(plot_id)
@@ -31794,7 +31795,14 @@ class UnifiedApp(tk.Tk):
                     frame._plot_auto_refresh_state = "pending"
                     frame._plot_auto_refresh_in_progress = False
                     frame._plot_auto_refresh_after_id = None
-                self._schedule_plot_auto_refresh(frame, canvas)
+                if plot_key == "fig_combined":
+                    # Combined plots refresh after the first draw_event; keep
+                    # overlay state pending until that callback runs.
+                    frame._plot_auto_refresh_state = "pending"
+                    frame._plot_auto_refresh_in_progress = False
+                    frame._plot_auto_refresh_after_id = None
+                else:
+                    self._schedule_plot_auto_refresh(frame, canvas)
             auto_state = getattr(frame, "_plot_auto_refresh_state", None)
             if auto_state == "refreshing" and not was_initial_render:
                 # Apply the same finalize/draw logic as manual Refresh before revealing.
@@ -31810,8 +31818,17 @@ class UnifiedApp(tk.Tk):
                 except Exception:
                     # Best-effort guard; ignore failures.
                     pass
-                # Auto refresh completed; reveal the stabilized render.
-                self._complete_plot_auto_refresh(frame)
+                if plot_key == "fig_combined" and getattr(
+                    frame, "_post_first_draw_refresh_hold_overlay", False
+                ):
+                    # Defer overlay removal for combined until the post-refresh draw.
+                    frame._plot_auto_refresh_state = "pending"
+                    frame._plot_auto_refresh_in_progress = False
+                    frame._plot_auto_refresh_after_id = None
+                    frame._plot_auto_refresh_phase = None
+                else:
+                    # Auto refresh completed; reveal the stabilized render.
+                    self._complete_plot_auto_refresh(frame)
 
         self._with_loading_cursor(_render, widget=widget)
 
@@ -35919,8 +35936,13 @@ class UnifiedApp(tk.Tk):
         frame._plot_render_task_id = None
         frame._plot_loading_overlay = None
         frame._plot_loading_label = None
+        frame._refresh_command = None
+        frame._post_first_draw_refresh_done = False
+        frame._post_first_draw_refresh_invoked = False
+        frame._post_first_draw_refresh_hold_overlay = False
         if plot_key == "fig_combined":
             frame._combined_render_ready = False
+            frame._post_first_draw_refresh_hold_overlay = True
 
         self._log_plot_tab_debug(f"Creating tab frame for '{title}'")
 
@@ -35955,6 +35977,12 @@ class UnifiedApp(tk.Tk):
         frame._plot_id = plot_id
 
         canvas = FigureCanvasTkAgg(fig, master=frame)
+        try:
+            # Bind the tab frame so draw-event handlers can route refresh state.
+            canvas._plot_frame = frame  # type: ignore[attr-defined]
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
 
         toolbar = NavigationToolbar2Tk(canvas, topbar)  # mount toolbar in the topbar
 
@@ -36474,10 +36502,32 @@ class UnifiedApp(tk.Tk):
 
         btn_close.pack(side="right", padx=6, pady=4)
 
+        # Closure captures _add_plot_tab state for callback wiring, kept nested to scope
+        # the handler, and invoked by bindings set in _add_plot_tab.
+        def _refresh_panel():
+            """Refresh the plot panel using the manual Refresh pipeline.
+
+            Purpose:
+                Rebuild the current plot tab using the same Refresh logic.
+            Why:
+                Ensures the manual Refresh callback is reusable for post-draw refreshes.
+            Inputs:
+                None.
+            Outputs:
+                None.
+            Side Effects:
+                Triggers a plot rebuild and display refresh on the existing canvas.
+            Exceptions:
+                Errors are handled by the downstream refresh pipeline.
+            """
+            self._force_plot_refresh(frame, canvas)
+
+        frame._refresh_command = _refresh_panel
+
         btn_refresh = ttk.Button(
             topbar,
             text="Refresh",
-            command=lambda: self._force_plot_refresh(frame, canvas),
+            command=_refresh_panel,
         )
 
         btn_refresh.pack(side="right", padx=6, pady=4)
@@ -51169,7 +51219,8 @@ class UnifiedApp(tk.Tk):
         self._combined_legend_canvas = canvas
         if not cycle_drag_enabled:
             # Drag capture callbacks are only registered when cycle dragging is enabled.
-            return
+            # draw_event remains active for post-draw refresh and anchor apply.
+            cycle_drag_enabled = False
         if (
             self._combined_cycle_legend_capture_enabled()
             and saved_offsets is None
@@ -51178,6 +51229,121 @@ class UnifiedApp(tk.Tk):
             )
         ):
             self._capture_combined_legend_anchor_from_fig(fig, source="auto")
+
+        def _finalize_post_first_draw_overlay(target_frame: ttk.Frame) -> None:
+            """Finalize the combined loading overlay after a post-draw refresh.
+
+            Purpose:
+                Clear the loading overlay only after the refresh-triggered draw.
+            Why:
+                The combined layout stabilizes after the manual Refresh callback
+                completes, so the overlay must remain until that draw finishes.
+            Inputs:
+                target_frame: Plot tab frame hosting the combined plot.
+            Outputs:
+                None.
+            Side Effects:
+                Clears the overlay, resets auto-refresh state, and records logs.
+            Exceptions:
+                Errors are caught to avoid interrupting the UI workflow.
+            """
+            if target_frame is None:
+                return
+            hold_overlay = getattr(
+                target_frame, "_post_first_draw_refresh_hold_overlay", False
+            )
+            if not hold_overlay:
+                return
+            try:
+                target_frame._post_first_draw_refresh_hold_overlay = False
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            try:
+                target_frame._plot_auto_refresh_state = "done"
+                target_frame._plot_auto_refresh_after_id = None
+                target_frame._plot_auto_refresh_in_progress = False
+                target_frame._plot_auto_refresh_phase = None
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            self._log_plot_tab_debug(
+                "Combined auto-refresh overlay cleared after post-refresh draw."
+            )
+            self._clear_plot_loading_overlay(target_frame)
+
+        def _schedule_post_first_draw_refresh(target_frame: ttk.Frame) -> None:
+            """Schedule the Combined post-first-draw refresh callback.
+
+            Purpose:
+                Invoke the manual Refresh callback once after the first draw.
+            Why:
+                The first draw guarantees renderer and geometry availability.
+            Inputs:
+                target_frame: Plot tab frame hosting the combined plot.
+            Outputs:
+                None.
+            Side Effects:
+                Schedules an idle callback to invoke the refresh command.
+            Exceptions:
+                Errors are caught to avoid interrupting the UI loop.
+            """
+            if target_frame is None:
+                return
+            refresh_command = getattr(target_frame, "_refresh_command", None)
+            if not callable(refresh_command):
+                _finalize_post_first_draw_overlay(target_frame)
+                return
+
+            def _invoke_refresh():
+                """Invoke the stored Refresh command after the first draw.
+
+                Purpose:
+                    Run the manual Refresh callback once geometry is stable.
+                Why:
+                    Combined plots need a deterministic post-draw refresh.
+                Inputs:
+                    None.
+                Outputs:
+                    None.
+                Side Effects:
+                    Flags auto-refresh invocation and calls the refresh callback.
+                Exceptions:
+                    Errors are caught to avoid UI interruption and overlay stalls.
+                """
+                try:
+                    target_frame._post_first_draw_refresh_invoked = True
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting
+                    # the workflow.
+                    pass
+                self._log_plot_tab_debug(
+                    "Combined auto-refresh invoked after first draw."
+                )
+                try:
+                    refresh_command()
+                except Exception:
+                    # Fail closed: avoid leaving the overlay stuck if refresh fails.
+                    _finalize_post_first_draw_overlay(target_frame)
+
+            tk_widget = None
+            try:
+                tk_widget = canvas.get_tk_widget()
+            except Exception:
+                tk_widget = None
+            try:
+                if tk_widget is not None:
+                    tk_widget.after_idle(_invoke_refresh)
+                else:
+                    self.after_idle(_invoke_refresh)
+            except Exception:
+                try:
+                    if tk_widget is not None:
+                        tk_widget.after(1, _invoke_refresh)
+                    else:
+                        self.after(1, _invoke_refresh)
+                except Exception:
+                    _invoke_refresh()
 
         # Closure captures _register_combined_legend_tracking state for callback
         # wiring, kept nested to scope the handler, and invoked by bindings set below.
@@ -51214,6 +51380,31 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting
                 # the workflow.
                 pass
+            frame = None
+            try:
+                frame = getattr(canvas, "_plot_frame", None)
+            except Exception:
+                frame = None
+            if frame is not None and getattr(frame, "_plot_key", None) == "fig_combined":
+                if not getattr(frame, "_post_first_draw_refresh_done", False):
+                    # Schedule the combined Refresh callback after the first draw.
+                    try:
+                        frame._post_first_draw_refresh_done = True
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting
+                        # the workflow.
+                        pass
+                    self._log_plot_tab_debug("Combined first draw event fired.")
+                    _schedule_post_first_draw_refresh(frame)
+                hold_overlay = getattr(
+                    frame, "_post_first_draw_refresh_hold_overlay", False
+                )
+                if (
+                    getattr(frame, "_post_first_draw_refresh_invoked", False)
+                    and hold_overlay
+                ):
+                    # Clear overlay on the first draw after the refresh completes.
+                    _finalize_post_first_draw_overlay(frame)
             try:
                 if getattr(fig, "_cycle_legend_anchor_applied", False):
                     return
@@ -51748,9 +51939,13 @@ class UnifiedApp(tk.Tk):
 
         try:
             draw_cid = canvas.mpl_connect("draw_event", _on_draw)
-            press_cid = canvas.mpl_connect("button_press_event", _on_press)
-            motion_cid = canvas.mpl_connect("motion_notify_event", _on_motion)
-            release_cid = canvas.mpl_connect("button_release_event", _on_release)
+            press_cid = None
+            motion_cid = None
+            release_cid = None
+            if cycle_drag_enabled:
+                press_cid = canvas.mpl_connect("button_press_event", _on_press)
+                motion_cid = canvas.mpl_connect("motion_notify_event", _on_motion)
+                release_cid = canvas.mpl_connect("button_release_event", _on_release)
             self._combined_legend_event_cids = {
                 "draw_event": draw_cid,
                 "button_press_event": press_cid,

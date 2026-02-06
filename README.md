@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.11.10)
+# GL-260 Data Analysis and Plotter (v2.11.11)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.11.10`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.11.11`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v2.11.11 Combined Post-Draw Refresh Hook](#v21111-combined-post-draw-refresh-hook)
   - [v2.11.10 Combined Auto Refresh Scheduling Fix](#v21110-combined-auto-refresh-scheduling-fix)
   - [v2.11.9 Combined Auto Refresh Overlay Continuity](#v2119-combined-auto-refresh-overlay-continuity)
   - [v2.11.8 Combined Auto Refresh Second Pass](#v2118-combined-auto-refresh-second-pass)
@@ -847,6 +848,11 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v2.11.11 Combined Post-Draw Refresh Hook
+- Combined Triple-Axis now invokes the same Refresh callback as the button exactly once after the first draw_event, guaranteeing stable geometry before the refresh.
+- The loading overlay stays visible through the initial render, first draw, and the auto-refresh pass, then clears only after the refresh-triggered draw completes.
+- Added debug logs for first draw, auto-refresh invocation, and overlay clearing.
 
 ### v2.11.10 Combined Auto Refresh Scheduling Fix
 - Combined Triple-Axis initial draw now sets the render-complete flag and schedules the auto-refresh pipeline so forced refresh runs automatically.
