@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.11.9)
+# GL-260 Data Analysis and Plotter (v2.11.10)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.11.9`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.11.10`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v2.11.10 Combined Auto Refresh Scheduling Fix](#v21110-combined-auto-refresh-scheduling-fix)
   - [v2.11.9 Combined Auto Refresh Overlay Continuity](#v2119-combined-auto-refresh-overlay-continuity)
   - [v2.11.8 Combined Auto Refresh Second Pass](#v2118-combined-auto-refresh-second-pass)
   - [v2.11.7 Forced Refresh Finalize Before Reveal](#v2117-forced-refresh-finalize-before-reveal)
@@ -846,6 +847,12 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v2.11.10 Combined Auto Refresh Scheduling Fix
+- Combined Triple-Axis initial draw now sets the render-complete flag and schedules the auto-refresh pipeline so forced refresh runs automatically.
+- Combined forced refresh now applies the same display/layout finalization step as other plots, so margins settle without a manual Refresh.
+- Loading overlays clear only after the final auto-refresh pass completes, keeping the splash visible through stabilization passes.
+- Added debug logs for combined auto-refresh scheduling and completion.
 
 ### v2.11.9 Combined Auto Refresh Overlay Continuity
 - Combined Triple-Axis forced refresh now applies the same display/layout finalization step as other plots, ensuring margins/layout settle without a manual Refresh.

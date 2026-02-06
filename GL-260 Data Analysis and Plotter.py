@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.11.9
-# Date: 2026-02-05
+# Version: v2.11.10
+# Date: 2026-02-06
 
 import os
 import sys
@@ -7929,7 +7929,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.11.9"
+APP_VERSION = "v2.11.10"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -31458,8 +31458,10 @@ class UnifiedApp(tk.Tk):
             return
         if not getattr(frame, "_plot_initial_render_complete", False):
             return
+        plot_key = getattr(frame, "_plot_key", None)
         frame._plot_auto_refresh_state = "scheduled"
-        if getattr(frame, "_plot_key", None) == "fig_combined":
+        if plot_key == "fig_combined":
+            self._log_plot_tab_debug("Combined auto-refresh scheduled.")
             # Combined plots need two auto-refresh phases to stabilize layout.
             frame._plot_auto_refresh_phase = 1
         else:
@@ -31600,6 +31602,10 @@ class UnifiedApp(tk.Tk):
         frame._plot_auto_refresh_after_id = None
         frame._plot_auto_refresh_in_progress = False
         frame._plot_auto_refresh_phase = None
+        if plot_key == "fig_combined":
+            self._log_plot_tab_debug(
+                "Combined auto-refresh complete; clearing loading overlay."
+            )
         self._clear_plot_loading_overlay(frame)
 
     def _finalize_combined_plot_display(
@@ -31627,10 +31633,11 @@ class UnifiedApp(tk.Tk):
         Side Effects:
             Defers render until widget geometry is ready, applies display layout
             settings and plot elements, restores legend anchors, registers drag
-            tracking, retargets annotation controllers, schedules a one-time
-            auto refresh, and triggers a single draw_idle. When completing a
-            forced refresh, synchronously finalizes layout before clearing the
-            loading overlay.
+            tracking, retargets annotation controllers, triggers a single
+            draw_idle, and schedules the one-time auto refresh after the first
+            successful draw. When completing a forced refresh, synchronously
+            finalizes layout before delegating overlay removal to the auto-refresh
+            completion handler.
         Exceptions:
             Errors are caught defensively to keep UI workflows responsive.
         """
@@ -31765,22 +31772,31 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures.
                 pass
-            try:
-                frame._plot_initial_render_complete = True
-            except Exception:
-                # Best-effort guard; ignore failures.
-                pass
+            was_initial_render = not getattr(
+                frame, "_plot_initial_render_complete", False
+            )
+            draw_succeeded = False
             try:
                 canvas.draw_idle()
+                draw_succeeded = True
             except Exception:
                 # Best-effort guard; ignore failures.
                 pass
+            if draw_succeeded and was_initial_render:
+                try:
+                    frame._plot_initial_render_complete = True
+                except Exception:
+                    # Best-effort guard; ignore failures.
+                    pass
+                auto_state = getattr(frame, "_plot_auto_refresh_state", None)
+                if auto_state == "refreshing":
+                    # Reset initial render state so auto-refresh scheduling can run.
+                    frame._plot_auto_refresh_state = "pending"
+                    frame._plot_auto_refresh_in_progress = False
+                    frame._plot_auto_refresh_after_id = None
+                self._schedule_plot_auto_refresh(frame, canvas)
             auto_state = getattr(frame, "_plot_auto_refresh_state", None)
-            if auto_state == "pending":
-                # Initial render complete; schedule auto refresh if enabled.
-                if getattr(frame, "_plot_auto_refresh_enabled", True):
-                    self._schedule_plot_auto_refresh(frame, canvas)
-            elif auto_state == "refreshing":
+            if auto_state == "refreshing" and not was_initial_render:
                 # Apply the same finalize/draw logic as manual Refresh before revealing.
                 try:
                     self._finalize_matplotlib_canvas_layout(
@@ -32058,9 +32074,9 @@ class UnifiedApp(tk.Tk):
         Side Effects:
             Captures combined legend anchors before rebuild when enabled, applies
             display/layout finalization for the active canvas (including the
-            combined plot when auto-refresh is active), defers combined refresh
-            until geometry is ready, starts background compute, and schedules
-            UI-thread rendering/overlay updates.
+            combined plot on every refresh), defers combined refresh until
+            geometry is ready, starts background compute, and schedules UI-thread
+            rendering/overlay updates.
 
         Exceptions:
             Internal errors are caught and ignored to keep UI responsive.
@@ -32155,13 +32171,7 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
         try:
-            apply_display_refresh = True
-            if plot_key == "fig_combined":
-                # Only apply the forced-refresh display finalize path when the
-                # auto-refresh pipeline is active to avoid manual refresh drift.
-                apply_display_refresh = auto_state in {"scheduled", "refreshing"}
-            if apply_display_refresh:
-                self._refresh_canvas_display(frame, canvas, trigger_resize=True)
+            self._refresh_canvas_display(frame, canvas, trigger_resize=True)
         except Exception:
             # Best-effort guard; ignore failures.
             pass
