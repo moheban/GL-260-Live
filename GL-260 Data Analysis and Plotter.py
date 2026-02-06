@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.11.12
+# Version: v2.11.13
 # Date: 2026-02-06
 
 import os
@@ -7929,7 +7929,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.11.12"
+APP_VERSION = "v2.11.13"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -37521,6 +37521,20 @@ class UnifiedApp(tk.Tk):
                         and size_val > 0.0
                     ):
                         config["size"] = size_val
+                linewidth_var = vars_map.get("linewidth")
+                if linewidth_var is not None:
+                    linewidth_raw = (linewidth_var.get() or "").strip()
+                    if linewidth_raw:
+                        try:
+                            linewidth_val = float(linewidth_raw)
+                        except ValueError:
+                            linewidth_val = None
+                        if (
+                            linewidth_val is not None
+                            and math.isfinite(linewidth_val)
+                            and linewidth_val > 0.0
+                        ):
+                            config["linewidth"] = linewidth_val
                 color_raw = (vars_map.get("color").get() or "").strip()
                 if color_raw:
                     config["color"] = color_raw
@@ -38085,6 +38099,43 @@ class UnifiedApp(tk.Tk):
                 size_var.set("")
             else:
                 size_var.set(f"{size_val:g}")
+        self._update_scatter_globals()
+        self._persist_scatter_settings()
+
+    def _on_series_linewidth_change(self, series_key: str) -> None:
+        """Handle series linewidth change.
+        Used as an event callback for series linewidth change."""
+        vars_map = getattr(self, "scatter_series_vars", {}).get(series_key)
+        if not vars_map:
+            return
+        linewidth_var = vars_map.get("linewidth")
+        if linewidth_var is None:
+            return
+        raw_value = (linewidth_var.get() or "").strip()
+        trace_active = bool(getattr(self, "_series_linewidth_trace_active", False))
+        if not raw_value:
+            if not trace_active:
+                linewidth_var.set("")
+            self._update_scatter_globals()
+            self._persist_scatter_settings()
+            return
+        try:
+            linewidth_val = float(raw_value)
+        except ValueError:
+            if not trace_active:
+                linewidth_var.set("")
+                self._update_scatter_globals()
+                self._persist_scatter_settings()
+            return
+        if not (math.isfinite(linewidth_val) and linewidth_val > 0.0):
+            if not trace_active:
+                linewidth_var.set("")
+                self._update_scatter_globals()
+                self._persist_scatter_settings()
+            return
+        formatted_value = f"{linewidth_val:g}"
+        if not trace_active and formatted_value != raw_value:
+            linewidth_var.set(formatted_value)
         self._update_scatter_globals()
         self._persist_scatter_settings()
 
@@ -70377,6 +70428,15 @@ class UnifiedApp(tk.Tk):
                     size_str = f"{float(size_val):g}"
                 else:
                     size_str = ""
+                linewidth_val = series_settings.get("linewidth")
+                if (
+                    isinstance(linewidth_val, (int, float))
+                    and math.isfinite(linewidth_val)
+                    and linewidth_val > 0.0
+                ):
+                    linewidth_str = f"{float(linewidth_val):g}"
+                else:
+                    linewidth_str = ""
                 color_val = series_settings.get("color", "")
                 color_str = color_val if isinstance(color_val, str) else ""
                 linestyle_val = _canonicalize_linestyle_name(
@@ -70392,10 +70452,12 @@ class UnifiedApp(tk.Tk):
                     linestyle_display = "Default"
 
                 size_var = tk.StringVar(value=size_str)
+                linewidth_var = tk.StringVar(value=linewidth_str)
                 color_var = tk.StringVar(value=color_str)
                 linestyle_var = tk.StringVar(value=linestyle_display)
                 self.scatter_series_vars[key] = {
                     "size": size_var,
+                    "linewidth": linewidth_var,
                     "color": color_var,
                     "linestyle": linestyle_var,
                 }
@@ -70404,7 +70466,7 @@ class UnifiedApp(tk.Tk):
                 scatter_frame.grid(
                     row=current_row, column=2, sticky="ew", padx=6, pady=6
                 )
-                scatter_frame.grid_columnconfigure(7, weight=1)
+                scatter_frame.grid_columnconfigure(9, weight=1)
 
                 ttk.Label(scatter_frame, text="Size").grid(row=0, column=0, sticky="w")
                 size_entry = ttk.Entry(scatter_frame, textvariable=size_var, width=6)
@@ -70424,7 +70486,44 @@ class UnifiedApp(tk.Tk):
                     ),
                 )
 
-                ttk.Label(scatter_frame, text="Color").grid(row=0, column=2, sticky="w")
+                ttk.Label(scatter_frame, text="Line Width (pt)").grid(
+                    row=0, column=2, sticky="w"
+                )
+                linewidth_entry = ttk.Entry(
+                    scatter_frame, textvariable=linewidth_var, width=7
+                )
+                linewidth_entry.grid(row=0, column=3, sticky="w", padx=(2, 6))
+                linewidth_entry.bind(
+                    "<FocusOut>",
+                    lambda _e, k=key: self._on_series_linewidth_change(k),
+                )
+                linewidth_entry.bind(
+                    "<Return>",
+                    lambda _e, k=key: (
+                        self._on_series_linewidth_change(k),
+                        "break",
+                    )[1],
+                )
+                # Use a trace wrapper to avoid clearing partial input while typing.
+                def _on_linewidth_trace(*_args, k=key):
+                    """Handle linewidth trace.
+                    Used as a trace callback for linewidth changes."""
+                    self._series_linewidth_trace_active = True
+                    try:
+                        self._on_series_linewidth_change(k)
+                    finally:
+                        self._series_linewidth_trace_active = False
+
+                linewidth_var.trace_add("write", _on_linewidth_trace)
+                self._attach_tooltip(
+                    linewidth_entry,
+                    (
+                        "Controls the thickness of the line connecting data points (in points). "
+                        "Leave blank to use the default linewidth."
+                    ),
+                )
+
+                ttk.Label(scatter_frame, text="Color").grid(row=0, column=4, sticky="w")
                 color_preview = tk.Label(
                     scatter_frame,
                     width=4,
@@ -70432,7 +70531,7 @@ class UnifiedApp(tk.Tk):
                     borderwidth=1,
                     text="Auto",
                 )
-                color_preview.grid(row=0, column=3, sticky="w", padx=(2, 2))
+                color_preview.grid(row=0, column=5, sticky="w", padx=(2, 2))
                 self._bind_color_preview(color_var, color_preview)
                 self._attach_tooltip(
                     color_preview,
@@ -70444,7 +70543,7 @@ class UnifiedApp(tk.Tk):
                     text="Pick",
                     command=lambda k=key: self._choose_series_color(k),
                 )
-                color_button.grid(row=0, column=4, padx=(2, 2))
+                color_button.grid(row=0, column=6, padx=(2, 2))
                 self._attach_tooltip(
                     color_button,
                     "Choose a custom color for this series that will be used on both scatter and line plots.",
@@ -70455,14 +70554,14 @@ class UnifiedApp(tk.Tk):
                     text="Clear",
                     command=lambda k=key: self._clear_series_color(k),
                 )
-                color_clear_btn.grid(row=0, column=5)
+                color_clear_btn.grid(row=0, column=7)
                 self._attach_tooltip(
                     color_clear_btn,
                     "Clear any custom color so the series reverts to the default line color.",
                 )
 
                 ttk.Label(scatter_frame, text="Line Style").grid(
-                    row=0, column=6, sticky="w", padx=(8, 2)
+                    row=0, column=8, sticky="w", padx=(8, 2)
                 )
                 linestyle_combo = ttk.Combobox(
                     scatter_frame,
@@ -70471,7 +70570,7 @@ class UnifiedApp(tk.Tk):
                     state="readonly",
                     width=24,
                 )
-                linestyle_combo.grid(row=0, column=7, sticky="ew")
+                linestyle_combo.grid(row=0, column=9, sticky="ew")
                 self._attach_tooltip(
                     linestyle_combo,
                     "Select the line style used when this series is drawn as a line (choose Default to inherit settings).",

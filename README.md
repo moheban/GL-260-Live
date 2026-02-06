@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.11.12)
+# GL-260 Data Analysis and Plotter (v2.11.13)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.11.12`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.11.13`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v2.11.13 Columns Per-Series Line Width Control](#v21113-columns-per-series-line-width-control)
   - [v2.11.12 Combined Splash Refresh Race Hardening](#v21112-combined-splash-refresh-race-hardening)
   - [v2.11.11 Combined Post-Draw Refresh Hook](#v21111-combined-post-draw-refresh-hook)
   - [v2.11.10 Combined Auto Refresh Scheduling Fix](#v21110-combined-auto-refresh-scheduling-fix)
@@ -260,7 +261,7 @@ Optional:
 - Date & Time (dt) required only for multi-sheet stitching
 
 Per-series styling (for scatter/line plots):
-- Size, Color, and Line Style controls appear for series that support scatter overrides.
+- Size, Line Width (pt), Color, and Line Style controls appear for series that support scatter overrides.
 
 Actions:
 - Apply Column Selection (Columns tab + bottom action bar) triggers background series building and auto-range updates.
@@ -507,7 +508,7 @@ Tools -> Developer Tools
 
 #### Scatter vs line rendering
 - Global scatter settings live in the Scatter Plot Settings dialog.
-- Per-series overrides (size, color, line style) are set on the Columns tab.
+- Per-series overrides (size, line width, color, line style) are set on the Columns tab.
 - Scatter settings apply to Figures 1/2/3 and the combined plot.
 
 #### Legend handling
@@ -849,6 +850,10 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v2.11.13 Columns Per-Series Line Width Control
+- Added a per-series Line Width (pt) input on the Columns tab to control line thickness independently of marker size.
+- Blank line width values inherit existing defaults and persist with profile settings.
 
 ### v2.11.12 Combined Splash Refresh Race Hardening
 - Combined post-draw refresh now retries briefly when the refresh callback is not yet wired, keeping the splash overlay visible until the forced auto-refresh actually runs.
