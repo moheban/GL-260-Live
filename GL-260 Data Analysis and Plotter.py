@@ -614,17 +614,25 @@ def _center_titles_to_axes_union(
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
         axes_list.append(axis)
+    primary_axis = None
+    # Title transform parity with combined rendering:
+    # the layout solver repositions titles in axes coordinates, so non-combined
+    # plots must keep title artists axes-bound (ax.set_title), not fig.text.
     if axes_list:
+        # Iterate over axes_list to apply the per-item logic.
+        for axis in axes_list:
+            if getattr(axis, "_gl260_axis_role", None) == "primary":
+                primary_axis = axis
+                break
+        if primary_axis is None:
+            primary_axis = axes_list[0]
         try:
             bbox = Bbox.union([axis.get_position() for axis in axes_list])
             center_x = (bbox.x0 + bbox.x1) / 2.0
-            top_y = bbox.y1
         except Exception:
             center_x = 0.5
-            top_y = 0.95
     else:
         center_x = 0.5
-        top_y = 0.95
 
     # Iterate over axes_list to apply the per-item logic.
     for axis in axes_list:
@@ -634,16 +642,36 @@ def _center_titles_to_axes_union(
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
-    # Figure-level titles keep multi-axis plots centered on the true data region.
+    # Remove stale figure-level and axes-bound title artists before rebuilding.
     for attr in ("_gl260_title_text", "_gl260_suptitle_text"):
         existing = getattr(fig, attr, None)
         if existing is not None:
             try:
-                existing.remove()
+                owner_ax = getattr(existing, "axes", None)
+                if owner_ax is not None:
+                    try:
+                        existing.set_text("")
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+                else:
+                    existing.remove()
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
             setattr(fig, attr, None)
+    old_suptitle = getattr(fig, "_suptitle", None)
+    if old_suptitle is not None:
+        try:
+            old_suptitle.remove()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+    try:
+        fig._suptitle = None
+    except Exception:
+        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+        pass
 
     fig_h_pts = max(fig.get_size_inches()[1] * 72.0, 1.0)
     if title_fs is not None:
@@ -659,7 +687,6 @@ def _center_titles_to_axes_union(
             plt.rcParams.get("figure.titlesize", 12.0), default=12.0
         )
 
-    dy_title = float(title_pad_pts or 0.0) / fig_h_pts
     dy_suptitle = float(suptitle_pad_pts or 0.0) / fig_h_pts
 
     def _clamp_y(value: float) -> float:
@@ -671,39 +698,45 @@ def _center_titles_to_axes_union(
     suptitle_text = (suptitle or "").strip()
 
     title_artist = None
-    y_title = None
     if title_text:
-        y_title = _clamp_y(top_y + dy_title)
-        title_kwargs: Dict[str, Any] = {
-            "ha": "center",
-            "va": "top",
-            "fontsize": title_fs_value,
-        }
-        if font_family:
-            title_kwargs["fontfamily"] = font_family
-        title_artist = fig.text(center_x, y_title, title_text, **title_kwargs)
+        if primary_axis is not None:
+            title_kwargs: Dict[str, Any] = {
+                "fontsize": title_fs_value,
+                "pad": float(title_pad_pts or 0.0),
+            }
+            if font_family:
+                title_kwargs["fontfamily"] = font_family
+            try:
+                title_artist = primary_axis.set_title(title_text, **title_kwargs)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                title_artist = None
+        if title_artist is None:
+            # Fallback for figures without data axes.
+            title_kwargs_fallback: Dict[str, Any] = {
+                "ha": "center",
+                "va": "top",
+                "fontsize": title_fs_value,
+            }
+            if font_family:
+                title_kwargs_fallback["fontfamily"] = font_family
+            title_artist = fig.text(0.5, 0.98, title_text, **title_kwargs_fallback)
 
     suptitle_artist = None
     if suptitle_text:
         if suptitle_y is None:
-            base_y = y_title if y_title is not None else top_y
-            extra_gap = (
-                (title_fs_value / fig_h_pts) * 1.15 if y_title is not None else 0.0
-            )
-            y_suptitle = base_y + dy_suptitle + extra_gap
+            y_suptitle = 0.98
         else:
             y_suptitle = float(suptitle_y) + dy_suptitle
         y_suptitle = _clamp_y(y_suptitle)
         suptitle_kwargs: Dict[str, Any] = {
-            "ha": "center",
-            "va": "top",
             "fontsize": suptitle_fs_value,
+            "x": center_x,
+            "y": y_suptitle,
         }
         if font_family:
             suptitle_kwargs["fontfamily"] = font_family
-        suptitle_artist = fig.text(
-            center_x, y_suptitle, suptitle_text, **suptitle_kwargs
-        )
+        suptitle_artist = fig.suptitle(suptitle_text, **suptitle_kwargs)
 
     fig._gl260_title_text = title_artist
     fig._gl260_suptitle_text = suptitle_artist
@@ -1525,6 +1558,381 @@ def _normalize_layout_profiles(value: Any) -> Dict[str, Dict[str, Any]]:
     return profiles
 
 
+CORE_RENDER_PROFILE_PLOT_IDS = ("fig_pressure_temp", "fig_pressure_derivative")
+
+
+def _default_core_plot_render_profile(
+    seed_source: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build default core plot render profile.
+    Seeds values from combined settings when available."""
+    source = seed_source if isinstance(seed_source, Mapping) else {}
+    legend_loc_choice = source.get("combined_cycle_legend_loc_choice", "upper right")
+    if isinstance(legend_loc_choice, str):
+        legend_loc_choice = legend_loc_choice.strip().lower()
+    else:
+        legend_loc_choice = str(legend_loc_choice).strip().lower()
+    if legend_loc_choice not in {
+        "upper right",
+        "upper left",
+        "lower right",
+        "lower left",
+        "center right",
+        "center left",
+        "upper center",
+        "lower center",
+        "center",
+    }:
+        legend_loc_choice = "upper right"
+    try:
+        legend_rows_value = int(source.get("combined_legend_rows", 2))
+    except Exception:
+        legend_rows_value = 2
+    legend_rows_value = max(1, legend_rows_value)
+    alignment_value = str(source.get("combined_legend_alignment", "center") or "").strip().lower()
+    if alignment_value not in {"left", "center", "right"}:
+        alignment_value = "center"
+    return {
+        "x_axis_label": str(source.get("combined_x_axis_label", "") or "").strip(),
+        "primary_axis_label": str(
+            source.get("combined_primary_axis_label", "") or ""
+        ).strip(),
+        "right_axis_label": str(source.get("combined_temp_axis_label", "") or "").strip(),
+        "third_axis_label": str(
+            source.get("combined_deriv_axis_label", "") or ""
+        ).strip(),
+        "primary_labelpad": source.get("combined_primary_labelpad", yaxis_labelpad_amount),
+        "right_labelpad": source.get(
+            "combined_temp_labelpad", twinyaxis_labelpad_amount
+        ),
+        "third_labelpad": source.get(
+            "combined_deriv_labelpad", twinyaxis_labelpad_amount
+        ),
+        "third_axis_offset": source.get("combined_deriv_axis_offset", 1.12),
+        "left_padding_pct": source.get(
+            "combined_left_pad_pct", DEFAULT_COMBINED_LEFT_PAD_PCT
+        ),
+        "right_padding_pct": source.get(
+            "combined_right_pad_pct", DEFAULT_COMBINED_RIGHT_PAD_PCT
+        ),
+        "export_pad_pts": source.get(
+            "combined_export_pad_pts", DEFAULT_COMBINED_EXPORT_PAD_PTS
+        ),
+        "title_pad_pts": source.get(
+            "combined_title_pad_pts", DEFAULT_COMBINED_TITLE_PAD_PTS
+        ),
+        "suptitle_pad_pts": source.get(
+            "combined_suptitle_pad_pts", DEFAULT_COMBINED_SUPTITLE_PAD_PTS
+        ),
+        "suptitle_y": source.get("combined_suptitle_y", DEFAULT_COMBINED_SUPTITLE_Y),
+        "top_margin_pct": source.get(
+            "combined_top_margin_pct", DEFAULT_COMBINED_TOP_MARGIN_PCT
+        ),
+        "font_family": str(source.get("combined_font_family", "") or "").strip(),
+        "suptitle_fontsize": source.get(
+            "combined_suptitle_fontsize", DEFAULT_COMBINED_SUPTITLE_FONTSIZE
+        ),
+        "title_fontsize": source.get(
+            "combined_title_fontsize", DEFAULT_COMBINED_TITLE_FONTSIZE
+        ),
+        "label_fontsize": source.get(
+            "combined_label_fontsize", DEFAULT_COMBINED_LABEL_FONTSIZE
+        ),
+        "tick_fontsize": source.get(
+            "combined_tick_fontsize", DEFAULT_COMBINED_TICK_FONTSIZE
+        ),
+        "legend_fontsize": source.get(
+            "combined_legend_fontsize",
+            source.get("core_legend_fontsize", DEFAULT_COMBINED_LEGEND_FONTSIZE),
+        ),
+        "cycle_legend_fontsize": source.get(
+            "combined_cycle_legend_fontsize",
+            source.get(
+                "core_cycle_legend_fontsize",
+                source.get("core_legend_fontsize", DEFAULT_COMBINED_LEGEND_FONTSIZE),
+            ),
+        ),
+        "legend_wrap": bool(source.get("combined_legend_wrap", False)),
+        "legend_rows": legend_rows_value,
+        "legend_label_gap_pts": source.get(
+            "combined_legend_gap_pts", DEFAULT_COMBINED_LEGEND_GAP_PTS
+        ),
+        "xlabel_tick_gap_pts": source.get(
+            "combined_xlabel_tick_gap_pts", DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS
+        ),
+        "legend_bottom_margin_pts": source.get(
+            "combined_legend_bottom_margin_pts", DEFAULT_COMBINED_LEGEND_MARGIN_PTS
+        ),
+        "legend_alignment": alignment_value,
+        "cycle_legend_loc_choice": legend_loc_choice,
+        "cycle_legend_ref_axis": _normalize_combined_cycle_ref_axis(
+            source.get("combined_cycle_legend_ref_axis")
+        ),
+        "cycle_legend_ref_corner": _normalize_combined_cycle_ref_corner(
+            source.get("combined_cycle_legend_ref_corner")
+        ),
+    }
+
+
+def _normalize_core_plot_render_profile(
+    value: Any,
+    *,
+    defaults: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Normalize one core plot render profile."""
+    defaults_map = defaults if isinstance(defaults, Mapping) else {}
+    if not isinstance(value, dict):
+        value = {}
+
+    def _text(key: str, fallback: str = "") -> str:
+        raw = value.get(key, defaults_map.get(key, fallback))
+        if raw is None:
+            return ""
+        return str(raw).strip()
+
+    def _finite_float(key: str, fallback: float) -> float:
+        raw = value.get(key, defaults_map.get(key, fallback))
+        try:
+            parsed = float(raw)
+        except Exception:
+            parsed = float(fallback)
+        if not math.isfinite(parsed):
+            parsed = float(fallback)
+        return parsed
+
+    legend_alignment = _text("legend_alignment", "center").lower()
+    if legend_alignment not in {"left", "center", "right"}:
+        legend_alignment = "center"
+
+    legend_loc_choice = _text("cycle_legend_loc_choice", "upper right").lower()
+    if legend_loc_choice not in {
+        "upper right",
+        "upper left",
+        "lower right",
+        "lower left",
+        "center right",
+        "center left",
+        "upper center",
+        "lower center",
+        "center",
+    }:
+        legend_loc_choice = "upper right"
+
+    try:
+        legend_rows_raw = value.get("legend_rows", defaults_map.get("legend_rows", 2))
+        legend_rows = int(legend_rows_raw)
+    except Exception:
+        legend_rows = 2
+    legend_rows = max(1, legend_rows)
+
+    return {
+        "x_axis_label": _text("x_axis_label"),
+        "primary_axis_label": _text("primary_axis_label"),
+        "right_axis_label": _text("right_axis_label"),
+        "third_axis_label": _text("third_axis_label"),
+        "primary_labelpad": _finite_float("primary_labelpad", yaxis_labelpad_amount),
+        "right_labelpad": _finite_float("right_labelpad", twinyaxis_labelpad_amount),
+        "third_labelpad": _finite_float("third_labelpad", twinyaxis_labelpad_amount),
+        "third_axis_offset": max(1.1, _finite_float("third_axis_offset", 1.12)),
+        "left_padding_pct": _sanitize_spacing_value(
+            _finite_float("left_padding_pct", DEFAULT_COMBINED_LEFT_PAD_PCT),
+            DEFAULT_COMBINED_LEFT_PAD_PCT,
+            MIN_COMBINED_SIDE_PAD_PCT,
+            MAX_COMBINED_SIDE_PAD_PCT,
+        ),
+        "right_padding_pct": _sanitize_spacing_value(
+            _finite_float("right_padding_pct", DEFAULT_COMBINED_RIGHT_PAD_PCT),
+            DEFAULT_COMBINED_RIGHT_PAD_PCT,
+            MIN_COMBINED_SIDE_PAD_PCT,
+            MAX_COMBINED_SIDE_PAD_PCT,
+        ),
+        "export_pad_pts": _sanitize_spacing_value(
+            _finite_float("export_pad_pts", DEFAULT_COMBINED_EXPORT_PAD_PTS),
+            DEFAULT_COMBINED_EXPORT_PAD_PTS,
+            MIN_COMBINED_EXPORT_PAD_PTS,
+            MAX_COMBINED_EXPORT_PAD_PTS,
+        ),
+        "title_pad_pts": _sanitize_spacing_value(
+            _finite_float("title_pad_pts", DEFAULT_COMBINED_TITLE_PAD_PTS),
+            DEFAULT_COMBINED_TITLE_PAD_PTS,
+            MIN_COMBINED_TITLE_PAD_PTS,
+            MAX_COMBINED_TITLE_PAD_PTS,
+        ),
+        "suptitle_pad_pts": _sanitize_spacing_value(
+            _finite_float("suptitle_pad_pts", DEFAULT_COMBINED_SUPTITLE_PAD_PTS),
+            DEFAULT_COMBINED_SUPTITLE_PAD_PTS,
+            MIN_COMBINED_SUPTITLE_PAD_PTS,
+            MAX_COMBINED_SUPTITLE_PAD_PTS,
+        ),
+        "suptitle_y": _sanitize_spacing_value(
+            _finite_float("suptitle_y", DEFAULT_COMBINED_SUPTITLE_Y),
+            DEFAULT_COMBINED_SUPTITLE_Y,
+            MIN_COMBINED_SUPTITLE_Y,
+            MAX_COMBINED_SUPTITLE_Y,
+        ),
+        "top_margin_pct": _sanitize_spacing_value(
+            _finite_float("top_margin_pct", DEFAULT_COMBINED_TOP_MARGIN_PCT),
+            DEFAULT_COMBINED_TOP_MARGIN_PCT,
+            MIN_COMBINED_TOP_MARGIN_PCT,
+            MAX_COMBINED_TOP_MARGIN_PCT,
+        ),
+        "font_family": _text("font_family"),
+        "suptitle_fontsize": _sanitize_spacing_value(
+            _finite_float("suptitle_fontsize", DEFAULT_COMBINED_SUPTITLE_FONTSIZE),
+            DEFAULT_COMBINED_SUPTITLE_FONTSIZE,
+            MIN_COMBINED_FONT_SIZE,
+            MAX_COMBINED_FONT_SIZE,
+        ),
+        "title_fontsize": _sanitize_spacing_value(
+            _finite_float("title_fontsize", DEFAULT_COMBINED_TITLE_FONTSIZE),
+            DEFAULT_COMBINED_TITLE_FONTSIZE,
+            MIN_COMBINED_FONT_SIZE,
+            MAX_COMBINED_FONT_SIZE,
+        ),
+        "label_fontsize": _sanitize_spacing_value(
+            _finite_float("label_fontsize", DEFAULT_COMBINED_LABEL_FONTSIZE),
+            DEFAULT_COMBINED_LABEL_FONTSIZE,
+            MIN_COMBINED_FONT_SIZE,
+            MAX_COMBINED_FONT_SIZE,
+        ),
+        "tick_fontsize": _sanitize_spacing_value(
+            _finite_float("tick_fontsize", DEFAULT_COMBINED_TICK_FONTSIZE),
+            DEFAULT_COMBINED_TICK_FONTSIZE,
+            MIN_COMBINED_FONT_SIZE,
+            MAX_COMBINED_FONT_SIZE,
+        ),
+        "legend_fontsize": _sanitize_spacing_value(
+            _finite_float("legend_fontsize", DEFAULT_COMBINED_LEGEND_FONTSIZE),
+            DEFAULT_COMBINED_LEGEND_FONTSIZE,
+            MIN_COMBINED_FONT_SIZE,
+            MAX_COMBINED_FONT_SIZE,
+        ),
+        "cycle_legend_fontsize": _sanitize_spacing_value(
+            _finite_float("cycle_legend_fontsize", DEFAULT_COMBINED_LEGEND_FONTSIZE),
+            DEFAULT_COMBINED_LEGEND_FONTSIZE,
+            MIN_COMBINED_FONT_SIZE,
+            MAX_COMBINED_FONT_SIZE,
+        ),
+        "legend_wrap": bool(value.get("legend_wrap", defaults_map.get("legend_wrap", False))),
+        "legend_rows": legend_rows,
+        "legend_label_gap_pts": _sanitize_spacing_value(
+            _finite_float("legend_label_gap_pts", DEFAULT_COMBINED_LEGEND_GAP_PTS),
+            DEFAULT_COMBINED_LEGEND_GAP_PTS,
+            MIN_COMBINED_LEGEND_GAP_PTS,
+            MAX_COMBINED_LEGEND_GAP_PTS,
+        ),
+        "xlabel_tick_gap_pts": _sanitize_spacing_value(
+            _finite_float("xlabel_tick_gap_pts", DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS),
+            DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS,
+            MIN_COMBINED_XLABEL_TICK_GAP_PTS,
+            MAX_COMBINED_XLABEL_TICK_GAP_PTS,
+        ),
+        "legend_bottom_margin_pts": _sanitize_spacing_value(
+            _finite_float("legend_bottom_margin_pts", DEFAULT_COMBINED_LEGEND_MARGIN_PTS),
+            DEFAULT_COMBINED_LEGEND_MARGIN_PTS,
+            MIN_COMBINED_LEGEND_MARGIN_PTS,
+            MAX_COMBINED_LEGEND_MARGIN_PTS,
+        ),
+        "legend_alignment": legend_alignment,
+        "cycle_legend_loc_choice": legend_loc_choice,
+        "cycle_legend_ref_axis": _normalize_combined_cycle_ref_axis(
+            value.get(
+                "cycle_legend_ref_axis",
+                defaults_map.get("cycle_legend_ref_axis", "main"),
+            )
+        ),
+        "cycle_legend_ref_corner": _normalize_combined_cycle_ref_corner(
+            value.get(
+                "cycle_legend_ref_corner",
+                defaults_map.get("cycle_legend_ref_corner", "upper right"),
+            )
+        ),
+    }
+
+
+def _normalize_core_plot_render_profiles(
+    value: Any,
+    *,
+    seed_source: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Normalize all core plot render profiles."""
+    profiles: Dict[str, Dict[str, Any]] = {}
+    raw_map = value if isinstance(value, dict) else {}
+    default_profile = _default_core_plot_render_profile(seed_source=seed_source)
+    # Iterate over configured core plot IDs to apply the per-item logic.
+    for plot_id in CORE_RENDER_PROFILE_PLOT_IDS:
+        raw_profile = raw_map.get(plot_id, {})
+        profiles[plot_id] = _normalize_core_plot_render_profile(
+            raw_profile,
+            defaults=default_profile,
+        )
+    return profiles
+
+
+def _write_legacy_core_legend_settings_from_profile(
+    profile: Optional[Mapping[str, Any]]
+) -> None:
+    """Mirror per-plot core legend values onto legacy flat settings keys."""
+    if not isinstance(profile, Mapping):
+        return
+    legend_value = _sanitize_spacing_value(
+        _coerce_float(profile.get("legend_fontsize")),
+        label_fontsize,
+        MIN_COMBINED_FONT_SIZE,
+        MAX_COMBINED_FONT_SIZE,
+    )
+    cycle_value = _sanitize_spacing_value(
+        _coerce_float(profile.get("cycle_legend_fontsize")),
+        legend_value,
+        MIN_COMBINED_FONT_SIZE,
+        MAX_COMBINED_FONT_SIZE,
+    )
+    settings["core_legend_fontsize"] = legend_value
+    settings["core_cycle_legend_fontsize"] = cycle_value
+
+
+def _get_core_plot_render_profiles() -> Dict[str, Dict[str, Any]]:
+    """Return normalized core plot render profiles with migration defaults."""
+    profiles = settings.get("core_plot_render_profiles")
+    normalized = _normalize_core_plot_render_profiles(profiles, seed_source=settings)
+    settings["core_plot_render_profiles"] = normalized
+    return normalized
+
+
+def _get_core_plot_render_profile(plot_id: str) -> Dict[str, Any]:
+    """Return one normalized core plot render profile."""
+    profiles = _get_core_plot_render_profiles()
+    if plot_id in profiles:
+        return profiles[plot_id]
+    fallback_key = CORE_RENDER_PROFILE_PLOT_IDS[0]
+    return profiles.get(
+        fallback_key,
+        _normalize_core_plot_render_profile({}, defaults=_default_core_plot_render_profile(settings)),
+    )
+
+
+def _set_core_plot_render_profile(
+    plot_id: str,
+    profile: Optional[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    """Persist one normalized core plot render profile."""
+    profiles = _get_core_plot_render_profiles()
+    target_plot_id = plot_id if plot_id in CORE_RENDER_PROFILE_PLOT_IDS else CORE_RENDER_PROFILE_PLOT_IDS[0]
+    defaults = _default_core_plot_render_profile(seed_source=settings)
+    normalized_profile = _normalize_core_plot_render_profile(
+        dict(profile) if isinstance(profile, Mapping) else {},
+        defaults=defaults,
+    )
+    profiles[target_plot_id] = normalized_profile
+    settings["core_plot_render_profiles"] = _normalize_core_plot_render_profiles(
+        profiles,
+        seed_source=settings,
+    )
+    stored_profile = settings["core_plot_render_profiles"].get(target_plot_id, normalized_profile)
+    _write_legacy_core_legend_settings_from_profile(stored_profile)
+    return stored_profile
+
+
 def _get_layout_profile(plot_id: str) -> Dict[str, Any]:
     """Return layout profile.
     Used to retrieve layout profile for downstream logic."""
@@ -1567,13 +1975,12 @@ def _apply_title_positions(
             ax = getattr(text_artist, "axes", None)
             if ax is not None:
                 try:
-                    if text_artist.get_transform() == ax.transAxes:
-                        fig_ref = getattr(text_artist, "figure", None) or ax.figure
-                        if fig_ref is not None:
-                            display_xy = fig_ref.transFigure.transform(target_xy)
-                            axes_xy = ax.transAxes.inverted().transform(display_xy)
-                            text_artist.set_position(axes_xy)
-                            return
+                    fig_ref = getattr(text_artist, "figure", None) or ax.figure
+                    if fig_ref is not None:
+                        display_xy = fig_ref.transFigure.transform(target_xy)
+                        axes_xy = ax.transAxes.inverted().transform(display_xy)
+                        text_artist.set_position(axes_xy)
+                        return
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
@@ -1745,6 +2152,13 @@ def _apply_layout_profile_to_figure(fig: Figure, plot_id: str, mode: str) -> Non
 
     cycle_anchor = section.get("cycle_legend_anchor")
     cycle_loc = section.get("cycle_legend_loc")
+    core_render_profile = None
+    if plot_id in CORE_RENDER_PROFILE_PLOT_IDS:
+        core_render_profile = _get_core_plot_render_profile(plot_id)
+        if cycle_loc is None:
+            cycle_loc = _normalize_legend_loc_value(
+                core_render_profile.get("cycle_legend_loc_choice")
+            )
     combined_cycle_anchor = None
     combined_axis_offset = None
     if plot_id == "fig_combined_triple_axis":
@@ -1855,10 +2269,98 @@ def _apply_layout_profile_to_figure(fig: Figure, plot_id: str, mode: str) -> Non
         title_pad_pts = float(title_state.get("title_pad_pts", 0.0) or 0.0)
         suptitle_pad_pts = float(title_state.get("suptitle_pad_pts", 0.0) or 0.0)
         suptitle_y = title_state.get("suptitle_y")
+        top_margin_pct = 0.0
+        legend_gap_pts = 0.0
+        xlabel_tick_gap_pts = 0.0
+        legend_margin_pts = 0.0
+        left_pad_pct = 0.0
+        right_pad_pct = 0.0
+        export_pad_pts = 0.0
+        legend_alignment = "center"
+        if plot_id in CORE_RENDER_PROFILE_PLOT_IDS:
+            if core_render_profile is None:
+                core_render_profile = _get_core_plot_render_profile(plot_id)
+            title_pad_pts = _sanitize_spacing_value(
+                core_render_profile.get("title_pad_pts", title_pad_pts),
+                DEFAULT_COMBINED_TITLE_PAD_PTS,
+                MIN_COMBINED_TITLE_PAD_PTS,
+                MAX_COMBINED_TITLE_PAD_PTS,
+            )
+            suptitle_pad_pts = _sanitize_spacing_value(
+                core_render_profile.get("suptitle_pad_pts", suptitle_pad_pts),
+                DEFAULT_COMBINED_SUPTITLE_PAD_PTS,
+                MIN_COMBINED_SUPTITLE_PAD_PTS,
+                MAX_COMBINED_SUPTITLE_PAD_PTS,
+            )
+            suptitle_y = _sanitize_spacing_value(
+                core_render_profile.get("suptitle_y", suptitle_y),
+                DEFAULT_COMBINED_SUPTITLE_Y,
+                MIN_COMBINED_SUPTITLE_Y,
+                MAX_COMBINED_SUPTITLE_Y,
+            )
+            top_margin_pct = _sanitize_spacing_value(
+                core_render_profile.get("top_margin_pct", DEFAULT_COMBINED_TOP_MARGIN_PCT),
+                DEFAULT_COMBINED_TOP_MARGIN_PCT,
+                MIN_COMBINED_TOP_MARGIN_PCT,
+                MAX_COMBINED_TOP_MARGIN_PCT,
+            )
+            legend_gap_pts = _sanitize_spacing_value(
+                core_render_profile.get("legend_label_gap_pts", DEFAULT_COMBINED_LEGEND_GAP_PTS),
+                DEFAULT_COMBINED_LEGEND_GAP_PTS,
+                MIN_COMBINED_LEGEND_GAP_PTS,
+                MAX_COMBINED_LEGEND_GAP_PTS,
+            )
+            xlabel_tick_gap_pts = _sanitize_spacing_value(
+                core_render_profile.get(
+                    "xlabel_tick_gap_pts", DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS
+                ),
+                DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS,
+                MIN_COMBINED_XLABEL_TICK_GAP_PTS,
+                MAX_COMBINED_XLABEL_TICK_GAP_PTS,
+            )
+            legend_margin_pts = _sanitize_spacing_value(
+                core_render_profile.get(
+                    "legend_bottom_margin_pts", DEFAULT_COMBINED_LEGEND_MARGIN_PTS
+                ),
+                DEFAULT_COMBINED_LEGEND_MARGIN_PTS,
+                MIN_COMBINED_LEGEND_MARGIN_PTS,
+                MAX_COMBINED_LEGEND_MARGIN_PTS,
+            )
+            left_pad_pct = _sanitize_spacing_value(
+                core_render_profile.get("left_padding_pct", DEFAULT_COMBINED_LEFT_PAD_PCT),
+                DEFAULT_COMBINED_LEFT_PAD_PCT,
+                MIN_COMBINED_SIDE_PAD_PCT,
+                MAX_COMBINED_SIDE_PAD_PCT,
+            )
+            right_pad_pct = _sanitize_spacing_value(
+                core_render_profile.get("right_padding_pct", DEFAULT_COMBINED_RIGHT_PAD_PCT),
+                DEFAULT_COMBINED_RIGHT_PAD_PCT,
+                MIN_COMBINED_SIDE_PAD_PCT,
+                MAX_COMBINED_SIDE_PAD_PCT,
+            )
+            export_pad_pts = _sanitize_spacing_value(
+                core_render_profile.get("export_pad_pts", DEFAULT_COMBINED_EXPORT_PAD_PTS),
+                DEFAULT_COMBINED_EXPORT_PAD_PTS,
+                MIN_COMBINED_EXPORT_PAD_PTS,
+                MAX_COMBINED_EXPORT_PAD_PTS,
+            )
+            legend_alignment = _normalize_legend_alignment(
+                core_render_profile.get("legend_alignment")
+            )
+        xlabel_pad_pts = section.get("xlabel_pad_pts")
+        if xlabel_pad_pts is None and isinstance(axis_labelpads, dict):
+            xlabel_pad_pts = axis_labelpads.get("x")
+        try:
+            xlabel_pad_pts_value = float(xlabel_pad_pts) if xlabel_pad_pts is not None else 0.0
+        except Exception:
+            xlabel_pad_pts_value = 0.0
         layout_mgr = PlotLayoutManager(
             fig,
             mode=mode,
             baseline_margins=margins,
+            left_pad_pct=left_pad_pct,
+            right_pad_pct=right_pad_pct,
+            export_pad_pts=export_pad_pts,
             legend_anchor=legend_anchor,
             legend_anchor_y=legend_anchor_y,
             title_pad_pts=title_pad_pts,
@@ -1866,11 +2368,13 @@ def _apply_layout_profile_to_figure(fig: Figure, plot_id: str, mode: str) -> Non
             suptitle_y=(
                 suptitle_y if suptitle_y is not None else DEFAULT_COMBINED_SUPTITLE_Y
             ),
-            top_margin_pct=0.0,
-            legend_gap_pts=0.0,
-            xlabel_tick_gap_pts=0.0,
-            legend_margin_pts=0.0,
+            top_margin_pct=top_margin_pct,
+            legend_gap_pts=legend_gap_pts,
+            xlabel_tick_gap_pts=xlabel_tick_gap_pts,
+            legend_margin_pts=legend_margin_pts,
+            xlabel_pad_pts=xlabel_pad_pts_value,
         )
+        layout_mgr.set_legend_alignment(legend_alignment)
         if axes:
             layout_mgr.register_axes(*axes)
         title_artist = getattr(fig, "_gl260_title_text", None)
@@ -1881,8 +2385,13 @@ def _apply_layout_profile_to_figure(fig: Figure, plot_id: str, mode: str) -> Non
             suptitle_artist = getattr(fig, "_suptitle", None)
         if suptitle_artist is not None:
             layout_mgr.register_artist("suptitle", suptitle_artist)
+        xlabel_artist = getattr(fig, "_gl260_xlabel_text", None)
+        if xlabel_artist is not None:
+            layout_mgr.register_artist("xlabel", xlabel_artist)
         if main_legend is not None:
             layout_mgr.register_artist("plot_legend", main_legend)
+        if cycle_legend is not None:
+            layout_mgr.register_artist("cycle_legend", cycle_legend)
         try:
             layout_mgr.solve()
         except Exception:
@@ -15351,6 +15860,271 @@ def _regression_test_analysis_progress_overlay() -> None:
     ), "Missing planning curve mapping should be safe."
 
 
+def _regression_test_core_plot_render_parity() -> None:
+    """Validate non-combined core plot parity with combined-style render settings."""
+    sentinel = object()
+    globals_snapshot: Dict[str, Any] = {
+        key: globals().get(key, sentinel)
+        for key in ("x", "y1", "y2", "y3", "z", "z2", "selected_columns")
+    }
+    settings_snapshot = copy.deepcopy(settings)
+    figures: List[Figure] = []
+    try:
+        settings["core_plot_render_profiles"] = _normalize_core_plot_render_profiles(
+            {
+                "fig_pressure_temp": {
+                    "x_axis_label": "Core Fig1 X Label",
+                    "primary_axis_label": "Core Fig1 Pressure",
+                    "right_axis_label": "Core Fig1 Temperature",
+                    "title_fontsize": 15.0,
+                    "suptitle_fontsize": 17.0,
+                    "title_pad_pts": 16.0,
+                    "suptitle_pad_pts": 13.0,
+                    "suptitle_y": 0.97,
+                    "label_fontsize": 12.0,
+                    "tick_fontsize": 10.0,
+                    "legend_wrap": True,
+                    "legend_rows": 2,
+                    "legend_alignment": "left",
+                },
+                "fig_pressure_derivative": {
+                    "x_axis_label": "Core Fig2 X Label",
+                    "primary_axis_label": "Core Fig2 Pressure",
+                    "third_axis_label": "Core Fig2 Derivative",
+                    "title_fontsize": 14.0,
+                    "suptitle_fontsize": 16.0,
+                    "title_pad_pts": 15.0,
+                    "suptitle_pad_pts": 12.0,
+                    "suptitle_y": 0.965,
+                    "label_fontsize": 11.0,
+                    "tick_fontsize": 9.0,
+                    "legend_wrap": True,
+                    "legend_rows": 3,
+                    "legend_alignment": "right",
+                },
+            },
+            seed_source=settings,
+        )
+        _write_legacy_core_legend_settings_from_profile(
+            settings["core_plot_render_profiles"].get("fig_pressure_temp")
+        )
+
+        x_vals = pd.Series([0.0, 0.5, 1.0, 1.5, 2.0], dtype=float)
+        y1_vals = pd.Series([10.0, 9.0, 8.2, 7.4, 6.8], dtype=float)
+        y2_vals = pd.Series([0.0, -0.6, -0.4, 0.2, 0.5], dtype=float)
+        y3_vals = pd.Series([9.8, 8.8, 8.0, 7.1, 6.6], dtype=float)
+        z_vals = pd.Series([22.0, 23.5, 24.0, 25.0, 26.5], dtype=float)
+        selected = {
+            "x": "Elapsed Days",
+            "y1": "Pressure PSI",
+            "y2": "Derivative PSI/day",
+            "y3": "Aux Pressure PSI",
+            "z": "Temperature (°C)",
+            "z2": "None",
+        }
+        globals().update(
+            {
+                "x": x_vals,
+                "y1": y1_vals,
+                "y2": y2_vals,
+                "y3": y3_vals,
+                "z": z_vals,
+                "z2": None,
+                "selected_columns": selected,
+            }
+        )
+        render_ctx = RenderContext(
+            data_ctx={
+                "series": {
+                    "x": x_vals,
+                    "y1": y1_vals,
+                    "y2": y2_vals,
+                    "y3": y3_vals,
+                    "z": z_vals,
+                    "z2": None,
+                },
+                "selected_columns": selected,
+            },
+            cycle_ctx={},
+            overlay_ctx={"markers": None, "cycle_legend": None, "moles_summary": None},
+            gates_ctx={
+                "show_cycle_markers": False,
+                "show_cycle_legend": False,
+                "include_moles": False,
+            },
+            style_ctx={
+                "scatter_config": None,
+                "scatter_series_configs": None,
+                "font_family": settings.get("font_family"),
+                "core_plot_render_profiles": copy.deepcopy(
+                    settings.get("core_plot_render_profiles", {})
+                ),
+            },
+            layout_ctx={},
+            plot_elements_ctx={},
+        )
+        figs = main_plotting_function(
+            0.0,
+            2.0,
+            0.0,
+            12.0,
+            10.0,
+            40.0,
+            -2.0,
+            2.0,
+            True,
+            True,
+            True,
+            True,
+            "Core Parity Title",
+            "Core Parity Suptitle",
+            0.5,
+            0.25,
+            2.0,
+            1.0,
+            5.0,
+            2.5,
+            1.0,
+            0.5,
+            True,
+            True,
+            0.8,
+            show_cycle_markers_on_core_plots=False,
+            show_cycle_legend_on_core_plots=False,
+            include_moles_in_core_plot_legend=False,
+            fig_size=(7.2, 4.8),
+            render_ctx=render_ctx,
+        )
+        if not isinstance(figs, dict):
+            raise AssertionError("Core parity regression did not return figure map.")
+        fig1 = figs.get("fig1")
+        fig2 = figs.get("fig2")
+        if fig1 is None or fig2 is None:
+            raise AssertionError("Core parity regression missing one or more core figures.")
+        figures.extend([fig1, fig2])
+        _apply_layout_profile_to_figure(fig1, "fig_pressure_temp", "display")
+        _apply_layout_profile_to_figure(fig2, "fig_pressure_derivative", "display")
+
+        def _bbox_in_figure_coords(fig_obj: Figure, artist: Any) -> Optional[Bbox]:
+            """Return figure-normalized bbox for one artist."""
+            if fig_obj is None or artist is None:
+                return None
+            if fig_obj.canvas is None:
+                FigureCanvasAgg(fig_obj)
+            try:
+                fig_obj.canvas.draw()
+                renderer = fig_obj.canvas.get_renderer()
+            except Exception:
+                return None
+            try:
+                return artist.get_window_extent(renderer=renderer).transformed(
+                    fig_obj.transFigure.inverted()
+                )
+            except Exception:
+                return None
+
+        for fig, plot_id in (
+            (fig1, "fig_pressure_temp"),
+            (fig2, "fig_pressure_derivative"),
+        ):
+            title_artist = getattr(fig, "_gl260_title_text", None)
+            suptitle_artist = getattr(fig, "_gl260_suptitle_text", None)
+            xlabel_artist = getattr(fig, "_gl260_xlabel_text", None)
+            if title_artist is None or not str(title_artist.get_text() or "").strip():
+                raise AssertionError(f"{plot_id}: title artist missing after render.")
+            if suptitle_artist is None or not str(suptitle_artist.get_text() or "").strip():
+                raise AssertionError(f"{plot_id}: suptitle artist missing after render.")
+            if xlabel_artist is None or not str(xlabel_artist.get_text() or "").strip():
+                raise AssertionError(f"{plot_id}: figure-level x-label missing after render.")
+            if getattr(title_artist, "axes", None) is None:
+                raise AssertionError(
+                    f"{plot_id}: title artist must be axes-bound for layout parity."
+                )
+            title_bbox = _bbox_in_figure_coords(fig, title_artist)
+            suptitle_bbox = _bbox_in_figure_coords(fig, suptitle_artist)
+            if title_bbox is None or suptitle_bbox is None:
+                raise AssertionError(
+                    f"{plot_id}: failed to measure title/suptitle bounding boxes."
+                )
+            if title_bbox.y0 > 1.001:
+                raise AssertionError(
+                    f"{plot_id}: title is outside figure bounds (y0={title_bbox.y0:.4f})."
+                )
+            if suptitle_bbox.y0 < title_bbox.y1:
+                raise AssertionError(
+                    f"{plot_id}: suptitle overlaps title (title_y1={title_bbox.y1:.4f}, suptitle_y0={suptitle_bbox.y0:.4f})."
+                )
+            data_axes = [
+                axis
+                for axis in fig.get_axes()
+                if not getattr(axis, "_gl260_legend_only", False)
+            ]
+            primary_axis = next(
+                (
+                    axis
+                    for axis in data_axes
+                    if getattr(axis, "_gl260_axis_role", None) == "primary"
+                ),
+                data_axes[0] if data_axes else None,
+            )
+            if primary_axis is not None and primary_axis.get_position().y1 < 0.80:
+                raise AssertionError(
+                    f"{plot_id}: plot area top collapsed unexpectedly (y1={primary_axis.get_position().y1:.4f})."
+                )
+            expected_legend_face = _normalize_mpl_color(
+                _legend_shadowbox_kwargs().get(
+                    "facecolor", DEFAULT_LEGEND_SHADOWBOX_FILL_COLOR
+                )
+            )
+            main_legends = [
+                legend
+                for legend in _collect_gl260_legends(fig)
+                if _gl260_legend_role(legend) == "main"
+            ]
+            if not main_legends:
+                raise AssertionError(f"{plot_id}: missing main legend for parity check.")
+            for legend in main_legends:
+                frame = None
+                try:
+                    frame = legend.get_frame()
+                except Exception:
+                    frame = None
+                if frame is None:
+                    raise AssertionError(f"{plot_id}: main legend frame missing.")
+                actual_face = _normalize_mpl_color(frame.get_facecolor())
+                if actual_face.lower() != expected_legend_face.lower():
+                    raise AssertionError(
+                        f"{plot_id}: legend frame facecolor mismatch ({actual_face} != {expected_legend_face})."
+                    )
+
+        fig1_axes = [ax for ax in fig1.get_axes() if not getattr(ax, "_gl260_legend_only", False)]
+        if not fig1_axes or fig1_axes[0].get_ylabel().strip() != "Core Fig1 Pressure":
+            raise AssertionError("fig_pressure_temp: primary y-label override did not apply.")
+        if str(getattr(fig1, "_gl260_xlabel_text").get_text()).strip() != "Core Fig1 X Label":
+            raise AssertionError("fig_pressure_temp: x-label override did not apply.")
+
+        fig2_axes = [ax for ax in fig2.get_axes() if not getattr(ax, "_gl260_legend_only", False)]
+        if not fig2_axes or fig2_axes[0].get_ylabel().strip() != "Core Fig2 Pressure":
+            raise AssertionError("fig_pressure_derivative: primary y-label override did not apply.")
+        if len(fig2_axes) > 1 and fig2_axes[1].get_ylabel().strip() != "Core Fig2 Derivative":
+            raise AssertionError("fig_pressure_derivative: derivative y-label override did not apply.")
+        if str(getattr(fig2, "_gl260_xlabel_text").get_text()).strip() != "Core Fig2 X Label":
+            raise AssertionError("fig_pressure_derivative: x-label override did not apply.")
+    finally:
+        for fig in figures:
+            try:
+                plt.close(fig)
+            except Exception:
+                pass
+        settings.clear()
+        settings.update(settings_snapshot)
+        for key, original in globals_snapshot.items():
+            if original is sentinel:
+                globals().pop(key, None)
+            else:
+                globals()[key] = original
+
+
 REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
     (
         "Planning equivalence definition",
@@ -15370,6 +16144,7 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
     ("Planning input wiring", _regression_test_planning_input_wiring),
     ("Post-equivalence pH trends", _regression_test_post_equivalence_ph_trends),
     ("Analysis overlay progress mapping", _regression_test_analysis_progress_overlay),
+    ("Core plot render parity", _regression_test_core_plot_render_parity),
     ("NaOH-CO2 Pitzer internal tests", _run_naoh_pitzer_internal_tests),
     ("Planning Pitzer smoke test", _integration_test_planning_pitzer_smoke),
     (
@@ -17391,9 +18166,27 @@ def _make_legend_draggable(legend):
 def _legend_shadowbox_kwargs() -> Dict[str, Any]:
     """Perform legend shadowbox kwargs.
     Used to keep the workflow logic localized and testable."""
+    fill_color_default = "#FFFFFF"
+    fill_color = fill_color_default
+    try:
+        settings_map = globals().get("settings", {})
+        raw_value = None
+        if isinstance(settings_map, dict):
+            raw_value = settings_map.get("combined_legend_shadowbox_fill_color")
+        try:
+            from matplotlib.colors import to_rgba  # type: ignore
+
+            candidate = str(raw_value or "").strip()
+            if candidate:
+                to_rgba(candidate)
+                fill_color = candidate
+        except Exception:
+            fill_color = fill_color_default
+    except Exception:
+        fill_color = fill_color_default
     return {
         "frameon": True,
-        "facecolor": "white",
+        "facecolor": fill_color,
         "edgecolor": "#444",
         "fancybox": True,
         "shadow": True,
@@ -17430,6 +18223,7 @@ plot_markersize = 0.75
 
 DEFAULT_COMBINED_LEGEND_GAP_PTS = 18.0
 DEFAULT_COMBINED_LEGEND_MARGIN_PTS = 8.0
+DEFAULT_LEGEND_SHADOWBOX_FILL_COLOR = "#FFFFFF"
 MIN_COMBINED_LEGEND_GAP_PTS = 6.0
 MAX_COMBINED_LEGEND_GAP_PTS = 120.0
 MIN_COMBINED_LEGEND_MARGIN_PTS = 2.0
@@ -18479,6 +19273,13 @@ if os.path.exists(SETTINGS_FILE):
     initial_combined_legend_alignment = settings.get(
         "combined_legend_alignment", "center"
     )
+    initial_combined_legend_shadowbox_fill_color = _normalize_color(
+        settings.get("combined_legend_shadowbox_fill_color"),
+        DEFAULT_LEGEND_SHADOWBOX_FILL_COLOR,
+    )
+    settings["combined_legend_shadowbox_fill_color"] = (
+        initial_combined_legend_shadowbox_fill_color
+    )
     cycle_loc_choices = {
         "upper right",
         "upper left",
@@ -18750,6 +19551,12 @@ else:
     initial_combined_legend_gap_pts = DEFAULT_COMBINED_LEGEND_GAP_PTS
     initial_combined_legend_margin_pts = DEFAULT_COMBINED_LEGEND_MARGIN_PTS
     initial_combined_legend_alignment = "center"
+    initial_combined_legend_shadowbox_fill_color = (
+        DEFAULT_LEGEND_SHADOWBOX_FILL_COLOR
+    )
+    settings["combined_legend_shadowbox_fill_color"] = (
+        initial_combined_legend_shadowbox_fill_color
+    )
     initial_combined_cycle_legend_loc_choice = "upper right"
     settings["combined_cycle_legend_loc_choice"] = (
         initial_combined_cycle_legend_loc_choice
@@ -18916,6 +19723,26 @@ settings["plot_elements"] = _normalize_plot_elements(settings.get("plot_elements
 settings["annotations_ui"] = _normalize_annotations_ui(settings.get("annotations_ui"))
 settings["layout_profiles"] = _normalize_layout_profiles(
     settings.get("layout_profiles")
+)
+settings["core_plot_render_profiles"] = _normalize_core_plot_render_profiles(
+    settings.get("core_plot_render_profiles"),
+    seed_source=settings,
+)
+_default_core_profile_for_legacy = settings["core_plot_render_profiles"].get(
+    CORE_RENDER_PROFILE_PLOT_IDS[0]
+)
+_write_legacy_core_legend_settings_from_profile(_default_core_profile_for_legacy)
+initial_core_legend_fontsize = _sanitize_spacing_value(
+    settings.get("core_legend_fontsize", initial_core_legend_fontsize),
+    label_fontsize,
+    MIN_COMBINED_FONT_SIZE,
+    MAX_COMBINED_FONT_SIZE,
+)
+initial_core_cycle_legend_fontsize = _sanitize_spacing_value(
+    settings.get("core_cycle_legend_fontsize", initial_core_legend_fontsize),
+    initial_core_legend_fontsize,
+    MIN_COMBINED_FONT_SIZE,
+    MAX_COMBINED_FONT_SIZE,
 )
 
 
@@ -21412,27 +22239,29 @@ def main_plotting_function(
     _apply_default_plot_fonts(settings.get("font_family"))
 
     target_figsize = tuple(fig_size) if fig_size else (11, 8.5)
-    font_family = (settings.get("font_family") or "").strip()
-    core_legend_fontsize = _sanitize_spacing_value(
-        settings.get("core_legend_fontsize", label_fontsize),
-        label_fontsize,
-        MIN_COMBINED_FONT_SIZE,
-        MAX_COMBINED_FONT_SIZE,
-    )
-    core_cycle_legend_fontsize = _sanitize_spacing_value(
-        settings.get("core_cycle_legend_fontsize", core_legend_fontsize),
-        core_legend_fontsize,
-        MIN_COMBINED_FONT_SIZE,
-        MAX_COMBINED_FONT_SIZE,
-    )
-    base_core_legend_font = label_fontsize if label_fontsize else 1.0
-    core_legend_markerscale = core_legend_fontsize / base_core_legend_font
-    core_cycle_legend_markerscale = core_cycle_legend_fontsize / base_core_legend_font
 
     data_ctx = render_ctx.data_ctx if render_ctx else {}
     style_ctx = render_ctx.style_ctx if render_ctx else {}
     gates_ctx = render_ctx.gates_ctx if render_ctx else {}
     overlay_ctx = render_ctx.overlay_ctx if render_ctx else {}
+    font_family = (style_ctx.get("font_family") or settings.get("font_family") or "").strip()
+    raw_core_profiles = style_ctx.get("core_plot_render_profiles")
+    if isinstance(raw_core_profiles, dict):
+        core_render_profiles = _normalize_core_plot_render_profiles(
+            raw_core_profiles,
+            seed_source=settings,
+        )
+    else:
+        core_render_profiles = _get_core_plot_render_profiles()
+    fig1_core_profile = core_render_profiles.get(
+        "fig_pressure_temp",
+        _get_core_plot_render_profile("fig_pressure_temp"),
+    )
+    fig2_core_profile = core_render_profiles.get(
+        "fig_pressure_derivative",
+        _get_core_plot_render_profile("fig_pressure_derivative"),
+    )
+    _write_legacy_core_legend_settings_from_profile(fig1_core_profile)
 
     show_cycle_markers_on_core_plots = bool(
         gates_ctx.get("show_cycle_markers", show_cycle_markers_on_core_plots)
@@ -21450,6 +22279,178 @@ def main_plotting_function(
     series_map = data_ctx.get("series") or {}
     selected_columns = data_ctx.get("selected_columns") or globals().get(
         "selected_columns", {}
+    )
+    fig1_font_family = (
+        str(fig1_core_profile.get("font_family") or "").strip() or font_family
+    )
+    fig2_font_family = (
+        str(fig2_core_profile.get("font_family") or "").strip() or font_family
+    )
+    fig1_label_fontsize = _sanitize_spacing_value(
+        _coerce_float(fig1_core_profile.get("label_fontsize")),
+        label_fontsize,
+        MIN_COMBINED_FONT_SIZE,
+        MAX_COMBINED_FONT_SIZE,
+    )
+    fig1_tick_fontsize = _sanitize_spacing_value(
+        _coerce_float(fig1_core_profile.get("tick_fontsize")),
+        tick_labelsize,
+        MIN_COMBINED_FONT_SIZE,
+        MAX_COMBINED_FONT_SIZE,
+    )
+    fig1_title_fontsize = _sanitize_spacing_value(
+        _coerce_float(fig1_core_profile.get("title_fontsize")),
+        subplottitle_fontsize,
+        MIN_COMBINED_FONT_SIZE,
+        MAX_COMBINED_FONT_SIZE,
+    )
+    fig1_suptitle_fontsize = _sanitize_spacing_value(
+        _coerce_float(fig1_core_profile.get("suptitle_fontsize")),
+        suptitle_fontsize,
+        MIN_COMBINED_FONT_SIZE,
+        MAX_COMBINED_FONT_SIZE,
+    )
+    fig1_title_pad_pts = _sanitize_spacing_value(
+        _coerce_float(fig1_core_profile.get("title_pad_pts")),
+        DEFAULT_COMBINED_TITLE_PAD_PTS,
+        MIN_COMBINED_TITLE_PAD_PTS,
+        MAX_COMBINED_TITLE_PAD_PTS,
+    )
+    fig1_suptitle_pad_pts = _sanitize_spacing_value(
+        _coerce_float(fig1_core_profile.get("suptitle_pad_pts")),
+        DEFAULT_COMBINED_SUPTITLE_PAD_PTS,
+        MIN_COMBINED_SUPTITLE_PAD_PTS,
+        MAX_COMBINED_SUPTITLE_PAD_PTS,
+    )
+    fig1_suptitle_y = _sanitize_spacing_value(
+        _coerce_float(fig1_core_profile.get("suptitle_y")),
+        DEFAULT_COMBINED_SUPTITLE_Y,
+        MIN_COMBINED_SUPTITLE_Y,
+        MAX_COMBINED_SUPTITLE_Y,
+    )
+    fig1_primary_labelpad = _coerce_float(fig1_core_profile.get("primary_labelpad"))
+    if fig1_primary_labelpad is None:
+        fig1_primary_labelpad = yaxis_labelpad_amount
+    fig1_temp_labelpad = _coerce_float(fig1_core_profile.get("right_labelpad"))
+    if fig1_temp_labelpad is None:
+        fig1_temp_labelpad = twinyaxis_labelpad_amount
+    fig1_legend_fontsize = _sanitize_spacing_value(
+        _coerce_float(fig1_core_profile.get("legend_fontsize")),
+        settings.get("core_legend_fontsize", label_fontsize),
+        MIN_COMBINED_FONT_SIZE,
+        MAX_COMBINED_FONT_SIZE,
+    )
+    fig1_cycle_legend_fontsize = _sanitize_spacing_value(
+        _coerce_float(fig1_core_profile.get("cycle_legend_fontsize")),
+        settings.get("core_cycle_legend_fontsize", fig1_legend_fontsize),
+        MIN_COMBINED_FONT_SIZE,
+        MAX_COMBINED_FONT_SIZE,
+    )
+    fig1_legend_alignment = _normalize_legend_alignment(
+        str(fig1_core_profile.get("legend_alignment") or "center")
+    )
+    fig1_legend_wrap = bool(fig1_core_profile.get("legend_wrap", False))
+    try:
+        fig1_legend_rows = max(1, int(fig1_core_profile.get("legend_rows", 2)))
+    except Exception:
+        fig1_legend_rows = 2
+    fig1_base_legend_font = max(1.0, float(fig1_label_fontsize or label_fontsize or 1.0))
+    fig1_legend_markerscale = fig1_legend_fontsize / fig1_base_legend_font
+    fig1_cycle_legend_markerscale = fig1_cycle_legend_fontsize / fig1_base_legend_font
+    fig1_x_label_text = str(
+        fig1_core_profile.get("x_axis_label")
+        or _format_axis_label(selected_columns.get("x", "Time"))
+    )
+    fig1_primary_label_text = str(
+        fig1_core_profile.get("primary_axis_label")
+        or _format_axis_label(selected_columns.get("y1", "Pressure"))
+    )
+    fig1_temp_label_text = str(
+        fig1_core_profile.get("right_axis_label") or "Temperature (°C)"
+    )
+
+    fig2_label_fontsize = _sanitize_spacing_value(
+        _coerce_float(fig2_core_profile.get("label_fontsize")),
+        label_fontsize,
+        MIN_COMBINED_FONT_SIZE,
+        MAX_COMBINED_FONT_SIZE,
+    )
+    fig2_tick_fontsize = _sanitize_spacing_value(
+        _coerce_float(fig2_core_profile.get("tick_fontsize")),
+        tick_labelsize,
+        MIN_COMBINED_FONT_SIZE,
+        MAX_COMBINED_FONT_SIZE,
+    )
+    fig2_title_fontsize = _sanitize_spacing_value(
+        _coerce_float(fig2_core_profile.get("title_fontsize")),
+        subplottitle_fontsize,
+        MIN_COMBINED_FONT_SIZE,
+        MAX_COMBINED_FONT_SIZE,
+    )
+    fig2_suptitle_fontsize = _sanitize_spacing_value(
+        _coerce_float(fig2_core_profile.get("suptitle_fontsize")),
+        suptitle_fontsize,
+        MIN_COMBINED_FONT_SIZE,
+        MAX_COMBINED_FONT_SIZE,
+    )
+    fig2_title_pad_pts = _sanitize_spacing_value(
+        _coerce_float(fig2_core_profile.get("title_pad_pts")),
+        DEFAULT_COMBINED_TITLE_PAD_PTS,
+        MIN_COMBINED_TITLE_PAD_PTS,
+        MAX_COMBINED_TITLE_PAD_PTS,
+    )
+    fig2_suptitle_pad_pts = _sanitize_spacing_value(
+        _coerce_float(fig2_core_profile.get("suptitle_pad_pts")),
+        DEFAULT_COMBINED_SUPTITLE_PAD_PTS,
+        MIN_COMBINED_SUPTITLE_PAD_PTS,
+        MAX_COMBINED_SUPTITLE_PAD_PTS,
+    )
+    fig2_suptitle_y = _sanitize_spacing_value(
+        _coerce_float(fig2_core_profile.get("suptitle_y")),
+        DEFAULT_COMBINED_SUPTITLE_Y,
+        MIN_COMBINED_SUPTITLE_Y,
+        MAX_COMBINED_SUPTITLE_Y,
+    )
+    fig2_primary_labelpad = _coerce_float(fig2_core_profile.get("primary_labelpad"))
+    if fig2_primary_labelpad is None:
+        fig2_primary_labelpad = yaxis_labelpad_amount
+    fig2_deriv_labelpad = _coerce_float(fig2_core_profile.get("third_labelpad"))
+    if fig2_deriv_labelpad is None:
+        fig2_deriv_labelpad = twinyaxis_labelpad_amount
+    fig2_legend_fontsize = _sanitize_spacing_value(
+        _coerce_float(fig2_core_profile.get("legend_fontsize")),
+        settings.get("core_legend_fontsize", label_fontsize),
+        MIN_COMBINED_FONT_SIZE,
+        MAX_COMBINED_FONT_SIZE,
+    )
+    fig2_cycle_legend_fontsize = _sanitize_spacing_value(
+        _coerce_float(fig2_core_profile.get("cycle_legend_fontsize")),
+        settings.get("core_cycle_legend_fontsize", fig2_legend_fontsize),
+        MIN_COMBINED_FONT_SIZE,
+        MAX_COMBINED_FONT_SIZE,
+    )
+    fig2_legend_alignment = _normalize_legend_alignment(
+        str(fig2_core_profile.get("legend_alignment") or "center")
+    )
+    fig2_legend_wrap = bool(fig2_core_profile.get("legend_wrap", False))
+    try:
+        fig2_legend_rows = max(1, int(fig2_core_profile.get("legend_rows", 2)))
+    except Exception:
+        fig2_legend_rows = 2
+    fig2_base_legend_font = max(1.0, float(fig2_label_fontsize or label_fontsize or 1.0))
+    fig2_legend_markerscale = fig2_legend_fontsize / fig2_base_legend_font
+    fig2_cycle_legend_markerscale = fig2_cycle_legend_fontsize / fig2_base_legend_font
+    fig2_x_label_text = str(
+        fig2_core_profile.get("x_axis_label")
+        or _format_axis_label(selected_columns.get("x", "Time"))
+    )
+    fig2_primary_label_text = str(
+        fig2_core_profile.get("primary_axis_label")
+        or _format_axis_label(selected_columns.get("y1", "Pressure"))
+    )
+    fig2_deriv_label_text = str(
+        fig2_core_profile.get("third_axis_label")
+        or _format_axis_label(selected_columns.get("y2", "Derivative"))
     )
 
     # Pull series/globals up front (needed for both paths)
@@ -21624,11 +22625,43 @@ def main_plotting_function(
             )
         return peak_artist, trough_artist
 
-    def _add_cycle_legend(ax_target, peak_artist, trough_artist):
+    def _add_cycle_legend(
+        ax_target,
+        peak_artist,
+        trough_artist,
+        *,
+        core_profile: Mapping[str, Any],
+        base_legend_font: float,
+    ):
         """Perform add cycle legend.
         Used to keep the workflow logic localized and testable."""
         if not (show_cycle_legend_on_core_plots and legend_overlay):
             return None
+        cycle_fontsize_value = _sanitize_spacing_value(
+            _coerce_float(core_profile.get("cycle_legend_fontsize")),
+            settings.get("core_cycle_legend_fontsize", settings.get("core_legend_fontsize", label_fontsize)),
+            MIN_COMBINED_FONT_SIZE,
+            MAX_COMBINED_FONT_SIZE,
+        )
+        safe_base_legend_font = max(1.0, float(base_legend_font or 1.0))
+        cycle_markerscale_value = cycle_fontsize_value / safe_base_legend_font
+        cycle_loc_value = (
+            str(core_profile.get("cycle_legend_loc_choice", "upper right") or "upper right")
+            .strip()
+            .lower()
+        )
+        if cycle_loc_value not in {
+            "upper right",
+            "upper left",
+            "lower right",
+            "lower left",
+            "center right",
+            "center left",
+            "upper center",
+            "lower center",
+            "center",
+        }:
+            cycle_loc_value = "upper right"
         handles: List[Any] = []
         labels: List[str] = []
         if peak_artist is not None:
@@ -21667,10 +22700,9 @@ def main_plotting_function(
         legend = ax_target.legend(
             handles,
             labels,
-            loc="upper right",
-            bbox_to_anchor=(0.98, 0.98),
-            fontsize=core_cycle_legend_fontsize,
-            markerscale=core_cycle_legend_markerscale,
+            loc=cycle_loc_value,
+            fontsize=cycle_fontsize_value,
+            markerscale=cycle_markerscale_value,
             **_legend_shadowbox_kwargs(),
         )
         try:
@@ -21680,8 +22712,8 @@ def main_plotting_function(
             pass
         try:
             legend._gl260_legend_role = "cycle"  # type: ignore[attr-defined]
-            legend._gl260_markerscale = core_cycle_legend_markerscale  # type: ignore[attr-defined]
-            legend._gl260_markerscale_base_font = base_core_legend_font  # type: ignore[attr-defined]
+            legend._gl260_markerscale = cycle_markerscale_value  # type: ignore[attr-defined]
+            legend._gl260_markerscale_base_font = safe_base_legend_font  # type: ignore[attr-defined]
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
@@ -21764,16 +22796,12 @@ def main_plotting_function(
 
     ax.set_ylim(*y_lim)
 
-    ax.set_xlabel(
-        fmt(selected_columns.get("x", "Time")),
-        fontsize=label_fontsize,
-        labelpad=xaxis_labelpad_amount,
-    )
+    ax.set_xlabel("")
 
     ax.set_ylabel(
-        fmt(selected_columns.get("y1", "Pressure")),
-        fontsize=label_fontsize,
-        labelpad=yaxis_labelpad_amount,
+        fig1_primary_label_text,
+        fontsize=fig1_label_fontsize,
+        labelpad=fig1_primary_labelpad,
     )
 
     temp_axis_selected = (
@@ -21828,14 +22856,14 @@ def main_plotting_function(
         ax2.set_ylim(*twin_y_lim)
 
         ax2.set_ylabel(
-            "Temperature (°C)",
+            fig1_temp_label_text,
             color="black",
             rotation=-90,
-            labelpad=twinyaxis_labelpad_amount,
-            fontsize=label_fontsize,
+            labelpad=fig1_temp_labelpad,
+            fontsize=fig1_label_fontsize,
         )
 
-        ax2.tick_params(axis="y", labelcolor="black", labelsize=tick_labelsize)
+        ax2.tick_params(axis="y", labelcolor="black", labelsize=fig1_tick_fontsize)
 
         ax2.spines["right"].set_color("black")
 
@@ -21888,20 +22916,20 @@ def main_plotting_function(
     ax.minorticks_on()
 
     ax.tick_params(
-        axis="both", which="major", labelcolor="black", labelsize=tick_labelsize
+        axis="both", which="major", labelcolor="black", labelsize=fig1_tick_fontsize
     )
     _enforce_axis_text_style(
         ax,
-        font_family=font_family,
-        tick_fontsize=tick_labelsize,
-        label_fontsize=label_fontsize,
+        font_family=fig1_font_family,
+        tick_fontsize=fig1_tick_fontsize,
+        label_fontsize=fig1_label_fontsize,
     )
     if enable_temp_axis and temp_axis_selected:
         _enforce_axis_text_style(
             ax2,
-            font_family=font_family,
-            tick_fontsize=tick_labelsize,
-            label_fontsize=label_fontsize,
+            font_family=fig1_font_family,
+            tick_fontsize=fig1_tick_fontsize,
+            label_fontsize=fig1_label_fontsize,
         )
 
     fig1_peak_artist, fig1_trough_artist = _draw_cycle_markers(ax)
@@ -21914,13 +22942,30 @@ def main_plotting_function(
         axes_for_title,
         title_text,
         suptitle_text,
-        subplottitle_fontsize,
-        suptitle_fontsize,
-        font_family,
-        float(plt.rcParams.get("axes.titlepad", 6.0)),
-        0.0,
-        suptitle_y=suptitle_yposition,
+        fig1_title_fontsize,
+        fig1_suptitle_fontsize,
+        fig1_font_family,
+        fig1_title_pad_pts,
+        fig1_suptitle_pad_pts,
+        suptitle_y=fig1_suptitle_y,
     )
+    fig1_center_x = 0.5
+    try:
+        axes_union = Bbox.union([axis.get_position() for axis in axes_for_title if axis is not None])
+        fig1_center_x = (axes_union.x0 + axes_union.x1) / 2.0
+    except Exception:
+        fig1_center_x = 0.5
+    fig1_xlabel_artist = fig1.supxlabel(
+        fig1_x_label_text,
+        fontsize=fig1_label_fontsize,
+        fontfamily=fig1_font_family if fig1_font_family else None,
+        x=fig1_center_x,
+    )
+    try:
+        fig1._gl260_xlabel_text = fig1_xlabel_artist  # type: ignore[attr-defined]
+    except Exception:
+        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+        pass
 
     handles_filtered, labels_filtered = _filter_none_legend_entries(
         handles, [handle.get_label() for handle in handles]
@@ -21936,26 +22981,46 @@ def main_plotting_function(
             handles_filtered.append(mpatches.Patch(color="none"))
             labels_filtered.append(line)
     if handles_filtered:
+        if fig1_legend_wrap:
+            ncol_fig1 = max(1, math.ceil(len(handles_filtered) / max(1, fig1_legend_rows)))
+        else:
+            ncol_fig1 = min(3, len(handles_filtered))
+        labels_filtered = [_wrap_legend_label(label) for label in labels_filtered]
+        if fig1_legend_alignment == "left":
+            fig1_legend_loc = "lower left"
+            fig1_legend_anchor = (0.02, 0.02)
+        elif fig1_legend_alignment == "right":
+            fig1_legend_loc = "lower right"
+            fig1_legend_anchor = (0.98, 0.02)
+        else:
+            fig1_legend_loc = "lower center"
+            fig1_legend_anchor = (0.5, 0.02)
         leg_fig1 = fig1.legend(
             handles=handles_filtered,
             labels=labels_filtered,
-            loc="lower center",
-            bbox_to_anchor=(0.5, 0.02),
-            ncol=min(3, len(handles_filtered)),
-            shadow=True,
-            fontsize=core_legend_fontsize,
-            markerscale=core_legend_markerscale,
+            loc=fig1_legend_loc,
+            bbox_to_anchor=fig1_legend_anchor,
+            ncol=ncol_fig1,
+            fontsize=fig1_legend_fontsize,
+            markerscale=fig1_legend_markerscale,
+            **_legend_shadowbox_kwargs(),
         )
 
         try:
             leg_fig1._gl260_legend_role = "main"  # type: ignore[attr-defined]
-            leg_fig1._gl260_markerscale = core_legend_markerscale  # type: ignore[attr-defined]
-            leg_fig1._gl260_markerscale_base_font = base_core_legend_font  # type: ignore[attr-defined]
+            leg_fig1._gl260_markerscale = fig1_legend_markerscale  # type: ignore[attr-defined]
+            leg_fig1._gl260_markerscale_base_font = fig1_base_legend_font  # type: ignore[attr-defined]
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
         _make_legend_draggable(leg_fig1)
-    _add_cycle_legend(ax, fig1_peak_artist, fig1_trough_artist)
+    _add_cycle_legend(
+        ax,
+        fig1_peak_artist,
+        fig1_trough_artist,
+        core_profile=fig1_core_profile,
+        base_legend_font=fig1_base_legend_font,
+    )
 
     # Figure 2: pressure + derivative
 
@@ -22006,12 +23071,12 @@ def main_plotting_function(
 
     ax_two.set_ylim(*y_lim)
 
-    ax_two.set_xlabel(
-        fmt(selected_columns.get("x", "Time")), fontsize=label_fontsize, labelpad=5
-    )
+    ax_two.set_xlabel("")
 
     ax_two.set_ylabel(
-        fmt(selected_columns.get("y1", "Pressure")), fontsize=label_fontsize, labelpad=3
+        fig2_primary_label_text,
+        fontsize=fig2_label_fontsize,
+        labelpad=fig2_primary_labelpad,
     )
 
     if enable_deriv_axis and deriv_axis_selected:
@@ -22038,14 +23103,14 @@ def main_plotting_function(
         ax3.set_ylim(deriv_y_min, deriv_y_max)
 
         ax3.set_ylabel(
-            fmt(selected_columns.get("y2", "Derivative")),
+            fig2_deriv_label_text,
             color="black",
             rotation=-90,
-            labelpad=15,
-            fontsize=label_fontsize,
+            labelpad=fig2_deriv_labelpad,
+            fontsize=fig2_label_fontsize,
         )
 
-        ax3.tick_params(axis="y", labelcolor="black", labelsize=tick_labelsize)
+        ax3.tick_params(axis="y", labelcolor="black", labelsize=fig2_tick_fontsize)
 
         ax3.spines["right"].set_color("black")
 
@@ -22098,20 +23163,20 @@ def main_plotting_function(
     ax_two.minorticks_on()
 
     ax_two.tick_params(
-        axis="both", which="major", labelcolor="black", labelsize=tick_labelsize
+        axis="both", which="major", labelcolor="black", labelsize=fig2_tick_fontsize
     )
     _enforce_axis_text_style(
         ax_two,
-        font_family=font_family,
-        tick_fontsize=tick_labelsize,
-        label_fontsize=label_fontsize,
+        font_family=fig2_font_family,
+        tick_fontsize=fig2_tick_fontsize,
+        label_fontsize=fig2_label_fontsize,
     )
     if enable_deriv_axis and deriv_axis_selected:
         _enforce_axis_text_style(
             ax3,
-            font_family=font_family,
-            tick_fontsize=tick_labelsize,
-            label_fontsize=label_fontsize,
+            font_family=fig2_font_family,
+            tick_fontsize=fig2_tick_fontsize,
+            label_fontsize=fig2_label_fontsize,
         )
 
     fig2_peak_artist, fig2_trough_artist = _draw_cycle_markers(ax_two)
@@ -22124,13 +23189,32 @@ def main_plotting_function(
         axes_two_for_title,
         title_text,
         suptitle_text,
-        subplottitle_fontsize,
-        suptitle_fontsize,
-        font_family,
-        float(plt.rcParams.get("axes.titlepad", 6.0)),
-        0.0,
-        suptitle_y=suptitle_yposition,
+        fig2_title_fontsize,
+        fig2_suptitle_fontsize,
+        fig2_font_family,
+        fig2_title_pad_pts,
+        fig2_suptitle_pad_pts,
+        suptitle_y=fig2_suptitle_y,
     )
+    fig2_center_x = 0.5
+    try:
+        axes_two_union = Bbox.union(
+            [axis.get_position() for axis in axes_two_for_title if axis is not None]
+        )
+        fig2_center_x = (axes_two_union.x0 + axes_two_union.x1) / 2.0
+    except Exception:
+        fig2_center_x = 0.5
+    fig2_xlabel_artist = fig2.supxlabel(
+        fig2_x_label_text,
+        fontsize=fig2_label_fontsize,
+        fontfamily=fig2_font_family if fig2_font_family else None,
+        x=fig2_center_x,
+    )
+    try:
+        fig2._gl260_xlabel_text = fig2_xlabel_artist  # type: ignore[attr-defined]
+    except Exception:
+        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+        pass
 
     handles2_filtered, labels2_filtered = _filter_none_legend_entries(
         handles2, [handle.get_label() for handle in handles2]
@@ -22146,39 +23230,59 @@ def main_plotting_function(
             handles2_filtered.append(mpatches.Patch(color="none"))
             labels2_filtered.append(line)
     if handles2_filtered:
+        if fig2_legend_wrap:
+            ncol_fig2 = max(1, math.ceil(len(handles2_filtered) / max(1, fig2_legend_rows)))
+        else:
+            ncol_fig2 = min(3, len(handles2_filtered))
+        labels2_filtered = [_wrap_legend_label(label) for label in labels2_filtered]
+        if fig2_legend_alignment == "left":
+            fig2_legend_loc = "lower left"
+            fig2_legend_anchor = (0.02, 0.02)
+        elif fig2_legend_alignment == "right":
+            fig2_legend_loc = "lower right"
+            fig2_legend_anchor = (0.98, 0.02)
+        else:
+            fig2_legend_loc = "lower center"
+            fig2_legend_anchor = (0.5, 0.02)
         leg_fig2 = fig2.legend(
             handles=handles2_filtered,
             labels=labels2_filtered,
-            loc="lower center",
-            bbox_to_anchor=(0.5, 0.02),
-            ncol=min(3, len(handles2_filtered)),
-            shadow=True,
-            fontsize=core_legend_fontsize,
-            markerscale=core_legend_markerscale,
+            loc=fig2_legend_loc,
+            bbox_to_anchor=fig2_legend_anchor,
+            ncol=ncol_fig2,
+            fontsize=fig2_legend_fontsize,
+            markerscale=fig2_legend_markerscale,
+            **_legend_shadowbox_kwargs(),
         )
 
         try:
             leg_fig2._gl260_legend_role = "main"  # type: ignore[attr-defined]
-            leg_fig2._gl260_markerscale = core_legend_markerscale  # type: ignore[attr-defined]
-            leg_fig2._gl260_markerscale_base_font = base_core_legend_font  # type: ignore[attr-defined]
+            leg_fig2._gl260_markerscale = fig2_legend_markerscale  # type: ignore[attr-defined]
+            leg_fig2._gl260_markerscale_base_font = fig2_base_legend_font  # type: ignore[attr-defined]
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
         _make_legend_draggable(leg_fig2)
-    _add_cycle_legend(ax_two, fig2_peak_artist, fig2_trough_artist)
+    _add_cycle_legend(
+        ax_two,
+        fig2_peak_artist,
+        fig2_trough_artist,
+        core_profile=fig2_core_profile,
+        base_legend_font=fig2_base_legend_font,
+    )
 
     try:
         _enforce_gl260_legend_sizing(
             fig1,
-            core_legend_fontsize,
-            core_cycle_legend_fontsize,
-            font_family=font_family,
+            fig1_legend_fontsize,
+            fig1_cycle_legend_fontsize,
+            font_family=fig1_font_family,
         )
         _enforce_gl260_legend_sizing(
             fig2,
-            core_legend_fontsize,
-            core_cycle_legend_fontsize,
-            font_family=font_family,
+            fig2_legend_fontsize,
+            fig2_cycle_legend_fontsize,
+            font_family=fig2_font_family,
         )
     except Exception:
         # Best-effort guard; ignore failures to avoid interrupting the workflow.
@@ -22462,8 +23566,23 @@ def _enforce_gl260_legend_sizing(
         if family_value
         else font_manager.FontProperties(size=cycle_fontsize)
     )
+    legend_frame_kwargs = _legend_shadowbox_kwargs()
+    legend_facecolor = legend_frame_kwargs.get("facecolor", DEFAULT_LEGEND_SHADOWBOX_FILL_COLOR)
+    legend_edgecolor = legend_frame_kwargs.get("edgecolor", "#444")
+    legend_alpha = _coerce_float(legend_frame_kwargs.get("framealpha"))
+    if legend_alpha is None or not math.isfinite(legend_alpha):
+        legend_alpha = 0.9
     # Iterate over legends to apply the per-item logic.
     for legend in legends:
+        try:
+            frame = legend.get_frame()
+            if frame is not None:
+                frame.set_facecolor(legend_facecolor)
+                frame.set_edgecolor(legend_edgecolor)
+                frame.set_alpha(legend_alpha)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
         role = _gl260_legend_role(legend)
         if role == "main":
             target_fontsize = main_fontsize
@@ -25323,6 +26442,50 @@ def _dev_validate_plot_title_centering_and_labels_impl() -> None:
         if label_sizes:
             if max(label_sizes) - min(label_sizes) > 0.01:
                 _warn(f"{label}: y-label font sizes mismatch {label_sizes}.")
+
+        def _artist_x_in_figure(artist: Any) -> Optional[float]:
+            """Map artist x-position into figure coordinates for center checks."""
+            if artist is None:
+                return None
+            try:
+                pos = artist.get_position()
+            except Exception:
+                return None
+            try:
+                transform = artist.get_transform()
+                display_xy = transform.transform(pos)
+                fig_xy = fig.transFigure.inverted().transform(display_xy)
+                return float(fig_xy[0])
+            except Exception:
+                try:
+                    return float(pos[0])
+                except Exception:
+                    return None
+
+        def _bbox_in_fig(artist: Any) -> Optional[Bbox]:
+            """Measure one artist in figure coordinates."""
+            if artist is None:
+                return None
+            try:
+                if fig.canvas is None:
+                    FigureCanvasAgg(fig)
+                fig.canvas.draw()
+                renderer = fig.canvas.get_renderer()
+            except Exception:
+                return None
+            try:
+                return artist.get_window_extent(renderer=renderer).transformed(
+                    fig.transFigure.inverted()
+                )
+            except Exception:
+                return None
+
+        title_artist = getattr(fig, "_gl260_title_text", None)
+        if title_artist is not None and getattr(title_artist, "axes", None) is None:
+            _warn(
+                f"{label}: title artist is figure-level; expected axes-bound title for parity."
+            )
+
         center_x = _axes_union_center(axes)
         tol = 0.002
         # Iterate to apply the per-item logic.
@@ -25333,14 +26496,27 @@ def _dev_validate_plot_title_centering_and_labels_impl() -> None:
             artist = getattr(fig, attr, None)
             if artist is None:
                 continue
-            try:
-                artist_x = float(artist.get_position()[0])
-            except Exception:
+            artist_x = _artist_x_in_figure(artist)
+            if artist_x is None:
                 continue
             if abs(artist_x - center_x) > tol:
                 _warn(
                     f"{label}: {tag} x={artist_x:.4f} does not match center {center_x:.4f}."
                 )
+
+        suptitle_artist = getattr(fig, "_gl260_suptitle_text", None)
+        title_bbox = _bbox_in_fig(title_artist)
+        suptitle_bbox = _bbox_in_fig(suptitle_artist)
+        if title_bbox is not None and title_bbox.y0 > 1.001:
+            _warn(f"{label}: title appears off-canvas (y0={title_bbox.y0:.4f}).")
+        if (
+            title_bbox is not None
+            and suptitle_bbox is not None
+            and suptitle_bbox.y0 < title_bbox.y1
+        ):
+            _warn(
+                f"{label}: suptitle overlaps title (title_y1={title_bbox.y1:.4f}, suptitle_y0={suptitle_bbox.y0:.4f})."
+            )
 
     sentinel = object()
     globals_snapshot: Dict[str, Any] = {
@@ -27818,6 +28994,9 @@ class UnifiedApp(tk.Tk):
         self.combined_legend_alignment = tk.StringVar(
             value=initial_combined_legend_alignment
         )
+        self.combined_legend_shadowbox_fill_color = tk.StringVar(
+            value=initial_combined_legend_shadowbox_fill_color
+        )
         self.combined_cycle_legend_loc_choice = tk.StringVar(
             value=initial_combined_cycle_legend_loc_choice
         )
@@ -27920,6 +29099,10 @@ class UnifiedApp(tk.Tk):
         )
         self._register_var_default(
             self.combined_legend_alignment, initial_combined_legend_alignment
+        )
+        self._register_var_default(
+            self.combined_legend_shadowbox_fill_color,
+            initial_combined_legend_shadowbox_fill_color,
         )
         self._register_var_default(
             self.combined_cycle_legend_loc_choice,
@@ -29034,6 +30217,12 @@ class UnifiedApp(tk.Tk):
         Used to apply gl260 legend sizing changes to live state."""
         if fig is None:
             return
+        core_plot_id = plot_id
+        if core_plot_id not in CORE_RENDER_PROFILE_PLOT_IDS:
+            core_plot_id = {
+                "fig1": "fig_pressure_temp",
+                "fig2": "fig_pressure_derivative",
+            }.get((plot_key or "").strip().lower())
         is_combined = False
         if plot_id == "fig_combined_triple_axis" or plot_key == "fig_combined":
             is_combined = True
@@ -29053,6 +30242,25 @@ class UnifiedApp(tk.Tk):
                 )
                 if font_family is None:
                     font_family = (settings.get("combined_font_family") or "").strip()
+            elif core_plot_id in CORE_RENDER_PROFILE_PLOT_IDS:
+                profile = _get_core_plot_render_profile(core_plot_id)
+                main_fontsize = _sanitize_spacing_value(
+                    profile.get("legend_fontsize", settings.get("core_legend_fontsize", label_fontsize)),
+                    settings.get("core_legend_fontsize", label_fontsize),
+                    MIN_COMBINED_FONT_SIZE,
+                    MAX_COMBINED_FONT_SIZE,
+                )
+                cycle_fontsize = _sanitize_spacing_value(
+                    profile.get("cycle_legend_fontsize", settings.get("core_cycle_legend_fontsize", main_fontsize)),
+                    main_fontsize,
+                    MIN_COMBINED_FONT_SIZE,
+                    MAX_COMBINED_FONT_SIZE,
+                )
+                if font_family is None:
+                    font_family = (
+                        (profile.get("font_family") or "").strip()
+                        or (settings.get("font_family") or "").strip()
+                    )
             else:
                 main_fontsize = _sanitize_spacing_value(
                     settings.get("core_legend_fontsize", label_fontsize),
@@ -32070,6 +33278,15 @@ class UnifiedApp(tk.Tk):
             if is_real_combined and not was_real_combined:
                 # Reset one-shot post-first-draw refresh flags when transitioning
                 # from placeholder to the first real combined figure.
+                prior_finalize_after_id = getattr(
+                    frame, "_combined_overlay_finalize_after_id", None
+                )
+                if prior_finalize_after_id is not None:
+                    try:
+                        self.after_cancel(prior_finalize_after_id)
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
                 try:
                     frame._post_first_draw_refresh_done = False
                     frame._post_first_draw_refresh_invoked = False
@@ -32083,6 +33300,10 @@ class UnifiedApp(tk.Tk):
                     frame._combined_overlay_ready_seen = False
                     frame._combined_overlay_second_refresh_scheduled = False
                     frame._combined_placeholder_draw_logged = False
+                    frame._combined_overlay_last_geometry_sig = None
+                    frame._combined_overlay_stable_draw_count = 0
+                    frame._combined_overlay_finalize_started_at = None
+                    frame._combined_overlay_finalize_after_id = None
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
@@ -32600,16 +33821,131 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
+    def _combined_rendered_geometry_signature(self, fig: Optional[Figure]) -> Any:
+        """Build a rendered-geometry signature for combined overlays."""
+        if fig is None:
+            return None
+
+        def _norm_num(value: Any) -> Any:
+            try:
+                value_f = float(value)
+            except Exception:
+                return value
+            if not math.isfinite(value_f):
+                return None
+            return round(value_f, 4)
+
+        def _norm_tuple(value: Any) -> Any:
+            if isinstance(value, (list, tuple)):
+                return tuple(_norm_num(item) for item in value)
+            return _norm_num(value)
+
+        try:
+            size = fig.get_size_inches()
+            size_sig = tuple(_norm_num(v) for v in size)
+        except Exception:
+            size_sig = None
+        try:
+            subplot = fig.subplotpars
+            subplot_sig = (
+                _norm_num(getattr(subplot, "left", None)),
+                _norm_num(getattr(subplot, "right", None)),
+                _norm_num(getattr(subplot, "bottom", None)),
+                _norm_num(getattr(subplot, "top", None)),
+                _norm_num(getattr(subplot, "wspace", None)),
+                _norm_num(getattr(subplot, "hspace", None)),
+            )
+        except Exception:
+            subplot_sig = None
+        axes_sig: List[Any] = []
+        try:
+            for idx, ax in enumerate(list(getattr(fig, "axes", []) or [])):
+                if getattr(ax, "_gl260_legend_only", False):
+                    continue
+                role = str(getattr(ax, "_gl260_axis_role", "") or "")
+                try:
+                    bounds = tuple(_norm_num(v) for v in ax.get_position().bounds)
+                except Exception:
+                    bounds = None
+                try:
+                    xlim = tuple(_norm_num(v) for v in ax.get_xlim())
+                except Exception:
+                    xlim = None
+                try:
+                    ylim = tuple(_norm_num(v) for v in ax.get_ylim())
+                except Exception:
+                    ylim = None
+                axes_sig.append((idx, role, bounds, xlim, ylim))
+        except Exception:
+            axes_sig = []
+        legend_sig: List[Any] = []
+        try:
+            legends = _collect_gl260_legends(fig)
+        except Exception:
+            legends = []
+        for idx, legend in enumerate(legends):
+            role = str(getattr(legend, "_gl260_legend_role", "") or "")
+            try:
+                loc_val = legend.get_loc()
+            except Exception:
+                loc_val = getattr(legend, "_loc", None)
+            try:
+                bbox = legend.get_bbox_to_anchor()
+                bounds = (
+                    tuple(_norm_num(v) for v in bbox.bounds) if bbox is not None else None
+                )
+            except Exception:
+                bounds = None
+            legend_sig.append((idx, role, _norm_tuple(loc_val), bounds))
+        return (size_sig, subplot_sig, tuple(axes_sig), tuple(legend_sig))
+
+    def _resolve_combined_overlay_figure(
+        self,
+        frame: Optional[ttk.Frame],
+        *,
+        canvas: Optional[FigureCanvasTkAgg] = None,
+        fig: Optional[Figure] = None,
+    ) -> Optional[Figure]:
+        """Resolve the active combined figure from direct or tab context."""
+        if fig is not None:
+            return fig
+        resolved_fig = getattr(canvas, "figure", None) if canvas is not None else None
+        if resolved_fig is not None:
+            return resolved_fig
+        if frame is not None:
+            plot_key = str(getattr(frame, "_plot_key", "") or "")
+            if plot_key:
+                _, resolved_canvas = self._find_plot_tab_canvas(plot_key)
+                resolved_fig = (
+                    getattr(resolved_canvas, "figure", None)
+                    if resolved_canvas is not None
+                    else None
+                )
+                if resolved_fig is not None:
+                    return resolved_fig
+        _, resolved_canvas = self._find_plot_tab_canvas("fig_combined")
+        if resolved_canvas is None:
+            return None
+        return getattr(resolved_canvas, "figure", None)
+
     def _combined_current_layout_sig(self) -> Any:
         """Return the most recent combined layout signature, if available."""
         state = self._combined_plot_state if isinstance(self._combined_plot_state, dict) else {}
-        return state.get("layout_sig")
+        return self._combined_rendered_geometry_signature(state.get("fig"))
 
-    def _capture_combined_overlay_layout_baseline(self, frame: Optional[ttk.Frame]) -> Any:
-        """Capture baseline layout signature before the first post-draw refresh."""
+    def _capture_combined_overlay_layout_baseline(
+        self,
+        frame: Optional[ttk.Frame],
+        *,
+        canvas: Optional[FigureCanvasTkAgg] = None,
+        fig: Optional[Figure] = None,
+    ) -> Any:
+        """Capture baseline rendered geometry before the first post-draw refresh."""
         if frame is None:
             return None
-        baseline = self._combined_current_layout_sig()
+        baseline = self._combined_rendered_geometry_signature(
+            self._resolve_combined_overlay_figure(frame, canvas=canvas, fig=fig)
+        )
         try:
             frame._combined_overlay_layout_sig_baseline = baseline
         except Exception:
@@ -32621,7 +33957,12 @@ class UnifiedApp(tk.Tk):
         )
         return baseline
 
-    def _mark_combined_overlay_refresh_completed(self, frame: Optional[ttk.Frame]) -> int:
+    def _mark_combined_overlay_refresh_completed(
+        self,
+        frame: Optional[ttk.Frame],
+        *,
+        fig: Optional[Figure] = None,
+    ) -> int:
         """Record one completed combined refresh render for overlay orchestration."""
         if frame is None:
             return 0
@@ -32639,7 +33980,9 @@ class UnifiedApp(tk.Tk):
 
         if completed_count == 1:
             baseline_sig = getattr(frame, "_combined_overlay_layout_sig_baseline", None)
-            current_sig = self._combined_current_layout_sig()
+            current_sig = self._combined_rendered_geometry_signature(
+                self._resolve_combined_overlay_figure(frame, fig=fig)
+            )
             need_second_refresh = True
             if baseline_sig is not None and current_sig is not None:
                 need_second_refresh = baseline_sig != current_sig
@@ -36687,6 +38030,10 @@ class UnifiedApp(tk.Tk):
             frame._combined_overlay_ready_seen = False
             frame._combined_overlay_second_refresh_scheduled = False
             frame._combined_placeholder_draw_logged = False
+            frame._combined_overlay_last_geometry_sig = None
+            frame._combined_overlay_stable_draw_count = 0
+            frame._combined_overlay_finalize_started_at = None
+            frame._combined_overlay_finalize_after_id = None
 
         self._log_plot_tab_debug(f"Creating tab frame for '{title}'")
 
@@ -41206,6 +42553,7 @@ class UnifiedApp(tk.Tk):
             "cycle_trace",
             "core_legend_fontsize",
             "core_cycle_legend_fontsize",
+            "core_plot_render_profiles",
             "combined_y_left_key",
             "combined_y_right_key",
             "combined_y_third_key",
@@ -41332,6 +42680,9 @@ class UnifiedApp(tk.Tk):
             if isinstance(cycle_trace_settings, dict)
             else {}
         )
+        payload["core_plot_render_profiles"] = copy.deepcopy(
+            _get_core_plot_render_profiles()
+        )
 
         combined_defaults = {
             key: copy.deepcopy(value)
@@ -41447,6 +42798,14 @@ class UnifiedApp(tk.Tk):
         # Iterate over items from plot_settings to apply the per-item logic.
         for key, value in plot_settings.items():
             settings[key] = copy.deepcopy(value)
+        settings["core_plot_render_profiles"] = _normalize_core_plot_render_profiles(
+            plot_settings.get("core_plot_render_profiles"),
+            seed_source=settings,
+        )
+        _legacy_core_profile = settings["core_plot_render_profiles"].get(
+            CORE_RENDER_PROFILE_PLOT_IDS[0]
+        )
+        _write_legacy_core_legend_settings_from_profile(_legacy_core_profile)
 
         # Closure captures _apply_profile_plot_settings local context to keep helper logic scoped and invoked directly within _apply_profile_plot_settings.
         def _set_var(var: Optional[tk.Variable], value: Any) -> None:
@@ -41495,6 +42854,17 @@ class UnifiedApp(tk.Tk):
         ):
             if key in plot_settings:
                 _set_var(getattr(self, attr, None), plot_settings.get(key))
+        _set_var(
+            getattr(self, "core_legend_fontsize", None),
+            settings.get("core_legend_fontsize", label_fontsize),
+        )
+        _set_var(
+            getattr(self, "core_cycle_legend_fontsize", None),
+            settings.get(
+                "core_cycle_legend_fontsize",
+                settings.get("core_legend_fontsize", label_fontsize),
+            ),
+        )
 
         auto_range = plot_settings.get("axis_auto_range")
         if isinstance(auto_range, dict):
@@ -41592,6 +42962,10 @@ class UnifiedApp(tk.Tk):
             ("combined_legend_gap_pts", "combined_legend_label_gap"),
             ("combined_legend_bottom_margin_pts", "combined_legend_bottom_margin"),
             ("combined_legend_alignment", "combined_legend_alignment"),
+            (
+                "combined_legend_shadowbox_fill_color",
+                "combined_legend_shadowbox_fill_color",
+            ),
             ("combined_cycle_legend_loc_choice", "combined_cycle_legend_loc_choice"),
             ("combined_cycle_legend_ref_axis", "combined_cycle_legend_ref_axis"),
             ("combined_cycle_legend_ref_corner", "combined_cycle_legend_ref_corner"),
@@ -41625,6 +42999,12 @@ class UnifiedApp(tk.Tk):
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+        for _core_plot_id in CORE_RENDER_PROFILE_PLOT_IDS:
+            try:
+                self._mark_plot_layout_dirty(_core_plot_id)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
 
     def _apply_profile_layout_profiles(self, layout_profiles: Dict[str, Any]) -> None:
         """Apply profile layout profiles.
@@ -42146,6 +43526,7 @@ class UnifiedApp(tk.Tk):
         legend_anchor_export = export_section.get("legend_anchor_y")
 
         stage_vars: Dict[str, tk.Variable] = {}
+        core_stage_profile: Dict[str, Any] = {}
         if is_combined:
             stage_vars = {
                 "combined_x_axis_label": tk.StringVar(
@@ -42241,14 +43622,116 @@ class UnifiedApp(tk.Tk):
                 ),
             }
         elif is_core:
+            core_stage_profile = _get_core_plot_render_profile(plot_id)
             stage_vars = {
+                "core_x_axis_label": tk.StringVar(
+                    value=core_stage_profile.get("x_axis_label", "")
+                ),
+                "core_primary_axis_label": tk.StringVar(
+                    value=core_stage_profile.get("primary_axis_label", "")
+                ),
+                "core_deriv_axis_label": tk.StringVar(
+                    value=core_stage_profile.get("third_axis_label", "")
+                ),
+                "core_temp_axis_label": tk.StringVar(
+                    value=core_stage_profile.get("right_axis_label", "")
+                ),
+                "core_deriv_axis_offset": tk.DoubleVar(
+                    value=float(core_stage_profile.get("third_axis_offset", 1.12))
+                ),
+                "core_primary_labelpad": tk.DoubleVar(
+                    value=float(core_stage_profile.get("primary_labelpad", yaxis_labelpad_amount))
+                ),
+                "core_deriv_labelpad": tk.DoubleVar(
+                    value=float(core_stage_profile.get("third_labelpad", twinyaxis_labelpad_amount))
+                ),
+                "core_temp_labelpad": tk.DoubleVar(
+                    value=float(core_stage_profile.get("right_labelpad", twinyaxis_labelpad_amount))
+                ),
+                "core_left_padding_pct": tk.DoubleVar(
+                    value=float(core_stage_profile.get("left_padding_pct", DEFAULT_COMBINED_LEFT_PAD_PCT))
+                ),
+                "core_right_padding_pct": tk.DoubleVar(
+                    value=float(core_stage_profile.get("right_padding_pct", DEFAULT_COMBINED_RIGHT_PAD_PCT))
+                ),
+                "core_export_pad_pts": tk.DoubleVar(
+                    value=float(core_stage_profile.get("export_pad_pts", DEFAULT_COMBINED_EXPORT_PAD_PTS))
+                ),
+                "core_title_pad_pts": tk.DoubleVar(
+                    value=float(core_stage_profile.get("title_pad_pts", DEFAULT_COMBINED_TITLE_PAD_PTS))
+                ),
+                "core_suptitle_pad_pts": tk.DoubleVar(
+                    value=float(core_stage_profile.get("suptitle_pad_pts", DEFAULT_COMBINED_SUPTITLE_PAD_PTS))
+                ),
+                "core_suptitle_y": tk.DoubleVar(
+                    value=float(core_stage_profile.get("suptitle_y", DEFAULT_COMBINED_SUPTITLE_Y))
+                ),
+                "core_top_margin_pct": tk.DoubleVar(
+                    value=float(core_stage_profile.get("top_margin_pct", DEFAULT_COMBINED_TOP_MARGIN_PCT))
+                ),
+                "core_font_family": tk.StringVar(
+                    value=str(core_stage_profile.get("font_family", "") or "")
+                ),
+                "core_suptitle_fontsize": tk.DoubleVar(
+                    value=float(core_stage_profile.get("suptitle_fontsize", DEFAULT_COMBINED_SUPTITLE_FONTSIZE))
+                ),
+                "core_title_fontsize": tk.DoubleVar(
+                    value=float(core_stage_profile.get("title_fontsize", DEFAULT_COMBINED_TITLE_FONTSIZE))
+                ),
+                "core_label_fontsize": tk.DoubleVar(
+                    value=float(core_stage_profile.get("label_fontsize", DEFAULT_COMBINED_LABEL_FONTSIZE))
+                ),
+                "core_tick_fontsize": tk.DoubleVar(
+                    value=float(core_stage_profile.get("tick_fontsize", DEFAULT_COMBINED_TICK_FONTSIZE))
+                ),
                 "core_legend_fontsize": tk.DoubleVar(
-                    value=self.core_legend_fontsize.get()
+                    value=float(core_stage_profile.get("legend_fontsize", self.core_legend_fontsize.get()))
                 ),
                 "core_cycle_legend_fontsize": tk.DoubleVar(
-                    value=self.core_cycle_legend_fontsize.get()
+                    value=float(
+                        core_stage_profile.get(
+                            "cycle_legend_fontsize", self.core_cycle_legend_fontsize.get()
+                        )
+                    )
+                ),
+                "core_legend_wrap": tk.BooleanVar(
+                    value=bool(core_stage_profile.get("legend_wrap", False))
+                ),
+                "core_legend_rows": tk.IntVar(
+                    value=int(core_stage_profile.get("legend_rows", 2))
+                ),
+                "core_legend_label_gap": tk.DoubleVar(
+                    value=float(core_stage_profile.get("legend_label_gap_pts", DEFAULT_COMBINED_LEGEND_GAP_PTS))
+                ),
+                "core_xlabel_tick_gap": tk.DoubleVar(
+                    value=float(core_stage_profile.get("xlabel_tick_gap_pts", DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS))
+                ),
+                "core_legend_bottom_margin": tk.DoubleVar(
+                    value=float(
+                        core_stage_profile.get(
+                            "legend_bottom_margin_pts", DEFAULT_COMBINED_LEGEND_MARGIN_PTS
+                        )
+                    )
+                ),
+                "core_legend_alignment": tk.StringVar(
+                    value=str(core_stage_profile.get("legend_alignment", "center") or "center")
+                ),
+                "core_cycle_legend_loc_choice": tk.StringVar(
+                    value=str(core_stage_profile.get("cycle_legend_loc_choice", "upper right") or "upper right")
+                ),
+                "core_cycle_legend_ref_axis": tk.StringVar(
+                    value=str(core_stage_profile.get("cycle_legend_ref_axis", "main") or "main")
+                ),
+                "core_cycle_legend_ref_corner": tk.StringVar(
+                    value=str(core_stage_profile.get("cycle_legend_ref_corner", "upper right") or "upper right")
                 ),
             }
+        stage_vars["combined_legend_shadowbox_fill_color"] = tk.StringVar(
+            value=_normalize_color(
+                self.combined_legend_shadowbox_fill_color.get(),
+                DEFAULT_LEGEND_SHADOWBOX_FILL_COLOR,
+            )
+        )
 
         stage_layout_display_left = tk.DoubleVar(
             value=display_margins.get("left", 0.125)
@@ -42283,25 +43766,58 @@ class UnifiedApp(tk.Tk):
         stage_mirror_detached_labelpad = tk.BooleanVar(
             value=bool(layout_profile.get("mirror_detached_labelpad", False))
         ) if is_combined else tk.BooleanVar(value=False)
+        is_core_pressure_temp = plot_id == "fig_pressure_temp"
+        is_core_pressure_derivative = plot_id == "fig_pressure_derivative"
 
         row_idx = 0
-        if is_combined:
+        if is_combined or is_core:
+            key_prefix = "combined" if is_combined else "core"
+            x_axis_key = f"{key_prefix}_x_axis_label"
+            primary_axis_key = f"{key_prefix}_primary_axis_label"
+            derivative_axis_key = f"{key_prefix}_deriv_axis_label"
+            temperature_axis_key = f"{key_prefix}_temp_axis_label"
+            deriv_axis_offset_key = f"{key_prefix}_deriv_axis_offset"
+            primary_labelpad_key = f"{key_prefix}_primary_labelpad"
+            deriv_labelpad_key = f"{key_prefix}_deriv_labelpad"
+            temp_labelpad_key = f"{key_prefix}_temp_labelpad"
+            left_padding_key = f"{key_prefix}_left_padding_pct"
+            right_padding_key = f"{key_prefix}_right_padding_pct"
+            export_pad_key = f"{key_prefix}_export_pad_pts"
+            title_pad_key = f"{key_prefix}_title_pad_pts"
+            suptitle_pad_key = f"{key_prefix}_suptitle_pad_pts"
+            suptitle_y_key = f"{key_prefix}_suptitle_y"
+            top_margin_key = f"{key_prefix}_top_margin_pct"
+            derivative_axis_label_state = (
+                "disabled" if (is_core and is_core_pressure_temp) else "normal"
+            )
+            temperature_axis_label_state = (
+                "disabled" if (is_core and is_core_pressure_derivative) else "normal"
+            )
+            derivative_axis_offset_state = "normal" if is_combined else "disabled"
+
             label_frame = ttk.Labelframe(container, text="Axis labels")
             label_frame.grid(row=row_idx, column=0, sticky="ew", pady=(0, 8))
             label_frame.grid_columnconfigure(1, weight=1)
-
             label_entries = [
-                ("X-axis label", stage_vars["combined_x_axis_label"]),
-                ("Primary Y-axis label", stage_vars["combined_primary_axis_label"]),
-                ("Derivative Y-axis label", stage_vars["combined_deriv_axis_label"]),
-                ("Temperature axis label", stage_vars["combined_temp_axis_label"]),
+                ("X-axis label", stage_vars[x_axis_key], "normal"),
+                ("Primary Y-axis label", stage_vars[primary_axis_key], "normal"),
+                (
+                    "Derivative Y-axis label",
+                    stage_vars[derivative_axis_key],
+                    derivative_axis_label_state,
+                ),
+                (
+                    "Temperature axis label",
+                    stage_vars[temperature_axis_key],
+                    temperature_axis_label_state,
+                ),
             ]
             # Iterate over indexed elements from label_entries to apply the per-item logic.
-            for row_index, (label_text, var) in enumerate(label_entries):
+            for row_index, (label_text, var, entry_state) in enumerate(label_entries):
                 ttk.Label(label_frame, text=label_text).grid(
                     row=row_index, column=0, sticky="w", padx=(0, 6), pady=2
                 )
-                entry = ttk.Entry(label_frame, textvariable=var)
+                entry = ttk.Entry(label_frame, textvariable=var, state=entry_state)
                 entry.grid(row=row_index, column=1, sticky="ew", pady=2)
 
             row_idx += 1
@@ -42314,8 +43830,9 @@ class UnifiedApp(tk.Tk):
             )
             ttk.Entry(
                 spacing_frame,
-                textvariable=stage_vars["combined_deriv_axis_offset"],
+                textvariable=stage_vars[deriv_axis_offset_key],
                 width=8,
+                state=derivative_axis_offset_state,
             ).grid(row=0, column=1, sticky="w", pady=2)
 
             ttk.Label(spacing_frame, text="Primary Y label padding").grid(
@@ -42323,7 +43840,7 @@ class UnifiedApp(tk.Tk):
             )
             ttk.Entry(
                 spacing_frame,
-                textvariable=stage_vars["combined_primary_labelpad"],
+                textvariable=stage_vars[primary_labelpad_key],
                 width=8,
             ).grid(row=1, column=1, sticky="w", pady=2)
 
@@ -42332,30 +43849,34 @@ class UnifiedApp(tk.Tk):
             )
             deriv_label_entry = ttk.Entry(
                 spacing_frame,
-                textvariable=stage_vars["combined_deriv_labelpad"],
+                textvariable=stage_vars[deriv_labelpad_key],
                 width=8,
+                state=derivative_axis_label_state,
             )
             deriv_label_entry.grid(row=2, column=1, sticky="w", pady=2)
 
             ttk.Label(spacing_frame, text="Temperature label padding").grid(
                 row=3, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ttk.Entry(
+            temp_label_entry = ttk.Entry(
                 spacing_frame,
-                textvariable=stage_vars["combined_temp_labelpad"],
+                textvariable=stage_vars[temp_labelpad_key],
                 width=8,
-            ).grid(row=3, column=1, sticky="w", pady=2)
+                state=temperature_axis_label_state,
+            )
+            temp_label_entry.grid(row=3, column=1, sticky="w", pady=2)
             ttk.Checkbutton(
                 spacing_frame,
                 text="Mirror attached right Y-axis label spacing to detached axis",
                 variable=stage_mirror_detached_labelpad,
+                state="normal" if is_combined else "disabled",
             ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 2))
             ttk.Label(spacing_frame, text="Left padding (%)").grid(
                 row=5, column=0, sticky="w", padx=(0, 6), pady=2
             )
             ttk.Entry(
                 spacing_frame,
-                textvariable=stage_vars["combined_left_padding_pct"],
+                textvariable=stage_vars[left_padding_key],
                 width=8,
             ).grid(row=5, column=1, sticky="w", pady=2)
             ttk.Label(spacing_frame, text="Right padding (%)").grid(
@@ -42363,7 +43884,7 @@ class UnifiedApp(tk.Tk):
             )
             ttk.Entry(
                 spacing_frame,
-                textvariable=stage_vars["combined_right_padding_pct"],
+                textvariable=stage_vars[right_padding_key],
                 width=8,
             ).grid(row=6, column=1, sticky="w", pady=2)
             ttk.Label(spacing_frame, text="Export padding (pt)").grid(
@@ -42371,7 +43892,7 @@ class UnifiedApp(tk.Tk):
             )
             ttk.Entry(
                 spacing_frame,
-                textvariable=stage_vars["combined_export_pad_pts"],
+                textvariable=stage_vars[export_pad_key],
                 width=8,
             ).grid(row=7, column=1, sticky="w", pady=2)
             ttk.Label(
@@ -42388,7 +43909,7 @@ class UnifiedApp(tk.Tk):
             )
             ttk.Entry(
                 spacing_frame,
-                textvariable=stage_vars["combined_title_pad_pts"],
+                textvariable=stage_vars[title_pad_key],
                 width=8,
             ).grid(row=9, column=1, sticky="w", pady=2)
             ttk.Label(
@@ -42399,7 +43920,7 @@ class UnifiedApp(tk.Tk):
             )
             ttk.Entry(
                 spacing_frame,
-                textvariable=stage_vars["combined_suptitle_pad_pts"],
+                textvariable=stage_vars[suptitle_pad_key],
                 width=8,
             ).grid(row=10, column=1, sticky="w", pady=2)
             ttk.Label(spacing_frame, text="Suptitle (Job Information) Y (0-1)").grid(
@@ -42407,7 +43928,7 @@ class UnifiedApp(tk.Tk):
             )
             ttk.Entry(
                 spacing_frame,
-                textvariable=stage_vars["combined_suptitle_y"],
+                textvariable=stage_vars[suptitle_y_key],
                 width=8,
             ).grid(row=11, column=1, sticky="w", pady=2)
             ttk.Label(spacing_frame, text="Top margin above plot (%)").grid(
@@ -42415,7 +43936,7 @@ class UnifiedApp(tk.Tk):
             )
             ttk.Entry(
                 spacing_frame,
-                textvariable=stage_vars["combined_top_margin_pct"],
+                textvariable=stage_vars[top_margin_key],
                 width=8,
             ).grid(row=12, column=1, sticky="w", pady=2)
             ttk.Label(
@@ -42428,31 +43949,33 @@ class UnifiedApp(tk.Tk):
                 foreground="#555555",
             ).grid(row=13, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
-            # Closure captures _open_plot_settings_dialog local context to keep helper logic scoped and invoked directly within _open_plot_settings_dialog.
-            def _sync_detached_labelpad(*_):
-                """Perform sync detached labelpad.
-                Used to keep the workflow logic localized and testable."""
-                if stage_mirror_detached_labelpad.get():
-                    stage_vars["combined_deriv_labelpad"].set(
-                        stage_vars["combined_temp_labelpad"].get()
-                    )
-                    try:
-                        deriv_label_entry.configure(state="disabled")
-                    except Exception:
-                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                        pass
-                else:
-                    try:
-                        deriv_label_entry.configure(state="normal")
-                    except Exception:
-                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                        pass
+            if is_combined:
 
-            stage_mirror_detached_labelpad.trace_add("write", _sync_detached_labelpad)
-            stage_vars["combined_temp_labelpad"].trace_add(
-                "write", _sync_detached_labelpad
-            )
-            _sync_detached_labelpad()
+                # Closure captures _open_plot_settings_dialog local context to keep helper logic scoped and invoked directly within _open_plot_settings_dialog.
+                def _sync_detached_labelpad(*_):
+                    """Perform sync detached labelpad.
+                    Used to keep the workflow logic localized and testable."""
+                    if stage_mirror_detached_labelpad.get():
+                        stage_vars["combined_deriv_labelpad"].set(
+                            stage_vars["combined_temp_labelpad"].get()
+                        )
+                        try:
+                            deriv_label_entry.configure(state="disabled")
+                        except Exception:
+                            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                            pass
+                    else:
+                        try:
+                            deriv_label_entry.configure(state="normal")
+                        except Exception:
+                            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                            pass
+
+                stage_mirror_detached_labelpad.trace_add("write", _sync_detached_labelpad)
+                stage_vars["combined_temp_labelpad"].trace_add(
+                    "write", _sync_detached_labelpad
+                )
+                _sync_detached_labelpad()
 
             row_idx += 1
 
@@ -42509,7 +44032,8 @@ class UnifiedApp(tk.Tk):
 
         row_idx += 1
 
-        if is_combined:
+        if is_combined or is_core:
+            key_prefix = "combined" if is_combined else "core"
             font_frame = ttk.Labelframe(container, text="Fonts")
             font_frame.grid(row=row_idx, column=0, sticky="ew", pady=(8, 0))
             font_frame.grid_columnconfigure(1, weight=1)
@@ -42518,14 +44042,14 @@ class UnifiedApp(tk.Tk):
                 row=0, column=0, sticky="w", padx=(0, 6), pady=2
             )
             ttk.Entry(
-                font_frame, textvariable=stage_vars["combined_font_family"], width=18
+                font_frame, textvariable=stage_vars[f"{key_prefix}_font_family"], width=18
             ).grid(row=0, column=1, sticky="w", pady=2)
             ttk.Label(font_frame, text="Suptitle (Job Information) size").grid(
                 row=1, column=0, sticky="w", padx=(0, 6), pady=2
             )
             ttk.Entry(
                 font_frame,
-                textvariable=stage_vars["combined_suptitle_fontsize"],
+                textvariable=stage_vars[f"{key_prefix}_suptitle_fontsize"],
                 width=8,
             ).grid(row=1, column=1, sticky="w", pady=2)
             ttk.Label(font_frame, text="Title size").grid(
@@ -42533,7 +44057,7 @@ class UnifiedApp(tk.Tk):
             )
             ttk.Entry(
                 font_frame,
-                textvariable=stage_vars["combined_title_fontsize"],
+                textvariable=stage_vars[f"{key_prefix}_title_fontsize"],
                 width=8,
             ).grid(row=2, column=1, sticky="w", pady=2)
             ttk.Label(font_frame, text="Axis label size").grid(
@@ -42541,7 +44065,7 @@ class UnifiedApp(tk.Tk):
             )
             ttk.Entry(
                 font_frame,
-                textvariable=stage_vars["combined_label_fontsize"],
+                textvariable=stage_vars[f"{key_prefix}_label_fontsize"],
                 width=8,
             ).grid(row=3, column=1, sticky="w", pady=2)
             ttk.Label(font_frame, text="Tick label size").grid(
@@ -42549,7 +44073,7 @@ class UnifiedApp(tk.Tk):
             )
             ttk.Entry(
                 font_frame,
-                textvariable=stage_vars["combined_tick_fontsize"],
+                textvariable=stage_vars[f"{key_prefix}_tick_fontsize"],
                 width=8,
             ).grid(row=4, column=1, sticky="w", pady=2)
             ttk.Label(font_frame, text="Main legend size").grid(
@@ -42557,7 +44081,7 @@ class UnifiedApp(tk.Tk):
             )
             ttk.Entry(
                 font_frame,
-                textvariable=stage_vars["combined_legend_fontsize"],
+                textvariable=stage_vars[f"{key_prefix}_legend_fontsize"],
                 width=8,
             ).grid(row=5, column=1, sticky="w", pady=2)
             ttk.Label(font_frame, text="Cycle legend size").grid(
@@ -42568,7 +44092,7 @@ class UnifiedApp(tk.Tk):
             )
             ttk.Entry(
                 font_frame,
-                textvariable=stage_vars["combined_cycle_legend_fontsize"],
+                textvariable=stage_vars[f"{key_prefix}_cycle_legend_fontsize"],
                 width=8,
                 state=cycle_legend_entry_state,
             ).grid(row=6, column=1, sticky="w", pady=2)
@@ -42581,43 +44105,16 @@ class UnifiedApp(tk.Tk):
 
             row_idx += 1
 
-        if is_core:
-            legend_size_frame = ttk.Labelframe(container, text="Legend sizes")
-            legend_size_frame.grid(row=row_idx, column=0, sticky="ew", pady=(8, 0))
-            legend_size_frame.grid_columnconfigure(1, weight=1)
-
-            ttk.Label(legend_size_frame, text="Main legend size").grid(
-                row=0, column=0, sticky="w", padx=(0, 6), pady=2
-            )
-            ttk.Entry(
-                legend_size_frame,
-                textvariable=stage_vars["core_legend_fontsize"],
-                width=8,
-            ).grid(row=0, column=1, sticky="w", pady=2)
-            ttk.Label(legend_size_frame, text="Cycle legend size").grid(
-                row=1, column=0, sticky="w", padx=(0, 6), pady=2
-            )
-            cycle_legend_entry_state = (
-                "normal" if cycle_legend_available else "disabled"
-            )
-            ttk.Entry(
-                legend_size_frame,
-                textvariable=stage_vars["core_cycle_legend_fontsize"],
-                width=8,
-                state=cycle_legend_entry_state,
-            ).grid(row=1, column=1, sticky="w", pady=2)
-
-            row_idx += 1
-
         legend_frame = ttk.Labelframe(container, text="Legend layout")
         legend_frame.grid(row=row_idx, column=0, sticky="ew", pady=(8, 0))
         legend_frame.grid_columnconfigure(1, weight=0)
 
-        if is_combined:
+        if is_combined or is_core:
+            key_prefix = "combined" if is_combined else "core"
             ttk.Checkbutton(
                 legend_frame,
                 text="Wrap legend into rows",
-                variable=stage_vars["combined_legend_wrap"],
+                variable=stage_vars[f"{key_prefix}_legend_wrap"],
             ).grid(row=0, column=0, columnspan=2, sticky="w", pady=2)
 
             ttk.Label(legend_frame, text="Legend rows").grid(
@@ -42626,7 +44123,7 @@ class UnifiedApp(tk.Tk):
             ttk.Entry(
                 legend_frame,
                 width=8,
-                textvariable=stage_vars["combined_legend_rows"],
+                textvariable=stage_vars[f"{key_prefix}_legend_rows"],
             ).grid(row=1, column=1, sticky="w", pady=2)
             ttk.Label(
                 legend_frame,
@@ -42641,7 +44138,7 @@ class UnifiedApp(tk.Tk):
             ttk.Entry(
                 legend_frame,
                 width=8,
-                textvariable=stage_vars["combined_legend_label_gap"],
+                textvariable=stage_vars[f"{key_prefix}_legend_label_gap"],
             ).grid(row=3, column=1, sticky="w", pady=2)
             ttk.Label(
                 legend_frame,
@@ -42656,7 +44153,7 @@ class UnifiedApp(tk.Tk):
             ttk.Entry(
                 legend_frame,
                 width=8,
-                textvariable=stage_vars["combined_xlabel_tick_gap"],
+                textvariable=stage_vars[f"{key_prefix}_xlabel_tick_gap"],
             ).grid(row=5, column=1, sticky="w", pady=2)
             ttk.Label(
                 legend_frame,
@@ -42671,7 +44168,7 @@ class UnifiedApp(tk.Tk):
             ttk.Entry(
                 legend_frame,
                 width=8,
-                textvariable=stage_vars["combined_legend_bottom_margin"],
+                textvariable=stage_vars[f"{key_prefix}_legend_bottom_margin"],
             ).grid(row=7, column=1, sticky="w", pady=2)
             ttk.Label(
                 legend_frame,
@@ -42680,19 +44177,20 @@ class UnifiedApp(tk.Tk):
                 foreground="#555555",
             ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
-            ttk.Button(
-                legend_frame,
-                text="Combined Plot Layout Tuner...",
-                command=self._open_combined_layout_tuner,
-            ).grid(row=9, column=0, columnspan=2, sticky="w", pady=(6, 2))
+            if is_combined:
+                ttk.Button(
+                    legend_frame,
+                    text="Combined Plot Layout Tuner...",
+                    command=self._open_combined_layout_tuner,
+                ).grid(row=9, column=0, columnspan=2, sticky="w", pady=(6, 2))
 
             ttk.Label(legend_frame, text="Legend alignment").grid(
                 row=10, column=0, sticky="w", padx=(0, 6), pady=2
             )
             alignment_menu = ttk.OptionMenu(
                 legend_frame,
-                stage_vars["combined_legend_alignment"],
-                stage_vars["combined_legend_alignment"].get(),
+                stage_vars[f"{key_prefix}_legend_alignment"],
+                stage_vars[f"{key_prefix}_legend_alignment"].get(),
                 "left",
                 "center",
                 "right",
@@ -42710,7 +44208,7 @@ class UnifiedApp(tk.Tk):
                 "lower center",
                 "center",
             ]
-            cycle_loc_var = stage_vars["combined_cycle_legend_loc_choice"]
+            cycle_loc_var = stage_vars[f"{key_prefix}_cycle_legend_loc_choice"]
             if (cycle_loc_var.get() or "").strip().lower() not in cycle_loc_choices:
                 cycle_loc_var.set("upper right")
 
@@ -42727,7 +44225,7 @@ class UnifiedApp(tk.Tk):
                 cycle_loc_menu.configure(state="disabled")
             cycle_loc_menu.grid(row=11, column=1, sticky="w", pady=2)
 
-            ref_axis_var = stage_vars["combined_cycle_legend_ref_axis"]
+            ref_axis_var = stage_vars[f"{key_prefix}_cycle_legend_ref_axis"]
             if (ref_axis_var.get() or "").strip().lower() not in COMBINED_CYCLE_REF_AXIS_CHOICES:
                 ref_axis_var.set("main")
             ttk.Label(legend_frame, text="Cycle Legend Reference Axis").grid(
@@ -42739,11 +44237,11 @@ class UnifiedApp(tk.Tk):
                 ref_axis_var.get(),
                 *COMBINED_CYCLE_REF_AXIS_CHOICES,
             )
-            if not cycle_legend_available:
+            if (not cycle_legend_available) or is_core:
                 ref_axis_menu.configure(state="disabled")
             ref_axis_menu.grid(row=12, column=1, sticky="w", pady=2)
 
-            ref_corner_var = stage_vars["combined_cycle_legend_ref_corner"]
+            ref_corner_var = stage_vars[f"{key_prefix}_cycle_legend_ref_corner"]
             if (
                 (ref_corner_var.get() or "").strip().lower()
                 not in COMBINED_CYCLE_REF_CORNER_CHOICES
@@ -42758,9 +44256,82 @@ class UnifiedApp(tk.Tk):
                 ref_corner_var.get(),
                 *COMBINED_CYCLE_REF_CORNER_CHOICES,
             )
-            if not cycle_legend_available:
+            if (not cycle_legend_available) or is_core:
                 ref_corner_menu.configure(state="disabled")
             ref_corner_menu.grid(row=13, column=1, sticky="w", pady=2)
+
+            # Keep legend shadowbox controls in Plot Settings so core and combined
+            # rendering share one visual source of truth for frame fill color.
+            legend_fill_row = 14
+            ttk.Label(legend_frame, text="Legend shadowbox fill").grid(
+                row=legend_fill_row, column=0, sticky="w", padx=(0, 6), pady=2
+            )
+            legend_fill_frame = ttk.Frame(legend_frame)
+            legend_fill_frame.grid(
+                row=legend_fill_row, column=1, sticky="w", pady=2
+            )
+            legend_fill_preview = tk.Label(
+                legend_fill_frame,
+                width=6,
+                relief="groove",
+                borderwidth=1,
+                text="Default",
+            )
+            legend_fill_preview.pack(side="left")
+            self._bind_color_preview(
+                stage_vars["combined_legend_shadowbox_fill_color"],
+                legend_fill_preview,
+                default_text="Default",
+            )
+            ttk.Entry(
+                legend_fill_frame,
+                textvariable=stage_vars["combined_legend_shadowbox_fill_color"],
+                width=12,
+                state="readonly",
+            ).pack(side="left", padx=(6, 4))
+
+            def _choose_legend_fill_color() -> None:
+                """Pick legend shadowbox fill color from the platform color chooser."""
+                initial = (
+                    stage_vars["combined_legend_shadowbox_fill_color"].get() or ""
+                ).strip() or None
+                try:
+                    _, hex_value = colorchooser.askcolor(
+                        color=initial,
+                        parent=window,
+                        title="Legend Shadowbox Fill Color",
+                    )
+                except Exception:
+                    hex_value = None
+                if hex_value:
+                    stage_vars["combined_legend_shadowbox_fill_color"].set(
+                        str(hex_value).upper()
+                    )
+
+            ttk.Button(
+                legend_fill_frame,
+                text="Choose...",
+                command=_choose_legend_fill_color,
+            ).pack(side="left", padx=(0, 4))
+            ttk.Button(
+                legend_fill_frame,
+                text="Reset",
+                command=lambda: stage_vars[
+                    "combined_legend_shadowbox_fill_color"
+                ].set(DEFAULT_LEGEND_SHADOWBOX_FILL_COLOR),
+            ).pack(side="left")
+            ttk.Label(
+                legend_frame,
+                text="Applies to combined and non-combined legend shadowbox backgrounds.",
+                wraplength=420,
+                foreground="#555555",
+            ).grid(
+                row=legend_fill_row + 1,
+                column=0,
+                columnspan=2,
+                sticky="w",
+                pady=(2, 0),
+            )
 
         # Closure captures _open_plot_settings_dialog local context to keep helper logic scoped and invoked directly within _open_plot_settings_dialog.
         def _parse_anchor_value(var: tk.StringVar) -> Optional[float]:
@@ -42785,7 +44356,7 @@ class UnifiedApp(tk.Tk):
             value = max(-0.1, min(1.1, value + (0.01 * direction)))
             var.set(f"{value:.4f}")
 
-        anchor_row = 14 if is_combined else 0
+        anchor_row = 16 if (is_combined or is_core) else 0
         ttk.Label(legend_frame, text="Legend anchor Y (display)").grid(
             row=anchor_row, column=0, sticky="w", padx=(0, 6), pady=2
         )
@@ -42863,6 +44434,45 @@ class UnifiedApp(tk.Tk):
             return value
 
         # Closure captures _open_plot_settings_dialog local context to keep helper logic scoped and invoked directly within _open_plot_settings_dialog.
+        def _normalized_core_stage_profile() -> Dict[str, Any]:
+            """Return a normalized core render profile from staged dialog values."""
+            defaults = _default_core_plot_render_profile(seed_source=settings)
+            raw_profile = {
+                "x_axis_label": str(stage_vars.get("core_x_axis_label").get() if stage_vars.get("core_x_axis_label") is not None else ""),
+                "primary_axis_label": str(stage_vars.get("core_primary_axis_label").get() if stage_vars.get("core_primary_axis_label") is not None else ""),
+                "right_axis_label": str(stage_vars.get("core_temp_axis_label").get() if stage_vars.get("core_temp_axis_label") is not None else ""),
+                "third_axis_label": str(stage_vars.get("core_deriv_axis_label").get() if stage_vars.get("core_deriv_axis_label") is not None else ""),
+                "primary_labelpad": _safe_stage_float(stage_vars.get("core_primary_labelpad"), yaxis_labelpad_amount),
+                "right_labelpad": _safe_stage_float(stage_vars.get("core_temp_labelpad"), twinyaxis_labelpad_amount),
+                "third_labelpad": _safe_stage_float(stage_vars.get("core_deriv_labelpad"), twinyaxis_labelpad_amount),
+                "third_axis_offset": _safe_stage_float(stage_vars.get("core_deriv_axis_offset"), 1.12),
+                "left_padding_pct": _safe_stage_float(stage_vars.get("core_left_padding_pct"), DEFAULT_COMBINED_LEFT_PAD_PCT),
+                "right_padding_pct": _safe_stage_float(stage_vars.get("core_right_padding_pct"), DEFAULT_COMBINED_RIGHT_PAD_PCT),
+                "export_pad_pts": _safe_stage_float(stage_vars.get("core_export_pad_pts"), DEFAULT_COMBINED_EXPORT_PAD_PTS),
+                "title_pad_pts": _safe_stage_float(stage_vars.get("core_title_pad_pts"), DEFAULT_COMBINED_TITLE_PAD_PTS),
+                "suptitle_pad_pts": _safe_stage_float(stage_vars.get("core_suptitle_pad_pts"), DEFAULT_COMBINED_SUPTITLE_PAD_PTS),
+                "suptitle_y": _safe_stage_float(stage_vars.get("core_suptitle_y"), DEFAULT_COMBINED_SUPTITLE_Y),
+                "top_margin_pct": _safe_stage_float(stage_vars.get("core_top_margin_pct"), DEFAULT_COMBINED_TOP_MARGIN_PCT),
+                "font_family": str(stage_vars.get("core_font_family").get() if stage_vars.get("core_font_family") is not None else ""),
+                "suptitle_fontsize": _safe_stage_float(stage_vars.get("core_suptitle_fontsize"), DEFAULT_COMBINED_SUPTITLE_FONTSIZE),
+                "title_fontsize": _safe_stage_float(stage_vars.get("core_title_fontsize"), DEFAULT_COMBINED_TITLE_FONTSIZE),
+                "label_fontsize": _safe_stage_float(stage_vars.get("core_label_fontsize"), DEFAULT_COMBINED_LABEL_FONTSIZE),
+                "tick_fontsize": _safe_stage_float(stage_vars.get("core_tick_fontsize"), DEFAULT_COMBINED_TICK_FONTSIZE),
+                "legend_fontsize": _safe_stage_float(stage_vars.get("core_legend_fontsize"), settings.get("core_legend_fontsize", label_fontsize)),
+                "cycle_legend_fontsize": _safe_stage_float(stage_vars.get("core_cycle_legend_fontsize"), settings.get("core_cycle_legend_fontsize", settings.get("core_legend_fontsize", label_fontsize))),
+                "legend_wrap": bool(stage_vars.get("core_legend_wrap").get()) if stage_vars.get("core_legend_wrap") is not None else False,
+                "legend_rows": int(_safe_stage_float(stage_vars.get("core_legend_rows"), 2)),
+                "legend_label_gap_pts": _safe_stage_float(stage_vars.get("core_legend_label_gap"), DEFAULT_COMBINED_LEGEND_GAP_PTS),
+                "xlabel_tick_gap_pts": _safe_stage_float(stage_vars.get("core_xlabel_tick_gap"), DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS),
+                "legend_bottom_margin_pts": _safe_stage_float(stage_vars.get("core_legend_bottom_margin"), DEFAULT_COMBINED_LEGEND_MARGIN_PTS),
+                "legend_alignment": str(stage_vars.get("core_legend_alignment").get() if stage_vars.get("core_legend_alignment") is not None else "center"),
+                "cycle_legend_loc_choice": str(stage_vars.get("core_cycle_legend_loc_choice").get() if stage_vars.get("core_cycle_legend_loc_choice") is not None else "upper right"),
+                "cycle_legend_ref_axis": str(stage_vars.get("core_cycle_legend_ref_axis").get() if stage_vars.get("core_cycle_legend_ref_axis") is not None else "main"),
+                "cycle_legend_ref_corner": str(stage_vars.get("core_cycle_legend_ref_corner").get() if stage_vars.get("core_cycle_legend_ref_corner") is not None else "upper right"),
+            }
+            return _normalize_core_plot_render_profile(raw_profile, defaults=defaults)
+
+        # Closure captures _open_plot_settings_dialog local context to keep helper logic scoped and invoked directly within _open_plot_settings_dialog.
         def _normalized_plot_settings_snapshot() -> Dict[str, Any]:
             """Perform normalized plot settings snapshot.
             Used to keep the workflow logic localized and testable."""
@@ -42925,24 +44535,11 @@ class UnifiedApp(tk.Tk):
                     stage_mirror_detached_labelpad.get()
                 )
             if is_core:
-                core_legend_value = _sanitize_spacing_value(
-                    _safe_stage_float(
-                        stage_vars.get("core_legend_fontsize"), label_fontsize
-                    ),
-                    label_fontsize,
-                    MIN_COMBINED_FONT_SIZE,
-                    MAX_COMBINED_FONT_SIZE,
-                )
-                core_cycle_legend_value = _sanitize_spacing_value(
-                    _safe_stage_float(
-                        stage_vars.get("core_cycle_legend_fontsize"), core_legend_value
-                    ),
-                    core_legend_value,
-                    MIN_COMBINED_FONT_SIZE,
-                    MAX_COMBINED_FONT_SIZE,
-                )
-                snapshot["core_legend_fontsize"] = core_legend_value
-                snapshot["core_cycle_legend_fontsize"] = core_cycle_legend_value
+                snapshot["core_render_profile"] = _normalized_core_stage_profile()
+            snapshot["combined_legend_shadowbox_fill_color"] = _normalize_color(
+                stage_vars["combined_legend_shadowbox_fill_color"].get(),
+                DEFAULT_LEGEND_SHADOWBOX_FILL_COLOR,
+            )
             return snapshot
 
         baseline_snapshot = _normalized_plot_settings_snapshot()
@@ -42970,26 +44567,31 @@ class UnifiedApp(tk.Tk):
                             target_var.set(var.get())
                         except Exception:
                             pass
+            legend_fill_color_value = _normalize_color(
+                self.combined_legend_shadowbox_fill_color.get(),
+                DEFAULT_LEGEND_SHADOWBOX_FILL_COLOR,
+            )
+            self.combined_legend_shadowbox_fill_color.set(legend_fill_color_value)
+            settings["combined_legend_shadowbox_fill_color"] = legend_fill_color_value
             if is_combined:
                 self._apply_combined_axis_preferences(skip_save=True)
             if is_core:
-                core_legend_value = _sanitize_spacing_value(
-                    self._safe_get_var(self.core_legend_fontsize, float),
-                    label_fontsize,
-                    MIN_COMBINED_FONT_SIZE,
-                    MAX_COMBINED_FONT_SIZE,
+                staged_core_profile = staged_snapshot.get("core_render_profile")
+                applied_core_profile = _set_core_plot_render_profile(
+                    plot_id,
+                    staged_core_profile if isinstance(staged_core_profile, Mapping) else {},
                 )
-                core_cycle_legend_value = _sanitize_spacing_value(
-                    self._safe_get_var(self.core_cycle_legend_fontsize, float),
-                    core_legend_value,
-                    MIN_COMBINED_FONT_SIZE,
-                    MAX_COMBINED_FONT_SIZE,
+                self.core_legend_fontsize.set(
+                    float(applied_core_profile.get("legend_fontsize", self.core_legend_fontsize.get()))
                 )
-                self.core_legend_fontsize.set(core_legend_value)
-                self.core_cycle_legend_fontsize.set(core_cycle_legend_value)
-                settings["core_legend_fontsize"] = core_legend_value
-                settings["core_cycle_legend_fontsize"] = core_cycle_legend_value
-                self._apply_combined_axis_preferences(skip_save=True)
+                self.core_cycle_legend_fontsize.set(
+                    float(
+                        applied_core_profile.get(
+                            "cycle_legend_fontsize",
+                            self.core_cycle_legend_fontsize.get(),
+                        )
+                    )
+                )
             display_margins = {
                 "left": stage_layout_display_left.get(),
                 "right": stage_layout_display_right.get(),
@@ -43021,17 +44623,17 @@ class UnifiedApp(tk.Tk):
                     legend_anchor_y_export=legend_anchor_export,
                 )
             try:
-                fig = None
-                # Iterate over indexed elements from getattr(self, "_plot_tabs", []) or [] to apply the per-item logic.
-                for idx, tab in enumerate(getattr(self, "_plot_tabs", []) or []):
-                    if getattr(tab, "_plot_id", None) != plot_id:
+                plot_tabs = list(getattr(self, "_plot_tabs", []) or [])
+                canvases = list(getattr(self, "_canvases", []) or [])
+                # Legend fill color is shared globally, so refresh every open plot.
+                for idx, canvas in enumerate(canvases):
+                    fig = getattr(canvas, "figure", None)
+                    if fig is None:
                         continue
-                    if idx < len(getattr(self, "_canvases", []) or []):
-                        canvas = self._canvases[idx]
-                        fig = getattr(canvas, "figure", None)
-                    break
-                if fig is not None:
-                    self._apply_gl260_legend_sizing(fig, plot_id=plot_id)
+                    canvas_plot_id = None
+                    if idx < len(plot_tabs):
+                        canvas_plot_id = getattr(plot_tabs[idx], "_plot_id", None)
+                    self._apply_gl260_legend_sizing(fig, plot_id=canvas_plot_id)
                     if fig.canvas is not None:
                         fig.canvas.draw_idle()
             except Exception:
@@ -43322,6 +44924,12 @@ class UnifiedApp(tk.Tk):
             legend_alignment_value = "center"
         self.combined_legend_alignment.set(legend_alignment_value)
         settings["combined_legend_alignment"] = legend_alignment_value
+        legend_fill_color_value = _normalize_color(
+            self.combined_legend_shadowbox_fill_color.get(),
+            DEFAULT_LEGEND_SHADOWBOX_FILL_COLOR,
+        )
+        self.combined_legend_shadowbox_fill_color.set(legend_fill_color_value)
+        settings["combined_legend_shadowbox_fill_color"] = legend_fill_color_value
         cycle_loc_choices = {
             "upper right",
             "upper left",
@@ -46362,12 +47970,27 @@ class UnifiedApp(tk.Tk):
         )
         ctx["paned"] = pw
 
-        left = ttk.Frame(pw)
+        left_outer = ttk.Frame(pw)
+        left_outer.grid_rowconfigure(0, weight=1)
+        left_outer.grid_columnconfigure(0, weight=1)
+        # Tkinter has no native scrollable frame; wrap Cycle controls in a canvas
+        # so enlarged UI text does not clip buttons/outputs in the left panel.
+        left_canvas = tk.Canvas(left_outer, borderwidth=0, highlightthickness=0)
+        left_scrollbar = ttk.Scrollbar(
+            left_outer, orient="vertical", command=left_canvas.yview
+        )
+        left_canvas.configure(yscrollcommand=left_scrollbar.set)
+        left_canvas.grid(row=0, column=0, sticky="nsew")
+        left_scrollbar.grid(row=0, column=1, sticky="ns")
+        left = ttk.Frame(left_canvas)
+        left_window_id = left_canvas.create_window((0, 0), window=left, anchor="nw")
         right = ttk.Frame(pw)
         ctx["left_frame"] = left
+        ctx["left_outer_frame"] = left_outer
+        ctx["left_canvas"] = left_canvas
         ctx["right_frame"] = right
 
-        pw.add(left, weight=1)
+        pw.add(left_outer, weight=1)
         pw.add(right, weight=2)
 
         split_frac = float(settings.get("cycle_split_frac", 0.35))
@@ -46409,6 +48032,61 @@ class UnifiedApp(tk.Tk):
         left.grid_columnconfigure(0, weight=1)
         right.grid_rowconfigure(1, weight=1)
         right.grid_columnconfigure(0, weight=1)
+
+        def _refresh_left_scroll_region(_event=None) -> None:
+            """Refresh left-panel canvas scrollregion after child layout changes."""
+            try:
+                left_canvas.configure(scrollregion=left_canvas.bbox("all"))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        def _sync_left_inner_width(event) -> None:
+            """Keep inner left-panel content width in sync with canvas width."""
+            try:
+                left_canvas.itemconfigure(left_window_id, width=event.width)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        def _bind_left_mousewheel(widget) -> None:
+            """Bind wheel scrolling across left-panel controls except text widgets."""
+
+            def _is_native_scroll_target(target) -> bool:
+                return isinstance(target, (tk.Text, tk.Listbox, ttk.Treeview))
+
+            def _scroll_units(step: int, event=None):
+                target = getattr(event, "widget", None)
+                if _is_native_scroll_target(target):
+                    return None
+                left_canvas.yview_scroll(step, "units")
+                return "break"
+
+            def _on_mousewheel(event):
+                if _is_native_scroll_target(getattr(event, "widget", None)):
+                    return None
+                delta = getattr(event, "delta", 0)
+                if delta == 0:
+                    return "break"
+                step = -1 if delta > 0 else 1
+                if abs(delta) >= 120:
+                    step = int(-delta / 120)
+                return _scroll_units(step, event)
+
+            widget.bind("<MouseWheel>", _on_mousewheel, add="+")
+            widget.bind(
+                "<Button-4>", lambda event: _scroll_units(-1, event), add="+"
+            )
+            widget.bind(
+                "<Button-5>", lambda event: _scroll_units(1, event), add="+"
+            )
+            # Iterate over widget.winfo_children() to apply the per-item logic.
+            for child in widget.winfo_children():
+                _bind_left_mousewheel(child)
+
+        left.bind("<Configure>", _refresh_left_scroll_region)
+        left_canvas.bind("<Configure>", _sync_left_inner_width)
+        ctx["bind_left_mousewheel"] = _bind_left_mousewheel
 
         sel_label = ttk.Label(left, text="Selection: (awaiting column apply)")
         sel_label.grid(row=0, column=0, sticky="w", pady=(0, scale_len(6)))
@@ -46875,6 +48553,9 @@ class UnifiedApp(tk.Tk):
             padx=self._scale_length(6),
             pady=self._scale_length(6),
         )
+        left_mousewheel_binder = ctx.get("bind_left_mousewheel")
+        if callable(left_mousewheel_binder):
+            self.after_idle(lambda: left_mousewheel_binder(left))
         self._set_cycle_summary(getattr(self, "_pending_cycle_summary", ""))
 
         right.grid_rowconfigure(1, weight=1)
@@ -52764,7 +54445,10 @@ class UnifiedApp(tk.Tk):
             return count
 
         def _finalize_post_first_draw_overlay(
-            target_frame: ttk.Frame, *, force_clear: bool = False
+            target_frame: ttk.Frame,
+            *,
+            force_clear: bool = False,
+            from_debounce: bool = False,
         ) -> None:
             """Finalize the combined loading overlay after a post-draw refresh.
 
@@ -52785,11 +54469,19 @@ class UnifiedApp(tk.Tk):
             """
             if target_frame is None:
                 return
+            if from_debounce:
+                try:
+                    target_frame._combined_overlay_finalize_after_id = None
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
             hold_overlay = getattr(
                 target_frame, "_post_first_draw_refresh_hold_overlay", False
             )
             if not hold_overlay:
                 return
+            settle_timeout_seconds = 2.0
+            settle_debounce_ms = 40
             completed_count = getattr(
                 target_frame, "_combined_overlay_refresh_completed_count", 0
             )
@@ -52809,12 +54501,157 @@ class UnifiedApp(tk.Tk):
             ready_seen = bool(
                 getattr(target_frame, "_combined_overlay_ready_seen", False)
             )
+            auto_refresh_after_id = getattr(target_frame, "_plot_auto_refresh_after_id", None)
+            auto_refresh_pending = auto_refresh_after_id is not None
+            combined_busy = bool(getattr(self, "_combined_render_busy", False))
+            active_fig = self._resolve_combined_overlay_figure(
+                target_frame, canvas=canvas, fig=fig
+            )
+            active_fig_id = id(active_fig) if active_fig is not None else None
+            pending_apply = bool(
+                getattr(self, "_combined_cycle_legend_pending_apply", False)
+            )
+            pending_fig_id = getattr(self, "_combined_cycle_legend_pending_fig_id", None)
+            pending_apply_for_active = pending_apply and (
+                active_fig_id is None or pending_fig_id == active_fig_id
+            )
+            redraw_queued = bool(
+                getattr(active_fig, "_cycle_legend_redraw_queued", False)
+                if active_fig is not None
+                else False
+            )
+            base_requirements_met = (
+                completed_count >= target_refreshes and ready_seen
+            )
+            settle_requirements_met = (
+                base_requirements_met
+                and not auto_refresh_pending
+                and not combined_busy
+                and not pending_apply_for_active
+                and not redraw_queued
+            )
+            current_geometry_sig = self._combined_rendered_geometry_signature(active_fig)
+            stable_count = getattr(target_frame, "_combined_overlay_stable_draw_count", 0)
+            try:
+                stable_count = int(stable_count)
+            except Exception:
+                stable_count = 0
+            if settle_requirements_met:
+                last_geometry_sig = getattr(
+                    target_frame, "_combined_overlay_last_geometry_sig", None
+                )
+                if current_geometry_sig is not None and current_geometry_sig == last_geometry_sig:
+                    stable_count += 1
+                elif current_geometry_sig is not None:
+                    stable_count = 1
+                else:
+                    stable_count = 0
+                try:
+                    target_frame._combined_overlay_last_geometry_sig = current_geometry_sig
+                    target_frame._combined_overlay_stable_draw_count = stable_count
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            else:
+                stable_count = 0
+                try:
+                    target_frame._combined_overlay_stable_draw_count = 0
+                    target_frame._combined_overlay_last_geometry_sig = current_geometry_sig
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+
+            finalize_started_at = getattr(
+                target_frame, "_combined_overlay_finalize_started_at", None
+            )
+            now_monotonic = time.monotonic()
+            if settle_requirements_met:
+                if finalize_started_at is None:
+                    finalize_started_at = now_monotonic
+                    try:
+                        target_frame._combined_overlay_finalize_started_at = (
+                            finalize_started_at
+                        )
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+            else:
+                finalize_started_at = None
+                try:
+                    target_frame._combined_overlay_finalize_started_at = None
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+
+            timed_out = False
+            if (
+                not force_clear
+                and settle_requirements_met
+                and finalize_started_at is not None
+                and (now_monotonic - float(finalize_started_at)) >= settle_timeout_seconds
+            ):
+                timed_out = True
+                force_clear = True
+                self._log_plot_tab_debug(
+                    "Combined overlay settle timeout reached (%.2fs); forcing clear."
+                    % settle_timeout_seconds
+                )
+
             if not force_clear:
-                if completed_count < target_refreshes or not ready_seen:
+                if not settle_requirements_met:
                     self._log_plot_tab_debug(
-                        "Combined overlay hold; completed=%s target=%s ready_seen=%s."
-                        % (completed_count, target_refreshes, ready_seen)
+                        "Combined overlay hold; completed=%s target=%s ready_seen=%s after_pending=%s busy=%s pending_apply=%s redraw_queued=%s."
+                        % (
+                            completed_count,
+                            target_refreshes,
+                            ready_seen,
+                            auto_refresh_pending,
+                            combined_busy,
+                            pending_apply_for_active,
+                            redraw_queued,
+                        )
                     )
+                    return
+                if stable_count < 2:
+                    self._log_plot_tab_debug(
+                        "Combined overlay hold; geometry not yet stable (stable_draws=%s)."
+                        % stable_count
+                    )
+                    return
+                if not from_debounce:
+                    scheduled_finalize_after_id = getattr(
+                        target_frame, "_combined_overlay_finalize_after_id", None
+                    )
+                    if scheduled_finalize_after_id is None:
+
+                        def _debounced_finalize() -> None:
+                            """Run one debounced combined-overlay finalize check."""
+                            _finalize_post_first_draw_overlay(
+                                target_frame,
+                                force_clear=False,
+                                from_debounce=True,
+                            )
+
+                        tk_widget = None
+                        try:
+                            tk_widget = canvas.get_tk_widget()
+                        except Exception:
+                            tk_widget = None
+                        try:
+                            if tk_widget is not None:
+                                scheduled_finalize_after_id = tk_widget.after(
+                                    settle_debounce_ms, _debounced_finalize
+                                )
+                            else:
+                                scheduled_finalize_after_id = self.after(
+                                    settle_debounce_ms, _debounced_finalize
+                                )
+                            target_frame._combined_overlay_finalize_after_id = (
+                                scheduled_finalize_after_id
+                            )
+                        except Exception:
+                            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                            _debounced_finalize()
                     return
             try:
                 target_frame._post_first_draw_refresh_hold_overlay = False
@@ -52826,12 +54663,23 @@ class UnifiedApp(tk.Tk):
                 target_frame._plot_auto_refresh_after_id = None
                 target_frame._plot_auto_refresh_in_progress = False
                 target_frame._plot_auto_refresh_phase = None
+                target_frame._combined_overlay_stable_draw_count = 0
+                target_frame._combined_overlay_last_geometry_sig = None
+                target_frame._combined_overlay_finalize_started_at = None
+                target_frame._combined_overlay_finalize_after_id = None
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
             self._log_plot_tab_debug(
-                "Combined auto-refresh overlay cleared after completed=%s target=%s ready_seen=%s force=%s."
-                % (completed_count, target_refreshes, ready_seen, force_clear)
+                "Combined auto-refresh overlay cleared after completed=%s target=%s ready_seen=%s stable_draws=%s force=%s timeout=%s."
+                % (
+                    completed_count,
+                    target_refreshes,
+                    ready_seen,
+                    stable_count,
+                    force_clear,
+                    timed_out,
+                )
             )
             self._clear_plot_loading_overlay(target_frame)
 
@@ -52952,7 +54800,9 @@ class UnifiedApp(tk.Tk):
                     target_frame, "_combined_overlay_layout_sig_baseline", None
                 )
                 if baseline_sig is None:
-                    self._capture_combined_overlay_layout_baseline(target_frame)
+                    self._capture_combined_overlay_layout_baseline(
+                        target_frame, canvas=canvas, fig=fig
+                    )
                 invoked_count = _increment_combined_overlay_refresh_invoked_count(
                     target_frame
                 )
@@ -76370,6 +78220,7 @@ class UnifiedApp(tk.Tk):
             "font_family": settings.get("font_family"),
             "core_legend_fontsize": settings.get("core_legend_fontsize"),
             "core_cycle_legend_fontsize": settings.get("core_cycle_legend_fontsize"),
+            "core_plot_render_profiles": copy.deepcopy(_get_core_plot_render_profiles()),
         }
         layout_ctx = {
             "plot_id": plot_id,
@@ -76555,6 +78406,9 @@ class UnifiedApp(tk.Tk):
                 "font_family": settings.get("font_family"),
                 "core_legend_fontsize": settings.get("core_legend_fontsize"),
                 "core_cycle_legend_fontsize": settings.get("core_cycle_legend_fontsize"),
+                "core_plot_render_profiles": copy.deepcopy(
+                    _get_core_plot_render_profiles()
+                ),
             },
             "layout_ctx": {
                 "plot_id": plot_id,
@@ -77178,7 +79032,8 @@ class UnifiedApp(tk.Tk):
                         completed_before = 0
                     if invoked_count > completed_before:
                         completed_count = self._mark_combined_overlay_refresh_completed(
-                            target_frame
+                            target_frame,
+                            fig=fig,
                         )
                         target_refreshes = getattr(
                             target_frame, "_combined_overlay_target_refreshes", 2
@@ -80254,6 +82109,14 @@ class UnifiedApp(tk.Tk):
         else:
             anchor_mode_value = "legacy_anchor"
         settings["combined_cycle_legend_anchor_mode"] = anchor_mode_value
+        settings["core_plot_render_profiles"] = _normalize_core_plot_render_profiles(
+            settings.get("core_plot_render_profiles"),
+            seed_source=settings,
+        )
+        _legacy_core_profile = settings["core_plot_render_profiles"].get(
+            CORE_RENDER_PROFILE_PLOT_IDS[0]
+        )
+        _write_legacy_core_legend_settings_from_profile(_legacy_core_profile)
 
         _save_settings_to_disk()
 
