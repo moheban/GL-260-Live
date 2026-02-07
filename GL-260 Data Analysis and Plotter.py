@@ -32014,6 +32014,10 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
         if plot_key == "fig_combined":
+            was_real_combined = bool(
+                getattr(frame, "_combined_real_figure_installed", False)
+            )
+            is_real_combined = self._is_real_combined_figure(fig)
             try:
                 fig.set_canvas(canvas)
             except Exception:
@@ -32024,6 +32028,33 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+            try:
+                frame._combined_real_figure_installed = is_real_combined
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            if is_real_combined and not was_real_combined:
+                # Reset one-shot post-first-draw refresh flags when transitioning
+                # from placeholder to the first real combined figure.
+                try:
+                    frame._post_first_draw_refresh_done = False
+                    frame._post_first_draw_refresh_invoked = False
+                    frame._post_first_draw_refresh_hold_overlay = True
+                    frame._post_first_draw_refresh_retry_count = 0
+                    frame._combined_overlay_refresh_invoked_count = 0
+                    frame._combined_overlay_refresh_completed_count = 0
+                    frame._combined_overlay_layout_sig_baseline = None
+                    frame._combined_overlay_need_second_refresh = True
+                    frame._combined_overlay_target_refreshes = 2
+                    frame._combined_overlay_ready_seen = False
+                    frame._combined_overlay_second_refresh_scheduled = False
+                    frame._combined_placeholder_draw_logged = False
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+                self._log_plot_tab_debug(
+                    "Combined real figure installed; reset post-draw refresh orchestration."
+                )
             try:
                 self._finalize_combined_plot_display(
                     frame, canvas, placement_state=placement_state
@@ -32112,6 +32143,153 @@ class UnifiedApp(tk.Tk):
         width_in = max(width_px / dpi, 4.0)
         height_in = max(height_px / dpi, 3.0)
         return (width_in, height_in)
+
+    def _is_real_combined_figure(self, fig: Optional[Figure]) -> bool:
+        """Return whether a figure is a real combined render output."""
+        if fig is None:
+            return False
+        return bool(getattr(fig, "_gl260_combined_real_figure", False))
+
+    def _mark_combined_figure_real(self, fig: Optional[Figure]) -> None:
+        """Mark a figure as a real combined render output."""
+        if fig is None:
+            return
+        try:
+            fig._gl260_combined_real_figure = True  # type: ignore[attr-defined]
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _combined_current_layout_sig(self) -> Any:
+        """Return the most recent combined layout signature, if available."""
+        state = self._combined_plot_state if isinstance(self._combined_plot_state, dict) else {}
+        return state.get("layout_sig")
+
+    def _capture_combined_overlay_layout_baseline(self, frame: Optional[ttk.Frame]) -> Any:
+        """Capture baseline layout signature before the first post-draw refresh."""
+        if frame is None:
+            return None
+        baseline = self._combined_current_layout_sig()
+        try:
+            frame._combined_overlay_layout_sig_baseline = baseline
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        self._log_plot_tab_debug(
+            "Combined auto-refresh baseline captured: available=%s."
+            % bool(baseline is not None)
+        )
+        return baseline
+
+    def _mark_combined_overlay_refresh_completed(self, frame: Optional[ttk.Frame]) -> int:
+        """Record one completed combined refresh render for overlay orchestration."""
+        if frame is None:
+            return 0
+        completed_count = getattr(frame, "_combined_overlay_refresh_completed_count", 0)
+        try:
+            completed_count = int(completed_count)
+        except Exception:
+            completed_count = 0
+        completed_count += 1
+        try:
+            frame._combined_overlay_refresh_completed_count = completed_count
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+        if completed_count == 1:
+            baseline_sig = getattr(frame, "_combined_overlay_layout_sig_baseline", None)
+            current_sig = self._combined_current_layout_sig()
+            need_second_refresh = True
+            if baseline_sig is not None and current_sig is not None:
+                need_second_refresh = baseline_sig != current_sig
+            target_refreshes = 2 if need_second_refresh else 1
+            try:
+                frame._combined_overlay_need_second_refresh = need_second_refresh
+                frame._combined_overlay_target_refreshes = target_refreshes
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            self._log_plot_tab_debug(
+                "Combined adaptive refresh decision: need_second=%s target=%s baseline_available=%s current_available=%s."
+                % (
+                    need_second_refresh,
+                    target_refreshes,
+                    baseline_sig is not None,
+                    current_sig is not None,
+                )
+            )
+        return completed_count
+
+    def _resolve_combined_initial_figsize_inches(
+        self,
+        frame: Optional[ttk.Frame] = None,
+        canvas: Optional[FigureCanvasTkAgg] = None,
+        *,
+        timeout_ms: int = 250,
+        poll_ms: int = 25,
+    ) -> Tuple[float, float]:
+        """Resolve initial combined figsize from the real canvas with a short bounded wait."""
+        if frame is None or canvas is None:
+            frame, canvas = self._find_plot_tab_canvas("fig_combined")
+        fallback = self._compute_target_figsize_inches()
+        if frame is None or canvas is None:
+            self._log_plot_tab_debug(
+                "Combined initial figsize fallback: frame/canvas unavailable."
+            )
+            return fallback
+        try:
+            widget = canvas.get_tk_widget()
+        except Exception:
+            widget = None
+        if widget is None:
+            self._log_plot_tab_debug(
+                "Combined initial figsize fallback: canvas widget unavailable."
+            )
+            return fallback
+        timeout_s = max(float(timeout_ms), 0.0) / 1000.0
+        poll_s = max(float(poll_ms), 1.0) / 1000.0
+        deadline = time.monotonic() + timeout_s
+        width_px = 0
+        height_px = 0
+        while True:
+            for widget_obj in (self.nb, frame, widget):
+                try:
+                    widget_obj.update_idletasks()
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            try:
+                width_px = int(widget.winfo_width())
+                height_px = int(widget.winfo_height())
+            except Exception:
+                width_px = 0
+                height_px = 0
+            if width_px > 2 and height_px > 2:
+                break
+            if time.monotonic() >= deadline:
+                width_px = 0
+                height_px = 0
+                break
+            time.sleep(poll_s)
+
+        if width_px <= 2 or height_px <= 2:
+            self._log_plot_tab_debug(
+                "Combined initial figsize fallback: timed out waiting for canvas size."
+            )
+            return fallback
+        try:
+            dpi = float(getattr(canvas.figure, "dpi", 100.0))
+            if not math.isfinite(dpi) or dpi <= 0.0:
+                dpi = 100.0
+        except Exception:
+            dpi = 100.0
+        size = (max(width_px / dpi, 1.0), max(height_px / dpi, 1.0))
+        self._log_plot_tab_debug(
+            "Combined initial figsize resolved from canvas: %sx%s px -> %.3fx%.3f in."
+            % (width_px, height_px, size[0], size[1])
+        )
+        return size
 
     def _force_plot_refresh(
         self,
@@ -35992,13 +36170,18 @@ class UnifiedApp(tk.Tk):
         frame._post_first_draw_refresh_hold_overlay = False
         frame._post_first_draw_refresh_retry_count = 0
         if plot_key == "fig_combined":
+            is_real_combined = self._is_real_combined_figure(fig)
             frame._combined_render_ready = False
             frame._post_first_draw_refresh_hold_overlay = True
-            # Track combined overlay refresh readiness and pass counts explicitly.
-            frame._combined_overlay_refresh_count = 0
+            frame._combined_real_figure_installed = bool(is_real_combined)
+            frame._combined_overlay_refresh_invoked_count = 0
+            frame._combined_overlay_refresh_completed_count = 0
+            frame._combined_overlay_layout_sig_baseline = None
+            frame._combined_overlay_need_second_refresh = True
             frame._combined_overlay_target_refreshes = 2
             frame._combined_overlay_ready_seen = False
             frame._combined_overlay_second_refresh_scheduled = False
+            frame._combined_placeholder_draw_logged = False
 
         self._log_plot_tab_debug(f"Creating tab frame for '{title}'")
 
@@ -52056,32 +52239,20 @@ class UnifiedApp(tk.Tk):
         ):
             self._capture_combined_legend_anchor_from_fig(fig, source="auto")
 
-        def _increment_combined_overlay_refresh_count(target_frame: ttk.Frame) -> int:
-            """Increment the combined overlay refresh count.
-
-            Purpose:
-                Track how many refresh callbacks have actually executed.
-            Why:
-                The overlay should clear only after the second refresh completes.
-            Inputs:
-                target_frame: Plot tab frame hosting the combined plot.
-            Outputs:
-                The updated refresh count value.
-            Side Effects:
-                Updates the frame refresh count attribute.
-            Exceptions:
-                Errors are caught to avoid interrupting the UI workflow.
-            """
+        def _increment_combined_overlay_refresh_invoked_count(
+            target_frame: ttk.Frame,
+        ) -> int:
+            """Increment the combined overlay refresh invocation count."""
             if target_frame is None:
                 return 0
-            count = getattr(target_frame, "_combined_overlay_refresh_count", 0)
+            count = getattr(target_frame, "_combined_overlay_refresh_invoked_count", 0)
             try:
                 count = int(count)
             except Exception:
                 count = 0
             count += 1
             try:
-                target_frame._combined_overlay_refresh_count = count
+                target_frame._combined_overlay_refresh_invoked_count = count
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
@@ -52114,11 +52285,13 @@ class UnifiedApp(tk.Tk):
             )
             if not hold_overlay:
                 return
-            refresh_count = getattr(target_frame, "_combined_overlay_refresh_count", 0)
+            completed_count = getattr(
+                target_frame, "_combined_overlay_refresh_completed_count", 0
+            )
             try:
-                refresh_count = int(refresh_count)
+                completed_count = int(completed_count)
             except Exception:
-                refresh_count = 0
+                completed_count = 0
             target_refreshes = getattr(
                 target_frame, "_combined_overlay_target_refreshes", 2
             )
@@ -52132,10 +52305,10 @@ class UnifiedApp(tk.Tk):
                 getattr(target_frame, "_combined_overlay_ready_seen", False)
             )
             if not force_clear:
-                if refresh_count < target_refreshes or not ready_seen:
+                if completed_count < target_refreshes or not ready_seen:
                     self._log_plot_tab_debug(
-                        "Combined overlay hold; refresh_count=%s target=%s ready_seen=%s."
-                        % (refresh_count, target_refreshes, ready_seen)
+                        "Combined overlay hold; completed=%s target=%s ready_seen=%s."
+                        % (completed_count, target_refreshes, ready_seen)
                     )
                     return
             try:
@@ -52152,8 +52325,8 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
             self._log_plot_tab_debug(
-                "Combined auto-refresh overlay cleared after refresh_count=%s ready_seen=%s."
-                % (refresh_count, ready_seen)
+                "Combined auto-refresh overlay cleared after completed=%s target=%s ready_seen=%s force=%s."
+                % (completed_count, target_refreshes, ready_seen, force_clear)
             )
             self._clear_plot_loading_overlay(target_frame)
 
@@ -52270,10 +52443,20 @@ class UnifiedApp(tk.Tk):
                     # Best-effort guard; ignore failures to avoid interrupting
                     # the workflow.
                     pass
-                refresh_count = _increment_combined_overlay_refresh_count(target_frame)
+                baseline_sig = getattr(
+                    target_frame, "_combined_overlay_layout_sig_baseline", None
+                )
+                if baseline_sig is None:
+                    self._capture_combined_overlay_layout_baseline(target_frame)
+                invoked_count = _increment_combined_overlay_refresh_invoked_count(
+                    target_frame
+                )
+                completed_count = getattr(
+                    target_frame, "_combined_overlay_refresh_completed_count", 0
+                )
                 self._log_plot_tab_debug(
-                    "Combined auto-refresh invoked after draw; refresh_count=%s."
-                    % refresh_count
+                    "Combined auto-refresh invoked after draw; invoked=%s completed=%s."
+                    % (invoked_count, completed_count)
                 )
                 try:
                     refresh_command()
@@ -52341,73 +52524,92 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 frame = None
             if frame is not None and getattr(frame, "_plot_key", None) == "fig_combined":
-                renderer_ok = False
-                try:
-                    renderer_ok = canvas.get_renderer() is not None
-                except Exception:
+                is_real_combined = bool(
+                    getattr(frame, "_combined_real_figure_installed", False)
+                )
+                if not is_real_combined:
+                    if not getattr(frame, "_combined_placeholder_draw_logged", False):
+                        try:
+                            frame._combined_placeholder_draw_logged = True
+                        except Exception:
+                            # Best-effort guard; ignore failures to avoid interrupting
+                            # the workflow.
+                            pass
+                        self._log_plot_tab_debug(
+                            "Combined placeholder draw ignored for auto-refresh scheduling."
+                        )
+                else:
                     renderer_ok = False
-                if renderer_ok and not getattr(
-                    frame, "_combined_overlay_ready_seen", False
-                ):
                     try:
-                        frame._combined_overlay_ready_seen = True
+                        renderer_ok = canvas.get_renderer() is not None
                     except Exception:
-                        # Best-effort guard; ignore failures to avoid interrupting
-                        # the workflow.
-                        pass
-                    self._log_plot_tab_debug(
-                        "Combined overlay ready signal observed (renderer ok)."
+                        renderer_ok = False
+                    if renderer_ok and not getattr(
+                        frame, "_combined_overlay_ready_seen", False
+                    ):
+                        try:
+                            frame._combined_overlay_ready_seen = True
+                        except Exception:
+                            # Best-effort guard; ignore failures to avoid interrupting
+                            # the workflow.
+                            pass
+                        self._log_plot_tab_debug(
+                            "Combined overlay ready signal observed (renderer ok)."
+                        )
+                    if not getattr(frame, "_post_first_draw_refresh_done", False):
+                        # Schedule the combined Refresh callback after the first draw.
+                        try:
+                            frame._post_first_draw_refresh_done = True
+                        except Exception:
+                            # Best-effort guard; ignore failures to avoid interrupting
+                            # the workflow.
+                            pass
+                        self._log_plot_tab_debug("Combined first draw event fired.")
+                        _schedule_post_first_draw_refresh(frame)
+                    hold_overlay = getattr(
+                        frame, "_post_first_draw_refresh_hold_overlay", False
                     )
-                if not getattr(frame, "_post_first_draw_refresh_done", False):
-                    # Schedule the combined Refresh callback after the first draw.
-                    try:
-                        frame._post_first_draw_refresh_done = True
-                    except Exception:
-                        # Best-effort guard; ignore failures to avoid interrupting
-                        # the workflow.
-                        pass
-                    self._log_plot_tab_debug("Combined first draw event fired.")
-                    _schedule_post_first_draw_refresh(frame)
-                hold_overlay = getattr(
-                    frame, "_post_first_draw_refresh_hold_overlay", False
-                )
-                refresh_count = getattr(frame, "_combined_overlay_refresh_count", 0)
-                try:
-                    refresh_count = int(refresh_count)
-                except Exception:
-                    refresh_count = 0
-                target_refreshes = getattr(
-                    frame, "_combined_overlay_target_refreshes", 2
-                )
-                try:
-                    target_refreshes = int(target_refreshes)
-                except Exception:
-                    target_refreshes = 2
-                if target_refreshes <= 0:
-                    target_refreshes = 1
-                if (
-                    hold_overlay
-                    and refresh_count >= 1
-                    and refresh_count < target_refreshes
-                    and not getattr(frame, "_combined_overlay_second_refresh_scheduled", False)
-                ):
-                    try:
-                        frame._combined_overlay_second_refresh_scheduled = True
-                    except Exception:
-                        # Best-effort guard; ignore failures to avoid interrupting
-                        # the workflow.
-                        pass
-                    self._log_plot_tab_debug(
-                        "Combined auto-refresh scheduling pass 2; refresh_count=%s."
-                        % refresh_count
+                    completed_count = getattr(
+                        frame, "_combined_overlay_refresh_completed_count", 0
                     )
-                    _schedule_post_first_draw_refresh(frame)
-                if (
-                    getattr(frame, "_post_first_draw_refresh_invoked", False)
-                    and hold_overlay
-                ):
-                    # Clear overlay on the first draw after the refresh completes.
-                    _finalize_post_first_draw_overlay(frame)
+                    try:
+                        completed_count = int(completed_count)
+                    except Exception:
+                        completed_count = 0
+                    target_refreshes = getattr(
+                        frame, "_combined_overlay_target_refreshes", 2
+                    )
+                    try:
+                        target_refreshes = int(target_refreshes)
+                    except Exception:
+                        target_refreshes = 2
+                    if target_refreshes <= 0:
+                        target_refreshes = 1
+                    if (
+                        hold_overlay
+                        and completed_count >= 1
+                        and completed_count < target_refreshes
+                        and not getattr(
+                            frame, "_combined_overlay_second_refresh_scheduled", False
+                        )
+                    ):
+                        try:
+                            frame._combined_overlay_second_refresh_scheduled = True
+                        except Exception:
+                            # Best-effort guard; ignore failures to avoid interrupting
+                            # the workflow.
+                            pass
+                        self._log_plot_tab_debug(
+                            "Combined auto-refresh scheduling pass 2; completed=%s target=%s."
+                            % (completed_count, target_refreshes)
+                        )
+                        _schedule_post_first_draw_refresh(frame)
+                    if (
+                        getattr(frame, "_post_first_draw_refresh_invoked", False)
+                        and hold_overlay
+                    ):
+                        # Clear overlay on the first draw after the refresh completes.
+                        _finalize_post_first_draw_overlay(frame)
             try:
                 if getattr(fig, "_cycle_legend_anchor_applied", False):
                     return
@@ -76434,6 +76636,43 @@ class UnifiedApp(tk.Tk):
                     self._render_figures_in_tabs(
                         {"fig_combined": fig}, clear_existing=False
                     )
+                if (
+                    target_frame is not None
+                    and getattr(
+                        target_frame, "_post_first_draw_refresh_hold_overlay", False
+                    )
+                    and self._is_real_combined_figure(fig)
+                ):
+                    invoked_count = getattr(
+                        target_frame, "_combined_overlay_refresh_invoked_count", 0
+                    )
+                    completed_before = getattr(
+                        target_frame, "_combined_overlay_refresh_completed_count", 0
+                    )
+                    try:
+                        invoked_count = int(invoked_count)
+                    except Exception:
+                        invoked_count = 0
+                    try:
+                        completed_before = int(completed_before)
+                    except Exception:
+                        completed_before = 0
+                    if invoked_count > completed_before:
+                        completed_count = self._mark_combined_overlay_refresh_completed(
+                            target_frame
+                        )
+                        target_refreshes = getattr(
+                            target_frame, "_combined_overlay_target_refreshes", 2
+                        )
+                        self._log_plot_tab_debug(
+                            "Combined auto-refresh completion recorded: invoked=%s completed=%s target=%s."
+                            % (invoked_count, completed_count, target_refreshes)
+                        )
+                    else:
+                        self._log_plot_tab_debug(
+                            "Combined render install skipped completion count: invoked=%s completed=%s."
+                            % (invoked_count, completed_before)
+                        )
                 if on_success is not None:
                     try:
                         on_success(fig)
@@ -76540,7 +76779,13 @@ class UnifiedApp(tk.Tk):
         if selections["fig2"]:
             placeholder_figs["fig2"] = Figure()
         if selections["fig_combined"]:
-            placeholder_figs["fig_combined"] = Figure()
+            placeholder_fig = Figure()
+            try:
+                placeholder_fig._gl260_combined_real_figure = False  # type: ignore[attr-defined]
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            placeholder_figs["fig_combined"] = placeholder_fig
         if placeholder_figs:
             self._render_figures_in_tabs(
                 placeholder_figs, clear_existing=False, auto_refresh=False
@@ -76560,14 +76805,22 @@ class UnifiedApp(tk.Tk):
             )
 
         if selections["fig_combined"]:
-            fig_size = self._compute_target_figsize_inches()
+            combined_frame, combined_canvas = self._find_plot_tab_canvas("fig_combined")
+            fig_size = self._resolve_combined_initial_figsize_inches(
+                combined_frame,
+                combined_canvas,
+                timeout_ms=250,
+            )
             snapshot = self._capture_plot_render_snapshot(
                 fig_size=fig_size,
                 plot_id="fig_combined_triple_axis",
                 target="display",
             )
             self._start_combined_render_async(
-                snapshot, warn_on_failure=not bool(core_keys)
+                snapshot,
+                warn_on_failure=not bool(core_keys),
+                frame=combined_frame,
+                canvas=combined_canvas,
             )
 
     def update_plots(self, *, include_cycle: bool = True):
@@ -76775,11 +77028,22 @@ class UnifiedApp(tk.Tk):
             return
 
         # Create placeholder tab so the loading overlay is visible immediately.
-        placeholder_figs = {"fig_combined": Figure()}
+        placeholder_fig = Figure()
+        try:
+            placeholder_fig._gl260_combined_real_figure = False  # type: ignore[attr-defined]
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        placeholder_figs = {"fig_combined": placeholder_fig}
         self._render_figures_in_tabs(
             placeholder_figs, clear_existing=False, auto_refresh=False
         )
-        fig_size = self._compute_target_figsize_inches()
+        combined_frame, combined_canvas = self._find_plot_tab_canvas("fig_combined")
+        fig_size = self._resolve_combined_initial_figsize_inches(
+            combined_frame,
+            combined_canvas,
+            timeout_ms=250,
+        )
         snapshot = self._capture_plot_render_snapshot(
             fig_size=fig_size,
             plot_id="fig_combined_triple_axis",
@@ -76818,6 +77082,8 @@ class UnifiedApp(tk.Tk):
         self._start_combined_render_async(
             snapshot,
             warn_on_failure=False,
+            frame=combined_frame,
+            canvas=combined_canvas,
             on_success=_export_after_render,
         )
 
@@ -78712,6 +78978,7 @@ class UnifiedApp(tk.Tk):
                 combined_stage = stages.setdefault("combined", {})
                 combined_stage["ms"] = (time.perf_counter() - perf_start) * 1000.0
                 combined_stage["path"] = "reuse"
+            self._mark_combined_figure_real(fig)
             _debug_build_end(fig)
             return fig
 
@@ -78952,6 +79219,7 @@ class UnifiedApp(tk.Tk):
                 combined_stage = stages.setdefault("combined", {})
                 combined_stage["ms"] = (time.perf_counter() - perf_start) * 1000.0
                 combined_stage["path"] = "rebuild"
+        self._mark_combined_figure_real(fig)
         _debug_build_end(fig)
         return fig
 
