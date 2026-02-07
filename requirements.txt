@@ -11,3 +11,6 @@ pypdf
 ruff
 black
 isort
+great_tables
+tk
+tcl
