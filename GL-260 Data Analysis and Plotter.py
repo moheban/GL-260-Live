@@ -31584,9 +31584,14 @@ class UnifiedApp(tk.Tk):
         """
         if frame is None:
             return
+        plot_key = getattr(frame, "_plot_key", None)
+        if plot_key in {"fig1", "fig2"} and bool(
+            getattr(frame, "_core_overlay_hold", False)
+        ):
+            self._finalize_core_overlay(frame)
+            return
         if getattr(frame, "_plot_auto_refresh_state", None) != "refreshing":
             return
-        plot_key = getattr(frame, "_plot_key", None)
         phase = getattr(frame, "_plot_auto_refresh_phase", None)
         after_id = getattr(frame, "_plot_auto_refresh_after_id", None)
         if plot_key == "fig_combined":
@@ -31932,6 +31937,11 @@ class UnifiedApp(tk.Tk):
         if canvas is None or new_fig is None:
             return
         self._log_plot_tab_debug("Installing refreshed figure onto canvas.")
+        widget = None
+        try:
+            widget = canvas.get_tk_widget()
+        except Exception:
+            widget = None
         try:
             new_fig.set_canvas(canvas)
         except Exception:
@@ -31949,25 +31959,22 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
         try:
-            canvas.resize_event()
+            self._finalize_matplotlib_canvas_layout(
+                canvas=canvas,
+                fig=new_fig,
+                tk_widget=widget,
+                keep_export_size=False,
+                trigger_resize_event=True,
+                force_draw=True,
+            )
+            self._log_plot_tab_debug(
+                "Refreshed figure: deterministic finalize complete."
+            )
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
         try:
-            canvas.draw()
-            self._log_plot_tab_debug("Refreshed figure: first draw complete.")
-        except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-            pass
-        try:
-            self._refresh_canvas_display(frame, canvas, trigger_resize=False)
-            self._log_plot_tab_debug("Refreshed figure: canvas display finalized.")
-        except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-            pass
-        try:
-            canvas.draw()
-            self._log_plot_tab_debug("Refreshed figure: second draw complete.")
+            canvas.draw_idle()
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
@@ -32007,12 +32014,39 @@ class UnifiedApp(tk.Tk):
         plot_id = self._plot_key_to_plot_id(plot_key)
         if not plot_id:
             plot_id = getattr(frame, "_plot_id", None)
+        is_core_key = plot_key in {"fig1", "fig2"}
         if plot_id:
             try:
                 self._teardown_layout_editor(plot_id, apply_changes=False)
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+        if is_core_key:
+            was_real_core = bool(getattr(frame, "_core_real_figure_installed", False))
+            is_real_core = self._is_real_core_figure(fig)
+            overlay_exists = bool(getattr(frame, "_plot_loading_overlay", None) is not None)
+            try:
+                frame._core_real_figure_installed = is_real_core
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            if is_real_core and not was_real_core and overlay_exists:
+                try:
+                    frame._core_overlay_refresh_invoked_count = 0
+                    frame._core_overlay_refresh_completed_count = 0
+                    frame._core_overlay_layout_sig_baseline = None
+                    frame._core_overlay_need_second_refresh = True
+                    frame._core_overlay_target_refreshes = 2
+                    frame._core_overlay_ready_seen = False
+                    frame._core_overlay_second_refresh_scheduled = False
+                    frame._core_overlay_hold = True
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+                self._log_plot_tab_debug(
+                    "Core real figure installed for %s; reset overlay refresh orchestration."
+                    % plot_key
+                )
         if plot_key == "fig_combined":
             was_real_combined = bool(
                 getattr(frame, "_combined_real_figure_installed", False)
@@ -32079,6 +32113,87 @@ class UnifiedApp(tk.Tk):
                 except Exception:
                     # Best-effort guard; ignore failures.
                     pass
+            if is_core_key and bool(getattr(frame, "_core_overlay_hold", False)):
+                renderer_ok = False
+                try:
+                    renderer_ok = canvas.get_renderer() is not None
+                except Exception:
+                    renderer_ok = False
+                if renderer_ok and not bool(
+                    getattr(frame, "_core_overlay_ready_seen", False)
+                ):
+                    try:
+                        frame._core_overlay_ready_seen = True
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+                    self._log_plot_tab_debug(
+                        "Core overlay ready signal observed for %s."
+                        % plot_key
+                    )
+                invoked_count = getattr(frame, "_core_overlay_refresh_invoked_count", 0)
+                completed_before = getattr(
+                    frame, "_core_overlay_refresh_completed_count", 0
+                )
+                try:
+                    invoked_count = int(invoked_count)
+                except Exception:
+                    invoked_count = 0
+                try:
+                    completed_before = int(completed_before)
+                except Exception:
+                    completed_before = 0
+                completed_count = completed_before
+                if invoked_count > completed_before:
+                    completed_count = self._mark_core_overlay_refresh_completed(
+                        frame,
+                        fig=fig,
+                    )
+                    target_refreshes = getattr(frame, "_core_overlay_target_refreshes", 2)
+                    self._log_plot_tab_debug(
+                        "Core auto-refresh completion recorded for %s: invoked=%s completed=%s target=%s."
+                        % (
+                            plot_key,
+                            invoked_count,
+                            completed_count,
+                            target_refreshes,
+                        )
+                    )
+                else:
+                    self._log_plot_tab_debug(
+                        "Core render install skipped completion count for %s: invoked=%s completed=%s."
+                        % (
+                            plot_key,
+                            invoked_count,
+                            completed_before,
+                        )
+                    )
+                target_refreshes = getattr(frame, "_core_overlay_target_refreshes", 2)
+                try:
+                    target_refreshes = int(target_refreshes)
+                except Exception:
+                    target_refreshes = 2
+                if target_refreshes <= 0:
+                    target_refreshes = 1
+                if invoked_count <= 0 and completed_count <= 0:
+                    self._schedule_core_refresh_pass(
+                        frame,
+                        canvas,
+                        pass_index=1,
+                    )
+                elif (
+                    completed_count >= 1
+                    and completed_count < target_refreshes
+                    and not bool(
+                        getattr(frame, "_core_overlay_second_refresh_scheduled", False)
+                    )
+                ):
+                    self._schedule_core_refresh_pass(
+                        frame,
+                        canvas,
+                        pass_index=2,
+                    )
+                self._finalize_core_overlay(frame)
         if plot_id:
             try:
                 self._set_plot_dirty_flags(
@@ -32092,7 +32207,10 @@ class UnifiedApp(tk.Tk):
                 pass
         auto_state = getattr(frame, "_plot_auto_refresh_state", None)
         auto_enabled = getattr(frame, "_plot_auto_refresh_enabled", True)
-        if auto_state == "refreshing":
+        if is_core_key and bool(getattr(frame, "_core_overlay_hold", False)):
+            # Completion-based core orchestration keeps the overlay until done.
+            pass
+        elif auto_state == "refreshing":
             self._complete_plot_auto_refresh(frame)
         elif auto_enabled and auto_state in {"pending", "scheduled"}:
             # Keep the overlay active until the forced refresh pipeline completes.
@@ -32143,6 +32261,328 @@ class UnifiedApp(tk.Tk):
         width_in = max(width_px / dpi, 4.0)
         height_in = max(height_px / dpi, 3.0)
         return (width_in, height_in)
+
+    def _is_real_core_figure(self, fig: Optional[Figure]) -> bool:
+        """Return whether a figure is a real core render output."""
+        if fig is None:
+            return False
+        return bool(getattr(fig, "_gl260_core_real_figure", False))
+
+    def _mark_core_figure_real(self, fig: Optional[Figure]) -> None:
+        """Mark a figure as a real core render output."""
+        if fig is None:
+            return
+        try:
+            fig._gl260_core_real_figure = True  # type: ignore[attr-defined]
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _core_layout_signature(self, fig: Optional[Figure]) -> Any:
+        """Build a lightweight layout signature for core plots."""
+        if fig is None:
+            return None
+
+        def _norm_num(value: Any) -> Any:
+            try:
+                value_f = float(value)
+            except Exception:
+                return value
+            if not math.isfinite(value_f):
+                return None
+            return round(value_f, 4)
+
+        def _norm_tuple(value: Any) -> Any:
+            if isinstance(value, (list, tuple)):
+                return tuple(_norm_num(item) for item in value)
+            return _norm_num(value)
+
+        try:
+            size = fig.get_size_inches()
+            size_sig = tuple(_norm_num(v) for v in size)
+        except Exception:
+            size_sig = None
+        try:
+            subplot = fig.subplotpars
+            subplot_sig = (
+                _norm_num(getattr(subplot, "left", None)),
+                _norm_num(getattr(subplot, "right", None)),
+                _norm_num(getattr(subplot, "bottom", None)),
+                _norm_num(getattr(subplot, "top", None)),
+                _norm_num(getattr(subplot, "wspace", None)),
+                _norm_num(getattr(subplot, "hspace", None)),
+            )
+        except Exception:
+            subplot_sig = None
+        axes_sig: List[Any] = []
+        try:
+            for idx, ax in enumerate(list(getattr(fig, "axes", []) or [])):
+                if getattr(ax, "_gl260_legend_only", False):
+                    continue
+                role = str(getattr(ax, "_gl260_axis_role", "") or "")
+                try:
+                    bounds = tuple(_norm_num(v) for v in ax.get_position().bounds)
+                except Exception:
+                    bounds = None
+                try:
+                    xlim = tuple(_norm_num(v) for v in ax.get_xlim())
+                except Exception:
+                    xlim = None
+                try:
+                    ylim = tuple(_norm_num(v) for v in ax.get_ylim())
+                except Exception:
+                    ylim = None
+                axes_sig.append((idx, role, bounds, xlim, ylim))
+        except Exception:
+            axes_sig = []
+        legend_sig: List[Any] = []
+        try:
+            legends = _collect_gl260_legends(fig)
+        except Exception:
+            legends = []
+        for idx, legend in enumerate(legends):
+            role = str(getattr(legend, "_gl260_legend_role", "") or "")
+            try:
+                loc_val = legend.get_loc()
+            except Exception:
+                loc_val = getattr(legend, "_loc", None)
+            try:
+                bbox = legend.get_bbox_to_anchor()
+                bounds = tuple(_norm_num(v) for v in bbox.bounds) if bbox is not None else None
+            except Exception:
+                bounds = None
+            legend_sig.append((idx, role, _norm_tuple(loc_val), bounds))
+        return (size_sig, subplot_sig, tuple(axes_sig), tuple(legend_sig))
+
+    def _capture_core_overlay_layout_baseline(
+        self,
+        frame: Optional[ttk.Frame],
+        *,
+        canvas: Optional[FigureCanvasTkAgg] = None,
+    ) -> Any:
+        """Capture baseline core layout signature before first auto-refresh pass."""
+        if frame is None:
+            return None
+        fig = getattr(canvas, "figure", None) if canvas is not None else None
+        if fig is None:
+            plot_key = str(getattr(frame, "_plot_key", "") or "")
+            _, resolved_canvas = self._find_plot_tab_canvas(plot_key)
+            fig = getattr(resolved_canvas, "figure", None) if resolved_canvas is not None else None
+        baseline = self._core_layout_signature(fig)
+        try:
+            frame._core_overlay_layout_sig_baseline = baseline
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        self._log_plot_tab_debug(
+            "Core auto-refresh baseline captured for %s: available=%s."
+            % (getattr(frame, "_plot_key", None), bool(baseline is not None))
+        )
+        return baseline
+
+    def _mark_core_overlay_refresh_completed(
+        self,
+        frame: Optional[ttk.Frame],
+        *,
+        fig: Optional[Figure] = None,
+    ) -> int:
+        """Record one completed core refresh render for overlay orchestration."""
+        if frame is None:
+            return 0
+        completed_count = getattr(frame, "_core_overlay_refresh_completed_count", 0)
+        try:
+            completed_count = int(completed_count)
+        except Exception:
+            completed_count = 0
+        completed_count += 1
+        try:
+            frame._core_overlay_refresh_completed_count = completed_count
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+        if completed_count == 1:
+            baseline_sig = getattr(frame, "_core_overlay_layout_sig_baseline", None)
+            current_sig = self._core_layout_signature(fig)
+            need_second_refresh = True
+            if baseline_sig is not None and current_sig is not None:
+                need_second_refresh = baseline_sig != current_sig
+            target_refreshes = 2 if need_second_refresh else 1
+            try:
+                frame._core_overlay_need_second_refresh = need_second_refresh
+                frame._core_overlay_target_refreshes = target_refreshes
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            self._log_plot_tab_debug(
+                "Core adaptive refresh decision for %s: need_second=%s target=%s baseline_available=%s current_available=%s."
+                % (
+                    getattr(frame, "_plot_key", None),
+                    need_second_refresh,
+                    target_refreshes,
+                    baseline_sig is not None,
+                    current_sig is not None,
+                )
+            )
+        return completed_count
+
+    def _finalize_core_overlay(
+        self, frame: Optional[ttk.Frame], *, force_clear: bool = False
+    ) -> None:
+        """Finalize core loading overlay after completion-based refresh passes."""
+        if frame is None:
+            return
+        hold_overlay = bool(getattr(frame, "_core_overlay_hold", False))
+        if not hold_overlay and not force_clear:
+            return
+        completed_count = getattr(frame, "_core_overlay_refresh_completed_count", 0)
+        try:
+            completed_count = int(completed_count)
+        except Exception:
+            completed_count = 0
+        target_refreshes = getattr(frame, "_core_overlay_target_refreshes", 2)
+        try:
+            target_refreshes = int(target_refreshes)
+        except Exception:
+            target_refreshes = 2
+        if target_refreshes <= 0:
+            target_refreshes = 1
+        ready_seen = bool(getattr(frame, "_core_overlay_ready_seen", False))
+        if not force_clear and (completed_count < target_refreshes or not ready_seen):
+            self._log_plot_tab_debug(
+                "Core overlay hold for %s: completed=%s target=%s ready_seen=%s."
+                % (
+                    getattr(frame, "_plot_key", None),
+                    completed_count,
+                    target_refreshes,
+                    ready_seen,
+                )
+            )
+            return
+        try:
+            frame._core_overlay_hold = False
+            frame._core_overlay_second_refresh_scheduled = False
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            frame._plot_auto_refresh_state = "done"
+            frame._plot_auto_refresh_after_id = None
+            frame._plot_auto_refresh_in_progress = False
+            frame._plot_auto_refresh_phase = None
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        self._log_plot_tab_debug(
+            "Core auto-refresh overlay cleared for %s: completed=%s target=%s ready_seen=%s force=%s."
+            % (
+                getattr(frame, "_plot_key", None),
+                completed_count,
+                target_refreshes,
+                ready_seen,
+                force_clear,
+            )
+        )
+        self._clear_plot_loading_overlay(frame)
+
+    def _schedule_core_refresh_pass(
+        self,
+        frame: Optional[ttk.Frame],
+        canvas: Optional[FigureCanvasTkAgg],
+        *,
+        pass_index: int,
+    ) -> None:
+        """Schedule one core refresh pass for completion-based overlay orchestration."""
+        if frame is None or canvas is None:
+            return
+        if not bool(getattr(frame, "_core_overlay_hold", False)):
+            return
+        after_id = getattr(frame, "_plot_auto_refresh_after_id", None)
+        if after_id is not None:
+            return
+        try:
+            if not frame.winfo_exists():
+                self._finalize_core_overlay(frame, force_clear=True)
+                return
+        except Exception:
+            self._finalize_core_overlay(frame, force_clear=True)
+            return
+        try:
+            widget = canvas.get_tk_widget()
+        except Exception:
+            widget = None
+        if widget is None:
+            self._finalize_core_overlay(frame, force_clear=True)
+            return
+        try:
+            if not widget.winfo_exists():
+                self._finalize_core_overlay(frame, force_clear=True)
+                return
+        except Exception:
+            self._finalize_core_overlay(frame, force_clear=True)
+            return
+        refresh_command = getattr(frame, "_refresh_command", None)
+        if not callable(refresh_command):
+            self._log_plot_tab_debug(
+                "Core auto-refresh pass %s missing refresh command for %s; clearing overlay."
+                % (pass_index, getattr(frame, "_plot_key", None))
+            )
+            self._finalize_core_overlay(frame, force_clear=True)
+            return
+        if pass_index <= 1 and getattr(frame, "_core_overlay_layout_sig_baseline", None) is None:
+            self._capture_core_overlay_layout_baseline(frame, canvas=canvas)
+        if pass_index >= 2:
+            try:
+                frame._core_overlay_second_refresh_scheduled = True
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        def _invoke_refresh() -> None:
+            """Invoke one scheduled core refresh pass."""
+            try:
+                frame._plot_auto_refresh_after_id = None
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            if not bool(getattr(frame, "_core_overlay_hold", False)):
+                return
+            invoked_count = getattr(frame, "_core_overlay_refresh_invoked_count", 0)
+            try:
+                invoked_count = int(invoked_count)
+            except Exception:
+                invoked_count = 0
+            invoked_count += 1
+            try:
+                frame._core_overlay_refresh_invoked_count = invoked_count
+                frame._plot_auto_refresh_state = "refreshing"
+                frame._plot_auto_refresh_in_progress = True
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            completed_count = getattr(frame, "_core_overlay_refresh_completed_count", 0)
+            self._log_plot_tab_debug(
+                "Core auto-refresh pass %s invoked for %s: invoked=%s completed=%s."
+                % (
+                    pass_index,
+                    getattr(frame, "_plot_key", None),
+                    invoked_count,
+                    completed_count,
+                )
+            )
+            try:
+                refresh_command()
+            except Exception:
+                # Fail closed: avoid leaving the overlay stuck if refresh fails.
+                self._finalize_core_overlay(frame, force_clear=True)
+
+        try:
+            frame._plot_auto_refresh_after_id = widget.after_idle(_invoke_refresh)
+        except Exception:
+            try:
+                frame._plot_auto_refresh_after_id = self.after_idle(_invoke_refresh)
+            except Exception:
+                _invoke_refresh()
 
     def _is_real_combined_figure(self, fig: Optional[Figure]) -> bool:
         """Return whether a figure is a real combined render output."""
@@ -32232,10 +32672,29 @@ class UnifiedApp(tk.Tk):
         """Resolve initial combined figsize from the real canvas with a short bounded wait."""
         if frame is None or canvas is None:
             frame, canvas = self._find_plot_tab_canvas("fig_combined")
+        return self._resolve_initial_canvas_figsize_inches(
+            frame,
+            canvas,
+            timeout_ms=timeout_ms,
+            poll_ms=poll_ms,
+            tag="combined",
+        )
+
+    def _resolve_initial_canvas_figsize_inches(
+        self,
+        frame: Optional[ttk.Frame],
+        canvas: Optional[FigureCanvasTkAgg],
+        *,
+        timeout_ms: int = 250,
+        poll_ms: int = 25,
+        tag: str = "plot",
+    ) -> Tuple[float, float]:
+        """Resolve initial figsize from a real canvas with a short bounded wait."""
         fallback = self._compute_target_figsize_inches()
         if frame is None or canvas is None:
             self._log_plot_tab_debug(
-                "Combined initial figsize fallback: frame/canvas unavailable."
+                "%s initial figsize fallback: frame/canvas unavailable."
+                % str(tag).capitalize()
             )
             return fallback
         try:
@@ -32244,7 +32703,8 @@ class UnifiedApp(tk.Tk):
             widget = None
         if widget is None:
             self._log_plot_tab_debug(
-                "Combined initial figsize fallback: canvas widget unavailable."
+                "%s initial figsize fallback: canvas widget unavailable."
+                % str(tag).capitalize()
             )
             return fallback
         timeout_s = max(float(timeout_ms), 0.0) / 1000.0
@@ -32272,10 +32732,10 @@ class UnifiedApp(tk.Tk):
                 height_px = 0
                 break
             time.sleep(poll_s)
-
         if width_px <= 2 or height_px <= 2:
             self._log_plot_tab_debug(
-                "Combined initial figsize fallback: timed out waiting for canvas size."
+                "%s initial figsize fallback: timed out waiting for canvas size."
+                % str(tag).capitalize()
             )
             return fallback
         try:
@@ -32286,10 +32746,32 @@ class UnifiedApp(tk.Tk):
             dpi = 100.0
         size = (max(width_px / dpi, 1.0), max(height_px / dpi, 1.0))
         self._log_plot_tab_debug(
-            "Combined initial figsize resolved from canvas: %sx%s px -> %.3fx%.3f in."
-            % (width_px, height_px, size[0], size[1])
+            "%s initial figsize resolved from canvas: %sx%s px -> %.3fx%.3f in."
+            % (str(tag).capitalize(), width_px, height_px, size[0], size[1])
         )
         return size
+
+    def _resolve_initial_core_figsize_inches(
+        self,
+        plot_keys: Sequence[str],
+        *,
+        timeout_ms: int = 250,
+        poll_ms: int = 25,
+    ) -> Dict[str, Tuple[float, float]]:
+        """Resolve initial core figsizes for selected core plot tabs."""
+        sizes: Dict[str, Tuple[float, float]] = {}
+        for key in [key for key in plot_keys if key in {"fig1", "fig2"}]:
+            frame, canvas = self._find_plot_tab_canvas(key)
+            if frame is None or canvas is None:
+                continue
+            sizes[key] = self._resolve_initial_canvas_figsize_inches(
+                frame,
+                canvas,
+                timeout_ms=timeout_ms,
+                poll_ms=poll_ms,
+                tag=key,
+            )
+        return sizes
 
     def _force_plot_refresh(
         self,
@@ -32422,6 +32904,14 @@ class UnifiedApp(tk.Tk):
             pass
         placement_state = self._capture_plot_element_placement_state(plot_id)
         fig_size = None
+        if plot_key in {"fig1", "fig2"}:
+            fig_size = self._resolve_initial_canvas_figsize_inches(
+                frame,
+                canvas,
+                timeout_ms=250,
+                poll_ms=25,
+                tag=f"{plot_key} refresh",
+            )
         if plot_key == "fig_combined":
             try:
                 if combined_size is None:
@@ -32443,7 +32933,7 @@ class UnifiedApp(tk.Tk):
         try:
             if plot_key in {"fig1", "fig2", "fig_peaks"}:
                 snapshot = self._capture_plot_render_snapshot(
-                    fig_size=None,
+                    fig_size=fig_size if plot_key in {"fig1", "fig2"} else None,
                     plot_id=plot_id or "",
                     target="display",
                 )
@@ -32487,7 +32977,11 @@ class UnifiedApp(tk.Tk):
                 pass
             if plot_key != "fig_combined":
                 try:
-                    if getattr(frame, "_plot_auto_refresh_state", None) == "refreshing":
+                    if plot_key in {"fig1", "fig2"} and bool(
+                        getattr(frame, "_core_overlay_hold", False)
+                    ):
+                        self._finalize_core_overlay(frame, force_clear=True)
+                    elif getattr(frame, "_plot_auto_refresh_state", None) == "refreshing":
                         self._complete_plot_auto_refresh(frame)
                 except Exception:
                     # Best-effort guard; ignore failures.
@@ -36169,6 +36663,17 @@ class UnifiedApp(tk.Tk):
         frame._post_first_draw_refresh_invoked = False
         frame._post_first_draw_refresh_hold_overlay = False
         frame._post_first_draw_refresh_retry_count = 0
+        if plot_key in {"fig1", "fig2"}:
+            is_real_core = self._is_real_core_figure(fig)
+            frame._core_real_figure_installed = bool(is_real_core)
+            frame._core_overlay_refresh_invoked_count = 0
+            frame._core_overlay_refresh_completed_count = 0
+            frame._core_overlay_layout_sig_baseline = None
+            frame._core_overlay_need_second_refresh = True
+            frame._core_overlay_target_refreshes = 2
+            frame._core_overlay_ready_seen = False
+            frame._core_overlay_second_refresh_scheduled = False
+            frame._core_overlay_hold = not bool(is_real_core)
         if plot_key == "fig_combined":
             is_real_combined = self._is_real_combined_figure(fig)
             frame._combined_render_ready = False
@@ -76310,7 +76815,11 @@ class UnifiedApp(tk.Tk):
                     frame, "_plot_render_task_id", None
                 ) != task_id:
                     continue
-                if getattr(frame, "_plot_auto_refresh_state", None) == "refreshing":
+                if key in {"fig1", "fig2"} and bool(
+                    getattr(frame, "_core_overlay_hold", False)
+                ):
+                    self._finalize_core_overlay(frame, force_clear=True)
+                elif getattr(frame, "_plot_auto_refresh_state", None) == "refreshing":
                     self._complete_plot_auto_refresh(frame)
                 else:
                     self._clear_plot_loading_overlay(frame)
@@ -76337,11 +76846,17 @@ class UnifiedApp(tk.Tk):
             ) != task_id:
                 continue
             if fig is None:
-                if getattr(frame, "_plot_auto_refresh_state", None) == "refreshing":
+                if key in {"fig1", "fig2"} and bool(
+                    getattr(frame, "_core_overlay_hold", False)
+                ):
+                    self._finalize_core_overlay(frame, force_clear=True)
+                elif getattr(frame, "_plot_auto_refresh_state", None) == "refreshing":
                     self._complete_plot_auto_refresh(frame)
                 else:
                     self._clear_plot_loading_overlay(frame)
                 continue
+            if key in {"fig1", "fig2"}:
+                self._mark_core_figure_real(fig)
             placement_state = (
                 placement_states.get(key) if isinstance(placement_states, dict) else None
             )
@@ -76426,7 +76941,11 @@ class UnifiedApp(tk.Tk):
                     frame, "_plot_render_task_id", None
                 ) != task_state["id"]:
                     continue
-                if getattr(frame, "_plot_auto_refresh_state", None) == "refreshing":
+                if key in {"fig1", "fig2"} and bool(
+                    getattr(frame, "_core_overlay_hold", False)
+                ):
+                    self._finalize_core_overlay(frame, force_clear=True)
+                elif getattr(frame, "_plot_auto_refresh_state", None) == "refreshing":
                     self._complete_plot_auto_refresh(frame)
                 else:
                     self._clear_plot_loading_overlay(frame)
@@ -76775,9 +77294,21 @@ class UnifiedApp(tk.Tk):
         # Create placeholder tabs immediately so loading overlays paint right away.
         placeholder_figs: Dict[str, Any] = {}
         if selections["fig1"]:
-            placeholder_figs["fig1"] = Figure()
+            placeholder_fig = Figure()
+            try:
+                placeholder_fig._gl260_core_real_figure = False  # type: ignore[attr-defined]
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            placeholder_figs["fig1"] = placeholder_fig
         if selections["fig2"]:
-            placeholder_figs["fig2"] = Figure()
+            placeholder_fig = Figure()
+            try:
+                placeholder_fig._gl260_core_real_figure = False  # type: ignore[attr-defined]
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            placeholder_figs["fig2"] = placeholder_fig
         if selections["fig_combined"]:
             placeholder_fig = Figure()
             try:
@@ -76793,8 +77324,14 @@ class UnifiedApp(tk.Tk):
 
         core_keys = [key for key in ("fig1", "fig2") if selections.get(key)]
         if core_keys:
+            core_sizes = self._resolve_initial_core_figsize_inches(
+                core_keys,
+                timeout_ms=250,
+                poll_ms=25,
+            )
+            core_fig_size = core_sizes.get("fig1") or core_sizes.get("fig2")
             core_snapshot = self._capture_plot_render_snapshot(
-                fig_size=None,
+                fig_size=core_fig_size,
                 plot_id="",
                 target="display",
             )
@@ -76866,12 +77403,27 @@ class UnifiedApp(tk.Tk):
         if include_cycle:
             plot_keys.append("fig_peaks")
         # Render placeholders first to show loading overlays immediately.
-        placeholder_figs = {key: Figure() for key in plot_keys}
+        placeholder_figs: Dict[str, Figure] = {}
+        for key in plot_keys:
+            placeholder_fig = Figure()
+            if key in {"fig1", "fig2"}:
+                try:
+                    placeholder_fig._gl260_core_real_figure = False  # type: ignore[attr-defined]
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            placeholder_figs[key] = placeholder_fig
         self._render_figures_in_tabs(
             placeholder_figs, clear_existing=True, auto_refresh=False
         )
+        core_sizes = self._resolve_initial_core_figsize_inches(
+            ("fig1", "fig2"),
+            timeout_ms=250,
+            poll_ms=25,
+        )
+        core_fig_size = core_sizes.get("fig1") or core_sizes.get("fig2")
         core_snapshot = self._capture_plot_render_snapshot(
-            fig_size=None,
+            fig_size=core_fig_size,
             plot_id="",
             target="display",
         )
@@ -76924,12 +77476,23 @@ class UnifiedApp(tk.Tk):
             return
 
         # Create placeholder tab so the loading overlay is visible immediately.
-        placeholder_figs = {"fig1": Figure()}
+        placeholder_fig = Figure()
+        try:
+            placeholder_fig._gl260_core_real_figure = False  # type: ignore[attr-defined]
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        placeholder_figs = {"fig1": placeholder_fig}
         self._render_figures_in_tabs(
             placeholder_figs, clear_existing=False, auto_refresh=False
         )
+        core_sizes = self._resolve_initial_core_figsize_inches(
+            ("fig1",),
+            timeout_ms=250,
+            poll_ms=25,
+        )
         core_snapshot = self._capture_plot_render_snapshot(
-            fig_size=None,
+            fig_size=core_sizes.get("fig1"),
             plot_id="",
             target="display",
         )
@@ -76977,12 +77540,23 @@ class UnifiedApp(tk.Tk):
             return
 
         # Create placeholder tab so the loading overlay is visible immediately.
-        placeholder_figs = {"fig2": Figure()}
+        placeholder_fig = Figure()
+        try:
+            placeholder_fig._gl260_core_real_figure = False  # type: ignore[attr-defined]
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        placeholder_figs = {"fig2": placeholder_fig}
         self._render_figures_in_tabs(
             placeholder_figs, clear_existing=False, auto_refresh=False
         )
+        core_sizes = self._resolve_initial_core_figsize_inches(
+            ("fig2",),
+            timeout_ms=250,
+            poll_ms=25,
+        )
         core_snapshot = self._capture_plot_render_snapshot(
-            fig_size=None,
+            fig_size=core_sizes.get("fig2"),
             plot_id="",
             target="display",
         )
