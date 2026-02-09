@@ -18671,6 +18671,95 @@ def _compute_top_overlay_zorder(
     return max(min_floor, float(max_zorder + pad_value))
 
 
+def _ensure_combined_derivative_zero_line(
+    fig: Optional[Figure],
+    ax_overlay: Optional[Axes],
+    ax_deriv: Optional[Axes],
+    *,
+    visible: bool,
+    zorder: float = 6.0,
+) -> Optional[Line2D]:
+    """Ensure the Combined derivative y=0 dashed line lives on the overlay axis.
+
+    Purpose:
+        Create or update the Combined derivative reference line at y=0.
+    Why:
+        X-span artists can target different data axes, so artist z-order alone
+        cannot guarantee that the derivative zero-line stays above spans. Keeping
+        the line on the dedicated overlay axis makes the layering deterministic.
+    Inputs:
+        fig: Combined figure storing the cached zero-line handle.
+        ax_overlay: Combined overlay axis used for top-layer reference artists.
+        ax_deriv: Active derivative axis that defines y-data coordinates.
+        visible: Whether the zero-line should be shown for this render pass.
+        zorder: Artist z-order for the zero-line on the overlay axis.
+    Outputs:
+        The zero-line artist when available; otherwise None.
+    Side Effects:
+        Creates/removes/reuses a Line2D artist and stores it on
+        `fig._gl260_combined_deriv_zero_line`.
+    Exceptions:
+        Best-effort behavior; invalid artists or transforms are ignored.
+    """
+    if fig is None:
+        return None
+    existing = getattr(fig, "_gl260_combined_deriv_zero_line", None)
+    line = existing if isinstance(existing, Line2D) else None
+    if ax_overlay is None:
+        if line is not None:
+            try:
+                line.set_visible(False)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        return line
+    if line is not None and getattr(line, "axes", None) is not ax_overlay:
+        try:
+            line.remove()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        line = None
+    if line is None:
+        try:
+            line = Line2D(
+                [0.0, 1.0],
+                [0.0, 0.0],
+                color="black",
+                linestyle="--",
+                linewidth=1.0,
+                zorder=float(zorder),
+            )
+            ax_overlay.add_line(line)
+            fig._gl260_combined_deriv_zero_line = line  # type: ignore[attr-defined]
+        except Exception:
+            return None
+    y_axis = ax_deriv if ax_deriv is not None else ax_overlay
+    try:
+        line.set_transform(
+            blended_transform_factory(ax_overlay.transAxes, y_axis.transData)
+        )
+    except Exception:
+        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+        pass
+    try:
+        line.set_data([0.0, 1.0], [0.0, 0.0])
+    except Exception:
+        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+        pass
+    try:
+        line.set_zorder(float(zorder))
+    except Exception:
+        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+        pass
+    try:
+        line.set_visible(bool(visible and ax_deriv is not None))
+    except Exception:
+        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+        pass
+    return line
+
+
 LINE_STYLE_MAP = OrderedDict(
     [
         ("solid", "solid"),
@@ -26064,6 +26153,7 @@ def build_combined_triple_axis_figure(
     title_display = _text_safe(title_text)
 
     axis_for_role: Dict[str, Axes] = {"primary": ax}
+    show_derivative_zero_line = False
 
     # Axis role mapping decides which datasets populate the right-side axes so
     # overlays, legends, and layout rules can target consistent roles.
@@ -26153,7 +26243,7 @@ def build_combined_triple_axis_figure(
             deriv_settings["min"],
         )
         if deriv_settings["label_key"] == "derivative":
-            ax_deriv.axhline(y=0, color="black", linestyle="--", linewidth=1, zorder=4)
+            show_derivative_zero_line = True
         ax_deriv.set_zorder(axis_layer_zorders["third"])
         ax_deriv.patch.set_visible(False)
         ax_deriv.set_facecolor("none")
@@ -26190,6 +26280,13 @@ def build_combined_triple_axis_figure(
         spine.set_visible(False)
     ax_overlay.yaxis.set_visible(False)
     ax_overlay.xaxis.set_visible(False)
+    _ensure_combined_derivative_zero_line(
+        fig,
+        ax_overlay,
+        ax_deriv,
+        visible=show_derivative_zero_line,
+        zorder=6.0,
+    )
 
     def _axis_zorder_text(axis: Optional[Axes]) -> str:
         """Return a debug-safe axis z-order string for logging.
@@ -33304,6 +33401,9 @@ class UnifiedApp(tk.Tk):
             try:
                 if overlay.winfo_exists():
                     overlay.lift()
+                    self._update_plot_loading_overlay_progress(
+                        frame, progress=5.0, message=message, reset=True
+                    )
                     return
             except Exception:
                 overlay = None
@@ -33330,12 +33430,30 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 return
         label = None
-        if message:
-            try:
-                label = ttk.Label(overlay, text=str(message))
-                label.place(relx=0.5, rely=0.5, anchor="center")
-            except Exception:
-                label = None
+        progress_var = None
+        progress_bar = None
+        percent_label = None
+        try:
+            content = ttk.Frame(overlay)
+            content.place(relx=0.5, rely=0.5, anchor="center")
+            label = ttk.Label(content, text=str(message or "Loading plot..."))
+            label.pack(side="top", pady=(0, 8))
+            progress_var = tk.DoubleVar(master=overlay, value=0.0)
+            progress_bar = ttk.Progressbar(
+                content,
+                mode="determinate",
+                length=260,
+                maximum=100.0,
+                variable=progress_var,
+            )
+            progress_bar.pack(side="top")
+            percent_label = ttk.Label(content, text="0%")
+            percent_label.pack(side="top", pady=(6, 0))
+        except Exception:
+            label = None
+            progress_var = None
+            progress_bar = None
+            percent_label = None
         try:
             overlay.lift()
         except Exception:
@@ -33343,6 +33461,13 @@ class UnifiedApp(tk.Tk):
             pass
         frame._plot_loading_overlay = overlay
         frame._plot_loading_label = label
+        frame._plot_loading_progress_var = progress_var
+        frame._plot_loading_bar = progress_bar
+        frame._plot_loading_progress_label = percent_label
+        frame._plot_loading_progress_value = 0.0
+        self._update_plot_loading_overlay_progress(
+            frame, progress=5.0, message=message, reset=True
+        )
 
     def _clear_plot_loading_overlay(self, frame) -> None:
         """Clear a plot loading overlay if present.
@@ -33377,6 +33502,112 @@ class UnifiedApp(tk.Tk):
             pass
         frame._plot_loading_overlay = None
         frame._plot_loading_label = None
+        frame._plot_loading_progress_var = None
+        frame._plot_loading_bar = None
+        frame._plot_loading_progress_label = None
+        frame._plot_loading_progress_value = 0.0
+
+    def _update_plot_loading_overlay_progress(
+        self,
+        frame,
+        *,
+        progress: Optional[float] = None,
+        message: Optional[str] = None,
+        reset: bool = False,
+    ) -> None:
+        """Update one plot splash overlay with deterministic progress milestones.
+
+        Purpose:
+            Keep loading-overlay message and progress state synchronized with
+            async plot-render milestones.
+        Why:
+            Core/combined render orchestration can fire callbacks out of order;
+            monotonic progress avoids visible regressions while still providing
+            meaningful stage feedback.
+        Inputs:
+            frame: Plot tab frame owning the active loading overlay widgets.
+            progress: Optional new progress value in the 0..100 range.
+            message: Optional overlay status text.
+            reset: When True, resets tracked progress before applying updates.
+        Outputs:
+            None.
+        Side Effects:
+            Mutates overlay text/progress widgets and frame progress cache.
+        Exceptions:
+            Best-effort behavior; missing widgets are ignored.
+        """
+        if frame is None:
+            return
+        overlay = getattr(frame, "_plot_loading_overlay", None)
+        if overlay is None:
+            return
+        try:
+            if not overlay.winfo_exists():
+                return
+        except Exception:
+            return
+        if reset:
+            try:
+                frame._plot_loading_progress_value = 0.0
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        current_value = getattr(frame, "_plot_loading_progress_value", 0.0)
+        try:
+            current_value = float(current_value)
+        except Exception:
+            current_value = 0.0
+        if not math.isfinite(current_value):
+            current_value = 0.0
+        target_value = current_value
+        if progress is not None:
+            try:
+                candidate = float(progress)
+            except Exception:
+                candidate = current_value
+            if not math.isfinite(candidate):
+                candidate = current_value
+            candidate = max(0.0, min(100.0, candidate))
+            # Keep progress monotonic unless the caller explicitly requests reset.
+            target_value = candidate if reset else max(current_value, candidate)
+        label = getattr(frame, "_plot_loading_label", None)
+        if label is not None and message is not None:
+            try:
+                label.configure(text=str(message))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        progress_var = getattr(frame, "_plot_loading_progress_var", None)
+        if progress_var is not None:
+            try:
+                progress_var.set(float(target_value))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        progress_bar = getattr(frame, "_plot_loading_bar", None)
+        if progress_bar is not None:
+            try:
+                progress_bar.configure(value=float(target_value), maximum=100.0)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        percent_label = getattr(frame, "_plot_loading_progress_label", None)
+        if percent_label is not None:
+            try:
+                percent_label.configure(text=f"{int(round(target_value))}%")
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        try:
+            frame._plot_loading_progress_value = float(target_value)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            overlay.lift()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
 
     def _schedule_plot_auto_refresh(self, frame, canvas) -> None:
         """Schedule the one-time plot auto refresh after initial render.
@@ -33561,6 +33792,11 @@ class UnifiedApp(tk.Tk):
             self._log_plot_tab_debug(
                 "Combined auto-refresh complete; clearing loading overlay."
             )
+        self._update_plot_loading_overlay_progress(
+            frame,
+            progress=100.0,
+            message="Plot ready.",
+        )
         self._clear_plot_loading_overlay(frame)
 
     def _finalize_combined_plot_display(
@@ -34448,6 +34684,23 @@ class UnifiedApp(tk.Tk):
                     current_sig is not None,
                 )
             )
+        target_refreshes = getattr(frame, "_core_overlay_target_refreshes", 2)
+        try:
+            target_refreshes = int(target_refreshes)
+        except Exception:
+            target_refreshes = 2
+        if target_refreshes <= 0:
+            target_refreshes = 1
+        milestone_value = 98.0 if completed_count >= target_refreshes else 90.0
+        self._update_plot_loading_overlay_progress(
+            frame,
+            progress=milestone_value,
+            message=(
+                "Finalizing plot..."
+                if completed_count >= target_refreshes
+                else "Auto-refresh pass complete."
+            ),
+        )
         return completed_count
 
     def _finalize_core_overlay(
@@ -34506,6 +34759,11 @@ class UnifiedApp(tk.Tk):
                 ready_seen,
                 force_clear,
             )
+        )
+        self._update_plot_loading_overlay_progress(
+            frame,
+            progress=100.0,
+            message="Plot ready.",
         )
         self._clear_plot_loading_overlay(frame)
 
@@ -34593,6 +34851,15 @@ class UnifiedApp(tk.Tk):
                     invoked_count,
                     completed_count,
                 )
+            )
+            self._update_plot_loading_overlay_progress(
+                frame,
+                progress=84.0 if pass_index <= 1 else 94.0,
+                message=(
+                    "Running auto-refresh pass 1..."
+                    if pass_index <= 1
+                    else "Running auto-refresh pass 2..."
+                ),
             )
             try:
                 refresh_command()
@@ -34838,6 +35105,23 @@ class UnifiedApp(tk.Tk):
                     current_sig is not None,
                 )
             )
+        target_refreshes = getattr(frame, "_combined_overlay_target_refreshes", 2)
+        try:
+            target_refreshes = int(target_refreshes)
+        except Exception:
+            target_refreshes = 2
+        if target_refreshes <= 0:
+            target_refreshes = 1
+        milestone_value = 98.0 if completed_count >= target_refreshes else 90.0
+        self._update_plot_loading_overlay_progress(
+            frame,
+            progress=milestone_value,
+            message=(
+                "Finalizing combined plot..."
+                if completed_count >= target_refreshes
+                else "Combined auto-refresh pass complete."
+            ),
+        )
         return completed_count
 
     def _resolve_combined_initial_figsize_inches(
@@ -38837,6 +39121,10 @@ class UnifiedApp(tk.Tk):
         frame._plot_render_task_id = None
         frame._plot_loading_overlay = None
         frame._plot_loading_label = None
+        frame._plot_loading_progress_var = None
+        frame._plot_loading_bar = None
+        frame._plot_loading_progress_label = None
+        frame._plot_loading_progress_value = 0.0
         frame._refresh_command = None
         frame._post_first_draw_refresh_done = False
         frame._post_first_draw_refresh_invoked = False
@@ -55432,6 +55720,15 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+            self._update_plot_loading_overlay_progress(
+                target_frame,
+                progress=84.0 if count <= 1 else 94.0,
+                message=(
+                    "Running combined auto-refresh pass 1..."
+                    if count <= 1
+                    else "Running combined auto-refresh pass 2..."
+                ),
+            )
             return count
 
         def _finalize_post_first_draw_overlay(
@@ -55670,6 +55967,11 @@ class UnifiedApp(tk.Tk):
                     force_clear,
                     timed_out,
                 )
+            )
+            self._update_plot_loading_overlay_progress(
+                target_frame,
+                progress=100.0,
+                message="Combined plot ready.",
             )
             self._clear_plot_loading_overlay(target_frame)
 
@@ -79629,6 +79931,19 @@ class UnifiedApp(tk.Tk):
         plot_keys_list = [key for key in plot_keys if key]
         if not plot_keys_list:
             return
+        for key in plot_keys_list:
+            frame, _ = self._find_plot_tab_canvas(key)
+            if frame is None:
+                continue
+            if task_id is not None and getattr(
+                frame, "_plot_render_task_id", None
+            ) != task_id:
+                continue
+            self._update_plot_loading_overlay_progress(
+                frame,
+                progress=65.0,
+                message="Building plot figure...",
+            )
         try:
             # Apply snapshot-derived globals on the UI thread for legacy consumers.
             self._apply_series_payload_from_snapshot(packet.render_ctx.data_ctx)
@@ -79707,6 +80022,11 @@ class UnifiedApp(tk.Tk):
             self._install_rendered_plot_in_tab(
                 frame, canvas, key, fig, placement_state=placement_state
             )
+            self._update_plot_loading_overlay_progress(
+                frame,
+                progress=80.0,
+                message="Applying layout stabilization...",
+            )
             rendered_any = True
 
         if not rendered_any and warn_on_failure:
@@ -79756,6 +80076,19 @@ class UnifiedApp(tk.Tk):
 
         def _on_ok(packet):
             """Render core plots on the UI thread after compute completes."""
+            for key in plot_keys_list:
+                frame, _ = self._find_plot_tab_canvas(key)
+                if frame is None:
+                    continue
+                if task_state["id"] is not None and getattr(
+                    frame, "_plot_render_task_id", None
+                ) != task_state["id"]:
+                    continue
+                self._update_plot_loading_overlay_progress(
+                    frame,
+                    progress=55.0,
+                    message="Data prepared. Rendering plot...",
+                )
             self._render_core_plot_ui(
                 packet,
                 plot_keys_list,
@@ -79817,6 +80150,11 @@ class UnifiedApp(tk.Tk):
             frame._plot_auto_refresh_state = "refreshing"
             frame._plot_auto_refresh_in_progress = True
             frame._plot_auto_refresh_after_id = None
+            self._update_plot_loading_overlay_progress(
+                frame,
+                progress=20.0,
+                message="Preparing plot data...",
+            )
 
     def _start_combined_render_async(
         self,
@@ -79860,6 +80198,15 @@ class UnifiedApp(tk.Tk):
         def _on_ok(packet):
             """Render the combined plot on the UI thread after compute completes."""
             self._set_combined_render_busy(False)
+            if frame is not None and (
+                task_state["id"] is None
+                or getattr(frame, "_plot_render_task_id", None) == task_state["id"]
+            ):
+                self._update_plot_loading_overlay_progress(
+                    frame,
+                    progress=55.0,
+                    message="Data prepared. Rendering combined plot...",
+                )
             self._render_combined_plot_ui(
                 packet,
                 warn_on_failure=warn_on_failure,
@@ -79912,6 +80259,11 @@ class UnifiedApp(tk.Tk):
             frame._plot_auto_refresh_state = "refreshing"
             frame._plot_auto_refresh_in_progress = True
             frame._plot_auto_refresh_after_id = None
+            self._update_plot_loading_overlay_progress(
+                frame,
+                progress=20.0,
+                message="Preparing combined plot data...",
+            )
 
     def _render_combined_plot_ui(
         self,
@@ -79947,6 +80299,12 @@ class UnifiedApp(tk.Tk):
         """
         perf_run = packet.perf if isinstance(packet.perf, dict) else None
         self._perf_diag_active_run = perf_run
+        if frame is not None:
+            self._update_plot_loading_overlay_progress(
+                frame,
+                progress=65.0,
+                message="Building combined figure...",
+            )
         try:
             fig = None
             render_error = None
@@ -79994,6 +80352,11 @@ class UnifiedApp(tk.Tk):
                         "fig_combined",
                         fig,
                         placement_state=placement_state,
+                    )
+                    self._update_plot_loading_overlay_progress(
+                        target_frame,
+                        progress=80.0,
+                        message="Applying combined layout stabilization...",
                     )
                 else:
                     self._render_figures_in_tabs(
@@ -81747,6 +82110,19 @@ class UnifiedApp(tk.Tk):
                     color="black",
                 )
                 ax_deriv.tick_params(axis="y", labelcolor="black", labelsize=tick_fontsize)
+
+        show_derivative_zero_line = bool(
+            ax_deriv is not None
+            and deriv_axis_active
+            and str(third_role).strip().lower() == "derivative"
+        )
+        _ensure_combined_derivative_zero_line(
+            fig,
+            ax_overlay,
+            ax_deriv,
+            visible=show_derivative_zero_line,
+            zorder=6.0,
+        )
 
         if ax is not None:
             if auto_time_ticks:

@@ -343,13 +343,13 @@ Purpose: preview the combined plot, manage overlays, and export the triple-axis 
 
 Key controls:
 - Generate Plot and Refresh actions (from the bottom action bar).
-- Generated plot tabs switch immediately and show a loading overlay while background computation runs; the UI-thread render finishes the stabilized layout.
+- Generated plot tabs switch immediately and show a loading overlay with a determinate progress bar while background computation runs; the UI-thread render finishes the stabilized layout.
 - Close Plot removes the generated figure tab and returns focus to Plot Settings.
 - Plot Elements editor for adding annotations and overlays.
 - Export controls (PNG/SVG/PDF) with output size profiles and DPI.
 
 Stabilization note:
-Combined plots use a two-pass refresh to stabilize layout. The loading overlay remains visible until the second refresh completes and stabilization is confirmed.
+Combined plots use a two-pass refresh to stabilize layout. The loading overlay remains visible until the second refresh completes and stabilization is confirmed, and the splash progress bar advances by render milestones until completion.
 
 #### Cycle Analysis Tab
 Purpose: detect cycles, compute moles, and interactively edit peak/trough markers.
@@ -617,7 +617,7 @@ Rendering Behavior:
 - Left Y axis: primary pressure (y1) and optional manifold pressure (y3).
 - Right Y axis: temperature traces (z/z2).
 - Detached right Y axis: derivative or auxiliary channel (y2) with configurable offset.
-- Combined layering is enforced at the Axes level: left axis draws first, right/third axes draw above it, and cycle markers are drawn on a dedicated top overlay axis.
+- Combined layering is enforced at the Axes level from active trace priorities: left/right/third axis z-order is resolved dynamically, a dedicated top overlay axis carries cycle markers, and the derivative `y=0` dashed line is rendered on the overlay layer so it stays above X-span elements.
 
 #### 3) Axis Range Control System
 - Auto-range tools pull min/max from current data only for the axes enabled in Axis Auto-Range Settings.
@@ -860,6 +860,7 @@ Warnings:
 ### Troubleshooting and FAQ
 - Symptom: Plots look clipped or axes do not update. Cause: Axis auto-range is disabled for that axis or padding is too small. Fix: Review Axis Auto-Range Settings and Span Padding (%) in Plot Settings.
 - Symptom: Combined plot is missing cycle overlays. Cause: Cycle analysis has not been finalized or automatic detection is disabled without manual markers. Fix: Run cycle detection or manually assign peaks/troughs, then regenerate the combined plot.
+- Symptom: Combined X-span highlight appears to cover reference guides. Cause: The derivative `y=0` dashed line now renders on the combined overlay layer by design. Fix: Adjust span opacity/color if visual contrast is needed; the `y=0` line should remain above spans.
 - Symptom: Cycle detection is noisy or misses cycles. Cause: Prominence/distance/width thresholds are too low or data is noisy. Fix: Adjust detection settings or switch to manual-only placement.
 - Symptom: Final Report generation fails. Cause: Combined plot export failed or columns are not applied. Fix: Apply columns, regenerate combined plot export, then rerun the report.
 - Symptom: VDW moles are not shown. Cause: SciPy is not installed. Fix: Install SciPy or rely on ideal gas metrics.
@@ -890,6 +891,8 @@ Apache-2.0. See `LICENSE`.
 ### v2.12.6 Combined Axes Layering Enforcement
 - Enforced deterministic Combined Triple-Axis draw order at the Axes level (left, right, third) so cross-axis layering is stable and predictable.
 - Added a dedicated invisible overlay axis for Combined cycle peak/trough markers; markers now render above all traces even when large z-order overrides are used.
+- Moved the Combined derivative `y=0` dashed reference line to the overlay layer so it remains above X-span plot elements while preserving marker-top layering.
+- Added a determinate splash progress bar for plot-generation overlays (core, combined, and other generated plot tabs), with milestone-based progress through data prep, render, auto-refresh passes, and completion.
 - Applied resolved per-trace z-order values to every created trace artist and added plotting.render debug logs that report intended vs actual artist z-order per axis role plus one-time axis z-order snapshots.
 
 ### v2.12.5 Cycle Marker Top-Layer Z-Order + Data Trace UX Clarity
