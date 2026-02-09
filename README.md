@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.12.3)
+# GL-260 Data Analysis and Plotter (v2.12.4)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.12.3`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.12.4`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v2.12.4 Working Version Rollforward + Docs Sync](#v2124-working-version-rollforward--docs-sync)
   - [v2.12.3 Input Persistence + Async Speciation Overlay](#v2123-input-persistence--async-speciation-overlay)
   - [v2.12.2 Planning Timeline Persistence + Input Stability](#v2122-planning-timeline-persistence--input-stability)
   - [v2.12.0 Data Trace Settings + Combined Splash Hold](#v2120-data-trace-settings--combined-splash-hold)
@@ -703,6 +704,7 @@ The Advanced Solubility and Equilibrium Engine models CO2 dissolution, carbonate
 - Provide solution inputs (mass, volume, temperature, pH targets, headspace conditions).
 - Import cycle payloads or manually enter CO2/NaOH inputs.
 - Run the solver to generate speciation, pH, and saturation metrics.
+- As of `v2.12.3`, manual Analysis CO2 charged values are preserved, Planning NaOH inputs persist after runs, and heavy solver work is executed asynchronously.
 
 #### 4) Visualization Outputs
 - Species concentration plots and saturation summaries.
@@ -879,6 +881,10 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v2.12.4 Working Version Rollforward + Docs Sync
+- Set `v2.12.4` as the active working version (`APP_VERSION` and file header).
+- Updated the README user manual wording to explicitly call out the `v2.12.3` input-persistence and async-speciation behavior in the Advanced Solubility workflow.
 
 ### v2.12.3 Input Persistence + Async Speciation Overlay
 - Analysis workflow now preserves user-entered CO2 charged values; Cycle Analysis auto-fill occurs only when the field is blank.
