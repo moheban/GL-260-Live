@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.12.5)
+# GL-260 Data Analysis and Plotter (v2.12.6)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.12.5`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.12.6`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v2.12.6 Combined Axes Layering Enforcement](#v2126-combined-axes-layering-enforcement)
   - [v2.12.5 Cycle Marker Top-Layer Z-Order + Data Trace UX Clarity](#v2125-cycle-marker-top-layer-z-order--data-trace-ux-clarity)
   - [v2.12.4 Working Version Rollforward + Docs Sync](#v2124-working-version-rollforward--docs-sync)
   - [v2.12.3 Input Persistence + Async Speciation Overlay](#v2123-input-persistence--async-speciation-overlay)
@@ -335,7 +336,7 @@ Controls (per trace):
 Inheritance behavior:
 - Blank fields inherit existing defaults with no behavior change.
 - Priority set to Inherit leaves the trace at its existing z-order.
-- Cycle peak/trough markers are overlay markers and always render above trace layers; Data Trace Settings z-order controls apply to traces only.
+- In the Combined Triple-Axis plot, cycle peak/trough markers are rendered on a dedicated overlay axis that is always above all data axes; Data Trace Settings z-order controls apply to traces only.
 
 #### Combined Triple-Axis Plot Tab
 Purpose: preview the combined plot, manage overlays, and export the triple-axis figure.
@@ -616,6 +617,7 @@ Rendering Behavior:
 - Left Y axis: primary pressure (y1) and optional manifold pressure (y3).
 - Right Y axis: temperature traces (z/z2).
 - Detached right Y axis: derivative or auxiliary channel (y2) with configurable offset.
+- Combined layering is enforced at the Axes level: left axis draws first, right/third axes draw above it, and cycle markers are drawn on a dedicated top overlay axis.
 
 #### 3) Axis Range Control System
 - Auto-range tools pull min/max from current data only for the axes enabled in Axis Auto-Range Settings.
@@ -884,6 +886,11 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v2.12.6 Combined Axes Layering Enforcement
+- Enforced deterministic Combined Triple-Axis draw order at the Axes level (left, right, third) so cross-axis layering is stable and predictable.
+- Added a dedicated invisible overlay axis for Combined cycle peak/trough markers; markers now render above all traces even when large z-order overrides are used.
+- Applied resolved per-trace z-order values to every created trace artist and added plotting.render debug logs that report intended vs actual artist z-order per axis role plus one-time axis z-order snapshots.
 
 ### v2.12.5 Cycle Marker Top-Layer Z-Order + Data Trace UX Clarity
 - Added dynamic cycle marker overlay z-ordering so peak/trough markers always render above trace layers, including custom trace z-order overrides.

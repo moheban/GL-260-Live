@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.12.5
+# Version: v2.12.6
 # Date: 2026-02-09
 
 import os
@@ -6678,8 +6678,24 @@ class AnnotationsPanel:
     def __init__(
         self, parent: tk.Widget, controller: PlotAnnotationsController, plot_id: str
     ) -> None:
-        """Initialize AnnotationsPanel instance.
-        Used at object creation to configure initial state and bindings."""
+        """Initialize the Plot Elements/Annotations editor panel.
+
+        Purpose:
+            Build panel state, UI bindings, and editing variables for one plot.
+        Why:
+            The editor needs per-plot state for selected-element properties,
+            pending manual edits, and add-element defaults.
+        Inputs:
+            parent: Tk parent widget hosting the panel frame.
+            controller: PlotAnnotationsController that owns element mutations.
+            plot_id: Plot identifier used for per-plot persistence keys.
+        Outputs:
+            None.
+        Side Effects:
+            Creates Tk variables/widgets and initializes editor tracking flags.
+        Exceptions:
+            None. Construction relies on existing controller/store guards.
+        """
         self._controller = controller
         self._plot_id = plot_id
         self._store = controller._store
@@ -6739,6 +6755,9 @@ class AnnotationsPanel:
         self._current_zorder_var: Optional[tk.StringVar] = None
         self._current_geom_vars: Dict[str, tk.Variable] = {}
         self._current_style_vars: Dict[str, tk.Variable] = {}
+        self._pending_manual_changes = False
+        self._zorder_pending_change = False
+        self._zorder_initial_value: Optional[float] = None
         self._suppress_add_traces = False
         self._collapsed = bool(self._store.ui_state_for(plot_id).get("collapsed", True))
         self._build_ui()
@@ -7802,8 +7821,23 @@ class AnnotationsPanel:
         self.refresh()
 
     def _refresh_properties(self) -> None:
-        """Refresh properties.
-        Used to sync properties with current settings."""
+        """Rebuild the selected-element properties form from current state.
+
+        Purpose:
+            Regenerate editor controls for the active plot element selection.
+        Why:
+            Selection changes and applied edits must refresh field values and
+            baseline tracking so Apply/Revert state is deterministic.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Recreates property widgets, traces variable changes, and resets
+            pending-edit tracking/baselines for manual Apply behavior.
+        Exceptions:
+            Widget creation and state writes are guarded in downstream calls.
+        """
         # Iterate over self._props_container.winfo_children() to apply the per-item logic.
         for child in self._props_container.winfo_children():
             child.destroy()
@@ -7818,6 +7852,7 @@ class AnnotationsPanel:
             ttk.Label(self._props_container, text="Select an element to edit.").pack(
                 anchor="w", padx=6, pady=6
             )
+            self._reset_manual_apply_tracking(None)
             self._set_apply_controls_state(False)
             self._suppress_live_update = False
             self._refresh_props_scroll()
@@ -7952,6 +7987,7 @@ class AnnotationsPanel:
 
         self._current_geom_vars = geom_vars
         self._current_style_vars = style_vars
+        self._reset_manual_apply_tracking(element)
 
         # Iterate over [axis_label_var, zorder_var] to apply the per-item logic.
         for var in [axis_label_var, zorder_var]:
@@ -7967,10 +8003,125 @@ class AnnotationsPanel:
         self._suppress_live_update = False
         self._refresh_props_scroll()
 
+    def _reset_manual_apply_tracking(self, element: Optional[Dict[str, Any]]) -> None:
+        """Reset pending manual-apply tracking for the properties editor.
+
+        Purpose:
+            Clear staged-change flags and establish the current z-order baseline.
+        Why:
+            The Apply controls should react to edits since the most recent
+            selected-state snapshot, and z-order comparisons need a stable
+            baseline value.
+        Inputs:
+            element: Selected plot element snapshot, or None when no selection.
+        Outputs:
+            None.
+        Side Effects:
+            Updates pending-change flags and cached baseline z-order.
+        Exceptions:
+            None. Invalid/missing z-order values fall back to defaults.
+        """
+        self._pending_manual_changes = False
+        self._zorder_pending_change = False
+        self._zorder_initial_value = None
+        if not isinstance(element, dict):
+            return
+        baseline = _coerce_float(element.get("zorder"))
+        if baseline is None:
+            baseline = float(ANNOTATION_DEFAULT_ZORDER)
+        self._zorder_initial_value = float(baseline)
+
+    def _update_zorder_pending_state(self) -> None:
+        """Recompute whether the current z-order field has unapplied changes.
+
+        Purpose:
+            Compare the edited z-order value against the selected-element
+            baseline to determine if Apply should be actionable.
+        Why:
+            Live Update can be disabled, so z-order edits must explicitly
+            surface as pending manual changes.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Updates `_zorder_pending_change`.
+        Exceptions:
+            None. Invalid numeric input is treated as pending.
+        """
+        zorder_var = self._current_zorder_var
+        baseline = self._zorder_initial_value
+        if zorder_var is None or baseline is None:
+            self._zorder_pending_change = False
+            return
+        raw_value = str(zorder_var.get()).strip()
+        parsed_value = _coerce_float(raw_value)
+        if parsed_value is None:
+            self._zorder_pending_change = bool(raw_value)
+            return
+        self._zorder_pending_change = not math.isclose(
+            float(parsed_value),
+            float(baseline),
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        )
+
+    def _on_property_editor_value_changed(
+        self, watched_var: Optional[tk.Variable] = None
+    ) -> None:
+        """Handle one property-field edit for Apply-state and live-update flow.
+
+        Purpose:
+            Track manual pending edits and schedule optional live updates.
+        Why:
+            The Apply button state must reflect unsaved property edits, with a
+            dedicated path for z-order field changes when Live Update is off.
+        Inputs:
+            watched_var: The variable that fired the write trace callback.
+        Outputs:
+            None.
+        Side Effects:
+            Updates pending-change flags, refreshes Apply/Revert button state,
+            and schedules debounced live updates when enabled.
+        Exceptions:
+            UI/state lookups are guarded to avoid interrupting editor workflow.
+        """
+        if self._suppress_live_update:
+            return
+        if watched_var is self._current_zorder_var:
+            self._update_zorder_pending_state()
+        else:
+            self._pending_manual_changes = True
+        selected = self._controller.selected_element()
+        locked = bool(selected.get("locked", False)) if isinstance(selected, dict) else True
+        self._set_apply_controls_state(not locked)
+        self._schedule_live_update()
+
     def _set_apply_controls_state(self, enabled: bool) -> None:
-        """Set apply controls state.
-        Used to persist apply controls state into the current state."""
-        state = "normal" if enabled else "disabled"
+        """Set Apply/Revert control availability for the current editor state.
+
+        Purpose:
+            Toggle Apply/Apply+Keep/Revert based on lock state and pending edits.
+        Why:
+            With Live Update disabled, users should only apply when there are
+            pending changes; z-order edits must explicitly activate Apply.
+        Inputs:
+            enabled: True when the selected element is editable (not locked).
+        Outputs:
+            None.
+        Side Effects:
+            Updates button widget states in the properties action row.
+        Exceptions:
+            Widget state updates are guarded to keep the panel responsive.
+        """
+        has_pending_changes = bool(
+            self._pending_manual_changes or self._zorder_pending_change
+        )
+        manual_apply_required = not bool(self._live_update_var.get())
+        allow_apply = bool(enabled) and (
+            has_pending_changes or not manual_apply_required
+        )
+        state = "normal" if allow_apply else "disabled"
         # Iterate to apply the per-item logic.
         for button in (
             self._apply_button,
@@ -7993,12 +8144,31 @@ class AnnotationsPanel:
                     pass
 
     def _register_live_update(self, var: tk.Variable) -> None:
-        """Update value.
-        Used by register live workflows to update value."""
+        """Register one property variable for pending-state and live-update flow.
+
+        Purpose:
+            Attach a write-trace callback for one editor variable.
+        Why:
+            Variable writes drive manual Apply-state tracking and optional
+            debounced Live Update applies.
+        Inputs:
+            var: Tk variable bound to a property editor field.
+        Outputs:
+            None.
+        Side Effects:
+            Adds a Tk trace callback to the provided variable.
+        Exceptions:
+            Trace registration failures are swallowed to avoid UI interruption.
+        """
         if var is None:
             return
         try:
-            var.trace_add("write", lambda *_args: self._schedule_live_update())
+            var.trace_add(
+                "write",
+                lambda *_args, watched_var=var: self._on_property_editor_value_changed(
+                    watched_var
+                ),
+            )
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             return
@@ -8024,8 +8194,22 @@ class AnnotationsPanel:
             self._live_update_after_id = None
 
     def _on_toggle_live_update(self) -> None:
-        """Handle toggle live update.
-        Used as an event callback for toggle live update."""
+        """Persist Live Update toggle state and refresh Apply control state.
+
+        Purpose:
+            Save user preference for automatic property application behavior.
+        Why:
+            Apply button gating differs between live and manual modes, so state
+            must be recomputed immediately when the toggle changes.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Updates persisted UI state and recalculates action-button enabled state.
+        Exceptions:
+            Settings persistence failures are guarded to keep editing active.
+        """
         self._store.set_ui_state(
             self._plot_id, live_update=bool(self._live_update_var.get())
         )
@@ -8034,10 +8218,29 @@ class AnnotationsPanel:
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+        selected = self._controller.selected_element()
+        locked = bool(selected.get("locked", False)) if isinstance(selected, dict) else True
+        self._set_apply_controls_state(not locked)
 
     def _apply_properties(self, *, keep_editing: bool = False) -> None:
-        """Apply properties.
-        Used to apply properties changes to live state."""
+        """Apply current property-form values to the selected plot element.
+
+        Purpose:
+            Commit staged editor values into the selected element model.
+        Why:
+            Manual Apply mode must reliably persist element edits, including
+            z-order values such as `0`, and then clear pending-change tracking.
+        Inputs:
+            keep_editing: When True, keep the form open without full panel refresh.
+        Outputs:
+            None.
+        Side Effects:
+            Mutates selected element fields, re-renders via controller update,
+            updates snapshots/baselines, and resets pending Apply state.
+        Exceptions:
+            Invalid numeric fields fall back to prior values; all controller
+            mutation guards remain inside update_element_properties.
+        """
         element = self._controller.selected_element()
         if element is None:
             return
@@ -8050,7 +8253,12 @@ class AnnotationsPanel:
         axis_role = self._current_axis_map.get(
             axis_var.get(), element.get("axes_target")
         )
-        zorder_value = _coerce_float(zorder_var.get()) or element.get("zorder")
+        zorder_candidate = _coerce_float(zorder_var.get())
+        zorder_value = (
+            float(zorder_candidate)
+            if zorder_candidate is not None
+            else element.get("zorder")
+        )
         geometry_updates: Dict[str, Any] = {}
         string_geom_keys = {"text", "orientation", "label_anchor"}
         # Iterate over items from self._current_geom_vars to apply the per-item logic.
@@ -8132,6 +8340,18 @@ class AnnotationsPanel:
         updated = self._controller.selected_element()
         if updated is not None and updated.get("id"):
             self._element_snapshots[str(updated.get("id"))] = copy.deepcopy(updated)
+            if keep_editing and self._current_zorder_var is not None:
+                applied_zorder = _coerce_float(updated.get("zorder"))
+                if applied_zorder is not None:
+                    self._suppress_live_update = True
+                    try:
+                        # Keep the entry synchronized with the applied value so
+                        # pending-state tracking clears immediately after Apply.
+                        self._current_zorder_var.set(f"{float(applied_zorder):g}")
+                    finally:
+                        self._suppress_live_update = False
+            self._reset_manual_apply_tracking(updated)
+            self._set_apply_controls_state(not bool(updated.get("locked", False)))
         if not keep_editing:
             self.refresh()
 
@@ -8438,7 +8658,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.12.5"
+APP_VERSION = "v2.12.6"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -18709,6 +18929,56 @@ def _get_scatter_config(
     return merged
 
 
+def _resolve_effective_trace_zorder(
+    default_zorder: float,
+    *,
+    series_key: Optional[str] = None,
+    scatter_series_configs: Optional[Dict[str, Any]] = None,
+) -> float:
+    """Resolve the effective z-order for a trace.
+
+    Purpose:
+        Convert default trace layering plus optional per-series override settings
+        into one deterministic z-order value.
+    Why:
+        Combined and non-combined render paths need the same priority/override
+        resolution logic so trace layering behavior stays consistent.
+    Inputs:
+        default_zorder: Baseline z-order for the series when no override exists.
+        series_key: Optional per-series settings key (for example "y1" or "z2").
+        scatter_series_configs: Optional per-series style mapping from settings.
+    Outputs:
+        Float z-order used for all artists produced by the series.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid overrides are ignored and the default value is returned.
+    """
+    try:
+        resolved_zorder = float(default_zorder)
+    except Exception:
+        resolved_zorder = 2.0
+    if not math.isfinite(resolved_zorder):
+        resolved_zorder = 2.0
+
+    if not series_key:
+        return resolved_zorder
+
+    series_cfgs = (
+        scatter_series_configs
+        if isinstance(scatter_series_configs, dict)
+        else (globals().get("scatter_series_configs") or {})
+    )
+    per_series = series_cfgs.get(series_key)
+    if not isinstance(per_series, dict):
+        return resolved_zorder
+
+    zorder_override = _coerce_float(per_series.get("zorder"))
+    if zorder_override is None or not math.isfinite(zorder_override):
+        return resolved_zorder
+    return float(zorder_override)
+
+
 def _plot_series(
     ax,
     x_values,
@@ -18771,18 +19041,11 @@ def _plot_series(
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             return default
 
-    series_zorder = zorder
-    if series_key:
-        series_cfgs = (
-            scatter_series_configs
-            if isinstance(scatter_series_configs, dict)
-            else (globals().get("scatter_series_configs") or {})
-        )
-        per_series = series_cfgs.get(series_key)
-        if isinstance(per_series, dict):
-            zorder_override = _coerce_float(per_series.get("zorder"), None)
-            if zorder_override is not None and math.isfinite(zorder_override):
-                series_zorder = zorder_override
+    series_zorder = _resolve_effective_trace_zorder(
+        zorder,
+        series_key=series_key,
+        scatter_series_configs=scatter_series_configs,
+    )
 
     if force_line or not cfg.get("enabled"):
         marker_style = line_marker
@@ -24985,6 +25248,7 @@ def build_combined_triple_axis_figure(
     time_range = (min_time, max_time)
     ax_temp: Optional[Axes] = None
     ax_deriv: Optional[Axes] = None
+    ax_overlay: Optional[Axes] = None
     label_overrides = (
         axis_label_overrides if isinstance(axis_label_overrides, dict) else {}
     )
@@ -25159,6 +25423,89 @@ def build_combined_triple_axis_figure(
         right_spine.set_position(("axes", location))
         right_spine.set_color("black")
 
+    def _combined_render_debug(message: str, *args: Any) -> None:
+        """Emit combined render debug logs when plotting.render is enabled.
+
+        Purpose:
+            Write deterministic verification logs for combined layering behavior.
+        Why:
+            Layering bugs are difficult to inspect without runtime logs showing
+            axis order and per-artist z-order resolution.
+        Inputs:
+            message: Logger format string.
+            *args: Format arguments consumed by the logger.
+        Outputs:
+            None.
+        Side Effects:
+            Writes to the module debug logger when debug/category gates are on.
+        Exceptions:
+            Logging errors are suppressed to preserve render stability.
+        """
+        try:
+            if not bool(settings.get("debug_enabled", False)):
+                return
+            categories = settings.get("debug_categories")
+            if not isinstance(categories, dict):
+                return
+            if not bool(categories.get("plotting.render", False)):
+                return
+            _GL260_LOGGER.debug("[plotting.render] " + message, *args)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _iter_artist_handles(artist_obj: Any) -> List[Any]:
+        """Return a flat list of artist handles from one or many artist objects.
+
+        Purpose:
+            Normalize artist return values so z-order enforcement can apply to
+            single artists and multi-artist series payloads.
+        Why:
+            Some render paths can evolve to return grouped artists; layering must
+            still be enforced on every created artist.
+        Inputs:
+            artist_obj: One artist or a collection of artists.
+        Outputs:
+            Flat list of artist objects supporting matplotlib artist APIs.
+        Side Effects:
+            None.
+        Exceptions:
+            Non-iterable or unsupported values are safely ignored.
+        """
+        if artist_obj is None:
+            return []
+        if isinstance(artist_obj, (list, tuple, set)):
+            artists: List[Any] = []
+            # Iterate over artist_obj to flatten nested artist groups.
+            for item in artist_obj:
+                artists.extend(_iter_artist_handles(item))
+            return artists
+        return [artist_obj]
+
+    def _apply_artist_zorder(artist_obj: Any, z_value: float) -> None:
+        """Apply one z-order value to every artist associated with a series.
+
+        Purpose:
+            Enforce resolved trace layering on all artists created for a series.
+        Why:
+            Series can contain more than one artist, and each one must carry the
+            same resolved z-order for deterministic stacking behavior.
+        Inputs:
+            artist_obj: One or many matplotlib artists for the series.
+            z_value: Resolved z-order to apply.
+        Outputs:
+            None.
+        Side Effects:
+            Mutates artist z-order state.
+        Exceptions:
+            Artists without set_zorder are skipped.
+        """
+        # Iterate over flattened handles so every artist gets the resolved zorder.
+        for artist_handle in _iter_artist_handles(artist_obj):
+            setter = getattr(artist_handle, "set_zorder", None)
+            if callable(setter):
+                setter(z_value)
+
     label_y1 = _fmt_safe(selected_columns.get("y1", "y1"))
     label_y3 = _fmt_safe(selected_columns.get("y3", "y3"))
     label_y2 = _fmt_safe(selected_columns.get("y2", "Derivative"))
@@ -25285,16 +25632,46 @@ def build_combined_triple_axis_figure(
         return True
 
     default_zorders = {"y1": 2, "y3": 1, "y2": 3, "z": 3, "z2": 3}
+    resolved_trace_zorders: Dict[str, float] = {}
+    # Iterate over default_zorders to resolve effective z-order per trace key.
+    for series_key, default_z in default_zorders.items():
+        resolved_trace_zorders[series_key] = _resolve_effective_trace_zorder(
+            default_z,
+            series_key=series_key,
+            scatter_series_configs=scatter_series_configs,
+        )
 
-    def _plot_dataset(ax_target: Axes, meta: Mapping[str, Any]) -> Optional[Any]:
-        """Perform plot dataset.
-        Used to keep the workflow logic localized and testable."""
+    def _plot_dataset(
+        ax_target: Axes, meta: Mapping[str, Any], *, axis_role: str
+    ) -> Optional[Any]:
+        """Render one dataset on its assigned combined-axis role.
+
+        Purpose:
+            Plot one selected data series and persist its artist for refresh and
+            legend workflows.
+        Why:
+            Combined layering requires each trace to resolve one deterministic
+            z-order and apply it consistently on every artist.
+        Inputs:
+            ax_target: Target Axes receiving the series artist(s).
+            meta: Dataset metadata including series values, label, and series_key.
+            axis_role: Combined-axis role name ("left", "right", or "third").
+        Outputs:
+            Primary artist handle for the rendered series, or None when skipped.
+        Side Effects:
+            Adds artists to the target Axes and updates line_map for reuse.
+        Exceptions:
+            Missing/invalid series data returns None without raising.
+        """
         series = meta.get("series")
         if series is None or not meta.get("selected"):
             return None
         series_key = meta.get("series_key")
+        resolved_zorder = resolved_trace_zorders.get(
+            series_key, float(default_zorders.get(series_key, 2))
+        )
         style_kwargs: Dict[str, Any] = {
-            "zorder": default_zorders.get(series_key, 2),
+            "zorder": resolved_zorder,
             "series_key": series_key,
         }
         if series_key == "z2":
@@ -25311,14 +25688,41 @@ def build_combined_triple_axis_figure(
         )
         if artist is None:
             return None
+        _apply_artist_zorder(artist, resolved_zorder)
+        artist_handles = _iter_artist_handles(artist)
+        if not artist_handles:
+            return None
+        # Emit one verification log per artist so trace layering can be audited.
+        for idx, artist_handle in enumerate(artist_handles):
+            actual_zorder = None
+            getter = getattr(artist_handle, "get_zorder", None)
+            if callable(getter):
+                try:
+                    actual_zorder = float(getter())
+                except Exception:
+                    actual_zorder = None
+            actual_text = (
+                f"{actual_zorder:.6g}"
+                if actual_zorder is not None and math.isfinite(actual_zorder)
+                else "None"
+            )
+            _combined_render_debug(
+                "Combined trace artist series=%s axis_role=%s intended_z=%s actual_z=%s artist_index=%s",
+                series_key,
+                axis_role,
+                f"{resolved_zorder:.6g}",
+                actual_text,
+                idx,
+            )
+        primary_artist = artist_handles[0]
         if series_key:
             try:
-                artist._gl260_series_key = series_key
+                primary_artist._gl260_series_key = series_key
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
-            line_map[series_key] = artist
-        return artist
+            line_map[series_key] = primary_artist
+        return primary_artist
 
     primary_meta = dataset_meta.get(left_key, dataset_meta["y1"])
     right_meta = dataset_meta.get(right_key, dataset_meta["z"])
@@ -25364,6 +25768,76 @@ def build_combined_triple_axis_figure(
         third_meta = _temperature_meta()
         third_role = third_meta.get("axis_type", "primary")
 
+    def _axis_role_layer_zorder(
+        series_keys: Sequence[str], role_bias: float, fallback: float
+    ) -> float:
+        """Resolve one combined-axis z-order from the role's active trace z-orders.
+
+        Purpose:
+            Compute deterministic axis-level draw order from effective per-trace
+            z-order values for that axis role.
+        Why:
+            Matplotlib draws by Axes first, so cross-axis trace priority must
+            influence each axis z-order to make foreground/background overrides
+            consistent when traces live on different axes.
+        Inputs:
+            series_keys: Trace keys assigned to one axis role.
+            role_bias: Small positive tie-breaker to keep equal-z axes stable.
+            fallback: Fallback z-order when no active traces exist for the role.
+        Outputs:
+            Float axis z-order value for the role.
+        Side Effects:
+            None.
+        Exceptions:
+            Invalid/non-finite trace z-orders are ignored.
+        """
+        z_values: List[float] = []
+        # Iterate over series_keys and collect active trace z-order values.
+        for trace_key in series_keys:
+            meta = dataset_meta.get(trace_key, {})
+            if not _is_available(meta):
+                continue
+            candidate = resolved_trace_zorders.get(trace_key)
+            if candidate is not None and math.isfinite(candidate):
+                z_values.append(float(candidate))
+        base_value = max(z_values) if z_values else float(fallback)
+        return float(base_value + role_bias)
+
+    axis_layer_zorders = {
+        "left": _axis_role_layer_zorder(("y1", "y3"), role_bias=0.01, fallback=0.0),
+        "right": _axis_role_layer_zorder(("z", "z2"), role_bias=0.02, fallback=0.0),
+        "third": _axis_role_layer_zorder(("y2",), role_bias=0.03, fallback=0.0),
+    }
+    axis_layer_zorders["overlay"] = max(axis_layer_zorders.values()) + 1000.0
+    legend_layer_zorder = float(axis_layer_zorders["overlay"] + 1000.0)
+
+    def _apply_combined_legend_layer(legend_obj: Any) -> None:
+        """Force one combined-plot legend above all combined axes.
+
+        Purpose:
+            Apply a deterministic top-layer z-order to a combined plot legend.
+        Why:
+            Combined axes z-orders can exceed Matplotlib's default legend z-order,
+            so legends must be explicitly lifted to stay visible.
+        Inputs:
+            legend_obj: Figure or axis legend artist to update.
+        Outputs:
+            None.
+        Side Effects:
+            Mutates legend z-order state when the artist supports set_zorder.
+        Exceptions:
+            Unsupported legend-like objects are ignored without raising.
+        """
+        if legend_obj is None:
+            return
+        setter = getattr(legend_obj, "set_zorder", None)
+        if callable(setter):
+            try:
+                setter(legend_layer_zorder)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
     cycle_overlay = overlay_ctx.get("cycle_overlay")
     markers_overlay = overlay_ctx.get("markers", cycle_overlay)
     legend_overlay = overlay_ctx.get("cycle_legend", cycle_overlay)
@@ -25400,19 +25874,19 @@ def build_combined_triple_axis_figure(
         )
 
     def _draw_cycle_markers(ax_target):
-        """Render cycle peak/trough markers as top-layer overlays on a target axes.
+        """Render cycle markers on the dedicated combined overlay axis.
 
         Purpose:
             Draw cached cycle peak and trough points for combined plot overlays.
         Why:
-            Cycle markers must remain above data traces even when trace zorder
-            priority or numeric overrides are raised by the user.
+            Overlay-axis rendering guarantees peak/trough markers stay above all
+            data traces regardless of per-trace priority or numeric overrides.
         Inputs:
-            ax_target: Axes receiving cycle marker scatter artists.
+            ax_target: Overlay Axes receiving cycle marker scatter artists.
         Outputs:
             Tuple of (peak_artist, trough_artist), each possibly None.
         Side Effects:
-            Adds scatter artists to the supplied axes.
+            Adds marker scatter artists to the overlay axis.
         Exceptions:
             Returns (None, None) when cycle overlay data is unavailable.
         """
@@ -25556,6 +26030,7 @@ def build_combined_triple_axis_figure(
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+        _apply_combined_legend_layer(legend)
         try:
             legend.set_draggable(True)
         except Exception:
@@ -25566,12 +26041,17 @@ def build_combined_triple_axis_figure(
 
     # Iterate over ("y1", "y3") to apply the per-item logic.
     for key in ("y1", "y3"):
-        artist = _plot_dataset(ax, dataset_meta[key])
+        artist = _plot_dataset(ax, dataset_meta[key], axis_role="left")
         if artist is not None:
             handles.append(artist)
 
     ax.set_xlim(*time_range)
     ax.set_ylim(*primary_settings["ylim"])
+    ax.set_zorder(axis_layer_zorders["left"])
+    # Keep the primary axes background transparent so high-z primary layers never
+    # occlude right/third-axis traces after dynamic axis z-order updates.
+    ax.patch.set_visible(False)
+    ax.set_facecolor("none")
     font_kwargs = {"fontsize": label_fontsize}
     if family_value:
         font_kwargs["fontfamily"] = family_value
@@ -25632,6 +26112,9 @@ def build_combined_triple_axis_figure(
             temp_settings["maj"],
             temp_settings["min"],
         )
+        ax_temp.set_zorder(axis_layer_zorders["right"])
+        ax_temp.patch.set_visible(False)
+        ax_temp.set_facecolor("none")
         axis_for_role.setdefault("temperature", ax_temp)
 
     # Derivative axis is a second detached right spine to preserve readability.
@@ -25671,19 +26154,89 @@ def build_combined_triple_axis_figure(
         )
         if deriv_settings["label_key"] == "derivative":
             ax_deriv.axhline(y=0, color="black", linestyle="--", linewidth=1, zorder=4)
+        ax_deriv.set_zorder(axis_layer_zorders["third"])
+        ax_deriv.patch.set_visible(False)
+        ax_deriv.set_facecolor("none")
         axis_for_role.setdefault("derivative", ax_deriv)
+
+    # Overlay axis carries only cycle markers and must render above all data axes.
+    ax_overlay = ax.twinx()
+    try:
+        ax_overlay._gl260_axis_role = "overlay"
+        ax_overlay._gl260_legend_only = True
+    except Exception:
+        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+        pass
+    ax_overlay.set_zorder(axis_layer_zorders["overlay"])
+    ax_overlay.set_ylim(*ax.get_ylim())
+    ax_overlay.set_autoscaley_on(False)
+    ax_overlay.patch.set_visible(False)
+    ax_overlay.set_facecolor("none")
+    ax_overlay.set_frame_on(False)
+    ax_overlay.tick_params(
+        axis="both",
+        which="both",
+        left=False,
+        right=False,
+        bottom=False,
+        top=False,
+        labelleft=False,
+        labelright=False,
+        labelbottom=False,
+        labeltop=False,
+    )
+    # Hide all overlay spines so only marker artists render on this axis.
+    for spine in ax_overlay.spines.values():
+        spine.set_visible(False)
+    ax_overlay.yaxis.set_visible(False)
+    ax_overlay.xaxis.set_visible(False)
+
+    def _axis_zorder_text(axis: Optional[Axes]) -> str:
+        """Return a debug-safe axis z-order string for logging.
+
+        Purpose:
+            Normalize axis z-order values into stable text for debug traces.
+        Why:
+            Layering verification logs should remain readable even when an axis
+            is absent or reports non-finite values.
+        Inputs:
+            axis: Axis to inspect, or None when that axis is disabled.
+        Outputs:
+            String representation of the axis z-order.
+        Side Effects:
+            None.
+        Exceptions:
+            Returns "None" when the axis cannot provide a finite z-order.
+        """
+        if axis is None:
+            return "None"
+        try:
+            z_value = float(axis.get_zorder())
+        except Exception:
+            return "None"
+        if not math.isfinite(z_value):
+            return "None"
+        return f"{z_value:.6g}"
+
+    _combined_render_debug(
+        "Combined axes z-orders left=%s right=%s third=%s overlay=%s",
+        _axis_zorder_text(ax),
+        _axis_zorder_text(ax_temp),
+        _axis_zorder_text(ax_deriv),
+        _axis_zorder_text(ax_overlay),
+    )
 
     temp_axis = axis_for_role.get("temperature")
     if temp_axis is not None:
         # Iterate over ("z", "z2") to apply the per-item logic.
         for key in ("z", "z2"):
-            artist = _plot_dataset(temp_axis, dataset_meta[key])
+            artist = _plot_dataset(temp_axis, dataset_meta[key], axis_role="right")
             if artist is not None:
                 handles.append(artist)
 
     deriv_axis = axis_for_role.get("derivative")
     if deriv_axis is not None:
-        artist = _plot_dataset(deriv_axis, dataset_meta["y2"])
+        artist = _plot_dataset(deriv_axis, dataset_meta["y2"], axis_role="third")
         if artist is not None:
             handles.append(artist)
 
@@ -25704,7 +26257,7 @@ def build_combined_triple_axis_figure(
         axis="both", which="major", labelcolor="black", labelsize=tick_fontsize
     )
     _apply_tick_font(ax)
-    combined_peak_artist, combined_trough_artist = _draw_cycle_markers(ax)
+    combined_peak_artist, combined_trough_artist = _draw_cycle_markers(ax_overlay)
     try:
         fig._gl260_cycle_marker_artists = {  # type: ignore[attr-defined]
             "peak": combined_peak_artist,
@@ -25810,6 +26363,7 @@ def build_combined_triple_axis_figure(
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+        _apply_combined_legend_layer(main_legend)
         if legend_anchor is not None:
             _apply_legend_anchor_to_artist(
                 main_legend,
@@ -25911,6 +26465,10 @@ def build_combined_triple_axis_figure(
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+    # Enforce the final legend layer for both newly created and reused legend artists.
+    # Iterate over _collect_gl260_legends(fig) to apply the per-item logic.
+    for legend_artist in _collect_gl260_legends(fig):
+        _apply_combined_legend_layer(legend_artist)
 
     # Layout solve: measure bboxes + adjust margins in a deterministic pass.
     layout_manager = PlotLayoutManager(
@@ -26149,6 +26707,7 @@ def build_combined_triple_axis_figure(
             "primary": ax,
             "right": ax_temp,
             "third": ax_deriv,
+            "overlay": ax_overlay,
         }
         fig._gl260_combined_axis_keys = {  # type: ignore[attr-defined]
             "left": left_key,
@@ -33561,11 +34120,19 @@ class UnifiedApp(tk.Tk):
                 pass
         auto_state = getattr(frame, "_plot_auto_refresh_state", None)
         auto_enabled = getattr(frame, "_plot_auto_refresh_enabled", True)
+        combined_overlay_hold = bool(
+            plot_key == "fig_combined"
+            and getattr(frame, "_post_first_draw_refresh_hold_overlay", False)
+        )
         if is_core_key and bool(getattr(frame, "_core_overlay_hold", False)):
             # Completion-based core orchestration keeps the overlay until done.
             pass
-        elif auto_state == "refreshing":
+        elif auto_state == "refreshing" and not combined_overlay_hold:
             self._complete_plot_auto_refresh(frame)
+        elif combined_overlay_hold and auto_state == "refreshing":
+            # Combined overlay release is draw-event gated; keep generic
+            # completion from clearing the splash before adaptive passes finish.
+            pass
         elif auto_enabled and auto_state in {"pending", "scheduled"}:
             # Keep the overlay active until the forced refresh pipeline completes.
             pass
@@ -33708,13 +34275,100 @@ class UnifiedApp(tk.Tk):
             legend_sig.append((idx, role, _norm_tuple(loc_val), bounds))
         return (size_sig, subplot_sig, tuple(axes_sig), tuple(legend_sig))
 
+    def _overlay_layout_decision_signature(self, fig: Optional[Figure]) -> Any:
+        """Build a low-noise layout signature for adaptive refresh pass decisions.
+
+        Purpose:
+            Capture only geometry that materially affects whether a second
+            refresh pass is needed before revealing the plot.
+        Why:
+            Overlay pass orchestration should react to structural layout changes
+            only; data limits and legend bounds are noisy and can trigger
+            unnecessary second passes.
+        Inputs:
+            fig: Matplotlib Figure being evaluated for adaptive refresh.
+        Outputs:
+            Tuple signature containing figure size, subplot parameters, and
+            non-legend axis geometry/visibility; returns None when unavailable.
+        Side Effects:
+            None.
+        Exceptions:
+            Internal lookups are guarded; missing values degrade to None.
+        """
+        if fig is None:
+            return None
+
+        def _norm_num(value: Any) -> Any:
+            """Normalize one numeric value for signature stability."""
+            try:
+                value_f = float(value)
+            except Exception:
+                return value
+            if not math.isfinite(value_f):
+                return None
+            return round(value_f, 4)
+
+        try:
+            size = fig.get_size_inches()
+            size_sig = tuple(_norm_num(v) for v in size)
+        except Exception:
+            size_sig = None
+        try:
+            subplot = fig.subplotpars
+            subplot_sig = (
+                _norm_num(getattr(subplot, "left", None)),
+                _norm_num(getattr(subplot, "right", None)),
+                _norm_num(getattr(subplot, "bottom", None)),
+                _norm_num(getattr(subplot, "top", None)),
+                _norm_num(getattr(subplot, "wspace", None)),
+                _norm_num(getattr(subplot, "hspace", None)),
+            )
+        except Exception:
+            subplot_sig = None
+
+        axes_sig: List[Any] = []
+        try:
+            for idx, ax in enumerate(list(getattr(fig, "axes", []) or [])):
+                if getattr(ax, "_gl260_legend_only", False):
+                    continue
+                role = str(getattr(ax, "_gl260_axis_role", "") or "")
+                try:
+                    visible = bool(ax.get_visible())
+                except Exception:
+                    visible = True
+                try:
+                    bounds = tuple(_norm_num(v) for v in ax.get_position().bounds)
+                except Exception:
+                    bounds = None
+                axes_sig.append((idx, role, visible, bounds))
+        except Exception:
+            axes_sig = []
+
+        return (size_sig, subplot_sig, tuple(axes_sig))
+
     def _capture_core_overlay_layout_baseline(
         self,
         frame: Optional[ttk.Frame],
         *,
         canvas: Optional[FigureCanvasTkAgg] = None,
     ) -> Any:
-        """Capture baseline core layout signature before first auto-refresh pass."""
+        """Capture the core overlay baseline used to decide if pass 2 is required.
+
+        Purpose:
+            Store the baseline layout signature before the first forced refresh.
+        Why:
+            Core overlay orchestration compares pass-1 output against this
+            baseline to avoid unnecessary second passes.
+        Inputs:
+            frame: Plot tab frame storing core overlay refresh state.
+            canvas: Optional canvas to resolve the active figure quickly.
+        Outputs:
+            The captured signature, or None when no figure is available.
+        Side Effects:
+            Persists baseline on frame as `_core_overlay_layout_sig_baseline`.
+        Exceptions:
+            Resolution and frame writes are guarded to keep UI flow resilient.
+        """
         if frame is None:
             return None
         fig = getattr(canvas, "figure", None) if canvas is not None else None
@@ -33722,7 +34376,7 @@ class UnifiedApp(tk.Tk):
             plot_key = str(getattr(frame, "_plot_key", "") or "")
             _, resolved_canvas = self._find_plot_tab_canvas(plot_key)
             fig = getattr(resolved_canvas, "figure", None) if resolved_canvas is not None else None
-        baseline = self._core_layout_signature(fig)
+        baseline = self._overlay_layout_decision_signature(fig)
         try:
             frame._core_overlay_layout_sig_baseline = baseline
         except Exception:
@@ -33740,7 +34394,23 @@ class UnifiedApp(tk.Tk):
         *,
         fig: Optional[Figure] = None,
     ) -> int:
-        """Record one completed core refresh render for overlay orchestration."""
+        """Record one core refresh completion and derive the adaptive pass target.
+
+        Purpose:
+            Track completed refresh renders for core overlay release gating.
+        Why:
+            The first completed pass decides whether a second pass is necessary
+            based on low-noise layout signature changes.
+        Inputs:
+            frame: Plot tab frame storing core overlay orchestration state.
+            fig: Optional rendered figure for current-pass signature capture.
+        Outputs:
+            Integer completion count after increment.
+        Side Effects:
+            Updates completion counters and target refresh metadata on frame.
+        Exceptions:
+            Counter and state writes are guarded to avoid UI disruption.
+        """
         if frame is None:
             return 0
         completed_count = getattr(frame, "_core_overlay_refresh_completed_count", 0)
@@ -33757,8 +34427,8 @@ class UnifiedApp(tk.Tk):
 
         if completed_count == 1:
             baseline_sig = getattr(frame, "_core_overlay_layout_sig_baseline", None)
-            current_sig = self._core_layout_signature(fig)
-            need_second_refresh = True
+            current_sig = self._overlay_layout_decision_signature(fig)
+            need_second_refresh = False
             if baseline_sig is not None and current_sig is not None:
                 need_second_refresh = baseline_sig != current_sig
             target_refreshes = 2 if need_second_refresh else 1
@@ -34073,10 +34743,27 @@ class UnifiedApp(tk.Tk):
         canvas: Optional[FigureCanvasTkAgg] = None,
         fig: Optional[Figure] = None,
     ) -> Any:
-        """Capture baseline rendered geometry before the first post-draw refresh."""
+        """Capture the combined overlay baseline used by adaptive pass selection.
+
+        Purpose:
+            Store baseline geometry before the first post-draw combined refresh.
+        Why:
+            Combined overlay logic should request pass 2 only when material
+            layout geometry changed after pass 1.
+        Inputs:
+            frame: Plot tab frame storing combined overlay state.
+            canvas: Optional canvas used to resolve the active combined figure.
+            fig: Optional explicit figure override for baseline capture.
+        Outputs:
+            Baseline decision signature, or None when unavailable.
+        Side Effects:
+            Persists baseline on frame as `_combined_overlay_layout_sig_baseline`.
+        Exceptions:
+            Resolution and state writes are guarded to avoid UI interruption.
+        """
         if frame is None:
             return None
-        baseline = self._combined_rendered_geometry_signature(
+        baseline = self._overlay_layout_decision_signature(
             self._resolve_combined_overlay_figure(frame, canvas=canvas, fig=fig)
         )
         try:
@@ -34096,7 +34783,23 @@ class UnifiedApp(tk.Tk):
         *,
         fig: Optional[Figure] = None,
     ) -> int:
-        """Record one completed combined refresh render for overlay orchestration."""
+        """Record one combined refresh completion and compute adaptive pass count.
+
+        Purpose:
+            Maintain completion counters for combined overlay hold/release flow.
+        Why:
+            Combined plots can require a second refresh pass when pass 1 changes
+            layout geometry; unchanged geometry should complete in one pass.
+        Inputs:
+            frame: Plot tab frame storing combined overlay orchestration state.
+            fig: Optional combined figure for current-pass signature capture.
+        Outputs:
+            Integer completion count after increment.
+        Side Effects:
+            Updates pass-target metadata on the frame after pass 1 completes.
+        Exceptions:
+            Counter and state writes are guarded to avoid UI disruption.
+        """
         if frame is None:
             return 0
         completed_count = getattr(frame, "_combined_overlay_refresh_completed_count", 0)
@@ -34113,10 +34816,10 @@ class UnifiedApp(tk.Tk):
 
         if completed_count == 1:
             baseline_sig = getattr(frame, "_combined_overlay_layout_sig_baseline", None)
-            current_sig = self._combined_rendered_geometry_signature(
+            current_sig = self._overlay_layout_decision_signature(
                 self._resolve_combined_overlay_figure(frame, fig=fig)
             )
-            need_second_refresh = True
+            need_second_refresh = False
             if baseline_sig is not None and current_sig is not None:
                 need_second_refresh = baseline_sig != current_sig
             target_refreshes = 2 if need_second_refresh else 1
@@ -80079,9 +80782,26 @@ class UnifiedApp(tk.Tk):
         scatter_config: Optional[Dict[str, Any]] = None,
         scatter_series_configs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Any, ...]:
-        """Perform combined scatter signature.
-        Used to keep the workflow logic localized and testable."""
+        """Compute a structure signature for combined scatter/trace styling.
+
+        Purpose:
+            Build a deterministic signature from per-series scatter settings.
+        Why:
+            Combined display reuse must rebuild when style inputs that affect
+            trace layering or appearance change, including z-order overrides.
+        Inputs:
+            series_keys: Ordered trace keys included in the signature.
+            scatter_config: Optional shared scatter settings.
+            scatter_series_configs: Optional per-series settings from Data Trace Settings.
+        Outputs:
+            Tuple signature used by combined structure invalidation logic.
+        Side Effects:
+            None.
+        Exceptions:
+            Invalid per-series settings are normalized to safe defaults.
+        """
         signature = []
+        default_zorders = {"y1": 2.0, "y3": 1.0, "y2": 3.0, "z": 3.0, "z2": 3.0}
         # Iterate over series_keys to apply the per-item logic.
         for key in series_keys:
             cfg = _get_scatter_config(
@@ -80089,6 +80809,13 @@ class UnifiedApp(tk.Tk):
                 scatter_config=scatter_config,
                 scatter_series_configs=scatter_series_configs,
             )
+            resolved_zorder = _resolve_effective_trace_zorder(
+                default_zorders.get(key, 2.0),
+                series_key=key,
+                scatter_series_configs=scatter_series_configs,
+            )
+            if not math.isfinite(resolved_zorder):
+                resolved_zorder = float(default_zorders.get(key, 2.0))
             signature.append(
                 (
                     key,
@@ -80100,6 +80827,7 @@ class UnifiedApp(tk.Tk):
                     _coerce_float(cfg.get("size")),
                     _coerce_float(cfg.get("linewidth")),
                     _coerce_float(cfg.get("alpha")),
+                    round(float(resolved_zorder), 6),
                 )
             )
         return tuple(signature)
@@ -80599,6 +81327,7 @@ class UnifiedApp(tk.Tk):
         ax = axes_map.get("primary")
         ax_temp = axes_map.get("right")
         ax_deriv = axes_map.get("third")
+        ax_overlay = axes_map.get("overlay")
         if ax is None:
             return fig
         try:
@@ -80684,6 +81413,8 @@ class UnifiedApp(tk.Tk):
         selected_columns = data_ctx.get("selected_columns") or globals().get(
             "selected_columns", {}
         )
+        prepared_series_map = data_ctx.get("series") or {}
+        prepared_series_np = data_ctx.get("series_np") or {}
         svg_safe = _svg_safe_text
         fmt = _format_axis_label
 
@@ -80714,31 +81445,41 @@ class UnifiedApp(tk.Tk):
 
         dataset_meta = {
             "y1": {
-                "series": globals().get("y1"),
+                "series": prepared_series_np.get(
+                    "y1", prepared_series_map.get("y1", globals().get("y1"))
+                ),
                 "label": label_y1,
                 "axis_type": "primary",
                 "selected": selected_map["y1"],
             },
             "y3": {
-                "series": globals().get("y3"),
+                "series": prepared_series_np.get(
+                    "y3", prepared_series_map.get("y3", globals().get("y3"))
+                ),
                 "label": label_y3,
                 "axis_type": "primary",
                 "selected": selected_map["y3"],
             },
             "y2": {
-                "series": globals().get("y2"),
+                "series": prepared_series_np.get(
+                    "y2", prepared_series_map.get("y2", globals().get("y2"))
+                ),
                 "label": label_y2,
                 "axis_type": "derivative",
                 "selected": selected_map["y2"],
             },
             "z": {
-                "series": globals().get("z"),
+                "series": prepared_series_np.get(
+                    "z", prepared_series_map.get("z", globals().get("z"))
+                ),
                 "label": label_z,
                 "axis_type": "temperature",
                 "selected": selected_map["z"],
             },
             "z2": {
-                "series": globals().get("z2"),
+                "series": prepared_series_np.get(
+                    "z2", prepared_series_map.get("z2", globals().get("z2"))
+                ),
                 "label": label_z2,
                 "axis_type": "temperature",
                 "selected": selected_map["z2"],
@@ -80809,6 +81550,89 @@ class UnifiedApp(tk.Tk):
         if temp_available and "temperature" not in {right_role, third_role}:
             right_meta = _temperature_meta()
 
+        default_zorders = {"y1": 2, "y3": 1, "y2": 3, "z": 3, "z2": 3}
+        resolved_trace_zorders: Dict[str, float] = {}
+        # Iterate over default_zorders to resolve effective z-order per trace key.
+        for trace_key, default_z in default_zorders.items():
+            resolved_trace_zorders[trace_key] = _resolve_effective_trace_zorder(
+                default_z,
+                series_key=trace_key,
+                scatter_series_configs=scatter_series_configs,
+            )
+
+        def _axis_role_layer_zorder(
+            series_keys: Sequence[str], role_bias: float, fallback: float
+        ) -> float:
+            """Resolve one axis z-order from active trace z-order values.
+
+            Purpose:
+                Compute axis-level draw order from effective z-orders assigned to
+                traces attached to that axis role.
+            Why:
+                Combined refresh must keep cross-axis foreground/background intent
+                aligned with current per-trace priority/override settings.
+            Inputs:
+                series_keys: Trace keys mapped to one axis role.
+                role_bias: Small tie-breaker for deterministic equal-z ordering.
+                fallback: Fallback z-order when no active traces are present.
+            Outputs:
+                Float axis z-order value.
+            Side Effects:
+                None.
+            Exceptions:
+                Invalid/non-finite trace values are skipped.
+            """
+            z_values: List[float] = []
+            # Iterate over series_keys and collect active trace z-order values.
+            for trace_key in series_keys:
+                meta = dataset_meta.get(trace_key, {})
+                if not _is_available(meta):
+                    continue
+                candidate = resolved_trace_zorders.get(trace_key)
+                if candidate is not None and math.isfinite(candidate):
+                    z_values.append(float(candidate))
+            base_value = max(z_values) if z_values else float(fallback)
+            return float(base_value + role_bias)
+
+        axis_layer_zorders = {
+            "left": _axis_role_layer_zorder(
+                ("y1", "y3"), role_bias=0.01, fallback=0.0
+            ),
+            "right": _axis_role_layer_zorder(
+                ("z", "z2"), role_bias=0.02, fallback=0.0
+            ),
+            "third": _axis_role_layer_zorder(("y2",), role_bias=0.03, fallback=0.0),
+        }
+        axis_layer_zorders["overlay"] = max(axis_layer_zorders.values()) + 1000.0
+        legend_layer_zorder = float(axis_layer_zorders["overlay"] + 1000.0)
+
+        def _apply_combined_legend_layer(legend_obj: Any) -> None:
+            """Force one combined legend above all axes during reuse updates.
+
+            Purpose:
+                Keep combined legends visible while display refresh reuses artists.
+            Why:
+                Dynamic axis z-orders can exceed default legend layering, so each
+                refresh must reassert legend z-order dominance.
+            Inputs:
+                legend_obj: Combined legend artist to lift.
+            Outputs:
+                None.
+            Side Effects:
+                Updates legend z-order when set_zorder is available.
+            Exceptions:
+                Invalid artists are ignored without raising.
+            """
+            if legend_obj is None:
+                return
+            setter = getattr(legend_obj, "set_zorder", None)
+            if callable(setter):
+                try:
+                    setter(legend_layer_zorder)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+
         primary_meta = dataset_meta.get(left_key, dataset_meta["y1"])
         label_overrides = (
             config.get("axis_label_overrides")
@@ -80863,12 +81687,24 @@ class UnifiedApp(tk.Tk):
         if ax is not None:
             ax.set_xlim(min_time, max_time)
             ax.set_ylim(min_y, max_y)
+            ax.set_zorder(axis_layer_zorders["left"])
+            # Combined reuse can preserve older axis patches, so force the primary
+            # patch transparent each refresh to avoid cross-axis occlusion.
+            ax.patch.set_visible(False)
+            ax.set_facecolor("none")
             ax.set_ylabel(
                 _label_or_default("primary", primary_meta.get("label", "")),
                 labelpad=primary_labelpad,
                 fontsize=label_fontsize,
                 fontfamily=family_value if family_value else None,
             )
+        if ax_overlay is not None:
+            # Keep the overlay axis aligned with pressure axis limits on reuse.
+            ax_overlay.set_ylim(min_y, max_y)
+            ax_overlay.set_zorder(axis_layer_zorders["overlay"])
+            ax_overlay.set_autoscaley_on(False)
+            ax_overlay.patch.set_visible(False)
+            ax_overlay.set_facecolor("none")
 
         if ax_temp is not None:
             try:
@@ -80878,6 +81714,9 @@ class UnifiedApp(tk.Tk):
                 pass
             if temp_axis_active:
                 ax_temp.set_ylim(twin_y_min, twin_y_max)
+                ax_temp.set_zorder(axis_layer_zorders["right"])
+                ax_temp.patch.set_visible(False)
+                ax_temp.set_facecolor("none")
                 ax_temp.set_ylabel(
                     _label_or_default("temperature", right_meta.get("label", "")),
                     labelpad=temp_labelpad,
@@ -80896,6 +81735,9 @@ class UnifiedApp(tk.Tk):
                 pass
             if deriv_axis_active:
                 ax_deriv.set_ylim(deriv_y_min, deriv_y_max)
+                ax_deriv.set_zorder(axis_layer_zorders["third"])
+                ax_deriv.patch.set_visible(False)
+                ax_deriv.set_facecolor("none")
                 ax_deriv.set_ylabel(
                     _label_or_default("derivative", third_meta.get("label", "")),
                     labelpad=deriv_labelpad,
@@ -81012,6 +81854,20 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+            # Reapply per-trace z-order on each refresh so Data Trace Settings
+            # updates take effect even when figure artists are reused in-place.
+            resolved_zorder = resolved_trace_zorders.get(key, 2.0)
+            try:
+                resolved_zorder = float(resolved_zorder)
+            except Exception:
+                resolved_zorder = 2.0
+            if not math.isfinite(resolved_zorder):
+                resolved_zorder = 2.0
+            try:
+                artist.set_zorder(resolved_zorder)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
             y_vals = decimated.get(key)
             if y_vals is None or x_plot is None:
                 continue
@@ -81118,6 +81974,7 @@ class UnifiedApp(tk.Tk):
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
+                _apply_combined_legend_layer(main_legend)
                 legend_anchor = config.get("legend_anchor")
                 legend_loc = config.get("legend_loc")
                 if legend_anchor is not None:
@@ -81300,6 +82157,7 @@ class UnifiedApp(tk.Tk):
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
+                _apply_combined_legend_layer(legend)
                 defer_drag_enable = False
                 try:
                     stored_mode = settings.get("combined_cycle_legend_anchor_mode")
@@ -81328,6 +82186,12 @@ class UnifiedApp(tk.Tk):
                 loc_override=config.get("cycle_legend_loc"),
                 anchor_space=config.get("cycle_legend_anchor_space"),
             )
+
+        # Apply legend z-order on every refresh so existing legends remain above
+        # high-priority axes even when no legend rebuild occurs.
+        # Iterate over self._collect_combined_legends(fig) to apply the per-item logic.
+        for legend in self._collect_combined_legends(fig):
+            _apply_combined_legend_layer(legend)
 
         try:
             cycle_legend_font_value = config.get(
