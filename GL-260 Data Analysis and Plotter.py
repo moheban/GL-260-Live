@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.12.4
+# Version: v2.12.5
 # Date: 2026-02-09
 
 import os
@@ -8438,7 +8438,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.12.4"
+APP_VERSION = "v2.12.5"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -18389,6 +18389,67 @@ DATA_TRACE_ZORDER_PRIORITY = OrderedDict(
     ]
 )
 DATA_TRACE_ZORDER_CHOICES = ["Inherit"] + list(DATA_TRACE_ZORDER_PRIORITY.keys())
+CYCLE_MARKER_MIN_ZORDER = 10.0
+CYCLE_MARKER_ZORDER_PAD = 1.0
+
+
+def _compute_top_overlay_zorder(
+    ax: Axes,
+    *,
+    min_z: float = CYCLE_MARKER_MIN_ZORDER,
+    pad: float = CYCLE_MARKER_ZORDER_PAD,
+) -> float:
+    """Compute a guaranteed top-layer zorder for cycle marker overlays.
+
+    Purpose:
+        Resolve a safe zorder that keeps cycle peak/trough markers above all
+        existing artists on an axes.
+    Why:
+        Per-trace zorder overrides can raise data traces above fixed marker
+        zorders, so overlays need a dynamic top-of-stack value.
+    Args:
+        ax: Target Matplotlib axes that will receive cycle markers.
+        min_z: Minimum floor zorder applied when axes artists are sparse.
+        pad: Positive spacing added above the current maximum axes zorder.
+    Returns:
+        Float zorder value for cycle marker overlays.
+    Side Effects:
+        None.
+    Exceptions:
+        None. Non-finite artist zorders are ignored.
+    """
+    max_zorder = None
+    # Scan existing artists so overlays sit above any trace priority/override mix.
+    for artist in ax.get_children():
+        getter = getattr(artist, "get_zorder", None)
+        if not callable(getter):
+            continue
+        try:
+            z_value = float(getter())
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(z_value):
+            continue
+        max_zorder = z_value if max_zorder is None else max(max_zorder, z_value)
+
+    try:
+        min_floor = float(min_z)
+    except (TypeError, ValueError):
+        min_floor = float(CYCLE_MARKER_MIN_ZORDER)
+    if not math.isfinite(min_floor):
+        min_floor = float(CYCLE_MARKER_MIN_ZORDER)
+
+    try:
+        pad_value = float(pad)
+    except (TypeError, ValueError):
+        pad_value = float(CYCLE_MARKER_ZORDER_PAD)
+    if not math.isfinite(pad_value) or pad_value < 0.0:
+        pad_value = float(CYCLE_MARKER_ZORDER_PAD)
+
+    if max_zorder is None:
+        return min_floor
+    return max(min_floor, float(max_zorder + pad_value))
+
 
 LINE_STYLE_MAP = OrderedDict(
     [
@@ -21804,7 +21865,7 @@ def analyze_pressure_cycles(
     min_cycle_drop,
     make_figure=True,
     *,
-    x_series=None,  
+    x_series=None,
     x_label="Elapsed Time (days)",
     time_range=None,  # (min_time, max_time) or None
     y_lim=None,  # (min_y, max_y) or None
@@ -21820,8 +21881,39 @@ def analyze_pressure_cycles(
     peak_width=1,
     fig_size=None,
 ):
-    """Analyze pressure cycles.
-    Used to produce pressure cycles diagnostics or summaries."""
+    """Analyze pressure cycles and optionally build a peak/trough figure.
+
+    Purpose:
+        Detect peak-to-trough cycles, compute cycle summary metrics, and produce
+        optional cycle marker visual output.
+    Why:
+        Cycle identification and visibility are required for downstream moles
+        calculations, overlays, and user-facing diagnostics.
+    Inputs:
+        pressure_series: Pressure values used for peak/trough detection.
+        temp_series: Temperature values used for cycle temperature statistics.
+        volume: Reactor volume used in moles calculations.
+        a_const: Van der Waals a constant used by gas model calculations.
+        b_const: Van der Waals b constant used by gas model calculations.
+        min_cycle_drop: Minimum valid pressure drop threshold per cycle (psi).
+        make_figure: Whether to generate a dedicated cycle figure.
+        x_series: Optional x-axis values for figure rendering.
+        x_label: X-axis label for the optional figure.
+        time_range: Optional x-axis limits tuple.
+        y_lim: Optional y-axis limits tuple.
+        auto_time_ticks: Enable auto x-axis ticks when True.
+        auto_y_ticks: Enable auto y-axis ticks when True.
+        xmaj_tick/xmin_tick/ymaj_tick/ymin_tick: Manual tick spacing values.
+        suptitle_text: Optional suptitle for the cycle figure.
+        peak_prominence/peak_distance/peak_width: Peak detector parameters.
+        fig_size: Optional figure size override.
+    Outputs:
+        Tuple of (figure_or_none, summary_text).
+    Side Effects:
+        Emits summary log lines and adds artists to the generated figure when enabled.
+    Exceptions:
+        Uses guarded fallbacks and returns a message when inputs are insufficient.
+    """
 
     import matplotlib.pyplot as plt
 
@@ -21831,14 +21923,7 @@ def analyze_pressure_cycles(
 
     import matplotlib.patches as mpatches
 
-    """
-
-    Computes cycle-by-cycle moles and returns a Peak/Trough figure (not shown).
-
-    """
-
     if pressure_series is None or len(pressure_series) == 0:
-
         msg = "No valid pressure data for cycle-by-cycle calculation."
 
         print(msg)
@@ -21970,11 +22055,9 @@ def analyze_pressure_cycles(
         # Use provided x_series if available; else fall back to Series index
 
         if x_series is not None:
-
             x_vals = np.asarray(x_series, dtype=float)
 
         else:
-
             x_vals = np.asarray(pressure_series.index, dtype=float)
 
         y_vals = np.asarray(pressure_series.values, dtype=float)
@@ -21997,12 +22080,14 @@ def analyze_pressure_cycles(
 
         # Annotate peaks/troughs
 
+        cycle_marker_zorder = _compute_top_overlay_zorder(
+            ax, min_z=CYCLE_MARKER_MIN_ZORDER, pad=CYCLE_MARKER_ZORDER_PAD
+        )
         peak_label_added = False
         trough_label_added = False
 
         # Iterate over cycles to apply the per-item logic.
         for c in cycles:
-
             peak_label = "Peak" if not peak_label_added else ""
             ax.scatter(
                 x_vals[c["peak_idx"]],
@@ -22010,13 +22095,13 @@ def analyze_pressure_cycles(
                 marker=style["peak_marker"],
                 s=style["marker_size"],
                 c=style["peak_color"],
-                zorder=3,
+                zorder=cycle_marker_zorder,
                 label=peak_label,
             )
             peak_label_added = peak_label_added or bool(peak_label)
 
             ax.annotate(
-                f'{c["peak"]:.1f}',
+                f"{c['peak']:.1f}",
                 (x_vals[c["peak_idx"]], c["peak"]),
                 textcoords="offset points",
                 xytext=(0, 10),
@@ -22032,7 +22117,7 @@ def analyze_pressure_cycles(
                 marker=style["trough_marker"],
                 s=style["marker_size"],
                 c=style["trough_color"],
-                zorder=3,
+                zorder=cycle_marker_zorder,
                 label=trough_label,
             )
             trough_label_added = trough_label_added or bool(trough_label)
@@ -22222,19 +22307,29 @@ def main_plotting_function(
     fig_size=None,
     render_ctx: Optional[RenderContext] = None,
 ):
-    """Perform main plotting function.
-    Used to keep the workflow logic localized and testable."""
+    """Generate the core GL-260 figures using live settings and render context.
+
+    Purpose:
+        Build Figure 1, Figure 2, and optional cycle-related outputs in one
+        coordinated plotting pass.
+    Why:
+        Centralizing figure generation keeps plot layering, legends, and export
+        behavior consistent across display and file outputs.
+    Inputs:
+        Axis ranges, tick controls, title text, plot toggles, cycle controls,
+        and an optional render context payload.
+    Outputs:
+        Mapping containing generated figures (`fig1`, `fig2`, and optional
+        cycle figure keys).
+    Side Effects:
+        Adds artists/legends to figures and tags figure metadata for downstream UI.
+    Exceptions:
+        Guarded branches keep rendering resilient when optional inputs are absent.
+    """
 
     import matplotlib.pyplot as plt
 
     from matplotlib.ticker import MultipleLocator, AutoMinorLocator, AutoLocator
-
-    """
-
-    Regenerate ALL figures at once using an explicit render context when provided.
-    Falls back to globals for legacy call sites.
-
-    """
 
     _apply_default_plot_fonts(settings.get("font_family"))
 
@@ -22561,7 +22656,6 @@ def main_plotting_function(
             cb = globals().get("update_cycle_summary_callback")
 
             if callable(cb):
-
                 cb(summary_text)
 
     def fmt(label):
@@ -22575,8 +22669,11 @@ def main_plotting_function(
     cycle_overlay = overlay_ctx.get("cycle_overlay")
     markers_overlay = overlay_ctx.get("markers", cycle_overlay)
     legend_overlay = overlay_ctx.get("cycle_legend", cycle_overlay)
-    cycle_style = get_cycle_trace_style() if (markers_overlay or legend_overlay) else None
+    cycle_style = (
+        get_cycle_trace_style() if (markers_overlay or legend_overlay) else None
+    )
     import matplotlib.patches as mpatches  # localized import to avoid circulars
+
     moles_lines = overlay_ctx.get("moles_summary")
     if moles_lines is None and isinstance(cycle_overlay, dict):
         moles_lines = cycle_overlay.get("moles_lines")
@@ -22594,10 +22691,27 @@ def main_plotting_function(
         )
 
     def _draw_cycle_markers(ax_target):
-        """Perform draw cycle markers.
-        Used to keep the workflow logic localized and testable."""
+        """Render cycle peak/trough markers as top-layer overlays on a target axes.
+
+        Purpose:
+            Draw cached cycle peak and trough points for core plot overlays.
+        Why:
+            Cycle markers must remain visually dominant regardless of trace zorder
+            overrides so cycle interpretation stays reliable.
+        Inputs:
+            ax_target: Axes receiving cycle marker scatter artists.
+        Outputs:
+            Tuple of (peak_artist, trough_artist), each possibly None.
+        Side Effects:
+            Adds scatter artists to the supplied axes.
+        Exceptions:
+            Returns (None, None) when cycle overlay data is unavailable.
+        """
         if not (show_cycle_markers_on_core_plots and markers_overlay and cycle_style):
             return (None, None)
+        cycle_marker_zorder = _compute_top_overlay_zorder(
+            ax_target, min_z=CYCLE_MARKER_MIN_ZORDER, pad=CYCLE_MARKER_ZORDER_PAD
+        )
         peak_artist = trough_artist = None
         peaks = markers_overlay.get("peak_points") or []
         troughs = markers_overlay.get("trough_points") or []
@@ -22609,7 +22723,7 @@ def main_plotting_function(
                 marker=cycle_style["peak_marker"],
                 s=cycle_style["marker_size"],
                 c=cycle_style["peak_color"],
-                zorder=4,
+                zorder=cycle_marker_zorder,
                 label=_text_safe("Peak"),
             )
         if troughs:
@@ -22620,7 +22734,7 @@ def main_plotting_function(
                 marker=cycle_style["trough_marker"],
                 s=cycle_style["marker_size"],
                 c=cycle_style["trough_color"],
-                zorder=4,
+                zorder=cycle_marker_zorder,
                 label=_text_safe("Trough"),
             )
         return peak_artist, trough_artist
@@ -25253,7 +25367,9 @@ def build_combined_triple_axis_figure(
     cycle_overlay = overlay_ctx.get("cycle_overlay")
     markers_overlay = overlay_ctx.get("markers", cycle_overlay)
     legend_overlay = overlay_ctx.get("cycle_legend", cycle_overlay)
-    cycle_style = get_cycle_trace_style() if (markers_overlay or legend_overlay) else None
+    cycle_style = (
+        get_cycle_trace_style() if (markers_overlay or legend_overlay) else None
+    )
     moles_lines = overlay_ctx.get("moles_summary")
     if moles_lines is None and isinstance(cycle_overlay, dict):
         moles_lines = cycle_overlay.get("moles_lines")
@@ -25284,10 +25400,27 @@ def build_combined_triple_axis_figure(
         )
 
     def _draw_cycle_markers(ax_target):
-        """Perform draw cycle markers.
-        Used to keep the workflow logic localized and testable."""
+        """Render cycle peak/trough markers as top-layer overlays on a target axes.
+
+        Purpose:
+            Draw cached cycle peak and trough points for combined plot overlays.
+        Why:
+            Cycle markers must remain above data traces even when trace zorder
+            priority or numeric overrides are raised by the user.
+        Inputs:
+            ax_target: Axes receiving cycle marker scatter artists.
+        Outputs:
+            Tuple of (peak_artist, trough_artist), each possibly None.
+        Side Effects:
+            Adds scatter artists to the supplied axes.
+        Exceptions:
+            Returns (None, None) when cycle overlay data is unavailable.
+        """
         if not (show_cycle_markers_on_core_plots and markers_overlay and cycle_style):
             return (None, None)
+        cycle_marker_zorder = _compute_top_overlay_zorder(
+            ax_target, min_z=CYCLE_MARKER_MIN_ZORDER, pad=CYCLE_MARKER_ZORDER_PAD
+        )
         peak_artist = trough_artist = None
         peaks = markers_overlay.get("peak_points") or []
         troughs = markers_overlay.get("trough_points") or []
@@ -25299,7 +25432,7 @@ def build_combined_triple_axis_figure(
                 marker=cycle_style["peak_marker"],
                 s=cycle_style["marker_size"],
                 c=cycle_style["peak_color"],
-                zorder=4,
+                zorder=cycle_marker_zorder,
                 label=_text_safe("Peak"),
             )
         if troughs:
@@ -25310,7 +25443,7 @@ def build_combined_triple_axis_figure(
                 marker=cycle_style["trough_marker"],
                 s=cycle_style["marker_size"],
                 c=cycle_style["trough_color"],
-                zorder=4,
+                zorder=cycle_marker_zorder,
                 label=_text_safe("Trough"),
             )
         return peak_artist, trough_artist
@@ -39266,13 +39399,11 @@ class UnifiedApp(tk.Tk):
                     self.nb.forget(tab)
 
                     try:
-
                         # also drop paired canvas if it exists at same index
 
                         self._canvases[i].get_tk_widget().destroy()
 
                     except Exception:
-
                         # Best-effort guard; ignore failures to avoid interrupting the workflow.
                         pass
 
@@ -39281,13 +39412,11 @@ class UnifiedApp(tk.Tk):
                     del self._plot_tabs[i]
 
                     if i < len(self._canvases):
-
                         del self._canvases[i]
 
                     break
 
             except Exception:
-
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
 
@@ -39326,8 +39455,27 @@ class UnifiedApp(tk.Tk):
     def _build_static_cycle_overview_figure(
         self, xv, yv, mask, peaks, troughs, cycles, total_drop
     ):
-        """Build static cycle overview figure.
-        Used to assemble static cycle overview figure during UI or plot setup."""
+        """Build a static cycle overview figure for summary/display workflows.
+
+        Purpose:
+            Render a non-interactive cycle figure with cycle markers and summary
+            legend content.
+        Why:
+            The application needs a deterministic cycle snapshot for preview,
+            tab display, and export workflows.
+        Inputs:
+            xv/yv: Full x/y numeric arrays.
+            mask: Boolean selection mask for visible data range.
+            peaks/troughs: Marker index collections.
+            cycles: Structured cycle rows produced by cycle detection.
+            total_drop: Aggregate pressure drop across valid cycles.
+        Outputs:
+            Matplotlib Figure object configured for cycle overview output.
+        Side Effects:
+            Creates and populates a Matplotlib figure with axes/artists.
+        Exceptions:
+            Best-effort guards preserve rendering continuity on optional failures.
+        """
 
         import matplotlib.pyplot as plt
 
@@ -39387,10 +39535,12 @@ class UnifiedApp(tk.Tk):
             mask, cycles, include_manual=True, cycle_only=True
         )
 
+        cycle_marker_zorder = _compute_top_overlay_zorder(
+            ax, min_z=CYCLE_MARKER_MIN_ZORDER, pad=CYCLE_MARKER_ZORDER_PAD
+        )
         peak_label_added = False
         # Iterate over peaks_in to apply the per-item logic.
         for idx in peaks_in:
-
             label = "Peak" if not peak_label_added else ""
             ax.scatter(
                 xv[idx],
@@ -39398,7 +39548,7 @@ class UnifiedApp(tk.Tk):
                 marker=style["peak_marker"],
                 s=style["marker_size"],
                 c=style["peak_color"],
-                zorder=3,
+                zorder=cycle_marker_zorder,
                 label=label,
             )
             peak_label_added = peak_label_added or bool(label)
@@ -39416,7 +39566,6 @@ class UnifiedApp(tk.Tk):
         trough_label_added = False
         # Iterate over troughs_in to apply the per-item logic.
         for idx in troughs_in:
-
             label = "Trough" if not trough_label_added else ""
             ax.scatter(
                 xv[idx],
@@ -39424,7 +39573,7 @@ class UnifiedApp(tk.Tk):
                 marker=style["trough_marker"],
                 s=style["marker_size"],
                 c=style["trough_color"],
-                zorder=3,
+                zorder=cycle_marker_zorder,
                 label=label,
             )
             trough_label_added = trough_label_added or bool(label)
@@ -40438,9 +40587,18 @@ class UnifiedApp(tk.Tk):
             container,
             text="Blank fields inherit the default plot styling.",
         ).grid(row=0, column=0, sticky="w", pady=(0, 10))
+        ttk.Label(
+            container,
+            text=(
+                "Cycle peak/trough markers are overlays and always render on top. "
+                "Priority and Z-Order Override in this dialog affect trace layers only."
+            ),
+            wraplength=980,
+            justify="left",
+        ).grid(row=1, column=0, sticky="w", pady=(0, 10))
 
         grid = ttk.Frame(container)
-        grid.grid(row=1, column=0, sticky="nsew")
+        grid.grid(row=2, column=0, sticky="nsew")
         grid.grid_columnconfigure(0, weight=0)
         grid.grid_columnconfigure(1, weight=0)
         grid.grid_columnconfigure(2, weight=0)
@@ -40448,7 +40606,8 @@ class UnifiedApp(tk.Tk):
         grid.grid_columnconfigure(4, weight=0)
         grid.grid_columnconfigure(5, weight=0)
         grid.grid_columnconfigure(6, weight=0)
-        grid.grid_columnconfigure(7, weight=1)
+        grid.grid_columnconfigure(7, weight=0)
+        grid.grid_columnconfigure(8, weight=1)
 
         headers = [
             ("Trace", 0),
@@ -40459,11 +40618,28 @@ class UnifiedApp(tk.Tk):
             ("Line Width (pt)", 5),
             ("Priority", 6),
             ("Z-Order Override", 7),
+            ("Effective Z", 8),
         ]
+        header_widgets: Dict[str, ttk.Label] = {}
         # Iterate over headers to apply the per-item logic.
         for label, column in headers:
-            ttk.Label(grid, text=label).grid(
-                row=0, column=column, sticky="w", padx=6, pady=(0, 6)
+            header_widget = ttk.Label(grid, text=label)
+            header_widget.grid(row=0, column=column, sticky="w", padx=6, pady=(0, 6))
+            header_widgets[label] = header_widget
+
+        priority_tooltip_text = (
+            "Maps trace layering to Background=1, Normal=2, Foreground=3, Hero=5. "
+            "Cycle peak/trough overlays are not controlled by this setting."
+        )
+        zorder_override_tooltip_text = (
+            "Optional numeric z-order override for traces only. "
+            "When provided, it supersedes Priority for that trace row."
+        )
+        if "Priority" in header_widgets:
+            self._attach_tooltip(header_widgets["Priority"], priority_tooltip_text)
+        if "Z-Order Override" in header_widgets:
+            self._attach_tooltip(
+                header_widgets["Z-Order Override"], zorder_override_tooltip_text
             )
 
         stored = (
@@ -40472,6 +40648,78 @@ class UnifiedApp(tk.Tk):
             else {}
         )
         series_vars: Dict[str, Dict[str, tk.Variable]] = {}
+
+        # Closure captures dialog state and computes resolved trace zorder shown
+        # in the read-only Effective Z column as users edit priority/override.
+        def _update_effective_z_display(vars_map: Dict[str, tk.Variable]) -> None:
+            """Refresh the Effective Z display for one data trace row.
+
+            Purpose:
+                Show the resolved zorder used for trace rendering in this row.
+            Why:
+                Priority and numeric override interplay can be unclear without a
+                live resolved value shown next to the inputs.
+            Inputs:
+                vars_map: Tk variable mapping for one trace row.
+            Outputs:
+                None.
+            Side Effects:
+                Updates the row's read-only Effective Z text variable.
+            Exceptions:
+                Invalid inputs resolve to an inherit placeholder safely.
+            """
+            effective_var = vars_map.get("effective_z")
+            if not isinstance(effective_var, tk.StringVar):
+                return
+            zorder_var = vars_map.get("zorder")
+            zorder_override = (
+                self._parse_optional_float_entry(zorder_var.get())
+                if isinstance(zorder_var, tk.StringVar)
+                else None
+            )
+            if zorder_override is not None:
+                effective_var.set(f"{float(zorder_override):g} (Override)")
+                return
+            priority_var = vars_map.get("priority")
+            priority_label = (
+                (priority_var.get() or "").strip()
+                if isinstance(priority_var, tk.StringVar)
+                else ""
+            )
+            priority_value = self._resolve_zorder_priority_value(priority_label)
+            if priority_value is not None:
+                effective_var.set(f"{float(priority_value):g} ({priority_label})")
+                return
+            effective_var.set("Inherit")
+
+        def _wire_effective_z_updates(vars_map: Dict[str, tk.Variable]) -> None:
+            """Bind live Effective Z refresh handlers for one trace row.
+
+            Purpose:
+                Keep Effective Z synchronized with Priority and Override fields.
+            Why:
+                Users should see immediate resolved layering feedback while editing.
+            Inputs:
+                vars_map: Tk variable mapping for one trace row.
+            Outputs:
+                None.
+            Side Effects:
+                Registers Tk variable trace callbacks.
+            Exceptions:
+                None.
+            """
+            priority_var = vars_map.get("priority")
+            if isinstance(priority_var, tk.StringVar):
+                priority_var.trace_add(
+                    "write",
+                    lambda *_args, _vars=vars_map: _update_effective_z_display(_vars),
+                )
+            zorder_var = vars_map.get("zorder")
+            if isinstance(zorder_var, tk.StringVar):
+                zorder_var.trace_add(
+                    "write",
+                    lambda *_args, _vars=vars_map: _update_effective_z_display(_vars),
+                )
 
         # Closure captures dialog state for callback wiring, kept nested to scope
         # the handler, and invoked by bindings set in _open_data_trace_settings_dialog.
@@ -40567,6 +40815,7 @@ class UnifiedApp(tk.Tk):
                     zorder_override_value = f"{float(zorder_val):g}"
             priority_var = tk.StringVar(value=priority_label)
             zorder_var = tk.StringVar(value=zorder_override_value)
+            effective_z_var = tk.StringVar(value="")
 
             series_vars[series_key] = {
                 "color": color_var,
@@ -40576,6 +40825,7 @@ class UnifiedApp(tk.Tk):
                 "linewidth": linewidth_var,
                 "priority": priority_var,
                 "zorder": zorder_var,
+                "effective_z": effective_z_var,
             }
 
             ttk.Label(grid, text=display_label).grid(
@@ -40666,12 +40916,13 @@ class UnifiedApp(tk.Tk):
                 width=12,
             )
             priority_combo.grid(row=row_offset, column=6, sticky="w", padx=6, pady=6)
+            self._attach_tooltip(priority_combo, priority_tooltip_text)
 
             zorder_frame = ttk.Frame(grid)
             zorder_frame.grid(row=row_offset, column=7, sticky="w", padx=6, pady=6)
-            ttk.Entry(zorder_frame, textvariable=zorder_var, width=10).grid(
-                row=0, column=0, sticky="w"
-            )
+            zorder_entry = ttk.Entry(zorder_frame, textvariable=zorder_var, width=10)
+            zorder_entry.grid(row=0, column=0, sticky="w")
+            self._attach_tooltip(zorder_entry, zorder_override_tooltip_text)
             ttk.Button(
                 zorder_frame,
                 text="Clear",
@@ -40681,10 +40932,19 @@ class UnifiedApp(tk.Tk):
                 ),
             ).grid(row=0, column=1, padx=(4, 0))
 
-        ttk.Separator(container).grid(row=2, column=0, sticky="ew", pady=(8, 8))
+            ttk.Entry(
+                grid,
+                textvariable=effective_z_var,
+                width=14,
+                state="readonly",
+            ).grid(row=row_offset, column=8, sticky="w", padx=6, pady=6)
+            _wire_effective_z_updates(series_vars[series_key])
+            _update_effective_z_display(series_vars[series_key])
+
+        ttk.Separator(container).grid(row=3, column=0, sticky="ew", pady=(8, 8))
 
         button_frame = ttk.Frame(container)
-        button_frame.grid(row=3, column=0, sticky="e")
+        button_frame.grid(row=4, column=0, sticky="e")
 
         # Closure captures _open_data_trace_settings_dialog state for callback wiring.
         def _apply_updates(close_after: bool = False) -> None:
@@ -51447,27 +51707,28 @@ class UnifiedApp(tk.Tk):
 
         self._trough_artist = None
 
+        cycle_marker_zorder = _compute_top_overlay_zorder(
+            self._cycle_ax, min_z=CYCLE_MARKER_MIN_ZORDER, pad=CYCLE_MARKER_ZORDER_PAD
+        )
         if plot_peaks.size:
-
             self._peak_artist = self._cycle_ax.scatter(
                 xv[plot_peaks],
                 yv[plot_peaks],
                 marker=style["peak_marker"],
                 s=style["marker_size"],
                 c=style["peak_color"],
-                zorder=3,
+                zorder=cycle_marker_zorder,
                 label="Peak",
             )
 
         if plot_troughs.size:
-
             self._trough_artist = self._cycle_ax.scatter(
                 xv[plot_troughs],
                 yv[plot_troughs],
                 marker=style["trough_marker"],
                 s=style["marker_size"],
                 c=style["trough_color"],
-                zorder=3,
+                zorder=cycle_marker_zorder,
                 label="Trough",
             )
 
@@ -51523,11 +51784,9 @@ class UnifiedApp(tk.Tk):
         self._cycle_legend_obj = leg
 
         if self._cycle_pending_range:
-
             self._shade_selection(self._cycle_pending_range)
 
         else:
-
             self._shade_selection(None)
 
         self._cycle_canvas.draw_idle()
@@ -51550,13 +51809,11 @@ class UnifiedApp(tk.Tk):
         pending = getattr(self, "_pending_fig3_update", None)
 
         if pending:
-
             fig = None
 
             err_msg = None
 
             try:
-
                 fig = self._build_cycle_figure_from_current_markers(
                     ignore_min_drop=pending.get("ignore_min_drop", True),
                     include_moles_legend=pending.get("include_moles", False),
@@ -51600,8 +51857,23 @@ class UnifiedApp(tk.Tk):
             self._update_cycle_fig_tab(None)
 
     def _recompute_manual_only(self):
-        """Perform recompute manual only.
-        Used to keep the workflow logic localized and testable."""
+        """Recompute cycle outputs using manual marker state only.
+
+        Purpose:
+            Refresh cycle summary metrics and the interactive cycle plot after
+            manual marker edits.
+        Why:
+            Manual correction workflows require immediate recalculation without
+            auto-detection overriding user-selected peak/trough points.
+        Inputs:
+            None. Uses current UI state, marker sets, and selected data mask.
+        Outputs:
+            None.
+        Side Effects:
+            Rebuilds cycle artists, updates summary text, and refreshes cycle tabs.
+        Exceptions:
+            Guarded checks return early when required data is unavailable.
+        """
 
         import matplotlib.patches as mpatches
 
@@ -51795,7 +52067,6 @@ class UnifiedApp(tk.Tk):
         cb = globals().get("update_cycle_summary_callback")
 
         if callable(cb):
-
             cb(summary)
 
         # Redraw plot (manual markers only)
@@ -51857,27 +52128,28 @@ class UnifiedApp(tk.Tk):
 
         ty = yv[plot_troughs]
 
+        cycle_marker_zorder = _compute_top_overlay_zorder(
+            self._cycle_ax, min_z=CYCLE_MARKER_MIN_ZORDER, pad=CYCLE_MARKER_ZORDER_PAD
+        )
         if len(px):
-
             self._peak_artist = self._cycle_ax.scatter(
                 px,
                 py,
                 marker=style["peak_marker"],
                 s=style["marker_size"],
                 c=style["peak_color"],
-                zorder=3,
+                zorder=cycle_marker_zorder,
                 label="Peak",
             )
 
         if len(tx):
-
             self._trough_artist = self._cycle_ax.scatter(
                 tx,
                 ty,
                 marker=style["trough_marker"],
                 s=style["marker_size"],
                 c=style["trough_color"],
-                zorder=3,
+                zorder=cycle_marker_zorder,
                 label="Trough",
             )
 
@@ -51943,8 +52215,23 @@ class UnifiedApp(tk.Tk):
     def _build_cycle_figure_from_current_markers(
         self, *, ignore_min_drop: bool = True, include_moles_legend: bool = False
     ):
-        """Build cycle figure from current markers.
-        Used to assemble cycle figure from current markers during UI or plot setup."""
+        """Build a static cycle figure from the current effective marker state.
+
+        Purpose:
+            Create an export/display-ready cycle figure from the active marker set.
+        Why:
+            Users need a deterministic cycle figure that reflects current manual
+            and auto marker decisions without rerunning full plot generation.
+        Inputs:
+            ignore_min_drop: When True, include cycles regardless of minimum drop.
+            include_moles_legend: When True, append moles summary lines to legend.
+        Outputs:
+            Matplotlib Figure instance, or None when prerequisites are missing.
+        Side Effects:
+            Constructs a new figure and populates axes, markers, and legend entries.
+        Exceptions:
+            Returns None when required data/mask context is not available.
+        """
 
         import matplotlib.pyplot as plt
 
@@ -51959,7 +52246,6 @@ class UnifiedApp(tk.Tk):
         x, y1, z = self._get_xy()
 
         if x is None or y1 is None:
-
             return None
 
         xv = np.asarray(x, dtype=float)
@@ -51969,7 +52255,6 @@ class UnifiedApp(tk.Tk):
         mask_arr = np.asarray(self._current_mask(), dtype=bool)
 
         if mask_arr.size == 0 or mask_arr.sum() < 3:
-
             return None
 
         # Effective markers, restricted to current mask
@@ -52046,6 +52331,9 @@ class UnifiedApp(tk.Tk):
 
         ty = yv[plot_troughs]
 
+        cycle_marker_zorder = _compute_top_overlay_zorder(
+            ax, min_z=CYCLE_MARKER_MIN_ZORDER, pad=CYCLE_MARKER_ZORDER_PAD
+        )
         if len(px):
 
             ax.scatter(
@@ -52054,19 +52342,18 @@ class UnifiedApp(tk.Tk):
                 marker=style["peak_marker"],
                 s=style["marker_size"],
                 c=style["peak_color"],
-                zorder=3,
+                zorder=cycle_marker_zorder,
                 label="Peak",
             )
 
         if len(tx):
-
             ax.scatter(
                 tx,
                 ty,
                 marker=style["trough_marker"],
                 s=style["marker_size"],
                 c=style["trough_color"],
-                zorder=3,
+                zorder=cycle_marker_zorder,
                 label="Trough",
             )
 

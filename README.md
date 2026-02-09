@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.12.4)
+# GL-260 Data Analysis and Plotter (v2.12.5)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.12.4`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.12.5`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v2.12.5 Cycle Marker Top-Layer Z-Order + Data Trace UX Clarity](#v2125-cycle-marker-top-layer-z-order--data-trace-ux-clarity)
   - [v2.12.4 Working Version Rollforward + Docs Sync](#v2124-working-version-rollforward--docs-sync)
   - [v2.12.3 Input Persistence + Async Speciation Overlay](#v2123-input-persistence--async-speciation-overlay)
   - [v2.12.2 Planning Timeline Persistence + Input Stability](#v2122-planning-timeline-persistence--input-stability)
@@ -329,10 +330,12 @@ Controls (per trace):
 - Line width (pt) (entry + Clear)
 - Z-order priority (Background / Normal / Foreground / Hero)
 - Z-order numeric override (optional; supersedes Priority)
+- Effective Z (read-only; live resolved z-order shown per row)
 
 Inheritance behavior:
 - Blank fields inherit existing defaults with no behavior change.
 - Priority set to Inherit leaves the trace at its existing z-order.
+- Cycle peak/trough markers are overlay markers and always render above trace layers; Data Trace Settings z-order controls apply to traces only.
 
 #### Combined Triple-Axis Plot Tab
 Purpose: preview the combined plot, manage overlays, and export the triple-axis figure.
@@ -881,6 +884,11 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v2.12.5 Cycle Marker Top-Layer Z-Order + Data Trace UX Clarity
+- Added dynamic cycle marker overlay z-ordering so peak/trough markers always render above trace layers, including custom trace z-order overrides.
+- Replaced hardcoded cycle marker z-order values across cycle and core plotting paths with a computed top-overlay z-order helper.
+- Updated Data Trace Settings with explicit overlay guidance, Priority and Z-Order Override tooltips, and a live read-only Effective Z column.
 
 ### v2.12.4 Working Version Rollforward + Docs Sync
 - Set `v2.12.4` as the active working version (`APP_VERSION` and file header).
