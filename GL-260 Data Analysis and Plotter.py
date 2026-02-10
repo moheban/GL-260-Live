@@ -57091,7 +57091,18 @@ class UnifiedApp(tk.Tk):
             stored_mode = None
             stored_loc = None
             stored_loc_tuple = None
-        defer_cycle_drag_enable = bool(stored_mode == "loc_tuple")
+        pending_saved_anchor_apply = bool(
+            defer_saved_anchor
+            and (
+                saved_offsets is not None
+                or (stored_mode == "loc_tuple" and stored_loc_tuple is not None)
+            )
+        )
+        # Defer cycle legend drag only while a saved loc-tuple anchor is queued
+        # for draw-time application; otherwise leave drag enabled.
+        defer_cycle_drag_enable = bool(
+            pending_saved_anchor_apply and stored_mode == "loc_tuple"
+        )
         self._dbg(
             "plotting.legends",
             "Apply saved anchor persist=%s dx=%s dy=%s fig_id=%s",
@@ -57100,10 +57111,7 @@ class UnifiedApp(tk.Tk):
             saved_dy,
             id(fig),
         )
-        if defer_saved_anchor and (
-            saved_offsets is not None
-            or (stored_mode == "loc_tuple" and stored_loc_tuple is not None)
-        ):
+        if pending_saved_anchor_apply:
             self._combined_cycle_legend_pending_apply = True
             self._combined_cycle_legend_pending_fig_id = id(fig)
             self._combined_cycle_legend_pending_offsets = saved_offsets
@@ -57129,6 +57137,25 @@ class UnifiedApp(tk.Tk):
         )
         cycle_lock_enabled = bool(
             settings.get("combined_cycle_legend_lock_position", False)
+        )
+        effective_cycle_drag_enabled = bool(
+            cycle_drag_enabled
+            and not cycle_lock_enabled
+            and not defer_cycle_drag_enable
+        )
+        self._dbg(
+            "plotting.legends",
+            "Cycle legend drag policy mode=%s defer_saved_anchor=%s "
+            "pending_apply=%s drag_enabled=%s lock_enabled=%s "
+            "defer_drag_enable=%s effective_drag=%s fig_id=%s",
+            stored_mode,
+            defer_saved_anchor,
+            pending_saved_anchor_apply,
+            cycle_drag_enabled,
+            cycle_lock_enabled,
+            defer_cycle_drag_enable,
+            effective_cycle_drag_enabled,
+            id(fig),
         )
         fig_expect_cycle = getattr(fig, "_gl260_expect_cycle_legend", None)
         if fig_expect_cycle is None:
