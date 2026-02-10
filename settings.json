@@ -92,6 +92,48 @@
           "x1": -0.10802072362146886,
           "trace_key": "y2"
         }
+      },
+      {
+        "id": "5f18ffea-2412-4b6b-a2f7-7bd3439a7014",
+        "name": "Trace Mask 4",
+        "type": "trace_mask",
+        "axes_target": "primary",
+        "coord_space": "data",
+        "visible": true,
+        "locked": false,
+        "zorder": 13.0,
+        "style": {
+          "color": "#000000",
+          "alpha": 0.9,
+          "linewidth": 1.5,
+          "linestyle": "solid"
+        },
+        "geometry": {
+          "x0": 1.1631322266875923,
+          "x1": 0.9954648129965197,
+          "trace_key": "y2"
+        }
+      },
+      {
+        "id": "2abb5f78-267d-48fe-8b6a-fa534237761a",
+        "name": "Trace Mask 5",
+        "type": "trace_mask",
+        "axes_target": "primary",
+        "coord_space": "data",
+        "visible": true,
+        "locked": false,
+        "zorder": 14.0,
+        "style": {
+          "color": "#000000",
+          "alpha": 0.9,
+          "linewidth": 1.5,
+          "linestyle": "solid"
+        },
+        "geometry": {
+          "x0": 3.9393926580374425,
+          "x1": 4.02517598597241,
+          "trace_key": "y2"
+        }
       }
     ],
     "fig_pressure_temp": [],
@@ -101,7 +143,7 @@
     "fig_combined_triple_axis": {
       "collapsed": false,
       "last_mode": "select",
-      "last_selected_id": "c67c9651-5b1f-4e34-8535-3e4efc7bc7f0",
+      "last_selected_id": "2abb5f78-267d-48fe-8b6a-fa534237761a",
       "live_update": false,
       "editor_geometry": "1542x714+2112+162",
       "editor_sash": 821,

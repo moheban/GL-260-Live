@@ -20,3 +20,4 @@ Prompt Template.md
 .envrc
 .DS_Store
 .ruff_cache
+settings.json
