@@ -6,7 +6,8 @@
   "selected_sheets": [
     "Batch 1 Rxn Day 1",
     "Batch 1 Rxn Day 1.1",
-    "Batch 1 Rxn Day 1.1-4"
+    "Batch 1 Rxn Day 1.1-4",
+    "Batch 1 Rxn Day 4-5"
   ],
   "plot_elements": {
     "fig_combined_triple_axis": [
@@ -377,7 +378,7 @@
   ],
   "sol_last_workflow": "Analysis",
   "min_time": -0.05,
-  "max_time": 3.95,
+  "max_time": 4.89,
   "min_y": -20.0,
   "max_y": 820.0,
   "twin_y_min": 13.38,
@@ -509,16 +510,17 @@
   "combined_y_right_key": "z",
   "combined_y_third_key": "y2",
   "combined_center_plot_legend": false,
-  "window_geometry": "1587x855+156+64",
+  "window_geometry": "1587x855+26+26",
   "last_file_path": "C:/Users/mmoheban/Local Documents/Python/PR-24302 Sodium Bicarbonate MPT/PR-24302 Sodium Bicarbonate GL-260 Data for Analysis.xlsx",
-  "last_sheet_name": "Batch 1 Rxn Day 1.1-4",
+  "last_sheet_name": "Batch 1 Rxn Day 4-5",
   "cycle_cached_markers": {
     "file": "C:\\Users\\mmoheban\\Local Documents\\Python\\PR-24302 Sodium Bicarbonate MPT\\PR-24302 Sodium Bicarbonate GL-260 Data for Analysis.xlsx",
-    "sheet": "Batch 1 Rxn Day 1.1-4",
+    "sheet": "Batch 1 Rxn Day 4-5",
     "sheets": [
       "Batch 1 Rxn Day 1",
       "Batch 1 Rxn Day 1.1",
-      "Batch 1 Rxn Day 1.1-4"
+      "Batch 1 Rxn Day 1.1-4",
+      "Batch 1 Rxn Day 4-5"
     ],
     "multi_sheet": true,
     "columns": {
@@ -526,7 +528,7 @@
       "y1": "Reactor Pressure (PSI)"
     },
     "data_len": 0,
-    "mask_true": 21540,
+    "mask_true": 26789,
     "peaks": [
       16,
       192,
@@ -557,7 +559,7 @@
       "width": 1
     },
     "min_cycle_drop": -10.0,
-    "timestamp": 1770667047.5515513
+    "timestamp": 1770733420.5829027
   },
   "cycle_legend_anchor": [
     0.6589208483067334,
@@ -808,9 +810,9 @@
     "external_temp": "CH3",
     "internal_temp": "CH4"
   },
-  "csv_import_last_csv_path": "C:/Users/mmoheban/OneDrive - Cambridge Isotope Laboratories, Inc/Documents/PR#/PR-24302 Sodium Bicarbonate MPT CLM-441-MPT/PR-24302 GL-260 Files/Day 1.1-4 Spot 15 Average PR-24302 CLM-441-MPT.csv",
+  "csv_import_last_csv_path": "C:/Users/mmoheban/OneDrive - Cambridge Isotope Laboratories, Inc/Documents/PR#/PR-24302 Sodium Bicarbonate MPT CLM-441-MPT/PR-24302 GL-260 Files/Day 4-5 Spot 15 Average PR-24302 CLM-441-MPT.csv",
   "csv_import_last_workbook_path": "C:/Users/mmoheban/Local Documents/Python/PR-24302 Sodium Bicarbonate MPT/PR-24302 Sodium Bicarbonate GL-260 Data for Analysis.xlsx",
-  "csv_import_last_sheet_name": "Batch 1 Rxn Day 1.1-4",
+  "csv_import_last_sheet_name": "Batch 1 Rxn Day 4-5",
   "csv_import_sheet_exists_mode": "overwrite",
   "csv_import_derivative_source": "reactor",
   "csv_import_smoothing_factor": 0.98,

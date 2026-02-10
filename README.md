@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.12.6)
+# GL-260 Data Analysis and Plotter (v2.12.7)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.12.6`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.12.7`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v2.12.7 Adaptive Combined Refresh + Data-Tab CSV Shortcut](#v2127-adaptive-combined-refresh--data-tab-csv-shortcut)
   - [v2.12.6 Combined Axes Layering Enforcement](#v2126-combined-axes-layering-enforcement)
   - [v2.12.5 Cycle Marker Top-Layer Z-Order + Data Trace UX Clarity](#v2125-cycle-marker-top-layer-z-order--data-trace-ux-clarity)
   - [v2.12.4 Working Version Rollforward + Docs Sync](#v2124-working-version-rollforward--docs-sync)
@@ -200,17 +201,17 @@ Purpose: load Excel workbooks and select one or multiple sheets.
 Key controls:
 - Excel file entry, Browse..., and Rescan File.
 - Mode: Single Sheet or Multiple Sheets.
-- Single Sheet: select a sheet from a combo box and click Load Sheet Data.
+- Single Sheet: select a sheet from a combo box, click Load Sheet Data, or click Import GL-260 CSV... to open the CSV import popup directly.
 - Multiple Sheets:
   - "Available Sheets" list and "Included Sheets (ordered)" list.
   - Add >>, << Remove, Move Up, Move Down to control the stitched sequence.
-  - Load Selected Sheets loads and stitches.
+  - Load Selected Sheets loads and stitches; Import GL-260 CSV... next to it opens the same CSV import popup.
 
 Runtime behavior:
 - Sheet names are read via `openpyxl` (read-only) with a pandas fallback.
 - The selected file path and last sheet are persisted to `settings.json`.
 
-#### GL-260 CSV Import (File -> Import GL-260 CSV...)
+#### GL-260 CSV Import (File menu or Data tab Import GL-260 CSV...)
 Purpose: convert raw Graphtec GL-260 CSV exports into a new Excel sheet that matches the app's expected schema.
 
 Workflow:
@@ -349,7 +350,7 @@ Key controls:
 - Export controls (PNG/SVG/PDF) with output size profiles and DPI.
 
 Stabilization note:
-Combined plots use a two-pass refresh to stabilize layout. The loading overlay remains visible until the second refresh completes and stabilization is confirmed, and the splash progress bar advances by render milestones until completion.
+Combined plots use adaptive refresh stabilization. A second pass is run only when pass-1 signals show material data/layout/plot-element changes plus geometry drift, while ambiguous signals fail closed to a second pass. The loading overlay remains visible until required passes complete and stabilization is confirmed, and the splash progress bar advances by render milestones until completion.
 
 #### Cycle Analysis Tab
 Purpose: detect cycles, compute moles, and interactively edit peak/trough markers.
@@ -887,6 +888,13 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v2.12.7 Adaptive Combined Refresh + Data-Tab CSV Shortcut
+- Updated Combined Triple-Axis auto-refresh pass targeting to use a decision bundle that tracks data, layout, plot elements, and rendered geometry signatures.
+- Combined pass 2 now runs adaptively: unchanged data/layout/elements can complete in one pass, while ambiguous or incomplete decision signals conservatively require pass 2.
+- Added debug-only decision diagnostics for combined adaptive refresh logic (change flags, ambiguity flag, and computed pass target).
+- Added direct `Import GL-260 CSV...` buttons on the Data tab in both Single Sheet and Multiple Sheets modes, including placement next to `Load Selected Sheets` in Multiple Sheets mode.
+- Bumped application version metadata to `v2.12.7` in the script header and `APP_VERSION`.
 
 ### v2.12.6 Combined Axes Layering Enforcement
 - Enforced deterministic Combined Triple-Axis draw order at the Axes level (left, right, third) so cross-axis layering is stable and predictable.

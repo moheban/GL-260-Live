@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.12.6
-# Date: 2026-02-09
+# Version: v2.12.7
+# Date: 2026-02-10
 
 import os
 import sys
@@ -8658,7 +8658,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.12.6"
+APP_VERSION = "v2.12.7"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -34223,6 +34223,9 @@ class UnifiedApp(tk.Tk):
                     frame._combined_overlay_refresh_invoked_count = 0
                     frame._combined_overlay_refresh_completed_count = 0
                     frame._combined_overlay_layout_sig_baseline = None
+                    frame._combined_overlay_decision_sig_baseline = None
+                    frame._combined_overlay_decision_sig_last = None
+                    frame._combined_overlay_data_sig_current = None
                     frame._combined_overlay_need_second_refresh = True
                     frame._combined_overlay_target_refreshes = 2
                     frame._combined_overlay_ready_seen = False
@@ -35003,6 +35006,56 @@ class UnifiedApp(tk.Tk):
         state = self._combined_plot_state if isinstance(self._combined_plot_state, dict) else {}
         return self._combined_rendered_geometry_signature(state.get("fig"))
 
+    def _combined_overlay_decision_signature(
+        self,
+        frame: Optional[ttk.Frame],
+        *,
+        canvas: Optional[FigureCanvasTkAgg] = None,
+        fig: Optional[Figure] = None,
+    ) -> Dict[str, Any]:
+        """Build the combined adaptive-refresh decision signature bundle.
+
+        Purpose:
+            Collect the low-noise signals used to decide whether combined pass 2
+            is required.
+        Why:
+            Combined overlay gating should avoid unconditional second refreshes
+            while still failing closed when decision signals are incomplete.
+        Inputs:
+            frame: Plot tab frame that stores combined overlay orchestration state.
+            canvas: Optional active canvas used to resolve the rendered figure.
+            fig: Optional explicit figure override for signature collection.
+        Outputs:
+            Mapping with `data_sig`, `layout_sig`, `elements_sig`, and
+            `geometry_sig`; values are None when unavailable.
+        Side Effects:
+            None.
+        Exceptions:
+            Resolution failures are guarded; missing values degrade to None.
+        """
+        active_fig = self._resolve_combined_overlay_figure(frame, canvas=canvas, fig=fig)
+        state = self._combined_plot_state if isinstance(self._combined_plot_state, dict) else {}
+
+        data_sig = None
+        if frame is not None:
+            data_sig = getattr(frame, "_combined_overlay_data_sig_current", None)
+        if data_sig is None and active_fig is not None:
+            data_sig = getattr(active_fig, "_gl260_combined_data_sig", None)
+
+        layout_sig = getattr(active_fig, "_gl260_combined_layout_sig", None)
+        state_fig = state.get("fig")
+        if layout_sig is None and active_fig is not None and state_fig is active_fig:
+            layout_sig = state.get("layout_sig")
+        if layout_sig is None:
+            layout_sig = self._combined_layout_state
+
+        return {
+            "data_sig": data_sig,
+            "layout_sig": layout_sig,
+            "elements_sig": self._plot_elements_signature("fig_combined_triple_axis"),
+            "geometry_sig": self._overlay_layout_decision_signature(active_fig),
+        }
+
     def _capture_combined_overlay_layout_baseline(
         self,
         frame: Optional[ttk.Frame],
@@ -35022,27 +35075,37 @@ class UnifiedApp(tk.Tk):
             canvas: Optional canvas used to resolve the active combined figure.
             fig: Optional explicit figure override for baseline capture.
         Outputs:
-            Baseline decision signature, or None when unavailable.
+            Baseline decision-signature bundle, or None when unavailable.
         Side Effects:
-            Persists baseline on frame as `_combined_overlay_layout_sig_baseline`.
+            Persists baseline metadata on the frame for pass-target derivation.
         Exceptions:
             Resolution and state writes are guarded to avoid UI interruption.
         """
         if frame is None:
             return None
-        baseline = self._overlay_layout_decision_signature(
-            self._resolve_combined_overlay_figure(frame, canvas=canvas, fig=fig)
+        baseline_bundle = self._combined_overlay_decision_signature(
+            frame,
+            canvas=canvas,
+            fig=fig,
         )
+        baseline = baseline_bundle.get("geometry_sig")
         try:
             frame._combined_overlay_layout_sig_baseline = baseline
+            frame._combined_overlay_decision_sig_baseline = baseline_bundle
+            frame._combined_overlay_decision_sig_last = baseline_bundle
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
         self._log_plot_tab_debug(
-            "Combined auto-refresh baseline captured: available=%s."
-            % bool(baseline is not None)
+            "Combined auto-refresh baseline captured: data=%s layout=%s elements=%s geometry=%s."
+            % (
+                baseline_bundle.get("data_sig") is not None,
+                baseline_bundle.get("layout_sig") is not None,
+                baseline_bundle.get("elements_sig") is not None,
+                baseline_bundle.get("geometry_sig") is not None,
+            )
         )
-        return baseline
+        return baseline_bundle
 
     def _mark_combined_overlay_refresh_completed(
         self,
@@ -35055,15 +35118,17 @@ class UnifiedApp(tk.Tk):
         Purpose:
             Maintain completion counters for combined overlay hold/release flow.
         Why:
-            Combined plots can require a second refresh pass when pass 1 changes
-            layout geometry; unchanged geometry should complete in one pass.
+            Combined plots should run a second pass only when data/layout/element
+            changes also produce a material geometry shift; ambiguous signal
+            sets fail closed to a second pass.
         Inputs:
             frame: Plot tab frame storing combined overlay orchestration state.
             fig: Optional combined figure for current-pass signature capture.
         Outputs:
             Integer completion count after increment.
         Side Effects:
-            Updates pass-target metadata on the frame after pass 1 completes.
+            Updates pass-target metadata and stores latest decision signatures on
+            the frame after pass 1 completes.
         Exceptions:
             Counter and state writes are guarded to avoid UI disruption.
         """
@@ -35082,13 +35147,52 @@ class UnifiedApp(tk.Tk):
             pass
 
         if completed_count == 1:
-            baseline_sig = getattr(frame, "_combined_overlay_layout_sig_baseline", None)
-            current_sig = self._overlay_layout_decision_signature(
-                self._resolve_combined_overlay_figure(frame, fig=fig)
+            baseline_bundle = getattr(frame, "_combined_overlay_decision_sig_baseline", None)
+            if not isinstance(baseline_bundle, dict):
+                baseline_bundle = {
+                    "data_sig": None,
+                    "layout_sig": None,
+                    "elements_sig": None,
+                    "geometry_sig": getattr(
+                        frame, "_combined_overlay_layout_sig_baseline", None
+                    ),
+                }
+            current_bundle = self._combined_overlay_decision_signature(frame, fig=fig)
+            try:
+                frame._combined_overlay_decision_sig_last = current_bundle
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+            def _changed(key: str) -> Optional[bool]:
+                """Compare one baseline/current signature field."""
+                baseline_value = baseline_bundle.get(key)
+                current_value = current_bundle.get(key)
+                if baseline_value is None or current_value is None:
+                    return None
+                return baseline_value != current_value
+
+            data_changed = _changed("data_sig")
+            layout_changed = _changed("layout_sig")
+            elements_changed = _changed("elements_sig")
+            geometry_changed = _changed("geometry_sig")
+            ambiguous = any(
+                value is None
+                for value in (
+                    data_changed,
+                    layout_changed,
+                    elements_changed,
+                    geometry_changed,
+                )
             )
-            need_second_refresh = False
-            if baseline_sig is not None and current_sig is not None:
-                need_second_refresh = baseline_sig != current_sig
+            # Conservative adaptive policy: when key decision signals are missing,
+            # require pass 2 so the overlay never clears on an uncertain state.
+            if ambiguous:
+                need_second_refresh = True
+            elif not any([data_changed, layout_changed, elements_changed]):
+                need_second_refresh = False
+            else:
+                need_second_refresh = bool(geometry_changed)
             target_refreshes = 2 if need_second_refresh else 1
             try:
                 frame._combined_overlay_need_second_refresh = need_second_refresh
@@ -35097,12 +35201,15 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
             self._log_plot_tab_debug(
-                "Combined adaptive refresh decision: need_second=%s target=%s baseline_available=%s current_available=%s."
+                "Combined adaptive refresh decision: need_second=%s target=%s data_changed=%s layout_changed=%s elements_changed=%s geometry_changed=%s ambiguous=%s."
                 % (
                     need_second_refresh,
                     target_refreshes,
-                    baseline_sig is not None,
-                    current_sig is not None,
+                    data_changed,
+                    layout_changed,
+                    elements_changed,
+                    geometry_changed,
+                    ambiguous,
                 )
             )
         target_refreshes = getattr(frame, "_combined_overlay_target_refreshes", 2)
@@ -39149,6 +39256,9 @@ class UnifiedApp(tk.Tk):
             frame._combined_overlay_refresh_invoked_count = 0
             frame._combined_overlay_refresh_completed_count = 0
             frame._combined_overlay_layout_sig_baseline = None
+            frame._combined_overlay_decision_sig_baseline = None
+            frame._combined_overlay_decision_sig_last = None
+            frame._combined_overlay_data_sig_current = None
             frame._combined_overlay_need_second_refresh = True
             frame._combined_overlay_target_refreshes = 2
             frame._combined_overlay_ready_seen = False
@@ -75414,6 +75524,11 @@ class UnifiedApp(tk.Tk):
             text="Load Sheet Data",
             command=self._load_dataframe,
         ).grid(row=0, column=2, padx=6, pady=6)
+        ttk.Button(
+            self._data_single_frame,
+            text="Import GL-260 CSV...",
+            command=self._open_csv_import_dialog,
+        ).grid(row=0, column=3, padx=6, pady=6)
 
         self._data_multi_frame = ttk.Frame(f)
         self._data_multi_frame.grid(row=3, column=0, columnspan=4, sticky="nsew")
@@ -75480,11 +75595,18 @@ class UnifiedApp(tk.Tk):
             move_frame, text="Move Down", command=lambda: self._move_selected_sheet(1)
         ).pack(fill="x", pady=2)
 
+        multi_actions = ttk.Frame(self._data_multi_frame)
+        multi_actions.grid(row=1, column=0, sticky="w", padx=6, pady=(0, 6))
         ttk.Button(
-            self._data_multi_frame,
+            multi_actions,
             text="Load Selected Sheets",
             command=self._load_dataframe,
-        ).grid(row=1, column=0, sticky="w", padx=6, pady=(0, 6))
+        ).pack(side="left")
+        ttk.Button(
+            multi_actions,
+            text="Import GL-260 CSV...",
+            command=self._open_csv_import_dialog,
+        ).pack(side="left", padx=(6, 0))
 
         self.lbl_status = ttk.Label(f, text="No file loaded.")
 
@@ -80345,6 +80467,15 @@ class UnifiedApp(tk.Tk):
                     and getattr(target_frame, "_plot_render_task_id", None) != task_id
                 ):
                     return
+                try:
+                    if target_frame is not None:
+                        target_frame._combined_overlay_data_sig_current = (
+                            packet.data_fingerprint
+                        )
+                    fig._gl260_combined_data_sig = packet.data_fingerprint  # type: ignore[attr-defined]
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
                 if target_frame is not None and target_canvas is not None:
                     self._install_rendered_plot_in_tab(
                         target_frame,
@@ -82645,6 +82776,11 @@ class UnifiedApp(tk.Tk):
             legend_text_sig=legend_text_sig,
             plot_elements_sig=plot_elements_sig,
         )
+        try:
+            fig._gl260_combined_layout_sig = layout_sig  # type: ignore[attr-defined]
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
         layout_dirty = self._combined_layout_dirty or self._combined_layout_state != layout_sig
 
         # Preview layout uses the same inference as export but limits passes to
@@ -83167,6 +83303,11 @@ class UnifiedApp(tk.Tk):
                     }
                     self._combined_layout_state = layout_sig
                     self._combined_layout_dirty = False
+                    try:
+                        fig._gl260_combined_layout_sig = layout_sig  # type: ignore[attr-defined]
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass

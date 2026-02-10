@@ -642,6 +642,10 @@
     "huckel",
     "aqion",
     "coeffs",
-    "mathrm"
+    "mathrm",
+    "XITS",
+    "bbox",
+    "mmoheban",
+    "stoich"
   ]
 }
