@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.12.7)
+# GL-260 Data Analysis and Plotter (v2.12.8)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.12.7`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.12.8`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v2.12.8 Refresh Overlay Reappearance Across Plot Refreshes](#v2128-refresh-overlay-reappearance-across-plot-refreshes)
   - [v2.12.7 Adaptive Combined Refresh + Data-Tab CSV Shortcut](#v2127-adaptive-combined-refresh--data-tab-csv-shortcut)
   - [v2.12.6 Combined Axes Layering Enforcement](#v2126-combined-axes-layering-enforcement)
   - [v2.12.5 Cycle Marker Top-Layer Z-Order + Data Trace UX Clarity](#v2125-cycle-marker-top-layer-z-order--data-trace-ux-clarity)
@@ -345,6 +346,7 @@ Purpose: preview the combined plot, manage overlays, and export the triple-axis 
 Key controls:
 - Generate Plot and Refresh actions (from the bottom action bar).
 - Generated plot tabs switch immediately and show a loading overlay with a determinate progress bar while background computation runs; the UI-thread render finishes the stabilized layout.
+- Refresh operations now re-show the loading overlay and progress bar, and the refreshed plot is revealed only after refresh finalization completes.
 - Close Plot removes the generated figure tab and returns focus to Plot Settings.
 - Plot Elements editor for adding annotations and overlays.
 - Export controls (PNG/SVG/PDF) with output size profiles and DPI.
@@ -888,6 +890,11 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v2.12.8 Refresh Overlay Reappearance Across Plot Refreshes
+- Refresh overlays now reappear at refresh entry across generated plot tabs for both manual and programmatic refresh paths that use the shared refresh pipeline.
+- The loading overlay and determinate progress bar remain visible until refresh rendering/finalization completes, and only then is the refreshed figure shown.
+- Bumped application version metadata to `v2.12.8` in the script header and `APP_VERSION`.
 
 ### v2.12.7 Adaptive Combined Refresh + Data-Tab CSV Shortcut
 - Updated Combined Triple-Axis auto-refresh pass targeting to use a decision bundle that tracks data, layout, plot elements, and rendered geometry signatures.

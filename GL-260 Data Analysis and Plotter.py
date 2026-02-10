@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.12.7
+# Version: v2.12.8
 # Date: 2026-02-10
 
 import os
@@ -9241,7 +9241,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.12.7"
+APP_VERSION = "v2.12.8"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -36003,6 +36003,7 @@ class UnifiedApp(tk.Tk):
 
         Side Effects:
             Captures combined legend anchors before rebuild when enabled, applies
+            or reattaches the loading overlay for refresh visibility, applies
             display/layout finalization for the active canvas (including the
             combined plot on every refresh), defers combined refresh until
             geometry is ready, starts background compute, and schedules UI-thread
@@ -36029,6 +36030,35 @@ class UnifiedApp(tk.Tk):
             frame._plot_auto_refresh_after_id = None
             frame._plot_auto_refresh_state = "refreshing"
             frame._plot_auto_refresh_in_progress = True
+        overlay_message = (
+            "Refreshing combined plot..."
+            if plot_key == "fig_combined"
+            else "Refreshing plot..."
+        )
+        refresh_widget = None
+        try:
+            refresh_widget = canvas.get_tk_widget()
+        except Exception:
+            refresh_widget = None
+        if refresh_widget is not None:
+            try:
+                if not refresh_widget.winfo_exists():
+                    refresh_widget = None
+            except Exception:
+                refresh_widget = None
+        if refresh_widget is not None:
+            # Reattach the overlay before refresh so stale content never flashes.
+            self._install_plot_loading_overlay(
+                frame,
+                refresh_widget,
+                message=overlay_message,
+            )
+        self._update_plot_loading_overlay_progress(
+            frame,
+            progress=12.0,
+            message=overlay_message,
+            reset=True,
+        )
         combined_widget = None
         combined_size = None
         if plot_key == "fig_combined":
@@ -36184,7 +36214,9 @@ class UnifiedApp(tk.Tk):
                         getattr(frame, "_core_overlay_hold", False)
                     ):
                         self._finalize_core_overlay(frame, force_clear=True)
-                    elif getattr(frame, "_plot_auto_refresh_state", None) == "refreshing":
+                    elif (
+                        getattr(frame, "_plot_auto_refresh_state", None) == "refreshing"
+                    ):
                         self._complete_plot_auto_refresh(frame)
                 except Exception:
                     # Best-effort guard; ignore failures.

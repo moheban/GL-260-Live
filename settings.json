@@ -538,7 +538,7 @@
   "combined_y_right_key": "z",
   "combined_y_third_key": "y2",
   "combined_center_plot_legend": false,
-  "window_geometry": "1587x855+108+48",
+  "window_geometry": "1587x855+52+52",
   "last_file_path": "C:/Users/mmoheban/Local Documents/Python/PR-24302 Sodium Bicarbonate MPT/PR-24302 Sodium Bicarbonate GL-260 Data for Analysis.xlsx",
   "last_sheet_name": "Batch 1 Rxn Day 4-5",
   "cycle_cached_markers": {
@@ -591,7 +591,7 @@
       "width": 1
     },
     "min_cycle_drop": -10.0,
-    "timestamp": 1770738889.9063513
+    "timestamp": 1770742373.5070634
   },
   "cycle_legend_anchor": [
     0.6589208483067334,
