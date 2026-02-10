@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.12.10
+# Version: v2.13.0
 # Date: 2026-02-10
 
 import os
@@ -9241,7 +9241,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.12.10"
+APP_VERSION = "v2.13.0"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -37083,6 +37083,7 @@ class UnifiedApp(tk.Tk):
         panel.frame.grid(row=0, column=0, sticky="nsew")
         controller.set_panel(panel)
         self._plot_annotation_panels[plot_id] = panel
+        close_state = {"closing": False, "refresh_scheduled": False}
 
         buttons = ttk.Frame(main)
         buttons.grid(row=1, column=0, sticky="ew", pady=(6, 0))
@@ -37138,8 +37139,29 @@ class UnifiedApp(tk.Tk):
                 pass
 
         def _close_editor() -> None:
-            """Close editor.
-            Used by UI actions to close editor safely."""
+            """Close Plot Elements editor and schedule one post-close refresh.
+
+            Purpose:
+                Persist editor UI state, release editor/controller bindings, and
+                close the Plot Elements window.
+            Why:
+                Closing the editor should immediately re-run the shared plot
+                refresh pipeline so users see the same splash/progress behavior
+                as the plot tab Refresh action.
+            Inputs:
+                None.
+            Outputs:
+                None.
+            Side Effects:
+                Cancels active placement mode, persists geometry/sash state,
+                destroys the editor, and schedules one idle refresh for the
+                owning plot tab.
+            Exceptions:
+                Errors are guarded to avoid interrupting the close workflow.
+            """
+            if close_state["closing"]:
+                return
+            close_state["closing"] = True
             try:
                 controller.cancel_place_element()
             except Exception:
@@ -37162,6 +37184,36 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+            if not close_state["refresh_scheduled"]:
+                close_state["refresh_scheduled"] = True
+
+                def _refresh_after_close() -> None:
+                    """Trigger one refresh after Plot Elements editor close.
+
+                    Purpose:
+                        Run the existing plot-tab refresh pipeline after close.
+                    Why:
+                        Reuses the shared splash/progress refresh behavior
+                        instead of introducing a separate refresh path.
+                    Inputs:
+                        None.
+                    Outputs:
+                        None.
+                    Side Effects:
+                        Invokes `_refresh_plot_for_plot_id` for the owning plot.
+                    Exceptions:
+                        Errors are guarded to keep close flow resilient.
+                    """
+                    try:
+                        self._refresh_plot_for_plot_id(plot_id)
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+
+                try:
+                    self.after_idle(_refresh_after_close)
+                except Exception:
+                    _refresh_after_close()
 
         ttk.Button(buttons, text="Refresh", command=_refresh_panel).pack(
             side="left", padx=(0, 6)

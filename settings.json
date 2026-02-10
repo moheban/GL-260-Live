@@ -130,7 +130,7 @@
           "linestyle": "solid"
         },
         "geometry": {
-          "x0": 3.9393926580374425,
+          "x0": 3.8926017518910974,
           "x1": 4.02517598597241,
           "trace_key": "y2"
         }
@@ -143,7 +143,7 @@
     "fig_combined_triple_axis": {
       "collapsed": false,
       "last_mode": "select",
-      "last_selected_id": "2abb5f78-267d-48fe-8b6a-fa534237761a",
+      "last_selected_id": null,
       "live_update": false,
       "editor_geometry": "1542x714+2112+162",
       "editor_sash": 821,
@@ -449,8 +449,8 @@
   "max_y": 820.0,
   "twin_y_min": 13.38,
   "twin_y_max": 65.0,
-  "deriv_y_min": -100.0,
-  "deriv_y_max": 100.0,
+  "deriv_y_min": -50.0,
+  "deriv_y_max": 50.0,
   "title_text": "Reaction Day 1-6 1/13-1/19",
   "suptitle_text": "PR-24302 CLM-441-MPT Sodium Bicarbonate Batch 1 of 2",
   "auto_time_ticks": true,
@@ -580,7 +580,7 @@
   "combined_y_right_key": "z",
   "combined_y_third_key": "y2",
   "combined_center_plot_legend": false,
-  "window_geometry": "1587x855+88+59",
+  "window_geometry": "1587x855+80+22",
   "last_file_path": "C:/Users/mmoheban/Local Documents/Python/PR-24302 Sodium Bicarbonate MPT/PR-24302 Sodium Bicarbonate GL-260 Data for Analysis.xlsx",
   "last_sheet_name": "Batch 1 Rxn Day 4-5",
   "cycle_cached_markers": {
@@ -633,7 +633,7 @@
       "width": 1
     },
     "min_cycle_drop": -10.0,
-    "timestamp": 1770745575.7176273
+    "timestamp": 1770746701.8694654
   },
   "cycle_legend_anchor": [
     0.6589208483067334,
@@ -904,13 +904,13 @@
   "combined_cycle_legend_clamp_to_axes": true,
   "combined_main_legend_enable_drag": false,
   "combined_cycle_legend_anchor": [
-    0.5359237844118513,
-    0.24745846343834782
+    0.5346842510478783,
+    0.25731860495853537
   ],
   "combined_cycle_legend_anchor_space": "axes",
   "combined_cycle_legend_loc": [
-    0.5359237844118513,
-    0.24745846343834782
+    0.5346842510478783,
+    0.25731860495853537
   ],
   "debug_enabled": false,
   "debug_categories": {

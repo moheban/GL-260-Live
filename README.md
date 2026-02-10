@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.12.8)
+# GL-260 Data Analysis and Plotter (v2.13.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.12.8`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.13.0`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,9 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v2.13.0 Plot Elements Close-Triggered Refresh Overlay](#v2130-plot-elements-close-triggered-refresh-overlay)
+  - [v2.12.10 Core Overlay Adaptive Pass Targeting](#v21210-core-overlay-adaptive-pass-targeting)
+  - [v2.12.9 Core Overlay Completion-Gated Refresh](#v2129-core-overlay-completion-gated-refresh)
   - [v2.12.8 Refresh Overlay Reappearance Across Plot Refreshes](#v2128-refresh-overlay-reappearance-across-plot-refreshes)
   - [v2.12.7 Adaptive Combined Refresh + Data-Tab CSV Shortcut](#v2127-adaptive-combined-refresh--data-tab-csv-shortcut)
   - [v2.12.6 Combined Axes Layering Enforcement](#v2126-combined-axes-layering-enforcement)
@@ -596,6 +599,7 @@ Key behaviors:
 - Axis-based legacy elements are automatically migrated into data coordinates.
 - Elements are applied both to on-screen figures and to exported PNG/PDF/SVG outputs.
 - Plot Elements controllers are rebound on figure swaps (Refresh, preview/export) so selection/dragging remains active.
+- Closing the Plot Elements window triggers a one-shot plot refresh through the shared Refresh pipeline, including the loading splash and determinate progress bar until refresh completion.
 - Element placement uses a dedicated Plot Elements editor with:
   - Add Element controls (type, axis, coordinate space) with explicit Place on Plot arming and status hints.
   - Color, transparency, and label presets.
@@ -890,6 +894,22 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v2.13.0 Plot Elements Close-Triggered Refresh Overlay
+- Closing the Plot Elements editor now schedules one idle refresh for the owning plot tab via the shared `Refresh` path.
+- The refresh uses the existing `_force_plot_refresh(...)` overlay pipeline, so splash/progress behavior matches manual Refresh and stays visible until finalization.
+- Added a close/refresh latch in the editor close handler to prevent duplicate refresh scheduling from repeated close events.
+- Bumped application version metadata to `v2.13.0` in the script header and `APP_VERSION`.
+
+### v2.12.10 Core Overlay Adaptive Pass Targeting
+- Core plot overlays now capture a layout-signature baseline before pass 1 and adaptively choose a one-pass or two-pass refresh target based on signature change detection.
+- Core refresh completion now tracks target-aware progress milestones and finalization messaging to keep determinate splash progress synchronized with pass decisions.
+- Overlay release remains completion-gated (`ready_seen` + target passes) with guarded state transitions so splash cleanup remains deterministic.
+
+### v2.12.9 Core Overlay Completion-Gated Refresh
+- Added completion-based core overlay orchestration that holds the splash during forced refresh passes and clears only after pass completion and draw readiness.
+- Introduced invoked/completed pass counters and scheduled refresh-pass callbacks so core plots follow the same shared refresh command path used by the Refresh button.
+- Added fail-closed overlay cleanup paths when frame/canvas/refresh command availability checks fail, preventing stuck overlays during teardown races.
 
 ### v2.12.8 Refresh Overlay Reappearance Across Plot Refreshes
 - Refresh overlays now reappear at refresh entry across generated plot tabs for both manual and programmatic refresh paths that use the shared refresh pipeline.
