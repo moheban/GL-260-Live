@@ -19,3 +19,4 @@ Prompt Template.md
 .venv
 .envrc
 .DS_Store
+.ruff_cache
