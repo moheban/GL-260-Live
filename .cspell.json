@@ -647,6 +647,7 @@
     "bbox",
     "mmoheban",
     "stoich",
-    "envrc"
+    "envrc",
+    "prefs"
   ]
 }
