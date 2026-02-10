@@ -1,0 +1,1024 @@
+{
+  "font_family": "XITS Math",
+  "per_sheet_column_map": {},
+  "elapsed_time_unit": "days",
+  "multi_sheet_enabled": true,
+  "selected_sheets": [
+    "Batch 1 Rxn Day 1",
+    "Batch 1 Rxn Day 1.1",
+    "Batch 1 Rxn Day 1.1-4",
+    "Batch 1 Rxn Day 4-5"
+  ],
+  "plot_elements": {
+    "fig_combined_triple_axis": [
+      {
+        "id": "d5434407-55da-44ac-9650-c2b91c38cfbd",
+        "name": "X-Span 1",
+        "type": "xspan",
+        "axes_target": "primary",
+        "coord_space": "data",
+        "visible": true,
+        "locked": false,
+        "zorder": 10.0,
+        "style": {
+          "color": "#000000",
+          "alpha": 0.9,
+          "linewidth": 1.5,
+          "linestyle": "solid",
+          "facecolor": "#ffff80",
+          "edgecolor": "#ffff80",
+          "span_layer": "behind_data"
+        },
+        "geometry": {
+          "x0": 0.8534709296077791,
+          "x1": 1.010296094353932
+        }
+      },
+      {
+        "id": "223e05bd-11bc-47f3-a2f4-6823288441d4",
+        "name": "Text 2",
+        "type": "text",
+        "axes_target": "primary",
+        "coord_space": "data",
+        "visible": true,
+        "locked": false,
+        "zorder": 11.0,
+        "style": {
+          "color": "#000000",
+          "alpha": 0.9,
+          "linewidth": 1.5,
+          "linestyle": "solid",
+          "fontsize": 10.0,
+          "fontfamily": "STIXGeneral",
+          "fontweight": "normal",
+          "text_align": "left",
+          "text_valign": "bottom",
+          "bbox_facecolor": "#ffffff",
+          "bbox_alpha": 0.85,
+          "bbox_edgecolor": "none",
+          "bbox_linewidth": 1.0,
+          "bbox_linestyle": "solid",
+          "bbox_boxstyle": "round",
+          "bbox_pad": 0.3,
+          "bbox_shadow": true,
+          "bbox_shadow_offset_x": 2.0,
+          "bbox_shadow_offset_y": -2.0,
+          "bbox_shadow_alpha": 0.35
+        },
+        "geometry": {
+          "x": 0.8419065969004754,
+          "y": 527.154673271011,
+          "text": "RB",
+          "wrap_width_x": 0.788
+        }
+      },
+      {
+        "id": "c67c9651-5b1f-4e34-8535-3e4efc7bc7f0",
+        "name": "Trace Mask 3",
+        "type": "trace_mask",
+        "axes_target": "primary",
+        "coord_space": "data",
+        "visible": true,
+        "locked": false,
+        "zorder": 12.0,
+        "style": {
+          "color": "#000000",
+          "alpha": 0.9,
+          "linewidth": 1.5,
+          "linestyle": "solid"
+        },
+        "geometry": {
+          "x0": 0.2858027364436083,
+          "x1": -0.10802072362146886,
+          "trace_key": "y2"
+        }
+      },
+      {
+        "id": "5f18ffea-2412-4b6b-a2f7-7bd3439a7014",
+        "name": "Trace Mask 4",
+        "type": "trace_mask",
+        "axes_target": "primary",
+        "coord_space": "data",
+        "visible": true,
+        "locked": false,
+        "zorder": 13.0,
+        "style": {
+          "color": "#000000",
+          "alpha": 0.9,
+          "linewidth": 1.5,
+          "linestyle": "solid"
+        },
+        "geometry": {
+          "x0": 1.1631322266875923,
+          "x1": 0.9954648129965197,
+          "trace_key": "y2"
+        }
+      },
+      {
+        "id": "47b0310b-e69c-48bb-8b5a-f0022169afee",
+        "name": "Trace Mask 5",
+        "type": "trace_mask",
+        "axes_target": "primary",
+        "coord_space": "data",
+        "visible": true,
+        "locked": false,
+        "zorder": 14.0,
+        "style": {
+          "color": "#000000",
+          "alpha": 0.9,
+          "linewidth": 1.5,
+          "linestyle": "solid"
+        },
+        "geometry": {
+          "x0": 3.8903381473125314,
+          "x1": 4.033676702694947,
+          "trace_key": "y2"
+        }
+      }
+    ],
+    "fig_pressure_temp": [],
+    "fig_pressure_derivative": []
+  },
+  "annotations_ui": {
+    "fig_combined_triple_axis": {
+      "collapsed": false,
+      "last_mode": "select",
+      "last_selected_id": null,
+      "live_update": false,
+      "editor_geometry": "1542x714+2112+162",
+      "editor_sash": 821,
+      "add_defaults": {
+        "add_type": "trace_mask",
+        "add_fillcolor": "#000000",
+        "add_alpha": 0.9,
+        "add_label_text": "RB",
+        "add_trace_key": "y2",
+        "add_axis_target": "primary",
+        "add_coord_space": "data"
+      }
+    },
+    "fig_pressure_temp": {
+      "collapsed": true,
+      "last_mode": "select",
+      "last_selected_id": null,
+      "live_update": false,
+      "editor_geometry": null,
+      "editor_sash": null,
+      "add_defaults": {
+        "add_type": "xspan",
+        "add_fillcolor": "#cccccc",
+        "add_alpha": 0.9,
+        "add_label_text": "Label",
+        "add_trace_key": "y2",
+        "add_axis_target": "primary",
+        "add_coord_space": "data"
+      }
+    },
+    "fig_pressure_derivative": {
+      "collapsed": true,
+      "last_mode": "select",
+      "last_selected_id": null,
+      "live_update": false,
+      "editor_geometry": null,
+      "editor_sash": null,
+      "add_defaults": {
+        "add_type": "xspan",
+        "add_fillcolor": "#cccccc",
+        "add_alpha": 0.9,
+        "add_label_text": "Label",
+        "add_trace_key": "y2",
+        "add_axis_target": "primary",
+        "add_coord_space": "data"
+      }
+    }
+  },
+  "cycle_trace": {
+    "line_color": "#FF0000",
+    "line_style": "solid",
+    "line_width": 0.8,
+    "peak_color": "#2ca02c",
+    "trough_color": "#0058B0",
+    "peak_marker": "^",
+    "trough_marker": "v",
+    "marker_size": 47.0
+  },
+  "final_report_presets": {},
+  "final_report": {
+    "title": "GL-260 Final Report",
+    "combined_plot_title_override": "",
+    "selected_sections": [
+      "combined_plot",
+      "cycle_summary",
+      "cycle_stats_table",
+      "cycle_timeline_table",
+      "predicted_ph_callouts",
+      "co2_dosing_guidance",
+      "planner_narrative",
+      "key_metrics",
+      "sol_summary",
+      "math_preview"
+    ],
+    "section_order": [
+      "combined_plot",
+      "cycle_summary",
+      "cycle_stats_table",
+      "cycle_timeline_table",
+      "predicted_ph_callouts",
+      "co2_dosing_guidance",
+      "planner_narrative",
+      "key_metrics",
+      "sol_summary",
+      "math_preview"
+    ],
+    "narrative": "",
+    "global_layout_mode": "mixed_pages",
+    "fit_mode": "Preserve Export Layout",
+    "font_scale": 1.0,
+    "margin_in": 0.75,
+    "safe_margin_preset": "Normal",
+    "show_page_numbers": true,
+    "show_section_headers": true,
+    "table_style_preset": "Normal",
+    "section_header_enabled": {
+      "cycle_plot": false,
+      "fig1": false,
+      "fig2": false,
+      "combined_plot": false,
+      "cycle_summary": false,
+      "cycle_stats_table": false,
+      "cycle_timeline_plot": false,
+      "cycle_timeline_table": false,
+      "predicted_ph_callouts": false,
+      "co2_dosing_guidance": false,
+      "planner_narrative": false,
+      "key_metrics": false,
+      "sol_summary": false,
+      "math_preview": false
+    },
+    "section_caption_enabled": {
+      "cycle_plot": false,
+      "fig1": false,
+      "fig2": false,
+      "combined_plot": false,
+      "cycle_stats_table": false,
+      "cycle_timeline_plot": false,
+      "cycle_timeline_table": false,
+      "key_metrics": false
+    },
+    "section_caption_placement": {
+      "cycle_plot": "Same Page",
+      "fig1": "Same Page",
+      "fig2": "Same Page",
+      "combined_plot": "Same Page",
+      "cycle_stats_table": "Same Page",
+      "cycle_timeline_plot": "Same Page",
+      "cycle_timeline_table": "Same Page",
+      "key_metrics": "Same Page"
+    },
+    "section_orientation": {
+      "cycle_plot": "inherit",
+      "fig1": "inherit",
+      "fig2": "inherit",
+      "combined_plot": "landscape",
+      "cycle_timeline_plot": "inherit"
+    },
+    "profile_key": "final_report_png"
+  },
+  "custom_gas_presets": {},
+  "vdw_gas": "CO₂ (a=3.592, b=0.0427)",
+  "ui_scale_ratio": 0.95,
+  "ui_font_size": 10,
+  "dev_request_gil_disabled": false,
+  "dev_worker_threads": 1,
+  "dev_enable_parallel_compute": false,
+  "show_contamination_tab": false,
+  "show_solubility_tab": false,
+  "show_solubility_new_tab": true,
+  "sol_show_helper": true,
+  "solubility_model_key": "naoh_co2_pitzer_hmw",
+  "sol_planning_use_same_model": true,
+  "sol_planning_spec_model_key": "naoh_co2_pitzer_hmw",
+  "sol_planning_ph_model_key": "naoh_co2_pitzer_hmw",
+  "sol_analysis_use_same_model": true,
+  "sol_analysis_spec_model_key": "naoh_co2_pitzer_hmw",
+  "sol_analysis_ph_model_key": "naoh_co2_pitzer_hmw",
+  "sol_reprocessing_use_same_model": true,
+  "sol_reprocessing_spec_model_key": "naoh_co2_pitzer_hmw",
+  "sol_reprocessing_ph_model_key": "naoh_co2_pitzer_hmw",
+  "cycle_plot_prefs": {
+    "species_min": null,
+    "species_max": null,
+    "ph_min": null,
+    "ph_max": null,
+    "show_legend": false,
+    "export_title": "Cycle Speciation Timeline"
+  },
+  "jump_to_plot_after_apply": true,
+  "solubility_inputs": {
+    "planning_cycle_delta_p_psi": "250",
+    "planning_headspace_pressure_high_psi": "800",
+    "planning_stop_co2_added_g": "2000.0",
+    "planning_stop_ph": "8.00",
+    "analysis_headspace_volume_l": "1.0",
+    "forced_ph_target": "8.00",
+    "mass_na_hco3_g": "1470.2258",
+    "diag_slurry_ph": "8.42",
+    "sol_simulation_mode": "naoh_reaction",
+    "solution_volume_l": "3",
+    "mass_naoh_g": "700.0000",
+    "reaction_co2_charged_g": "765.03",
+    "water_mass_g": "2200",
+    "reaction_naoh_mass_g": "700",
+    "reaction_solution_volume_l": "3"
+  },
+  "output_size_profiles": {
+    "plot_export": {
+      "mode": "fixed",
+      "units": "in",
+      "width": 11.0,
+      "height": 8.5,
+      "aspect_width": 4.0,
+      "aspect_height": 3.0,
+      "limit_dimension": "width",
+      "limit_value": 11.0
+    },
+    "cycle_summary_png": {
+      "mode": "auto",
+      "units": "in",
+      "width": 8.5,
+      "height": 11.0,
+      "aspect_width": 3.0,
+      "aspect_height": 4.0,
+      "limit_dimension": "height",
+      "limit_value": 11.0
+    },
+    "solubility_summary_png": {
+      "mode": "auto",
+      "units": "in",
+      "width": 8.5,
+      "height": 11.0,
+      "aspect_width": 3.0,
+      "aspect_height": 4.0,
+      "limit_dimension": "height",
+      "limit_value": 11.0
+    },
+    "sol_planner_narrative_png": {
+      "mode": "auto",
+      "units": "in",
+      "width": 8.5,
+      "height": 10.0,
+      "aspect_width": 3.0,
+      "aspect_height": 4.0,
+      "limit_dimension": "height",
+      "limit_value": 10.0
+    },
+    "sol_co2_guidance_png": {
+      "mode": "auto",
+      "units": "in",
+      "width": 6.0,
+      "height": 4.0,
+      "aspect_width": 3.0,
+      "aspect_height": 2.0,
+      "limit_dimension": "width",
+      "limit_value": 6.0
+    },
+    "sol_math_preview_png": {
+      "mode": "auto",
+      "units": "in",
+      "width": 8.5,
+      "height": 6.0,
+      "aspect_width": 3.0,
+      "aspect_height": 2.0,
+      "limit_dimension": "width",
+      "limit_value": 8.5
+    },
+    "sol_math_detail_export": {
+      "mode": "auto",
+      "units": "in",
+      "width": 8.5,
+      "height": 11.0,
+      "aspect_width": 3.0,
+      "aspect_height": 4.0,
+      "limit_dimension": "height",
+      "limit_value": 11.0
+    },
+    "final_report_png": {
+      "mode": "fixed",
+      "units": "in",
+      "width": 8.5,
+      "height": 11.0,
+      "aspect_width": 3.0,
+      "aspect_height": 4.0,
+      "limit_dimension": "height",
+      "limit_value": 11.0
+    },
+    "contamination_summary_png": {
+      "mode": "auto",
+      "units": "in",
+      "width": 8.5,
+      "height": 11.0,
+      "aspect_width": 3.0,
+      "aspect_height": 4.0,
+      "limit_dimension": "height",
+      "limit_value": 11.0
+    }
+  },
+  "export_dpi": 600,
+  "product_formula": "13CO2",
+  "axis_auto_range": {
+    "time": false,
+    "pressure": false,
+    "temperature": false,
+    "derivative": false
+  },
+  "contam_equilibrium_enabled": false,
+  "tab_order": [
+    "data",
+    "columns",
+    "plot",
+    "cycle",
+    "contamination",
+    "solubility",
+    "solubility_new",
+    "final_report"
+  ],
+  "sol_last_workflow": "Analysis",
+  "min_time": -0.05,
+  "max_time": 4.89,
+  "min_y": -20.0,
+  "max_y": 820.0,
+  "twin_y_min": 13.38,
+  "twin_y_max": 65.0,
+  "deriv_y_min": -50.0,
+  "deriv_y_max": 50.0,
+  "title_text": "Reaction Day 1-6 1/13-1/19",
+  "suptitle_text": "PR-24302 CLM-441-MPT Sodium Bicarbonate Batch 1 of 2",
+  "auto_time_ticks": true,
+  "auto_y_ticks": true,
+  "auto_temp_ticks": true,
+  "auto_deriv_ticks": true,
+  "x_major_tick": 0.2,
+  "x_minor_tick": 0.05,
+  "y_major_tick": 50.0,
+  "y_minor_tick": 5.0,
+  "temp_major_tick": 5.0,
+  "temp_minor_tick": 2.5,
+  "deriv_major_tick": 200.0,
+  "deriv_minor_tick": 100.0,
+  "enable_temp_axis": true,
+  "enable_deriv_axis": true,
+  "min_cycle_drop": -10.0,
+  "vdw_gas_molar_mass": 45.002,
+  "gas_preset_overrides": {
+    "Custom": {
+      "molar_mass": 45.002
+    },
+    "CO₂ (a=3.592, b=0.0427)": {
+      "molar_mass": 45.002
+    },
+    "Ethanol (a=12.38416, b=0.08710)": {
+      "molar_mass": 29.01
+    },
+    "CO (a=1.4514, b=0.03948)": {
+      "molar_mass": 29.01
+    }
+  },
+  "columns": {
+    "x": "__GL260_ELAPSED_DAYS_STITCHED__",
+    "dt": "Date & Time",
+    "y1": "Reactor Pressure (PSI)",
+    "y3": "Manifold Pressure (PSI)",
+    "y2": "First Derivative Moving Average",
+    "z": "Internal Reactor Temperature",
+    "z2": "External Reactor Temperature"
+  },
+  "vessel_volume": 1.75,
+  "vdw_a": 3.592,
+  "vdw_b": 0.0427,
+  "starting_mass": 700.92,
+  "naoh_mass": 700.92,
+  "product_preset": "CO2 (13CO2)",
+  "product_name": "CO2",
+  "product_molar_mass": 48.05,
+  "include_moles_legend": false,
+  "show_cycle_markers_on_core_plots": true,
+  "show_cycle_legend_on_core_plots": true,
+  "include_moles_in_core_plot_legend": false,
+  "cycle_auto_detect_enabled": false,
+  "scatter_enabled": false,
+  "scatter_marker": "o",
+  "scatter_size": 20.0,
+  "scatter_color": "",
+  "scatter_alpha": 1.0,
+  "scatter_edgecolor": "",
+  "scatter_linewidth": 0.0,
+  "scatter_series": {
+    "y1": {
+      "linewidth": 1.5,
+      "color": "#D70428",
+      "linestyle": "solid",
+      "zorder": 5.0
+    },
+    "y3": {
+      "color": "#910B6E",
+      "linestyle": "solid",
+      "zorder": 5.0
+    },
+    "y2": {
+      "color": "#797979",
+      "linestyle": "solid",
+      "zorder": 2.0
+    },
+    "z": {
+      "color": "#48A4FF",
+      "linestyle": "solid",
+      "zorder": 3.0
+    },
+    "z2": {
+      "color": "#00BF30",
+      "linestyle": "solid",
+      "zorder": 3.0
+    }
+  },
+  "cycle_temp_column": "Internal Reactor Temperature",
+  "peak_prominence": 1.0,
+  "peak_distance": 1,
+  "peak_width": 1,
+  "axis_pad_pct": 10.0,
+  "combined_deriv_axis_offset": 1.08,
+  "cycle_manual_add_peaks": [
+    16,
+    192,
+    325,
+    439,
+    660,
+    781,
+    4910,
+    5112,
+    5250,
+    5567,
+    21553,
+    21982
+  ],
+  "cycle_manual_add_troughs": [
+    184,
+    316,
+    433,
+    654,
+    777,
+    4895,
+    5103,
+    5241,
+    5495,
+    21530,
+    21943,
+    26764
+  ],
+  "cycle_manual_remove_peaks": [],
+  "cycle_manual_remove_troughs": [],
+  "combined_y_left_key": "y1",
+  "combined_y_right_key": "z",
+  "combined_y_third_key": "y2",
+  "combined_center_plot_legend": false,
+  "window_geometry": "1587x855+52+52",
+  "last_file_path": "C:/Users/mmoheban/Local Documents/Python/PR-24302 Sodium Bicarbonate MPT/PR-24302 Sodium Bicarbonate GL-260 Data for Analysis.xlsx",
+  "last_sheet_name": "Batch 1 Rxn Day 4-5",
+  "cycle_cached_markers": {
+    "file": "C:\\Users\\mmoheban\\Local Documents\\Python\\PR-24302 Sodium Bicarbonate MPT\\PR-24302 Sodium Bicarbonate GL-260 Data for Analysis.xlsx",
+    "sheet": "Batch 1 Rxn Day 4-5",
+    "sheets": [
+      "Batch 1 Rxn Day 1",
+      "Batch 1 Rxn Day 1.1",
+      "Batch 1 Rxn Day 1.1-4",
+      "Batch 1 Rxn Day 4-5"
+    ],
+    "multi_sheet": true,
+    "columns": {
+      "x": "__GL260_ELAPSED_DAYS_STITCHED__",
+      "y1": "Reactor Pressure (PSI)"
+    },
+    "data_len": 0,
+    "mask_true": 26789,
+    "peaks": [
+      16,
+      192,
+      325,
+      439,
+      660,
+      781,
+      4910,
+      5112,
+      5250,
+      5567,
+      21553,
+      21982
+    ],
+    "troughs": [
+      184,
+      316,
+      433,
+      654,
+      777,
+      4895,
+      5103,
+      5241,
+      5495,
+      21530,
+      21943,
+      26764
+    ],
+    "peak_params": {
+      "prominence": 1.0,
+      "distance": 1,
+      "width": 1
+    },
+    "min_cycle_drop": -10.0,
+    "timestamp": 1770756321.1885138
+  },
+  "cycle_legend_anchor": [
+    0.6589208483067334,
+    0.38585629794434806
+  ],
+  "combined_legend_anchor": [
+    0.500695952816758,
+    0.047695606644581015
+  ],
+  "combined_legend_loc": 8,
+  "combined_x_axis_label": "",
+  "combined_primary_axis_label": "",
+  "combined_deriv_axis_label": "First Derivative Moving Average (ΔPSI/Δhour)",
+  "combined_temp_axis_label": "Temperature (°C)",
+  "combined_primary_labelpad": 3.0,
+  "combined_deriv_labelpad": 15.0,
+  "combined_temp_labelpad": 15.0,
+  "combined_left_pad_pct": 1.0,
+  "combined_right_pad_pct": 6.0,
+  "combined_title_pad_pts": 13.0,
+  "combined_suptitle_pad_pts": 2.0,
+  "combined_suptitle_y": 0.98,
+  "combined_top_margin_pct": 5.0,
+  "combined_export_pad_pts": 6.0,
+  "combined_suptitle_fontsize": 18.0,
+  "combined_title_fontsize": 16.0,
+  "combined_label_fontsize": 13.0,
+  "combined_tick_fontsize": 12.0,
+  "combined_legend_fontsize": 10.0,
+  "combined_font_family": "STIXGeneral",
+  "combined_legend_wrap": true,
+  "combined_legend_rows": 1,
+  "combined_legend_gap_pts": 6.0,
+  "combined_legend_bottom_margin_pts": 2.0,
+  "combined_legend_alignment": "center",
+  "combined_xlabel_tick_gap_pts": 10.0,
+  "layout_profiles": {
+    "fig_pressure_temp": {
+      "mirror_detached_labelpad": false,
+      "display": {
+        "margins": {
+          "left": 0.071,
+          "right": 0.924,
+          "top": 0.91,
+          "bottom": 0.143
+        },
+        "title_xy": null,
+        "suptitle_xy": null,
+        "legend_anchor": null,
+        "legend_loc": null,
+        "cycle_legend_anchor": null,
+        "cycle_legend_loc": null,
+        "axis_labelpads": {},
+        "xlabel_pad_pts": null,
+        "detached_spine_offset": null,
+        "detached_labelpad": null,
+        "legend_anchor_y": null
+      },
+      "export": {
+        "margins": {
+          "left": 0.071,
+          "right": 0.924,
+          "top": 0.91,
+          "bottom": 0.184
+        },
+        "title_xy": null,
+        "suptitle_xy": null,
+        "legend_anchor": null,
+        "legend_loc": null,
+        "cycle_legend_anchor": null,
+        "cycle_legend_loc": null,
+        "axis_labelpads": {},
+        "xlabel_pad_pts": null,
+        "detached_spine_offset": null,
+        "detached_labelpad": null,
+        "legend_anchor_y": null
+      }
+    },
+    "fig_pressure_derivative": {
+      "mirror_detached_labelpad": false,
+      "display": {
+        "margins": {
+          "left": 0.071,
+          "right": 0.924,
+          "top": 0.901,
+          "bottom": 0.143
+        },
+        "title_xy": null,
+        "suptitle_xy": null,
+        "legend_anchor": null,
+        "legend_loc": null,
+        "cycle_legend_anchor": null,
+        "cycle_legend_loc": null,
+        "axis_labelpads": {},
+        "xlabel_pad_pts": null,
+        "detached_spine_offset": null,
+        "detached_labelpad": null,
+        "legend_anchor_y": null
+      },
+      "export": {
+        "margins": {
+          "left": 0.071,
+          "right": 0.924,
+          "top": 0.91,
+          "bottom": 0.184
+        },
+        "title_xy": null,
+        "suptitle_xy": null,
+        "legend_anchor": null,
+        "legend_loc": null,
+        "cycle_legend_anchor": null,
+        "cycle_legend_loc": null,
+        "axis_labelpads": {},
+        "xlabel_pad_pts": null,
+        "detached_spine_offset": null,
+        "detached_labelpad": null,
+        "legend_anchor_y": null
+      }
+    },
+    "fig_combined_triple_axis": {
+      "mirror_detached_labelpad": false,
+      "display": {
+        "margins": {
+          "left": 0.08,
+          "right": 0.9,
+          "top": 0.9,
+          "bottom": 0.18
+        },
+        "title_xy": null,
+        "suptitle_xy": null,
+        "legend_anchor": null,
+        "legend_loc": null,
+        "cycle_legend_anchor": null,
+        "cycle_legend_loc": null,
+        "axis_labelpads": {
+          "primary": 3.0,
+          "right": 15.0,
+          "third": 15.0
+        },
+        "xlabel_pad_pts": null,
+        "detached_spine_offset": 1.08,
+        "detached_labelpad": 15.0,
+        "legend_anchor_y": null
+      },
+      "export": {
+        "margins": {
+          "left": 0.08,
+          "right": 0.9,
+          "top": 0.9,
+          "bottom": 0.18
+        },
+        "title_xy": null,
+        "suptitle_xy": null,
+        "legend_anchor": null,
+        "legend_loc": null,
+        "cycle_legend_anchor": null,
+        "cycle_legend_loc": null,
+        "axis_labelpads": {
+          "primary": 3.0,
+          "right": 15.0,
+          "third": 15.0
+        },
+        "xlabel_pad_pts": null,
+        "detached_spine_offset": 1.08,
+        "detached_labelpad": 15.0,
+        "legend_anchor_y": null
+      }
+    },
+    "fig_cycle_analysis": {
+      "mirror_detached_labelpad": false,
+      "display": {
+        "margins": {
+          "left": 0.076,
+          "right": 0.97,
+          "top": 0.914,
+          "bottom": 0.079
+        },
+        "title_xy": null,
+        "suptitle_xy": null,
+        "legend_anchor": null,
+        "legend_loc": null,
+        "cycle_legend_anchor": null,
+        "cycle_legend_loc": null,
+        "axis_labelpads": {},
+        "xlabel_pad_pts": null,
+        "detached_spine_offset": null,
+        "detached_labelpad": null,
+        "legend_anchor_y": null
+      },
+      "export": {
+        "margins": {
+          "left": 0.076,
+          "right": 0.97,
+          "top": 0.914,
+          "bottom": 0.184
+        },
+        "title_xy": null,
+        "suptitle_xy": null,
+        "legend_anchor": null,
+        "legend_loc": null,
+        "cycle_legend_anchor": null,
+        "cycle_legend_loc": null,
+        "axis_labelpads": {},
+        "xlabel_pad_pts": null,
+        "detached_spine_offset": null,
+        "detached_labelpad": null,
+        "legend_anchor_y": null
+      }
+    }
+  },
+  "combined_cycle_legend_draggable": true,
+  "combined_cycle_legend_loc_choice": "upper right",
+  "combined_cycle_legend_ref_axis": "main",
+  "combined_cycle_legend_ref_corner": "center",
+  "combined_cycle_legend_anchor_mode": "loc_tuple",
+  "combined_cycle_legend_fontsize": 10.0,
+  "core_legend_fontsize": 10.0,
+  "core_cycle_legend_fontsize": 10.0,
+  "plot_export_formats": {
+    "png": true,
+    "pdf": false,
+    "svg": true
+  },
+  "auto_title_enabled": true,
+  "auto_title_template": "{type} Days {day_start}-{day_end}; {date_start}-{date_end}",
+  "auto_title_source": "full_dataset",
+  "auto_title_day_mode": "date_diff",
+  "title_data_types": [
+    "Reaction",
+    "Pressure Test"
+  ],
+  "title_selected_type": "Reaction",
+  "starting_material_preset": "Custom",
+  "starting_material_name": "CO2",
+  "starting_material_formula": "13CO2",
+  "starting_material_mw_g_mol": 39.995,
+  "starting_material_mass_g": 700.92,
+  "stoich_mol_gas_per_mol_starting": 1.0,
+  "summary_compact": true,
+  "summary_include_diagnostics": false,
+  "summary_include_per_cycle_gas_mass": false,
+  "summary_include_conversion_estimate": true,
+  "starting_material_display_name": "NaOH",
+  "starting_material_display_note": "",
+  "csv_import_mapping": {
+    "reactor_pressure": "CH1",
+    "manifold_pressure": "CH2",
+    "external_temp": "CH3",
+    "internal_temp": "CH4"
+  },
+  "csv_import_last_csv_path": "C:/Users/mmoheban/OneDrive - Cambridge Isotope Laboratories, Inc/Documents/PR#/PR-24302 Sodium Bicarbonate MPT CLM-441-MPT/PR-24302 GL-260 Files/Day 4-5 Spot 15 Average PR-24302 CLM-441-MPT.csv",
+  "csv_import_last_workbook_path": "C:/Users/mmoheban/Local Documents/Python/PR-24302 Sodium Bicarbonate MPT/PR-24302 Sodium Bicarbonate GL-260 Data for Analysis.xlsx",
+  "csv_import_last_sheet_name": "Batch 1 Rxn Day 4-5",
+  "csv_import_sheet_exists_mode": "overwrite",
+  "csv_import_derivative_source": "reactor",
+  "csv_import_smoothing_factor": 0.98,
+  "csv_import_moving_average_window": 100,
+  "plot_generation_selection": {
+    "fig1": false,
+    "fig2": false,
+    "fig_combined": true
+  },
+  "final_report_preview_zoom": 100,
+  "combined_title_center_reference": "axes_union",
+  "combined_cycle_legend_enable_drag": true,
+  "combined_cycle_legend_lock_position": false,
+  "combined_cycle_legend_persist_position": true,
+  "combined_cycle_legend_clamp_to_axes": true,
+  "combined_main_legend_enable_drag": false,
+  "combined_cycle_legend_anchor": [
+    0.5270427290673769,
+    0.17888341496119803
+  ],
+  "combined_cycle_legend_anchor_space": "axes",
+  "combined_cycle_legend_loc": [
+    0.5270427290673769,
+    0.17888341496119803
+  ],
+  "debug_enabled": true,
+  "debug_categories": {
+    "ui.events": true,
+    "cache.render": false,
+    "perf.timing": false,
+    "plotting.render": true,
+    "plotting.layout": true,
+    "plotting.legends": true,
+    "cycle.analysis": false,
+    "cycle.interaction": false,
+    "report.build": false,
+    "report.figures": false,
+    "report.export": false,
+    "speciation.engine": false,
+    "speciation.solver": false,
+    "speciation.chemistry": false,
+    "speciation.results": false,
+    "io.excel": false,
+    "io.files": false
+  },
+  "debug_file_logging_enabled": false,
+  "timeline_table_export_dir": "C:\\Users\\mmoheban\\Local Documents\\Python\\PR-24302 Sodium Bicarbonate MPT",
+  "timeline_table_columns_enabled": {
+    "cycle": true,
+    "co2_cycle_g": true,
+    "co2_g": true,
+    "co2_to_target": true,
+    "ph": true,
+    "pco2_atm": true,
+    "h2co3_pct": true,
+    "hco3_pct": true,
+    "co3_pct": true,
+    "solid_na2co3_g": true,
+    "solid_nahco3_g": true,
+    "warnings": true
+  },
+  "timeline_table_export_orientation": "portrait",
+  "timeline_table_export_acs_quality": true,
+  "combined_cycle_legend_markerscale": null,
+  "combined_legend_shadowbox_fill_color": "#FFFFFF",
+  "core_plot_render_profiles": {
+    "fig_pressure_temp": {
+      "x_axis_label": "",
+      "primary_axis_label": "",
+      "right_axis_label": "Temperature (°C)",
+      "third_axis_label": "First Derivative Moving Average (ΔPSI/Δhour)",
+      "primary_labelpad": 3.0,
+      "right_labelpad": 15.0,
+      "third_labelpad": 15.0,
+      "third_axis_offset": 1.12,
+      "left_padding_pct": 1.0,
+      "right_padding_pct": 6.0,
+      "export_pad_pts": 6.0,
+      "title_pad_pts": 20.0,
+      "suptitle_pad_pts": 0.0,
+      "suptitle_y": 0.99,
+      "top_margin_pct": 5.0,
+      "font_family": "STIXGeneral",
+      "suptitle_fontsize": 18.0,
+      "title_fontsize": 16.0,
+      "label_fontsize": 13.0,
+      "tick_fontsize": 12.0,
+      "legend_fontsize": 10.0,
+      "cycle_legend_fontsize": 10.0,
+      "legend_wrap": true,
+      "legend_rows": 1,
+      "legend_label_gap_pts": 6.0,
+      "xlabel_tick_gap_pts": 10.0,
+      "legend_bottom_margin_pts": 2.0,
+      "legend_alignment": "center",
+      "cycle_legend_loc_choice": "upper right",
+      "cycle_legend_ref_axis": "main",
+      "cycle_legend_ref_corner": "center"
+    },
+    "fig_pressure_derivative": {
+      "x_axis_label": "",
+      "primary_axis_label": "",
+      "right_axis_label": "Temperature (°C)",
+      "third_axis_label": "First Derivative Moving Average (ΔPSI/Δhour)",
+      "primary_labelpad": 3.0,
+      "right_labelpad": 15.0,
+      "third_labelpad": 15.0,
+      "third_axis_offset": 1.12,
+      "left_padding_pct": 1.0,
+      "right_padding_pct": 6.0,
+      "export_pad_pts": 6.0,
+      "title_pad_pts": 20.0,
+      "suptitle_pad_pts": 0.0,
+      "suptitle_y": 0.99,
+      "top_margin_pct": 5.0,
+      "font_family": "STIXGeneral",
+      "suptitle_fontsize": 18.0,
+      "title_fontsize": 16.0,
+      "label_fontsize": 13.0,
+      "tick_fontsize": 12.0,
+      "legend_fontsize": 10.0,
+      "cycle_legend_fontsize": 10.0,
+      "legend_wrap": true,
+      "legend_rows": 1,
+      "legend_label_gap_pts": 6.0,
+      "xlabel_tick_gap_pts": 10.0,
+      "legend_bottom_margin_pts": 2.0,
+      "legend_alignment": "center",
+      "cycle_legend_loc_choice": "upper right",
+      "cycle_legend_ref_axis": "main",
+      "cycle_legend_ref_corner": "center"
+    }
+  },
+  "combined_disable_second_refresh": true
+}
