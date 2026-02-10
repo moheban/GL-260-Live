@@ -56256,6 +56256,255 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures.
             pass
 
+    def _capture_cycle_legend_loc_tuple_axes(
+        self,
+        fig: Figure | None,
+        legend: Any,
+        *,
+        source: str,
+    ) -> bool:
+        """Capture the cycle legend lower-left position in reference-axis space.
+
+        Purpose:
+            Persist a canonical cycle legend position that is invariant across
+            display, preview, and export figure sizes.
+        Why:
+            Mixed anchor semantics caused drift between display and preview/export.
+            Canonicalizing to lower-left axes coordinates removes the translation
+            mismatch and enables deterministic bidirectional sync.
+        Inputs:
+            fig: Matplotlib Figure containing the cycle legend.
+            legend: Cycle legend artist to capture.
+            source: Capture trigger source (for debug visibility).
+        Outputs:
+            True when a canonical tuple was captured and persisted; False otherwise.
+        Side Effects:
+            Updates in-memory cycle legend anchor state and writes
+            combined_cycle_legend_* settings keys in loc_tuple mode.
+        Exceptions:
+            Errors are caught defensively and return False.
+        """
+        if fig is None or legend is None:
+            return False
+        ref_axis = self._combined_cycle_reference_axis(fig)
+        if ref_axis is None:
+            return False
+        renderer = None
+        canvas = getattr(fig, "canvas", None)
+        if canvas is not None:
+            try:
+                renderer = canvas.get_renderer()
+            except Exception:
+                renderer = None
+            if renderer is None:
+                try:
+                    canvas.draw()
+                    renderer = canvas.get_renderer()
+                except Exception:
+                    renderer = None
+        if renderer is None:
+            return False
+        try:
+            bbox_disp = legend.get_window_extent(renderer=renderer)
+        except Exception:
+            bbox_disp = None
+        if bbox_disp is None:
+            return False
+        try:
+            bbox_axes = bbox_disp.transformed(ref_axis.transAxes.inverted())
+        except Exception:
+            bbox_axes = None
+        if bbox_axes is None:
+            return False
+        try:
+            raw_x_ll = float(bbox_axes.x0)
+            raw_y_ll = float(bbox_axes.y0)
+            width_axes = float(max(0.0, bbox_axes.width))
+            height_axes = float(max(0.0, bbox_axes.height))
+        except Exception:
+            return False
+        if not (
+            math.isfinite(raw_x_ll)
+            and math.isfinite(raw_y_ll)
+            and math.isfinite(width_axes)
+            and math.isfinite(height_axes)
+        ):
+            return False
+        clamp_enabled = bool(settings.get("combined_cycle_legend_clamp_to_axes", True))
+        x_ll = raw_x_ll
+        y_ll = raw_y_ll
+        if clamp_enabled:
+            max_x = max(0.0, 1.0 - width_axes)
+            max_y = max(0.0, 1.0 - height_axes)
+            x_ll = max(0.0, min(max_x, raw_x_ll))
+            y_ll = max(0.0, min(max_y, raw_y_ll))
+        else:
+            x_ll = max(-0.1, min(1.1, raw_x_ll))
+            y_ll = max(-0.1, min(1.1, raw_y_ll))
+        loc_tuple = (float(x_ll), float(y_ll))
+        self._combined_cycle_legend_anchor = loc_tuple
+        settings["combined_cycle_legend_anchor"] = [loc_tuple[0], loc_tuple[1]]
+        self._combined_cycle_legend_loc = loc_tuple
+        settings["combined_cycle_legend_loc"] = [loc_tuple[0], loc_tuple[1]]
+        self._combined_cycle_legend_anchor_space = "axes"
+        settings["combined_cycle_legend_anchor_space"] = "axes"
+        settings["combined_cycle_legend_anchor_mode"] = "loc_tuple"
+        settings.pop("combined_cycle_legend_ref_dx_px", None)
+        settings.pop("combined_cycle_legend_ref_dy_px", None)
+        settings["combined_cycle_legend_persist_position"] = True
+        clamp_dx = loc_tuple[0] - raw_x_ll
+        clamp_dy = loc_tuple[1] - raw_y_ll
+        ref_axis_role = getattr(ref_axis, "_gl260_axis_role", None)
+        fig_size = None
+        fig_dpi = None
+        try:
+            size = fig.get_size_inches()
+            fig_size = (float(size[0]), float(size[1]))
+        except Exception:
+            fig_size = None
+        try:
+            fig_dpi = float(fig.dpi)
+        except Exception:
+            fig_dpi = None
+        self._dbg(
+            "plotting.legends",
+            "Cycle legend canonical capture source=%s mode=%s ref_axis=%s "
+            "anchor_space=%s loc_tuple=%s clamp_delta=(%s,%s) fig_size=%s dpi=%s",
+            source,
+            "loc_tuple",
+            ref_axis_role,
+            "axes",
+            loc_tuple,
+            clamp_dx,
+            clamp_dy,
+            fig_size,
+            fig_dpi,
+        )
+        return True
+
+    def _apply_cycle_legend_loc_tuple_axes(
+        self,
+        fig: Figure | None,
+        legend: Any,
+        *,
+        allow_draw: bool = True,
+        clamp: bool | None = None,
+    ) -> bool:
+        """Apply persisted cycle legend tuple in reference-axis coordinates.
+
+        Purpose:
+            Reapply canonical cycle legend placement consistently across renders.
+        Why:
+            A single apply path for loc_tuple mode prevents coordinate-space drift
+            between display, preview, and export workflows.
+        Inputs:
+            fig: Matplotlib Figure containing the cycle legend.
+            legend: Cycle legend artist to position.
+            allow_draw: When True, permits draw calls to obtain a renderer.
+            clamp: Optional clamp override; when None uses settings toggle.
+        Outputs:
+            True when placement is applied; False otherwise.
+        Side Effects:
+            Mutates legend bbox transform/location and normalizes in-memory
+            cycle legend state/keys to axes-space loc_tuple semantics.
+        Exceptions:
+            Errors are caught defensively and return False.
+        """
+        if fig is None or legend is None:
+            return False
+        normalized_loc = _normalize_legend_loc_value(
+            settings.get("combined_cycle_legend_loc")
+        )
+        if not (
+            isinstance(normalized_loc, tuple)
+            and len(normalized_loc) == 2
+            and all(math.isfinite(float(v)) for v in normalized_loc)
+        ):
+            return False
+        ref_axis = self._combined_cycle_reference_axis(fig)
+        if ref_axis is None:
+            return False
+        if clamp is None:
+            clamp_enabled = bool(settings.get("combined_cycle_legend_clamp_to_axes", True))
+        else:
+            clamp_enabled = bool(clamp)
+        x_ll = float(normalized_loc[0])
+        y_ll = float(normalized_loc[1])
+        try:
+            legend.set_bbox_to_anchor((0.0, 0.0, 1.0, 1.0), transform=ref_axis.transAxes)
+            legend.set_loc((x_ll, y_ll))
+        except Exception:
+            return False
+        renderer = None
+        canvas = getattr(fig, "canvas", None)
+        if canvas is not None:
+            try:
+                renderer = canvas.get_renderer()
+            except Exception:
+                renderer = None
+            if renderer is None and allow_draw:
+                try:
+                    canvas.draw()
+                    renderer = canvas.get_renderer()
+                except Exception:
+                    renderer = None
+        clamp_dx = 0.0
+        clamp_dy = 0.0
+        if clamp_enabled and renderer is not None:
+            try:
+                bbox_disp = legend.get_window_extent(renderer=renderer)
+                bbox_axes = bbox_disp.transformed(ref_axis.transAxes.inverted())
+                width_axes = float(max(0.0, bbox_axes.width))
+                height_axes = float(max(0.0, bbox_axes.height))
+                max_x = max(0.0, 1.0 - width_axes)
+                max_y = max(0.0, 1.0 - height_axes)
+                clamped_x = max(0.0, min(max_x, x_ll))
+                clamped_y = max(0.0, min(max_y, y_ll))
+                clamp_dx = clamped_x - x_ll
+                clamp_dy = clamped_y - y_ll
+                if abs(clamp_dx) > 1e-12 or abs(clamp_dy) > 1e-12:
+                    legend.set_loc((clamped_x, clamped_y))
+                    x_ll, y_ll = clamped_x, clamped_y
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting workflows.
+                pass
+        loc_tuple = (float(x_ll), float(y_ll))
+        self._combined_cycle_legend_anchor = loc_tuple
+        settings["combined_cycle_legend_anchor"] = [loc_tuple[0], loc_tuple[1]]
+        self._combined_cycle_legend_loc = loc_tuple
+        settings["combined_cycle_legend_loc"] = [loc_tuple[0], loc_tuple[1]]
+        self._combined_cycle_legend_anchor_space = "axes"
+        settings["combined_cycle_legend_anchor_space"] = "axes"
+        settings["combined_cycle_legend_anchor_mode"] = "loc_tuple"
+        settings.pop("combined_cycle_legend_ref_dx_px", None)
+        settings.pop("combined_cycle_legend_ref_dy_px", None)
+        ref_axis_role = getattr(ref_axis, "_gl260_axis_role", None)
+        fig_size = None
+        fig_dpi = None
+        try:
+            size = fig.get_size_inches()
+            fig_size = (float(size[0]), float(size[1]))
+        except Exception:
+            fig_size = None
+        try:
+            fig_dpi = float(fig.dpi)
+        except Exception:
+            fig_dpi = None
+        self._dbg(
+            "plotting.legends",
+            "Cycle legend canonical apply mode=%s ref_axis=%s anchor_space=%s "
+            "loc_tuple=%s clamp_delta=(%s,%s) fig_size=%s dpi=%s",
+            "loc_tuple",
+            ref_axis_role,
+            "axes",
+            loc_tuple,
+            clamp_dx,
+            clamp_dy,
+            fig_size,
+            fig_dpi,
+        )
+        return True
+
     def _apply_combined_saved_legend_anchors(
         self, fig: Figure | None
     ) -> None:
@@ -56281,57 +56530,28 @@ class UnifiedApp(tk.Tk):
         cycle_legend = self._get_combined_cycle_legend(fig)
         if cycle_legend is None:
             return
-        stored_mode = None
-        stored_loc = None
-        stored_anchor_space = None
-        try:
-            stored_mode = settings.get("combined_cycle_legend_anchor_mode")
-            stored_loc = settings.get("combined_cycle_legend_loc")
-            stored_anchor_space = settings.get("combined_cycle_legend_anchor_space")
-        except Exception:
-            stored_mode = None
-            stored_loc = None
-            stored_anchor_space = None
-        if stored_anchor_space not in {"axes", "figure"}:
-            stored_anchor_space = None
-        normalized_loc = _normalize_legend_loc_value(stored_loc)
-        stored_loc_tuple = None
-        if isinstance(normalized_loc, tuple):
-            try:
-                stored_loc_tuple = (float(normalized_loc[0]), float(normalized_loc[1]))
-            except Exception:
-                stored_loc_tuple = None
         applied = False
-        if stored_mode == "loc_tuple" and stored_loc_tuple is not None:
-            ref_axis = self._combined_cycle_reference_axis(fig)
-            try:
-                if stored_anchor_space == "axes" and ref_axis is not None:
-                    cycle_legend.set_bbox_to_anchor(
-                        (0.0, 0.0, 1.0, 1.0), transform=ref_axis.transAxes
-                    )
-                else:
-                    cycle_legend.set_bbox_to_anchor(
-                        (0.0, 0.0, 1.0, 1.0), transform=fig.transFigure
-                    )
-                cycle_legend.set_loc(
-                    (float(stored_loc_tuple[0]), float(stored_loc_tuple[1]))
-                )
-                applied = True
-            except Exception:
-                applied = False
-        else:
+        try:
+            applied = self._apply_cycle_legend_loc_tuple_axes(
+                fig,
+                cycle_legend,
+                allow_draw=False,
+                clamp=True,
+            )
+        except Exception:
+            applied = False
+        if not applied:
             offsets = _combined_cycle_axis_offset_values()
             if offsets is not None:
                 ref_axis = self._combined_cycle_reference_axis(fig)
                 if ref_axis is not None:
                     loc_value = _resolve_combined_cycle_legend_loc()
                     original_canvas = getattr(fig, "canvas", None)
-                    agg_canvas = None
                     try:
-                        agg_canvas = FigureCanvasAgg(fig)
-                        agg_canvas.draw()
+                        FigureCanvasAgg(fig).draw()
                     except Exception:
-                        agg_canvas = None
+                        # Best-effort guard; ignore failures.
+                        pass
                     try:
                         applied = _apply_cycle_legend_axis_offset(
                             fig,
@@ -56353,6 +56573,18 @@ class UnifiedApp(tk.Tk):
                             except Exception:
                                 # Best-effort guard; ignore failures.
                                 pass
+                    if applied:
+                        try:
+                            migrated = self._capture_cycle_legend_loc_tuple_axes(
+                                fig,
+                                cycle_legend,
+                                source="sync",
+                            )
+                            if migrated:
+                                _save_settings_to_disk()
+                        except Exception:
+                            # Best-effort guard; ignore failures.
+                            pass
         if applied:
             try:
                 fig._cycle_legend_anchor_applied = True  # type: ignore[attr-defined]
@@ -56504,7 +56736,15 @@ class UnifiedApp(tk.Tk):
         if not explicit_capture_source:
             try:
                 if settings.get("combined_cycle_legend_anchor_mode") == "loc_tuple":
-                    return
+                    existing_loc = _normalize_legend_loc_value(
+                        settings.get("combined_cycle_legend_loc")
+                    )
+                    if (
+                        isinstance(existing_loc, tuple)
+                        and len(existing_loc) == 2
+                        and all(math.isfinite(float(v)) for v in existing_loc)
+                    ):
+                        return
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
@@ -56823,6 +57063,21 @@ class UnifiedApp(tk.Tk):
         # Iterate over cycle legends to apply the per-item logic.
         for lg in cycle_legends:
             try:
+                if explicit_capture_source:
+                    # Explicit sync/drag capture uses canonical lower-left axes tuple
+                    # semantics and bypasses legacy anchor/loc translation logic.
+                    if not (
+                        cycle_capture_enabled
+                        and (source != "drag" or cycle_drag_capture_enabled)
+                    ):
+                        continue
+                    if self._capture_cycle_legend_loc_tuple_axes(
+                        fig,
+                        lg,
+                        source=source,
+                    ):
+                        updated = True
+                    continue
                 anchor_loc, anchor_space = _legend_anchor_axes_fraction(lg)
                 if anchor_loc is None:
                     anchor_loc = _validated_anchor_pair(getattr(lg, "_loc", ()))
@@ -58010,15 +58265,6 @@ class UnifiedApp(tk.Tk):
                 stored_loc = settings.get("combined_cycle_legend_loc")
             except Exception:
                 stored_loc = None
-            stored_anchor_space = None
-            try:
-                stored_anchor_space = settings.get(
-                    "combined_cycle_legend_anchor_space"
-                )
-            except Exception:
-                stored_anchor_space = None
-            if stored_anchor_space not in {"axes", "figure"}:
-                stored_anchor_space = None
             stored_loc_tuple = None
             normalized_loc = _normalize_legend_loc_value(stored_loc)
             if isinstance(normalized_loc, tuple):
@@ -58051,20 +58297,12 @@ class UnifiedApp(tk.Tk):
             applied = False
             if stored_mode == "loc_tuple" and stored_loc_tuple is not None:
                 try:
-                    # Respect the saved anchor space so axes-anchored legends
-                    # persist relative to the plot area.
-                    if stored_anchor_space == "axes" and ref_axis is not None:
-                        cycle_legend.set_bbox_to_anchor(
-                            (0.0, 0.0, 1.0, 1.0), transform=ref_axis.transAxes
-                        )
-                    else:
-                        cycle_legend.set_bbox_to_anchor(
-                            (0.0, 0.0, 1.0, 1.0), transform=fig.transFigure
-                        )
-                    cycle_legend.set_loc(
-                        (float(stored_loc_tuple[0]), float(stored_loc_tuple[1]))
+                    applied = self._apply_cycle_legend_loc_tuple_axes(
+                        fig,
+                        cycle_legend,
+                        allow_draw=False,
+                        clamp=True,
                     )
-                    applied = True
                 except Exception:
                     applied = False
             else:
@@ -58084,6 +58322,19 @@ class UnifiedApp(tk.Tk):
                     )
                 except Exception:
                     applied = False
+                if applied:
+                    try:
+                        migrated = self._capture_cycle_legend_loc_tuple_axes(
+                            fig,
+                            cycle_legend,
+                            source="sync",
+                        )
+                        if migrated:
+                            _save_settings_to_disk()
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting
+                        # the workflow.
+                        pass
             try:
                 legend_id = id(cycle_legend)
             except Exception:
@@ -58429,10 +58680,19 @@ class UnifiedApp(tk.Tk):
                         and not isinstance(legend_loc, tuple)
                     ):
                         try:
-                            cycle_legend.set_bbox_to_anchor(
-                                (0.0, 0.0, 1.0, 1.0), transform=fig.transFigure
+                            pre_tuple = tuple(map(float, pre_loc))
+                            settings["combined_cycle_legend_anchor_mode"] = "loc_tuple"
+                            settings["combined_cycle_legend_anchor_space"] = "axes"
+                            settings["combined_cycle_legend_loc"] = [
+                                pre_tuple[0],
+                                pre_tuple[1],
+                            ]
+                            self._apply_cycle_legend_loc_tuple_axes(
+                                fig,
+                                cycle_legend,
+                                allow_draw=False,
+                                clamp=True,
                             )
-                            cycle_legend.set_loc(tuple(map(float, pre_loc)))
                             if fig.canvas is not None:
                                 fig.canvas.draw_idle()
                             self._dbg(
@@ -82733,6 +82993,28 @@ class UnifiedApp(tk.Tk):
         cycle_legend_anchor_space = getattr(
             self, "_combined_cycle_legend_anchor_space", None
         )
+        cycle_anchor_mode = settings.get("combined_cycle_legend_anchor_mode")
+        if cycle_anchor_mode == "loc_tuple":
+            normalized_cycle_loc = _normalize_legend_loc_value(cycle_legend_loc)
+            if not (
+                isinstance(normalized_cycle_loc, tuple)
+                and len(normalized_cycle_loc) == 2
+                and all(math.isfinite(float(v)) for v in normalized_cycle_loc)
+            ):
+                normalized_cycle_loc = _normalize_legend_loc_value(
+                    settings.get("combined_cycle_legend_loc")
+                )
+            if (
+                isinstance(normalized_cycle_loc, tuple)
+                and len(normalized_cycle_loc) == 2
+                and all(math.isfinite(float(v)) for v in normalized_cycle_loc)
+            ):
+                cycle_legend_loc = (
+                    float(normalized_cycle_loc[0]),
+                    float(normalized_cycle_loc[1]),
+                )
+            cycle_legend_anchor = None
+            cycle_legend_anchor_space = "axes"
         if not bool(settings.get("combined_cycle_legend_persist_position", True)):
             # Persistence toggle should suppress stored cycle legend placement.
             cycle_legend_anchor = None
@@ -82757,6 +83039,8 @@ class UnifiedApp(tk.Tk):
             layout_profile.get("mirror_detached_labelpad", False)
         )
         axis_offset_values = _combined_cycle_axis_offset_values()
+        if cycle_anchor_mode == "loc_tuple":
+            axis_offset_values = None
         if bool(self.center_combined_plot_legend.get()):
             # When centering is enabled, ignore persisted main-legend anchors so the
             # builder's default centered placement applies on refresh.
@@ -84408,27 +84692,47 @@ class UnifiedApp(tk.Tk):
         layout_mgr.register_artist("plot_legend", main_legend)
         layout_mgr.register_artist("cycle_legend", cycle_legend)
         layout_mgr.set_legend_alignment(config.get("legend_alignment_value", "center"))
-        if axis_offset_values is not None and cycle_legend is not None:
+        if cycle_legend is not None:
+            applied_tuple = False
             try:
-                # Apply offsets before layout solve so legend bboxes are accurate.
-                ref_axis = _resolve_combined_cycle_ref_axis(
-                    fig,
-                    ref_axis_key=settings.get("combined_cycle_legend_ref_axis"),
-                )
-                loc_value = _resolve_combined_cycle_legend_loc()
-                _apply_cycle_legend_axis_offset(
+                applied_tuple = self._apply_cycle_legend_loc_tuple_axes(
                     fig,
                     cycle_legend,
-                    ref_axis,
-                    settings.get("combined_cycle_legend_ref_corner"),
-                    axis_offset_values[0],
-                    axis_offset_values[1],
-                    loc_value,
                     allow_draw=False,
+                    clamp=True,
                 )
             except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
+                applied_tuple = False
+            if not applied_tuple and axis_offset_values is not None:
+                try:
+                    # Legacy fallback: keep offsets working, then migrate to canonical tuple.
+                    ref_axis = _resolve_combined_cycle_ref_axis(
+                        fig,
+                        ref_axis_key=settings.get("combined_cycle_legend_ref_axis"),
+                    )
+                    loc_value = _resolve_combined_cycle_legend_loc()
+                    applied_offset = _apply_cycle_legend_axis_offset(
+                        fig,
+                        cycle_legend,
+                        ref_axis,
+                        settings.get("combined_cycle_legend_ref_corner"),
+                        axis_offset_values[0],
+                        axis_offset_values[1],
+                        loc_value,
+                        allow_draw=False,
+                    )
+                    if applied_offset:
+                        migrated = self._capture_cycle_legend_loc_tuple_axes(
+                            fig,
+                            cycle_legend,
+                            source="sync",
+                        )
+                        if migrated:
+                            _save_settings_to_disk()
+                            axis_offset_values = None
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
         if layout_dirty:
             layout_start = time.perf_counter() if perf_run is not None else None
             layout_mgr.solve(max_passes=1, allow_draw=False)
@@ -84441,27 +84745,6 @@ class UnifiedApp(tk.Tk):
             self._combined_layout_state = layout_sig
             self._combined_layout_dirty = False
         fig._gl260_layout_manager = layout_mgr  # type: ignore[attr-defined]
-
-        if axis_offset_values is not None and cycle_legend is not None:
-            try:
-                ref_axis = _resolve_combined_cycle_ref_axis(
-                    fig,
-                    ref_axis_key=settings.get("combined_cycle_legend_ref_axis"),
-                )
-                loc_value = _resolve_combined_cycle_legend_loc()
-                _apply_cycle_legend_axis_offset(
-                    fig,
-                    cycle_legend,
-                    ref_axis,
-                    settings.get("combined_cycle_legend_ref_corner"),
-                    axis_offset_values[0],
-                    axis_offset_values[1],
-                    loc_value,
-                    allow_draw=False,
-                )
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
 
         try:
             state["legend_sig"] = legend_sig
@@ -84836,22 +85119,37 @@ class UnifiedApp(tk.Tk):
                         except Exception:
                             # Best-effort guard; ignore failures to avoid interrupting the workflow.
                             pass
-                if axis_offset_values is not None and cycle_legend is not None:
-                    ref_axis = _resolve_combined_cycle_ref_axis(
-                        fig,
-                        ref_axis_key=settings.get("combined_cycle_legend_ref_axis"),
-                    )
-                    loc_value = _resolve_combined_cycle_legend_loc()
-                    _apply_cycle_legend_axis_offset(
+                if cycle_legend is not None:
+                    applied_tuple = self._apply_cycle_legend_loc_tuple_axes(
                         fig,
                         cycle_legend,
-                        ref_axis,
-                        settings.get("combined_cycle_legend_ref_corner"),
-                        axis_offset_values[0],
-                        axis_offset_values[1],
-                        loc_value,
                         allow_draw=(mode == "export"),
+                        clamp=True,
                     )
+                    if not applied_tuple and axis_offset_values is not None:
+                        ref_axis = _resolve_combined_cycle_ref_axis(
+                            fig,
+                            ref_axis_key=settings.get("combined_cycle_legend_ref_axis"),
+                        )
+                        loc_value = _resolve_combined_cycle_legend_loc()
+                        applied_offset = _apply_cycle_legend_axis_offset(
+                            fig,
+                            cycle_legend,
+                            ref_axis,
+                            settings.get("combined_cycle_legend_ref_corner"),
+                            axis_offset_values[0],
+                            axis_offset_values[1],
+                            loc_value,
+                            allow_draw=(mode == "export"),
+                        )
+                        if applied_offset:
+                            migrated = self._capture_cycle_legend_loc_tuple_axes(
+                                fig,
+                                cycle_legend,
+                                source="sync",
+                            )
+                            if migrated:
+                                _save_settings_to_disk()
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass

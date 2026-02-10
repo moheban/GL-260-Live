@@ -115,7 +115,7 @@
         }
       },
       {
-        "id": "2abb5f78-267d-48fe-8b6a-fa534237761a",
+        "id": "47b0310b-e69c-48bb-8b5a-f0022169afee",
         "name": "Trace Mask 5",
         "type": "trace_mask",
         "axes_target": "primary",
@@ -130,8 +130,8 @@
           "linestyle": "solid"
         },
         "geometry": {
-          "x0": 2.739755689242862,
-          "x1": 3.6300264549181804,
+          "x0": 3.8903381473125314,
+          "x1": 4.033676702694947,
           "trace_key": "y2"
         }
       }
@@ -143,7 +143,7 @@
     "fig_combined_triple_axis": {
       "collapsed": false,
       "last_mode": "select",
-      "last_selected_id": null,
+      "last_selected_id": "47b0310b-e69c-48bb-8b5a-f0022169afee",
       "live_update": false,
       "editor_geometry": "1542x714+2112+162",
       "editor_sash": 821,
@@ -580,7 +580,7 @@
   "combined_y_right_key": "z",
   "combined_y_third_key": "y2",
   "combined_center_plot_legend": false,
-  "window_geometry": "1587x855+114+55",
+  "window_geometry": "1587x855+183+55",
   "last_file_path": "C:/Users/mmoheban/Local Documents/Python/PR-24302 Sodium Bicarbonate MPT/PR-24302 Sodium Bicarbonate GL-260 Data for Analysis.xlsx",
   "last_sheet_name": "Batch 1 Rxn Day 4-5",
   "cycle_cached_markers": {
@@ -633,7 +633,7 @@
       "width": 1
     },
     "min_cycle_drop": -10.0,
-    "timestamp": 1770753367.206046
+    "timestamp": 1770756321.1885138
   },
   "cycle_legend_anchor": [
     0.6589208483067334,
@@ -904,13 +904,13 @@
   "combined_cycle_legend_clamp_to_axes": true,
   "combined_main_legend_enable_drag": false,
   "combined_cycle_legend_anchor": [
-    0.31895357132246493,
-    0.3161784739524776
+    0.4677216478564506,
+    0.19075050453036563
   ],
   "combined_cycle_legend_anchor_space": "axes",
   "combined_cycle_legend_loc": [
-    0.31895357132246493,
-    0.3161784739524776
+    0.4677216478564506,
+    0.19075050453036563
   ],
   "debug_enabled": true,
   "debug_categories": {
