@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.12.8
+# Version: v2.12.10
 # Date: 2026-02-10
 
 import os
@@ -9241,7 +9241,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.12.8"
+APP_VERSION = "v2.12.10"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
