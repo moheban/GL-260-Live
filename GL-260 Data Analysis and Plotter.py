@@ -29510,6 +29510,20 @@ class UnifiedApp(tk.Tk):
         self._final_report_combined_failure_reason: Optional[str] = None
         self._combined_export_artifact: Optional[Dict[str, Any]] = None
         self._combined_plot_preview_fig: Optional[Figure] = None
+        self._combined_plot_preview_window: Optional[tk.Toplevel] = None
+        self._combined_plot_preview_host: Optional[ttk.Frame] = None
+        self._combined_plot_preview_content: Optional[ttk.Frame] = None
+        self._combined_plot_preview_overlay: Optional[tk.Frame] = None
+        self._combined_plot_preview_overlay_label: Optional[ttk.Label] = None
+        self._combined_plot_preview_overlay_progress_var: Optional[tk.DoubleVar] = None
+        self._combined_plot_preview_overlay_progress_label: Optional[ttk.Label] = None
+        self._combined_plot_preview_canvas: Optional[FigureCanvasTkAgg] = None
+        self._combined_plot_preview_toolbar: Optional[NavigationToolbar2Tk] = None
+        self._combined_plot_preview_resize_after_id: Optional[str] = None
+        self._combined_plot_preview_task_id: Optional[int] = None
+        self._combined_plot_preview_request_token = 0
+        self._combined_plot_preview_progress_value = 0.0
+        self._combined_plot_preview_closing = False
         self._combined_plot_state: Optional[Dict[str, Any]] = None
         self._combined_layout_state: Optional[Tuple[Any, ...]] = None
         self._combined_layout_dirty = True
@@ -34550,6 +34564,11 @@ class UnifiedApp(tk.Tk):
                 pass
             if plot_id:
                 try:
+                    self._update_plot_loading_overlay_progress(
+                        frame,
+                        progress=82.0,
+                        message="Adding Plot Elements...",
+                    )
                     self._apply_display_settings_for_plot(fig, plot_id, canvas)
                 except Exception:
                     # Best-effort guard; ignore failures.
@@ -34613,6 +34632,11 @@ class UnifiedApp(tk.Tk):
             if auto_state == "refreshing" and not was_initial_render:
                 # Apply the same finalize/draw logic as manual Refresh before revealing.
                 try:
+                    self._update_plot_loading_overlay_progress(
+                        frame,
+                        progress=92.0,
+                        message="Final Layout Adjustments...",
+                    )
                     self._finalize_matplotlib_canvas_layout(
                         canvas=canvas,
                         fig=fig,
@@ -34681,6 +34705,7 @@ class UnifiedApp(tk.Tk):
             None.
         Side Effects:
             Attaches the figure to the canvas, applies display settings,
+            updates refresh progress stages for plot elements/final layout,
             triggers canvas resize/draw, and finalizes layout.
         Exceptions:
             Errors are caught to avoid interrupting UI workflows.
@@ -34705,11 +34730,21 @@ class UnifiedApp(tk.Tk):
             pass
         if plot_id:
             try:
+                self._update_plot_loading_overlay_progress(
+                    frame,
+                    progress=82.0,
+                    message="Adding Plot Elements...",
+                )
                 self._apply_display_settings_for_plot(new_fig, plot_id, canvas)
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
         try:
+            self._update_plot_loading_overlay_progress(
+                frame,
+                progress=92.0,
+                message="Final Layout Adjustments...",
+            )
             self._finalize_matplotlib_canvas_layout(
                 canvas=canvas,
                 fig=new_fig,
@@ -40740,225 +40775,738 @@ class UnifiedApp(tk.Tk):
 
         return frame
 
+    def _set_combined_plot_preview_loading_state(
+        self,
+        *,
+        progress: Optional[float] = None,
+        message: Optional[str] = None,
+        reset: bool = False,
+        show: bool = True,
+    ) -> None:
+        """Update combined Plot Preview loading overlay message/progress.
+
+        Purpose:
+            Keep preview splash progress synchronized with async preview stages.
+        Why:
+            Preview rendering runs across worker/UI phases and needs deterministic
+            user feedback.
+        Inputs:
+            progress: Optional progress value in the 0..100 range.
+            message: Optional stage message to display.
+            reset: When True, reset tracked progress before applying updates.
+            show: When True, ensure overlay remains visible.
+        Outputs:
+            None.
+        Side Effects:
+            Mutates preview overlay widgets and cached progress value.
+        Exceptions:
+            Best-effort behavior; missing widgets are ignored.
+        """
+        overlay = getattr(self, "_combined_plot_preview_overlay", None)
+        if overlay is None:
+            return
+        try:
+            if not overlay.winfo_exists():
+                return
+        except Exception:
+            return
+        if reset:
+            self._combined_plot_preview_progress_value = 0.0
+        current_value = getattr(self, "_combined_plot_preview_progress_value", 0.0)
+        try:
+            current_value = float(current_value)
+        except Exception:
+            current_value = 0.0
+        if not math.isfinite(current_value):
+            current_value = 0.0
+        target_value = current_value
+        if progress is not None:
+            try:
+                candidate = float(progress)
+            except Exception:
+                candidate = current_value
+            if not math.isfinite(candidate):
+                candidate = current_value
+            candidate = max(0.0, min(100.0, candidate))
+            target_value = candidate if reset else max(current_value, candidate)
+        label = getattr(self, "_combined_plot_preview_overlay_label", None)
+        if label is not None and message is not None:
+            try:
+                label.configure(text=str(message))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        progress_var = getattr(self, "_combined_plot_preview_overlay_progress_var", None)
+        if progress_var is not None:
+            try:
+                progress_var.set(float(target_value))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        progress_label = getattr(self, "_combined_plot_preview_overlay_progress_label", None)
+        if progress_label is not None:
+            try:
+                progress_label.configure(text=f"{int(round(target_value))}%")
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._combined_plot_preview_progress_value = float(target_value)
+        if show:
+            try:
+                overlay.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
+                overlay.lift()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        window = getattr(self, "_combined_plot_preview_window", None)
+        if window is not None:
+            try:
+                window.update_idletasks()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+    def _hide_combined_plot_preview_loading(self, *, defer: bool = True) -> None:
+        """Hide the combined Plot Preview loading overlay.
+
+        Purpose:
+            Remove splash overlay after preview install/failure handling.
+        Why:
+            Ensures overlay cleanup is centralized across success and error paths.
+        Inputs:
+            defer: When True, hide via after_idle to allow pending UI updates first.
+        Outputs:
+            None.
+        Side Effects:
+            Hides the preview overlay frame.
+        Exceptions:
+            Best-effort behavior; widget errors are ignored.
+        """
+
+        def _do_hide() -> None:
+            """Hide preview overlay widgets.
+
+            Purpose:
+                Centralize overlay hide logic.
+            Why:
+                Prevent duplicate cleanup code across callbacks.
+            Inputs:
+                None.
+            Outputs:
+                None.
+            Side Effects:
+                Calls `place_forget()` on preview overlay.
+            Exceptions:
+                Best-effort behavior; errors are ignored.
+            """
+            overlay = getattr(self, "_combined_plot_preview_overlay", None)
+            if overlay is None:
+                return
+            try:
+                overlay.place_forget()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        if defer:
+            try:
+                self.after_idle(_do_hide)
+            except Exception:
+                _do_hide()
+        else:
+            _do_hide()
+
+    def _close_combined_plot_preview_window(self, _event: Any = None) -> None:
+        """Close combined Plot Preview window and invalidate in-flight preview tasks.
+
+        Purpose:
+            Tear down preview resources safely.
+        Why:
+            Preview callbacks can complete after close; token invalidation avoids
+            stale UI mutation.
+        Inputs:
+            _event: Optional Tk event payload.
+        Outputs:
+            None.
+        Side Effects:
+            Closes preview figure/window widgets, clears preview state, restores
+            combined legend tracking when combined tab exists.
+        Exceptions:
+            Best-effort cleanup; exceptions are suppressed.
+        """
+        window = getattr(self, "_combined_plot_preview_window", None)
+        if window is None:
+            return
+        if _event is not None and getattr(_event, "widget", None) is not window:
+            return
+        if getattr(self, "_combined_plot_preview_closing", False):
+            return
+        self._combined_plot_preview_closing = True
+        try:
+            self._combined_plot_preview_request_token += 1
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            after_id = getattr(self, "_combined_plot_preview_resize_after_id", None)
+            if after_id is not None:
+                window.after_cancel(after_id)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        self._combined_plot_preview_resize_after_id = None
+        preview_fig = getattr(self, "_combined_plot_preview_fig", None)
+        if preview_fig is not None:
+            try:
+                self._capture_combined_legend_anchor_from_fig(preview_fig)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            try:
+                plt.close(preview_fig)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        try:
+            if _event is None and window.winfo_exists():
+                window.destroy()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        self._combined_plot_preview_window = None
+        self._combined_plot_preview_host = None
+        self._combined_plot_preview_content = None
+        self._combined_plot_preview_overlay = None
+        self._combined_plot_preview_overlay_label = None
+        self._combined_plot_preview_overlay_progress_var = None
+        self._combined_plot_preview_overlay_progress_label = None
+        self._combined_plot_preview_canvas = None
+        self._combined_plot_preview_toolbar = None
+        self._combined_plot_preview_fig = None
+        self._combined_plot_preview_progress_value = 0.0
+        self._combined_plot_preview_task_id = None
+        try:
+            tabs = list(getattr(self, "_plot_tabs", []) or [])
+            has_combined_tab = any(
+                getattr(tab, "_plot_key", None) == "fig_combined"
+                or getattr(tab, "_plot_id", None) == "fig_combined_triple_axis"
+                for tab in tabs
+            )
+        except Exception:
+            has_combined_tab = False
+        if has_combined_tab:
+            try:
+                self._refresh_combined_legend_tracking()
+                combined_canvas = getattr(self, "_combined_legend_canvas", None)
+                if isinstance(combined_canvas, FigureCanvasTkAgg):
+                    combined_canvas.draw_idle()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._combined_plot_preview_closing = False
+
     def _open_plot_preview(
         self, plot_key: str | None, plot_id: str | None, title: str
     ) -> None:
-        """Open plot preview for the combined plot.
+        """Open combined Plot Preview with async compute and splash overlay.
 
         Purpose:
-            Build and display an export-grade combined plot preview window.
+            Show the preview window immediately, then build preview in stages.
         Why:
-            Users need to verify the export layout without mutating the live
-            combined plot or its interactive handlers.
-
-        Args:
+            Data preparation is expensive; running it in a worker keeps Tk
+            responsive while the splash/progress stays active on the UI thread.
+        Inputs:
             plot_key: Plot key requested for preview; only combined is supported.
-            plot_id: Plot identifier for the combined plot.
-            title: Title text from the invoking button (unused here).
-
-        Returns:
+            plot_id: Plot identifier for combined preview settings.
+            title: Title text from the invoking button (unused).
+        Outputs:
             None.
-
         Side Effects:
-            Creates a preview window, renders a combined plot figure, and
-            temporarily stores the preview figure reference.
-
+            Opens/reuses preview window, runs async preview prep, installs preview
+            figure widgets, and updates loading overlay progress stages.
         Exceptions:
-            Errors are caught and reported via message boxes to keep the UI stable.
+            Failures are caught and reported via dialog while preventing stuck UI.
         """
         if plot_key != "fig_combined":
             return
-        try:
-            # Plot Preview uses the same export pipeline as Save As (fixed 11x8.5).
-            fig = self.render_plot(
-                "fig_combined",
-                target="preview",
-                mode="export",
-                plot_id=plot_id or "fig_combined_triple_axis",
-                fig_size=(11.0, 8.5),
-            )
-        except Exception as exc:
-            messagebox.showerror(
-                "Plot Preview",
-                f"Combined plot could not be rebuilt for preview.\n{exc}",
-            )
-            return
-        if fig is None:
-            messagebox.showerror(
-                "Plot Preview", "Combined plot could not be rebuilt for preview."
-            )
-            return
-        if not self._assert_combined_export_size(fig):
+        preview_plot_id = plot_id or "fig_combined_triple_axis"
+
+        window = getattr(self, "_combined_plot_preview_window", None)
+        if window is None or not bool(getattr(window, "winfo_exists", lambda: False)()):
+            window = tk.Toplevel(self)
+            window.title("Plot Preview (Export 11x8.5)")
+            window.transient(self)
+            host = ttk.Frame(window)
+            host.pack(fill="both", expand=True)
+            content = ttk.Frame(host)
+            content.pack(fill="both", expand=True)
             try:
-                plt.close(fig)
+                base_bg = window.cget("background")
+            except Exception:
+                base_bg = None
+            overlay = tk.Frame(host, background=base_bg)
+            center = ttk.Frame(overlay)
+            center.place(relx=0.5, rely=0.5, anchor="center")
+            label = ttk.Label(center, text="Opening Preview...")
+            label.pack(side="top", pady=(0, 8))
+            progress_var = tk.DoubleVar(master=overlay, value=0.0)
+            ttk.Progressbar(
+                center,
+                mode="determinate",
+                length=260,
+                maximum=100.0,
+                variable=progress_var,
+            ).pack(side="top")
+            progress_label = ttk.Label(center, text="0%")
+            progress_label.pack(side="top", pady=(6, 0))
+            overlay.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
+            overlay.place_forget()
+
+            self._combined_plot_preview_window = window
+            self._combined_plot_preview_host = host
+            self._combined_plot_preview_content = content
+            self._combined_plot_preview_overlay = overlay
+            self._combined_plot_preview_overlay_label = label
+            self._combined_plot_preview_overlay_progress_var = progress_var
+            self._combined_plot_preview_overlay_progress_label = progress_label
+            self._combined_plot_preview_progress_value = 0.0
+            self._combined_plot_preview_canvas = None
+            self._combined_plot_preview_toolbar = None
+            self._combined_plot_preview_resize_after_id = None
+            window.protocol("WM_DELETE_WINDOW", self._close_combined_plot_preview_window)
+            window.bind("<Destroy>", self._close_combined_plot_preview_window, add="+")
+        else:
+            try:
+                window.deiconify()
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
-            return
-        self._combined_plot_preview_fig = fig
         try:
-            self._apply_gl260_legend_sizing(
-                fig,
-                plot_id=plot_id or "fig_combined_triple_axis",
-                plot_key="fig_combined",
-            )
-        except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-            pass
-        win = tk.Toplevel(self)
-        win.title("Plot Preview (Export 11x8.5)")
-        win.transient(self)
-        canvas = FigureCanvasTkAgg(fig, master=win)
-        toolbar = NavigationToolbar2Tk(canvas, win)
-        toolbar.update()
-        toolbar.pack(side="top", fill="x")
-        widget = canvas.get_tk_widget()
-        widget.pack(fill="both", expand=True)
-
-        resize_state = {"after_id": None}
-
-        def _schedule_preview_finalize(_event=None):
-            """Schedule preview finalize.
-            Used to queue preview finalize without blocking the UI."""
-            after_id = resize_state.get("after_id")
-            if after_id is not None:
-                try:
-                    win.after_cancel(after_id)
-                except Exception:
-                    # Best-effort guard; ignore failures to avoid interrupting
-                    # the workflow.
-                    pass
-
-            # Closure captures _schedule_preview_finalize state for callback wiring,
-            # kept nested to scope the handler, and invoked by bindings set in
-            # _schedule_preview_finalize.
-            def _apply_finalize():
-                """Apply finalize.
-                Used to apply finalize changes to live state."""
-                resize_state["after_id"] = None
-                self._finalize_matplotlib_canvas_layout(
-                    canvas=canvas,
-                    fig=fig,
-                    tk_widget=widget,
-                    keep_export_size=True,
-                    trigger_resize_event=False,
-                    force_draw=True,
-                )
-
-            try:
-                resize_state["after_id"] = win.after(120, _apply_finalize)
-            except Exception:
-                _apply_finalize()
-
-        try:
-            widget.bind("<Configure>", _schedule_preview_finalize, add="+")
+            window.lift()
+            window.focus_force()
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
-        try:
-            win.update_idletasks()
-        except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-            pass
-        try:
-            widget.update_idletasks()
-        except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-            pass
-        self._finalize_matplotlib_canvas_layout(
-            canvas=canvas,
-            fig=fig,
-            tk_widget=widget,
-            keep_export_size=True,
-            trigger_resize_event=True,
-            force_draw=True,
+        self._combined_plot_preview_request_token += 1
+        request_token = int(getattr(self, "_combined_plot_preview_request_token", 0))
+        self._set_combined_plot_preview_loading_state(
+            progress=5.0,
+            message="Opening Preview...",
+            reset=True,
+            show=True,
+        )
+        self._set_combined_plot_preview_loading_state(
+            progress=20.0,
+            message="Preparing Preview Data...",
         )
 
-        # Plot Preview is view-only; avoid registering combined legend tracking
-        # here because it would disconnect the live combined canvas callbacks.
-
-        close_state = {"closed": False}
-
-        def _close(_event=None):
-            """Close the plot preview window safely.
-
-            Purpose:
-                Tear down the preview window and restore combined legend tracking.
-            Why:
-                Preview teardown must not leave the live combined plot without
-                its draggable legend callbacks.
-
-            Args:
-                _event: Optional Tk event payload from close/destroy events.
-
-            Returns:
-                None.
-
-            Side Effects:
-                Closes the preview figure, clears preview references, restores
-                combined legend tracking, and schedules a combined redraw.
-
-            Exceptions:
-                Errors are caught to avoid interrupting the UI workflow.
-            """
-            if _event is not None and getattr(_event, "widget", None) is not win:
-                return
-            if close_state["closed"]:
-                return
-            close_state["closed"] = True
+        try:
+            snapshot = self._capture_combined_render_snapshot(
+                fig_size=(11.0, 8.5),
+                plot_id=preview_plot_id,
+                target="preview",
+            )
+        except Exception as exc:
+            self._set_combined_plot_preview_loading_state(
+                progress=100.0,
+                message="Preview failed.",
+            )
+            self._hide_combined_plot_preview_loading()
             try:
-                self._capture_combined_legend_anchor_from_fig(fig)
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-            try:
-                after_id = resize_state.get("after_id")
-                if after_id is not None:
-                    win.after_cancel(after_id)
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-            try:
-                plt.close(fig)
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-            try:
-                if getattr(self, "_combined_plot_preview_fig", None) is fig:
-                    self._combined_plot_preview_fig = None
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-            try:
-                tabs = list(getattr(self, "_plot_tabs", []) or [])
-                has_combined_tab = any(
-                    getattr(tab, "_plot_key", None) == "fig_combined"
-                    or getattr(tab, "_plot_id", None) == "fig_combined_triple_axis"
-                    for tab in tabs
+                messagebox.showerror(
+                    "Plot Preview",
+                    f"Combined plot preview could not prepare inputs.\n{exc}",
                 )
             except Exception:
-                has_combined_tab = False
-            if has_combined_tab:
-                try:
-                    # Restore combined legend tracking after preview teardown.
-                    self._refresh_combined_legend_tracking()
-                    combined_canvas = getattr(self, "_combined_legend_canvas", None)
-                    if isinstance(combined_canvas, FigureCanvasTkAgg):
-                        combined_canvas.draw_idle()
-                except Exception:
-                    # Best-effort guard; ignore failures to avoid interrupting
-                    # the workflow.
-                    pass
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            return
+
+        def _is_stale_request() -> bool:
+            """Return whether the async preview callback is stale.
+
+            Purpose:
+                Guard async callbacks against close/reopen and repeated clicks.
+            Why:
+                Stale callbacks can otherwise install old figures into new windows.
+            Inputs:
+                None.
+            Outputs:
+                True when callback must be ignored; otherwise False.
+            Side Effects:
+                None.
+            Exceptions:
+                Window-state lookup failures fail closed to stale.
+            """
+            if request_token != getattr(self, "_combined_plot_preview_request_token", 0):
+                return True
+            active_window = getattr(self, "_combined_plot_preview_window", None)
+            if active_window is None:
+                return True
             try:
-                if _event is None:
-                    win.destroy()
+                return not active_window.winfo_exists()
+            except Exception:
+                return True
+
+        def _handle_preview_failure(message: str, exc: Optional[BaseException] = None) -> None:
+            """Handle preview async failures and clear loading state.
+
+            Purpose:
+                Surface errors while keeping preview overlay state consistent.
+            Why:
+                Worker or build failures must not leave a stuck splash.
+            Inputs:
+                message: Error lead message.
+                exc: Optional exception details.
+            Outputs:
+                None.
+            Side Effects:
+                Updates loading overlay and displays an error dialog.
+            Exceptions:
+                Best-effort behavior; dialog failures are ignored.
+            """
+            if _is_stale_request():
+                return
+            self._set_combined_plot_preview_loading_state(
+                progress=100.0,
+                message="Preview failed.",
+            )
+            self._hide_combined_plot_preview_loading()
+            detail = f"{message}\n{exc}" if exc is not None else message
+            try:
+                messagebox.showerror("Plot Preview", detail)
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
 
-        win.protocol("WM_DELETE_WINDOW", _close)
-        win.bind("<Destroy>", _close, add="+")
+        def _worker() -> RenderPacket:
+            """Compute preview packet on worker thread.
+
+            Purpose:
+                Prepare combined preview data off the UI thread.
+            Why:
+                Keeps the app responsive while heavy prep runs.
+            Inputs:
+                None.
+            Outputs:
+                RenderPacket for UI-thread preview build/install.
+            Side Effects:
+                May update render cache metadata.
+            Exceptions:
+                Worker exceptions are routed to error callback.
+            """
+            return self._compute_combined_plot_data(snapshot)
+
+        def _on_ok(packet: RenderPacket) -> None:
+            """Handle worker success and build preview on UI thread.
+
+            Purpose:
+                Build and install preview figure from prepared render packet.
+            Why:
+                Matplotlib/Tk widget installation must remain on UI thread.
+            Inputs:
+                packet: Worker-prepared render packet.
+            Outputs:
+                None.
+            Side Effects:
+                Replaces preview figure widgets and updates overlay stages.
+            Exceptions:
+                Build/install failures route through preview failure handler.
+            """
+            if _is_stale_request():
+                return
+            self._set_combined_plot_preview_loading_state(
+                progress=55.0,
+                message="Building Preview Figure...",
+            )
+
+            def _build_and_install() -> None:
+                """Build/install preview figure after overlay paint.
+
+                Purpose:
+                    Defer heavy UI-thread preview build by one idle cycle.
+                Why:
+                    Allows splash stage updates to render before blocking work.
+                Inputs:
+                    None.
+                Outputs:
+                    None.
+                Side Effects:
+                    Builds preview figure and finalizes preview layout.
+                Exceptions:
+                    Failures route through preview failure handler.
+                """
+                if _is_stale_request():
+                    return
+                perf_run = packet.perf if isinstance(packet.perf, dict) else None
+                try:
+                    fig = self._build_combined_triple_axis_from_state(
+                        args=packet.args,
+                        fig_size=(11.0, 8.5),
+                        mode="export",
+                        reuse=False,
+                        render_ctx=packet.render_ctx,
+                        perf_run=perf_run,
+                    )
+                except Exception as exc:
+                    _handle_preview_failure(
+                        "Combined plot could not be rebuilt for preview.", exc
+                    )
+                    return
+                if fig is None:
+                    _handle_preview_failure(
+                        "Combined plot could not be rebuilt for preview."
+                    )
+                    return
+                if _is_stale_request():
+                    try:
+                        plt.close(fig)
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+                    return
+                if not self._assert_combined_export_size(fig):
+                    try:
+                        plt.close(fig)
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+                    self._hide_combined_plot_preview_loading()
+                    return
+
+                current_window = getattr(self, "_combined_plot_preview_window", None)
+                current_content = getattr(self, "_combined_plot_preview_content", None)
+                if current_window is None or current_content is None:
+                    try:
+                        plt.close(fig)
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+                    return
+
+                after_id = getattr(self, "_combined_plot_preview_resize_after_id", None)
+                if after_id is not None:
+                    try:
+                        current_window.after_cancel(after_id)
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+                self._combined_plot_preview_resize_after_id = None
+
+                old_toolbar = getattr(self, "_combined_plot_preview_toolbar", None)
+                if old_toolbar is not None:
+                    try:
+                        old_toolbar.destroy()
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+                old_canvas = getattr(self, "_combined_plot_preview_canvas", None)
+                if old_canvas is not None:
+                    try:
+                        old_widget = old_canvas.get_tk_widget()
+                    except Exception:
+                        old_widget = None
+                    if old_widget is not None:
+                        try:
+                            old_widget.destroy()
+                        except Exception:
+                            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                            pass
+                old_fig = getattr(self, "_combined_plot_preview_fig", None)
+                if old_fig is not None and old_fig is not fig:
+                    try:
+                        plt.close(old_fig)
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+
+                self._set_combined_plot_preview_loading_state(
+                    progress=82.0,
+                    message="Adding Plot Elements...",
+                )
+                try:
+                    self._apply_gl260_legend_sizing(
+                        fig,
+                        plot_id=preview_plot_id,
+                        plot_key="fig_combined",
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+
+                canvas = FigureCanvasTkAgg(fig, master=current_content)
+                toolbar = NavigationToolbar2Tk(canvas, current_content)
+                toolbar.update()
+                toolbar.pack(side="top", fill="x")
+                widget = canvas.get_tk_widget()
+                widget.pack(fill="both", expand=True)
+                self._combined_plot_preview_canvas = canvas
+                self._combined_plot_preview_toolbar = toolbar
+                self._combined_plot_preview_fig = fig
+
+                def _schedule_preview_finalize(_event: Any = None) -> None:
+                    """Schedule debounced preview finalize pass.
+
+                    Purpose:
+                        Re-run preview layout finalize after window resizes.
+                    Why:
+                        Prevents redundant finalize calls during resize bursts.
+                    Inputs:
+                        _event: Optional Tk configure event payload.
+                    Outputs:
+                        None.
+                    Side Effects:
+                        Schedules one deferred preview finalize pass.
+                    Exceptions:
+                        Best-effort behavior; failures are ignored.
+                    """
+                    active_after_id = getattr(
+                        self, "_combined_plot_preview_resize_after_id", None
+                    )
+                    if active_after_id is not None:
+                        try:
+                            current_window.after_cancel(active_after_id)
+                        except Exception:
+                            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                            pass
+
+                    def _apply_finalize() -> None:
+                        """Apply one preview finalize pass.
+
+                        Purpose:
+                            Finalize preview layout after geometry settles.
+                        Why:
+                            Keeps preview reveal consistent after resizes.
+                        Inputs:
+                            None.
+                        Outputs:
+                            None.
+                        Side Effects:
+                            Runs deterministic canvas finalize + draw.
+                        Exceptions:
+                            Best-effort behavior; failures are ignored.
+                        """
+                        self._combined_plot_preview_resize_after_id = None
+                        if _is_stale_request():
+                            return
+                        self._set_combined_plot_preview_loading_state(
+                            progress=92.0,
+                            message="Final Layout Adjustments...",
+                        )
+                        try:
+                            self._finalize_matplotlib_canvas_layout(
+                                canvas=canvas,
+                                fig=fig,
+                                tk_widget=widget,
+                                keep_export_size=True,
+                                trigger_resize_event=False,
+                                force_draw=True,
+                            )
+                        except Exception:
+                            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                            pass
+
+                    try:
+                        self._combined_plot_preview_resize_after_id = current_window.after(
+                            120, _apply_finalize
+                        )
+                    except Exception:
+                        _apply_finalize()
+
+                try:
+                    widget.bind("<Configure>", _schedule_preview_finalize, add="+")
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+                try:
+                    current_window.update_idletasks()
+                    widget.update_idletasks()
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+                self._set_combined_plot_preview_loading_state(
+                    progress=92.0,
+                    message="Final Layout Adjustments...",
+                )
+                try:
+                    self._finalize_matplotlib_canvas_layout(
+                        canvas=canvas,
+                        fig=fig,
+                        tk_widget=widget,
+                        keep_export_size=True,
+                        trigger_resize_event=True,
+                        force_draw=True,
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+                self._set_combined_plot_preview_loading_state(
+                    progress=100.0,
+                    message="Preview Ready.",
+                )
+                self._hide_combined_plot_preview_loading()
+
+            try:
+                self.after_idle(_build_and_install)
+            except Exception:
+                _build_and_install()
+
+        def _on_err(exc: BaseException) -> None:
+            """Handle preview worker failure.
+
+            Purpose:
+                Surface async preview preparation errors.
+            Why:
+                Ensures failure states clear splash and inform users.
+            Inputs:
+                exc: Worker exception payload.
+            Outputs:
+                None.
+            Side Effects:
+                Updates splash state and displays an error dialog.
+            Exceptions:
+                Best-effort behavior; dialog failures are ignored.
+            """
+            _handle_preview_failure(
+                "Combined plot preview failed during data preparation.",
+                exc,
+            )
+
+        runner = getattr(self, "_task_runner", None)
+        if runner is not None and hasattr(runner, "submit"):
+            self._combined_plot_preview_task_id = runner.submit(
+                "combined_plot_preview_render",
+                _worker,
+                _on_ok,
+                _on_err,
+            )
+            return
+
+        def _thread_worker() -> None:
+            """Run preview compute fallback on daemon thread.
+
+            Purpose:
+                Preserve async preview behavior without TkTaskRunner.
+            Why:
+                Fallback avoids UI blocking if task runner is unavailable.
+            Inputs:
+                None.
+            Outputs:
+                None.
+            Side Effects:
+                Executes worker in background thread and marshals callbacks to UI.
+            Exceptions:
+                Worker errors are routed to `_on_err`.
+            """
+            try:
+                packet = _worker()
+            except Exception as exc:
+                self.after(0, lambda exc=exc: _on_err(exc))
+                return
+            self.after(0, lambda packet=packet: _on_ok(packet))
+
+        threading.Thread(target=_thread_worker, daemon=True).start()
 
     def _place_annotations_panel(
         self, frame: ttk.Frame, topbar: ttk.Frame, panel: AnnotationsPanel
@@ -81019,13 +81567,13 @@ class UnifiedApp(tk.Tk):
             placement_state = (
                 placement_states.get(key) if isinstance(placement_states, dict) else None
             )
-            self._install_rendered_plot_in_tab(
-                frame, canvas, key, fig, placement_state=placement_state
-            )
             self._update_plot_loading_overlay_progress(
                 frame,
-                progress=80.0,
-                message="Applying layout stabilization...",
+                progress=78.0,
+                message="Installing refreshed figure...",
+            )
+            self._install_rendered_plot_in_tab(
+                frame, canvas, key, fig, placement_state=placement_state
             )
             rendered_any = True
 
@@ -81355,17 +81903,17 @@ class UnifiedApp(tk.Tk):
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
                 if target_frame is not None and target_canvas is not None:
+                    self._update_plot_loading_overlay_progress(
+                        target_frame,
+                        progress=78.0,
+                        message="Installing refreshed figure...",
+                    )
                     self._install_rendered_plot_in_tab(
                         target_frame,
                         target_canvas,
                         "fig_combined",
                         fig,
                         placement_state=placement_state,
-                    )
-                    self._update_plot_loading_overlay_progress(
-                        target_frame,
-                        progress=80.0,
-                        message="Applying combined layout stabilization...",
                     )
                 else:
                     self._render_figures_in_tabs(
