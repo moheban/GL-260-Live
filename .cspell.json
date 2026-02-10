@@ -646,6 +646,7 @@
     "XITS",
     "bbox",
     "mmoheban",
-    "stoich"
+    "stoich",
+    "envrc"
   ]
 }
