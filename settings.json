@@ -127,7 +127,7 @@
     }
   },
   "cycle_trace": {
-    "line_color": "#1f77b4",
+    "line_color": "#FF0000",
     "line_style": "solid",
     "line_width": 0.8,
     "peak_color": "#2ca02c",
@@ -539,7 +539,9 @@
       4910,
       5112,
       5250,
-      5567
+      5567,
+      21553,
+      21982
     ],
     "troughs": [
       184,
@@ -551,7 +553,9 @@
       5103,
       5241,
       5495,
-      21530
+      21530,
+      21943,
+      26764
     ],
     "peak_params": {
       "prominence": 1.0,
@@ -559,7 +563,7 @@
       "width": 1
     },
     "min_cycle_drop": -10.0,
-    "timestamp": 1770733420.5829027
+    "timestamp": 1770733874.7646377
   },
   "cycle_legend_anchor": [
     0.6589208483067334,
