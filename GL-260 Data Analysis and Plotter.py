@@ -40333,7 +40333,10 @@ class UnifiedApp(tk.Tk):
                             except Exception:
                                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                                 pass
-                        self._capture_combined_legend_anchor_from_fig(target_fig)
+                        self._capture_combined_legend_anchor_from_fig(
+                            target_fig,
+                            source="sync",
+                        )
                     except Exception:
                         # Best-effort guard; ignore failures to avoid interrupting the workflow.
                         pass
@@ -41032,7 +41035,10 @@ class UnifiedApp(tk.Tk):
         preview_fig = getattr(self, "_combined_plot_preview_fig", None)
         if preview_fig is not None:
             try:
-                self._capture_combined_legend_anchor_from_fig(preview_fig)
+                self._capture_combined_legend_anchor_from_fig(
+                    preview_fig,
+                    source="sync",
+                )
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
@@ -41070,10 +41076,7 @@ class UnifiedApp(tk.Tk):
             has_combined_tab = False
         if has_combined_tab:
             try:
-                self._refresh_combined_legend_tracking()
-                combined_canvas = getattr(self, "_combined_legend_canvas", None)
-                if isinstance(combined_canvas, FigureCanvasTkAgg):
-                    combined_canvas.draw_idle()
+                self._apply_saved_cycle_legend_state_to_display_combined()
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
@@ -41104,6 +41107,18 @@ class UnifiedApp(tk.Tk):
         if plot_key != "fig_combined":
             return
         preview_plot_id = plot_id or "fig_combined_triple_axis"
+        try:
+            _display_frame, display_canvas = self._find_plot_tab_canvas("fig_combined")
+            display_fig = getattr(display_canvas, "figure", None)
+            if display_fig is not None:
+                # Sync latest display legend placement before rebuilding preview.
+                self._capture_combined_legend_anchor_from_fig(
+                    display_fig,
+                    source="sync",
+                )
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
 
         window = getattr(self, "_combined_plot_preview_window", None)
         if window is None or not bool(getattr(window, "winfo_exists", lambda: False)()):
@@ -56189,6 +56204,58 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures.
                 pass
 
+    def _apply_saved_cycle_legend_state_to_display_combined(self) -> None:
+        """Apply persisted cycle legend state to the live combined display figure.
+
+        Purpose:
+            Deterministically sync persisted cycle legend placement onto the
+            currently visible combined display plot.
+        Why:
+            Export Preview interactions can update persisted legend placement,
+            and the display figure must reflect those changes immediately when
+            the preview closes.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Side Effects:
+            Applies saved cycle legend anchor/offset state to the live combined
+            display figure, re-registers combined legend tracking callbacks,
+            and schedules a canvas redraw.
+
+        Exceptions:
+            Errors are caught to avoid interrupting UI workflows.
+        """
+        combined_frame, combined_canvas = self._find_plot_tab_canvas("fig_combined")
+        fig = getattr(combined_canvas, "figure", None)
+        if fig is None:
+            return
+        try:
+            self._apply_combined_saved_legend_anchors(fig)
+        except Exception:
+            # Best-effort guard; ignore failures.
+            pass
+        try:
+            self._register_combined_legend_tracking(
+                fig,
+                force_draw=False,
+                defer_saved_anchor=False,
+            )
+        except Exception:
+            # Best-effort guard; ignore failures.
+            pass
+        try:
+            if isinstance(combined_canvas, FigureCanvasTkAgg):
+                combined_canvas.draw_idle()
+            elif getattr(fig, "canvas", None) is not None:
+                fig.canvas.draw_idle()
+        except Exception:
+            # Best-effort guard; ignore failures.
+            pass
+
     def _apply_combined_saved_legend_anchors(
         self, fig: Figure | None
     ) -> None:
@@ -56418,7 +56485,8 @@ class UnifiedApp(tk.Tk):
         Args:
             fig: Matplotlib Figure containing combined legends to inspect.
             source: "auto" for passive capture, "drag" for mouse-up capture,
-                or "refresh" for pre-rebuild capture.
+                "sync" for explicit display/preview synchronization, or
+                "refresh" for pre-rebuild capture.
 
         Returns:
             None.
@@ -56432,7 +56500,8 @@ class UnifiedApp(tk.Tk):
         """
         if fig is None:
             return
-        if source != "drag":
+        explicit_capture_source = source in {"drag", "sync"}
+        if not explicit_capture_source:
             try:
                 if settings.get("combined_cycle_legend_anchor_mode") == "loc_tuple":
                     return
@@ -56784,7 +56853,7 @@ class UnifiedApp(tk.Tk):
                     and cycle_capture_enabled
                     and (source != "drag" or cycle_drag_capture_enabled)
                 ):
-                    if source == "drag" and self._is_debug_category_enabled(
+                    if explicit_capture_source and self._is_debug_category_enabled(
                         "plotting.legends"
                     ):
                         try:
@@ -56835,7 +56904,7 @@ class UnifiedApp(tk.Tk):
                             bbox_bounds,
                             bbox_repr,
                         )
-                    if source == "drag" and loc_tuple is not None:
+                    if explicit_capture_source and loc_tuple is not None:
                         persist_value = bool(
                             settings.get(
                                 "combined_cycle_legend_persist_position", True
@@ -56868,7 +56937,7 @@ class UnifiedApp(tk.Tk):
                         anchor_loc[0],
                         anchor_loc[1],
                     ]
-                    if loc_tuple is not None and source == "drag":
+                    if loc_tuple is not None and explicit_capture_source:
                         # Persist drag anchors in axes space when the cycle legend
                         # is axes-anchored; preserve figure-space for legacy anchors.
                         loc_tuple_to_store = loc_tuple
@@ -56893,6 +56962,17 @@ class UnifiedApp(tk.Tk):
                         settings.pop("combined_cycle_legend_ref_dx_px", None)
                         settings.pop("combined_cycle_legend_ref_dy_px", None)
                         settings["combined_cycle_legend_persist_position"] = True
+                        self._dbg(
+                            "plotting.legends",
+                            "Capture explicit source=%s write_type=tuple mode=%s "
+                            "anchor_space=%s loc=%s dx=%s dy=%s",
+                            source,
+                            "loc_tuple",
+                            anchor_space_to_store,
+                            loc_tuple_to_store,
+                            None,
+                            None,
+                        )
                         updated = True
                         continue
                     if anchor_space in {"figure", "axes"}:
@@ -56950,7 +57030,7 @@ class UnifiedApp(tk.Tk):
                                     clamped_display[1] - ref_point[1],
                                 )
                     if offsets is not None:
-                        if source == "drag":
+                        if explicit_capture_source:
                             persist_value = bool(
                                 settings.get(
                                     "combined_cycle_legend_persist_position", True
@@ -56991,6 +57071,27 @@ class UnifiedApp(tk.Tk):
                                 # Best-effort guard; ignore failures to avoid interrupting
                                 # the workflow.
                                 pass
+                        resolved_space = (
+                            self._combined_cycle_legend_anchor_space
+                            if self._combined_cycle_legend_anchor_space
+                            in {"figure", "axes"}
+                            else (
+                                "axes"
+                                if cycle_ref_axis is not None
+                                else "figure"
+                            )
+                        )
+                        self._dbg(
+                            "plotting.legends",
+                            "Capture explicit source=%s write_type=offset mode=%s "
+                            "anchor_space=%s loc=%s dx=%s dy=%s",
+                            source,
+                            "axis_offset",
+                            resolved_space,
+                            normalized_loc,
+                            offsets[0],
+                            offsets[1],
+                        )
                         # Debug: confirm capture source and offsets for persistence.
                         self._dbg(
                             "plotting.legends",
