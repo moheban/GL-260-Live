@@ -853,6 +853,8 @@ ANNOTATION_MODES = (
     "point",
     "xspan",
     "xspan_label",
+    "trace_mask",
+    "trace_start",
     "rect",
     "ref_line",
     "ink",
@@ -866,10 +868,44 @@ ANNOTATION_TYPE_LABELS = {
     "point": "Point / Marker",
     "xspan": "X-Span",
     "xspan_label": "Span + Label",
+    "trace_mask": "Trace Mask",
+    "trace_start": "Trace Start",
     "rect": "Box Region",
     "ref_line": "Reference Line",
     "ink": "Freehand",
 }
+
+TRACE_SERIES_KEYS: Tuple[str, ...] = ("y1", "y3", "y2", "z", "z2")
+
+
+def _normalize_trace_series_key(value: Any, default: str = "y2") -> str:
+    """Normalize a trace-series key for behavior plot elements.
+    Used to keep trace-targeted behavior elements constrained to known series keys."""
+    fallback_raw = "" if default is None else str(default).strip().lower()
+    if fallback_raw in TRACE_SERIES_KEYS:
+        fallback = fallback_raw
+    elif fallback_raw == "":
+        fallback = ""
+    else:
+        fallback = "y2"
+    if not isinstance(value, str):
+        return fallback
+    candidate = value.strip().lower()
+    if candidate in TRACE_SERIES_KEYS:
+        return candidate
+    return fallback
+
+
+def _trace_series_option_pairs() -> List[Tuple[str, str]]:
+    """Return display/value pairs for trace-target selectors.
+    Used by Add Element and Properties editors to show consistent trace choices."""
+    return [
+        ("Reactor Pressure (y1)", "y1"),
+        ("Manifold Pressure (y3)", "y3"),
+        ("Derivative (y2)", "y2"),
+        ("Internal Temperature (z)", "z"),
+        ("External Temperature (z2)", "z2"),
+    ]
 
 ANNOTATION_DEFAULT_ZORDER = 10
 ANNOTATION_SPAN_BACKGROUND_ZORDER = 0.9
@@ -921,6 +957,14 @@ def _canonicalize_annotation_type(value: str) -> Optional[str]:
         "span_label": "xspan_label",
         "span+label": "xspan_label",
         "span_label_text": "xspan_label",
+        "tracemask": "trace_mask",
+        "trace mask": "trace_mask",
+        "trace-mask": "trace_mask",
+        "mask": "trace_mask",
+        "tracestart": "trace_start",
+        "trace start": "trace_start",
+        "trace-start": "trace_start",
+        "start_x": "trace_start",
         "freehand": "ink",
         "ink": "ink",
         "rectangle": "rect",
@@ -1087,6 +1131,20 @@ def _migrate_legacy_geometry(
             legacy_align = data.get("text_align")
             if legacy_align:
                 geometry["label_anchor"] = str(legacy_align).strip().lower()
+    elif element_type == "trace_mask":
+        geometry["x0"] = _coerce_float(data.get("x0"))
+        geometry["x1"] = _coerce_float(data.get("x1"))
+        geometry["trace_key"] = _normalize_trace_series_key(
+            data.get("trace_key") or data.get("series_key") or "y2"
+        )
+    elif element_type == "trace_start":
+        start_value = data.get("x_start")
+        if start_value is None:
+            start_value = data.get("x")
+        geometry["x_start"] = _coerce_float(start_value)
+        geometry["trace_key"] = _normalize_trace_series_key(
+            data.get("trace_key") or data.get("series_key") or "y2"
+        )
     elif element_type == "rect":
         geometry["x0"] = _coerce_float(data.get("x0"))
         geometry["x1"] = _coerce_float(data.get("x1"))
@@ -1184,6 +1242,19 @@ def _normalize_plot_elements(value: Any) -> Dict[str, List[Dict[str, Any]]]:
                     x1 = _coerce_float(geometry.get("x1"))
                     if x0 is not None and x1 is not None:
                         geometry["wrap_width_x"] = abs(x1 - x0)
+            if element_type == "trace_mask":
+                geometry = {
+                    "x0": _coerce_float(geometry.get("x0")),
+                    "x1": _coerce_float(geometry.get("x1")),
+                    "trace_key": _normalize_trace_series_key(geometry.get("trace_key")),
+                }
+                normalized["geometry"] = geometry
+            if element_type == "trace_start":
+                geometry = {
+                    "x_start": _coerce_float(geometry.get("x_start")),
+                    "trace_key": _normalize_trace_series_key(geometry.get("trace_key")),
+                }
+                normalized["geometry"] = geometry
             if element_type in {"xspan", "xspan_label"}:
                 style.setdefault("span_layer", "behind_data")
             if element_type == "ink" and coord_space != "data":
@@ -1206,6 +1277,7 @@ def _default_add_defaults() -> Dict[str, Any]:
         "add_fillcolor": str(base_style.get("facecolor", "#cccccc")),
         "add_alpha": float(base_style.get("alpha", 0.9)),
         "add_label_text": "Label",
+        "add_trace_key": "y2",
         "add_axis_target": "primary",
         "add_coord_space": "data",
     }
@@ -1246,6 +1318,10 @@ def _normalize_annotations_ui(value: Any) -> Dict[str, Dict[str, Any]]:
         label_text = add_defaults.get("add_label_text")
         if not isinstance(label_text, str):
             label_text = _default_add_defaults()["add_label_text"]
+        trace_key = _normalize_trace_series_key(
+            add_defaults.get("add_trace_key"),
+            default=str(_default_add_defaults().get("add_trace_key", "y2")),
+        )
         axis_target = _normalize_axes_target(add_defaults.get("add_axis_target"))
         coord_space = str(add_defaults.get("add_coord_space") or "data").strip().lower()
         if coord_space not in {"data", "axes"}:
@@ -1271,6 +1347,7 @@ def _normalize_annotations_ui(value: Any) -> Dict[str, Dict[str, Any]]:
                 "add_fillcolor": fill_color,
                 "add_alpha": alpha_value,
                 "add_label_text": label_text,
+                "add_trace_key": trace_key,
                 "add_axis_target": axis_target,
                 "add_coord_space": coord_space,
             },
@@ -2591,6 +2668,236 @@ class AnnotationRenderer:
         fig._gl260_annotation_artists = artists
         fig._gl260_annotation_artist_map = artist_map
 
+    def _iter_trace_target_artists(self, fig: Figure) -> Iterable[Tuple[str, Any]]:
+        """Iterate over plot artists that map to trace series keys.
+        Used to drive trace-mask and trace-start behavior updates."""
+        if fig is None:
+            return []
+        items: List[Tuple[str, Any]] = []
+        for ax in getattr(fig, "axes", []) or []:
+            for artist in getattr(ax, "lines", []) or []:
+                series_key = _normalize_trace_series_key(
+                    getattr(artist, "_gl260_series_key", None),
+                    default="",
+                )
+                if series_key:
+                    items.append((series_key, artist))
+            for artist in getattr(ax, "collections", []) or []:
+                series_key = _normalize_trace_series_key(
+                    getattr(artist, "_gl260_series_key", None),
+                    default="",
+                )
+                if series_key:
+                    items.append((series_key, artist))
+        return items
+
+    def _capture_trace_filter_baseline(self, artist: Any) -> Optional[Tuple[str, Any, Any]]:
+        """Capture baseline (unfiltered) data for one trace artist.
+        Used to make trace behaviors reversible across redraw/update cycles."""
+        if artist is None:
+            return None
+        baseline = getattr(artist, "_gl260_trace_filter_baseline", None)
+        if isinstance(baseline, tuple) and len(baseline) == 3:
+            return baseline
+        if isinstance(artist, Line2D):
+            try:
+                x_vals = np.asarray(artist.get_xdata()).reshape(-1)
+                y_vals = np.asarray(artist.get_ydata()).reshape(-1)
+            except Exception:
+                return None
+            if x_vals.size != y_vals.size:
+                return None
+            baseline = ("line", np.array(x_vals, copy=True), np.array(y_vals, copy=True))
+            try:
+                artist._gl260_trace_filter_baseline = baseline
+            except Exception:
+                pass
+            return baseline
+        if hasattr(artist, "get_offsets") and hasattr(artist, "set_offsets"):
+            try:
+                offsets = np.asarray(artist.get_offsets())
+            except Exception:
+                return None
+            if offsets.ndim != 2 or offsets.shape[1] < 2:
+                return None
+            x_vals = np.array(offsets[:, 0], copy=True).reshape(-1)
+            y_vals = np.array(offsets[:, 1], copy=True).reshape(-1)
+            baseline = ("scatter", x_vals, y_vals)
+            try:
+                artist._gl260_trace_filter_baseline = baseline
+            except Exception:
+                pass
+            return baseline
+        return None
+
+    def invalidate_trace_filter_baselines(
+        self, fig: Figure, series_keys: Optional[Iterable[str]] = None
+    ) -> None:
+        """Invalidate cached baseline data for trace-filtering artists.
+        Used when upstream plot data changes so behavior filters rebase on fresh arrays."""
+        if fig is None:
+            return
+        key_filter: Optional[Set[str]] = None
+        if series_keys is not None:
+            key_filter = set()
+            for key in series_keys:
+                normalized = _normalize_trace_series_key(key, default="")
+                if normalized:
+                    key_filter.add(normalized)
+        for series_key, artist in self._iter_trace_target_artists(fig):
+            if key_filter is not None and series_key not in key_filter:
+                continue
+            try:
+                if hasattr(artist, "_gl260_trace_filter_baseline"):
+                    delattr(artist, "_gl260_trace_filter_baseline")
+            except Exception:
+                pass
+
+    def _collect_trace_behavior_rules(
+        self,
+        elements: Sequence[Mapping[str, Any]],
+        scatter_series_settings: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Collect effective trace-mask and trace-start rules by series key.
+        Used to apply consistent behavior filtering across display/export renders."""
+        rules: Dict[str, Dict[str, Any]] = {}
+        series_settings = (
+            scatter_series_settings if isinstance(scatter_series_settings, Mapping) else {}
+        )
+        for series_key in TRACE_SERIES_KEYS:
+            series_cfg = series_settings.get(series_key)
+            if not isinstance(series_cfg, Mapping):
+                continue
+            start_x = _coerce_float(series_cfg.get("start_x"))
+            if start_x is None:
+                continue
+            rules[series_key] = {"start_x": float(start_x), "mask_ranges": []}
+
+        for element in elements or []:
+            if not isinstance(element, Mapping):
+                continue
+            if not element.get("visible", True):
+                continue
+            if element.get("_draft") or element.get("_editor_only"):
+                continue
+            element_type = str(element.get("type") or "").strip().lower()
+            if element_type not in {"trace_mask", "trace_start"}:
+                continue
+            geometry = (
+                element.get("geometry") if isinstance(element.get("geometry"), Mapping) else {}
+            )
+            trace_key = _normalize_trace_series_key(geometry.get("trace_key"), default="y2")
+            bucket = rules.setdefault(trace_key, {"start_x": None, "mask_ranges": []})
+            if element_type == "trace_start":
+                x_start = _coerce_float(geometry.get("x_start"))
+                if x_start is None:
+                    continue
+                current = _coerce_float(bucket.get("start_x"))
+                if current is None or float(x_start) > float(current):
+                    bucket["start_x"] = float(x_start)
+                continue
+            x0 = _coerce_float(geometry.get("x0"))
+            x1 = _coerce_float(geometry.get("x1"))
+            if x0 is None or x1 is None:
+                continue
+            if not math.isfinite(x0) or not math.isfinite(x1):
+                continue
+            left = min(float(x0), float(x1))
+            right = max(float(x0), float(x1))
+            if abs(right - left) <= 1e-12:
+                continue
+            ranges = bucket.setdefault("mask_ranges", [])
+            if isinstance(ranges, list):
+                ranges.append((left, right))
+
+        for bucket in rules.values():
+            ranges = bucket.get("mask_ranges")
+            if not isinstance(ranges, list) or not ranges:
+                bucket["mask_ranges"] = []
+                continue
+            merged: List[Tuple[float, float]] = []
+            for left, right in sorted(ranges, key=lambda item: (item[0], item[1])):
+                if not merged:
+                    merged.append((left, right))
+                    continue
+                prev_left, prev_right = merged[-1]
+                if left <= prev_right:
+                    merged[-1] = (prev_left, max(prev_right, right))
+                else:
+                    merged.append((left, right))
+            bucket["mask_ranges"] = merged
+        return rules
+
+    def apply_trace_behavior_filters(
+        self,
+        fig: Figure,
+        elements: Sequence[Mapping[str, Any]],
+        scatter_series_settings: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        """Apply trace-start and trace-mask behavior filters to plotted artists.
+        Used to hide selected trace segments without mutating source data."""
+        if fig is None:
+            return
+        rules = self._collect_trace_behavior_rules(elements, scatter_series_settings)
+        for series_key, artist in self._iter_trace_target_artists(fig):
+            baseline = self._capture_trace_filter_baseline(artist)
+            if baseline is None:
+                continue
+            _, x_base, y_base = baseline
+            try:
+                x_arr = np.asarray(x_base).reshape(-1)
+                y_arr = np.asarray(y_base).reshape(-1)
+            except Exception:
+                continue
+            if x_arr.size != y_arr.size:
+                continue
+            rule = rules.get(series_key, {})
+            start_x = _coerce_float(rule.get("start_x")) if isinstance(rule, Mapping) else None
+            ranges = rule.get("mask_ranges") if isinstance(rule, Mapping) else []
+            hide_mask = np.zeros(x_arr.size, dtype=bool)
+            if start_x is not None:
+                hide_mask |= x_arr < float(start_x)
+            if isinstance(ranges, list):
+                for left, right in ranges:
+                    hide_mask |= (x_arr >= float(left)) & (x_arr <= float(right))
+
+            if isinstance(artist, Line2D):
+                if hide_mask.any():
+                    try:
+                        y_filtered = np.asarray(y_arr, dtype=float).copy()
+                    except Exception:
+                        y_filtered = np.array(y_arr, copy=True)
+                        if y_filtered.dtype.kind in {"b", "i", "u"}:
+                            y_filtered = y_filtered.astype(float, copy=False)
+                    try:
+                        y_filtered[hide_mask] = np.nan
+                    except Exception:
+                        y_filtered = np.array(
+                            [np.nan if flag else val for val, flag in zip(y_arr, hide_mask)],
+                            dtype=float,
+                        )
+                    try:
+                        artist.set_data(x_arr, y_filtered)
+                    except Exception:
+                        continue
+                else:
+                    try:
+                        artist.set_data(x_arr, y_arr)
+                    except Exception:
+                        continue
+                continue
+
+            if hasattr(artist, "set_offsets"):
+                try:
+                    if hide_mask.any():
+                        visible_mask = ~hide_mask
+                        offsets = np.column_stack((x_arr[visible_mask], y_arr[visible_mask]))
+                    else:
+                        offsets = np.column_stack((x_arr, y_arr))
+                    artist.set_offsets(offsets)
+                except Exception:
+                    continue
+
     def _style_float(
         self, style: Mapping[str, Any], key: str, default: float, minimum: float
     ) -> float:
@@ -2951,6 +3258,10 @@ class AnnotationRenderer:
         linewidth = self._style_float(style, "linewidth", 1.5, 0.2)
         zorder = _coerce_float(element.get("zorder")) or ANNOTATION_DEFAULT_ZORDER
         color = self._resolve_color(style, "color", "edgecolor", "linecolor")
+
+        if element_type in {"trace_mask", "trace_start"}:
+            # Behavior-only elements do not render persistent artists.
+            return None
 
         if element_type == "text":
             x = _coerce_float(geometry.get("x"))
@@ -3337,6 +3648,8 @@ class AnnotationRenderer:
         linewidth = self._style_float(style, "linewidth", 1.5, 0.2)
         zorder = _coerce_float(element.get("zorder")) or ANNOTATION_DEFAULT_ZORDER
         color = self._resolve_color(style, "color", "edgecolor", "linecolor")
+        if element_type in {"trace_mask", "trace_start"}:
+            return False
 
         try:
             if element_type == "text":
@@ -3963,6 +4276,43 @@ class AnnotationHitTest:
                 return "move"
             return None
 
+        if element_type == "trace_start":
+            x_start = _coerce_float(geometry.get("x_start"))
+            if x_start is None:
+                return None
+            if event_data is None:
+                event_data = _event_data_coords()
+            y_ref = event_data[1] if event_data is not None else sum(ax.get_ylim()) / 2.0
+            if _dist_to_point(x_start, y_ref) <= self._pixel_tolerance:
+                return "x_start"
+            try:
+                x_disp = transform.transform((x_start, y_ref))[0]
+            except Exception:
+                return None
+            return "move" if abs(x_disp - event_xy[0]) <= self._pixel_tolerance else None
+
+        if element_type == "trace_mask":
+            x0 = _coerce_float(geometry.get("x0"))
+            x1 = _coerce_float(geometry.get("x1"))
+            if x0 is None or x1 is None:
+                return None
+            if event_data is None:
+                event_data = _event_data_coords()
+            y_ref = event_data[1] if event_data is not None else sum(ax.get_ylim()) / 2.0
+            if _dist_to_point(x0, y_ref) <= self._pixel_tolerance:
+                return "x0"
+            if _dist_to_point(x1, y_ref) <= self._pixel_tolerance:
+                return "x1"
+            try:
+                x0_disp = transform.transform((x0, y_ref))[0]
+                x1_disp = transform.transform((x1, y_ref))[0]
+            except Exception:
+                return None
+            tol = self._pixel_tolerance
+            if min(x0_disp, x1_disp) - tol <= event_xy[0] <= max(x0_disp, x1_disp) + tol:
+                return "move"
+            return None
+
         if element_type in {"xspan", "xspan_label"}:
             x0 = _coerce_float(geometry.get("x0"))
             x1 = _coerce_float(geometry.get("x1"))
@@ -4449,6 +4799,8 @@ class PlotAnnotationsController:
         self._panel = panel
         if self._panel is not None:
             self._panel.refresh()
+        # Overlay visibility depends on whether the editor is open.
+        self.render()
 
     def set_target(self, fig: Figure, canvas: FigureCanvasTkAgg) -> None:
         """Set target.
@@ -4548,7 +4900,7 @@ class PlotAnnotationsController:
         if canonical not in ANNOTATION_TYPE_LABELS:
             return
         self.cancel_place_element()
-        if canonical not in {"xspan", "xspan_label"}:
+        if canonical not in {"xspan", "xspan_label", "trace_mask"}:
             self._clear_span_selectors()
         self._cancel_draft()
         overrides = dict(style_overrides or {})
@@ -4561,7 +4913,7 @@ class PlotAnnotationsController:
         if coord_value not in {"data", "axes"}:
             coord_value = "data"
         self._placing_coord_space = coord_value
-        if canonical in {"xspan", "xspan_label"} and coord_value == "data":
+        if canonical in {"xspan", "xspan_label", "trace_mask"} and coord_value == "data":
             if not self._arm_span_selectors():
                 self.cancel_place_element()
                 return
@@ -4632,6 +4984,15 @@ class PlotAnnotationsController:
     def _span_selector_style(self) -> Dict[str, Any]:
         """Perform span selector style.
         Used to keep the workflow logic localized and testable."""
+        if self._placing_type == "trace_mask":
+            # Trace-mask editing shows boundary guidance only while dragging.
+            return {
+                "facecolor": "none",
+                "edgecolor": "#9AA0A6",
+                "alpha": 0.9,
+                "linewidth": 1.0,
+                "linestyle": "--",
+            }
         base = _default_style_for_type("xspan")
         base.update(self._placing_style_overrides or {})
         alpha = _coerce_float(base.get("alpha"))
@@ -4748,7 +5109,7 @@ class PlotAnnotationsController:
     def _commit_new_xspan_from_selector(self, xmin: float, xmax: float) -> None:
         """Perform commit new xspan from selector.
         Used to keep the workflow logic localized and testable."""
-        if self._placing_type not in {"xspan", "xspan_label"}:
+        if self._placing_type not in {"xspan", "xspan_label", "trace_mask"}:
             return
         x0 = _coerce_float(xmin)
         x1 = _coerce_float(xmax)
@@ -4811,6 +5172,11 @@ class PlotAnnotationsController:
             wrap_width = self._default_span_wrap_width(span_ax, x0, x1, "data")
             if wrap_width is not None:
                 geometry.setdefault("wrap_width_x", wrap_width)
+        elif element_type == "trace_mask":
+            seed = self._placing_geometry_seed or {}
+            geometry["trace_key"] = _normalize_trace_series_key(
+                seed.get("trace_key"), default="y2"
+            )
         element_id = str(uuid.uuid4())
         element = {
             "id": element_id,
@@ -4858,7 +5224,7 @@ class PlotAnnotationsController:
         self._selected_id = element_id
         self._store.set_ui_state(self._plot_id, last_selected_id=element_id)
         if element_id and (
-            self._placing_type not in {"xspan", "xspan_label"}
+            self._placing_type not in {"xspan", "xspan_label", "trace_mask"}
             or (self._placing_coord_space or "data") != "data"
         ):
             self._clear_span_selectors()
@@ -4899,7 +5265,7 @@ class PlotAnnotationsController:
         if self._placing_state is not None or self._draft_element is not None:
             self._placing_state = None
             self._clear_draft()
-        if self._placing_type in {"xspan", "xspan_label"} and (
+        if self._placing_type in {"xspan", "xspan_label", "trace_mask"} and (
             self._placing_coord_space or "data"
         ) == "data":
             if not self._arm_span_selectors():
@@ -5111,6 +5477,40 @@ class PlotAnnotationsController:
                         new_handles.append(("wrap", (label_x + wrap_width, label_y)))
             if new_handles:
                 handles = new_handles
+        if element_type == "trace_mask":
+            geometry = (
+                element.get("geometry", {})
+                if isinstance(element.get("geometry"), dict)
+                else {}
+            )
+            x0 = _coerce_float(geometry.get("x0"))
+            x1 = _coerce_float(geometry.get("x1"))
+            if x0 is not None and x1 is not None and self._panel is not None:
+                for x_value in (x0, x1):
+                    try:
+                        line = ax.axvline(
+                            x=x_value,
+                            color="#9AA0A6",
+                            linestyle="--",
+                            linewidth=1.0,
+                            alpha=0.95,
+                            zorder=2000,
+                        )
+                        self._overlay_artists.append(line)
+                    except Exception:
+                        continue
+            # Trace-mask uses boundary guides while editing; no marker handles.
+            handles = []
+        if element_type == "trace_start":
+            geometry = (
+                element.get("geometry", {})
+                if isinstance(element.get("geometry"), dict)
+                else {}
+            )
+            x_start = _coerce_float(geometry.get("x_start"))
+            if x_start is not None:
+                ymid = sum(ax.get_ylim()) / 2.0
+                handles = [("x_start", (x_start, ymid))]
         if element_type == "ref_line":
             value = _coerce_float(element.get("geometry", {}).get("value"))
             orientation = (
@@ -5194,6 +5594,16 @@ class PlotAnnotationsController:
             y = _coerce_float(geometry.get("y"))
             if x is not None and y is not None:
                 handles.append(("move", (x, y)))
+        elif element_type == "trace_start":
+            x_start = _coerce_float(geometry.get("x_start"))
+            if x_start is not None:
+                handles.append(("x_start", (x_start, 0.5)))
+        elif element_type == "trace_mask":
+            x0 = _coerce_float(geometry.get("x0"))
+            x1 = _coerce_float(geometry.get("x1"))
+            if x0 is not None and x1 is not None:
+                handles.append(("x0", (x0, 0.5)))
+                handles.append(("x1", (x1, 0.5)))
         elif element_type in {"xspan", "xspan_label"}:
             x0 = _coerce_float(geometry.get("x0"))
             x1 = _coerce_float(geometry.get("x1"))
@@ -5367,7 +5777,7 @@ class PlotAnnotationsController:
             for key in ("y0", "y1"):
                 if key in geometry:
                     geometry[key] = (_coerce_float(geometry.get(key)) or 0.0) + dy
-        elif element_type == "xspan":
+        elif element_type in {"xspan", "trace_mask"}:
             # Iterate over ("x0", "x1") to apply the per-item logic.
             for key in ("x0", "x1"):
                 if key in geometry:
@@ -5396,6 +5806,9 @@ class PlotAnnotationsController:
                 geometry["value"] = (_coerce_float(geometry.get("value")) or 0.0) + dy
             else:
                 geometry["value"] = (_coerce_float(geometry.get("value")) or 0.0) + dx
+        elif element_type == "trace_start":
+            if "x_start" in geometry:
+                geometry["x_start"] = (_coerce_float(geometry.get("x_start")) or 0.0) + dx
         elif element_type == "ink":
             points = geometry.get("points")
             if isinstance(points, list) and points:
@@ -5437,7 +5850,7 @@ class PlotAnnotationsController:
                     )
                     if element is None:
                         return
-                    if self._placing_type not in {"xspan", "xspan_label"} or (
+                    if self._placing_type not in {"xspan", "xspan_label", "trace_mask"} or (
                         self._placing_coord_space or "data"
                     ) != "data":
                         self._clear_span_selectors()
@@ -5489,7 +5902,7 @@ class PlotAnnotationsController:
             if element.get("locked"):
                 self.set_selected_id(element.get("id"))
                 return
-            if self._placing_type not in {"xspan", "xspan_label"} or (
+            if self._placing_type not in {"xspan", "xspan_label", "trace_mask"} or (
                 self._placing_coord_space or "data"
             ) != "data":
                 self._clear_span_selectors()
@@ -5577,10 +5990,13 @@ class PlotAnnotationsController:
                 else {}
             )
             valid = True
-            if element_type in {"xspan", "xspan_label"}:
+            if element_type in {"xspan", "xspan_label", "trace_mask"}:
                 x0 = _coerce_float(geometry.get("x0"))
                 x1 = _coerce_float(geometry.get("x1"))
                 if x0 is None or x1 is None or abs(x1 - x0) <= 1e-12:
+                    valid = False
+            if element_type == "trace_start":
+                if _coerce_float(geometry.get("x_start")) is None:
                     valid = False
             if element_type == "rect":
                 x0 = _coerce_float(geometry.get("x0"))
@@ -5874,7 +6290,7 @@ class PlotAnnotationsController:
         seed = self._placing_geometry_seed or {}
         shift = "shift" in str(getattr(event, "key", "") or "").lower()
 
-        if element_type in {"point", "text", "ref_line"}:
+        if element_type in {"point", "text", "ref_line", "trace_start"}:
             if element_type == "point":
                 geometry = {"x": x, "y": y}
             elif element_type == "ref_line":
@@ -5884,6 +6300,13 @@ class PlotAnnotationsController:
                 label_text = seed.get("text")
                 if isinstance(label_text, str) and label_text.strip():
                     geometry["text"] = label_text
+            elif element_type == "trace_start":
+                geometry = {
+                    "x_start": x,
+                    "trace_key": _normalize_trace_series_key(
+                        seed.get("trace_key"), default="y2"
+                    ),
+                }
             else:
                 text_value = seed.get("text")
                 if not isinstance(text_value, str) or not text_value.strip():
@@ -5928,6 +6351,16 @@ class PlotAnnotationsController:
             geometry.update({"x0": x, "y0": y, "x1": x, "y1": y})
         elif element_type == "xspan":
             geometry.update({"x0": x, "x1": x})
+        elif element_type == "trace_mask":
+            geometry.update(
+                {
+                    "x0": x,
+                    "x1": x,
+                    "trace_key": _normalize_trace_series_key(
+                        seed.get("trace_key"), default="y2"
+                    ),
+                }
+            )
         elif element_type == "xspan_label":
             if not label_text.strip():
                 label_text = "Label"
@@ -6004,7 +6437,7 @@ class PlotAnnotationsController:
         if element_type in {"callout", "arrow", "rect"}:
             geometry["x1"] = x
             geometry["y1"] = y
-        elif element_type == "xspan":
+        elif element_type in {"xspan", "trace_mask"}:
             geometry["x1"] = x
         elif element_type == "xspan_label":
             geometry["x1"] = x
@@ -6033,7 +6466,7 @@ class PlotAnnotationsController:
         coord_space = str(self._draft_element.get("coord_space") or "data").strip()
         style = copy.deepcopy(self._draft_element.get("style", {}))
         valid = True
-        if element_type in {"xspan", "xspan_label"}:
+        if element_type in {"xspan", "xspan_label", "trace_mask"}:
             x0 = _coerce_float(geometry.get("x0"))
             x1 = _coerce_float(geometry.get("x1"))
             if x0 is None or x1 is None or abs(x1 - x0) <= 1e-12:
@@ -6047,6 +6480,9 @@ class PlotAnnotationsController:
                     )
                     if wrap_width is not None:
                         geometry["wrap_width_x"] = wrap_width
+        if element_type == "trace_start":
+            if _coerce_float(geometry.get("x_start")) is None:
+                valid = False
         if element_type == "rect":
             x0 = _coerce_float(geometry.get("x0"))
             x1 = _coerce_float(geometry.get("x1"))
@@ -6058,6 +6494,10 @@ class PlotAnnotationsController:
             points = geometry.get("points")
             if not isinstance(points, list) or len(points) < 2:
                 valid = False
+        if element_type in {"trace_mask", "trace_start"}:
+            geometry["trace_key"] = _normalize_trace_series_key(
+                geometry.get("trace_key"), default="y2"
+            )
         if not valid:
             self._placing_state = None
             self._clear_draft()
@@ -6146,12 +6586,20 @@ class PlotAnnotationsController:
             self.set_selected_id(element_id)
             self._commit_history()
             return
+        if element_type == "trace_start":
+            geometry.update({"x_start": x, "trace_key": "y2"})
+            self._elements().append(element)
+            self.set_selected_id(element_id)
+            self._commit_history()
+            return
         if element_type == "callout":
             geometry.update({"x0": x, "y0": y, "x1": x, "y1": y, "text": "Callout"})
         elif element_type == "arrow":
             geometry.update({"x0": x, "y0": y, "x1": x, "y1": y})
         elif element_type == "xspan":
             geometry.update({"x0": x, "x1": x})
+        elif element_type == "trace_mask":
+            geometry.update({"x0": x, "x1": x, "trace_key": "y2"})
         elif element_type == "xspan_label":
             geometry.update(
                 {"x0": x, "x1": x, "label_x": x, "label_y_data": y, "text": "Label"}
@@ -6265,6 +6713,16 @@ class PlotAnnotationsController:
             else:
                 geometry["x0"] = start_geom.get("x0", x) + dx
                 geometry["x1"] = start_geom.get("x1", x) + dx
+        elif element_type == "trace_mask":
+            if handle == "x0":
+                geometry["x0"] = x
+            elif handle == "x1":
+                geometry["x1"] = x
+            else:
+                geometry["x0"] = start_geom.get("x0", x) + dx
+                geometry["x1"] = start_geom.get("x1", x) + dx
+        elif element_type == "trace_start":
+            geometry["x_start"] = start_geom.get("x_start", x) + dx
         elif element_type == "xspan_label":
             if handle == "wrap":
                 if coord_space == "axes":
@@ -6716,6 +7174,8 @@ class AnnotationsPanel:
         self._add_axis_label_var = tk.StringVar(value="")
         self._add_coord_var = tk.StringVar(value=add_defaults["add_coord_space"])
         self._add_coord_label_var = tk.StringVar(value="")
+        self._add_trace_var = tk.StringVar(value=add_defaults["add_trace_key"])
+        self._add_trace_label_var = tk.StringVar(value="")
         self._add_hint_var = tk.StringVar(value="")
         self._add_fill_var = tk.StringVar(value=add_defaults["add_fillcolor"])
         alpha_value = float(add_defaults["add_alpha"])
@@ -6731,6 +7191,7 @@ class AnnotationsPanel:
         self._add_label_entry: Optional[ttk.Entry] = None
         self._add_color_swatch: Optional[tk.Label] = None
         self._add_axis_combo: Optional[ttk.Combobox] = None
+        self._add_trace_combo: Optional[ttk.Combobox] = None
         self._apply_button: Optional[ttk.Button] = None
         self._apply_keep_button: Optional[ttk.Button] = None
         self._revert_button: Optional[ttk.Button] = None
@@ -6753,6 +7214,8 @@ class AnnotationsPanel:
         self._current_axis_map: Dict[str, str] = {}
         self._current_axis_var: Optional[tk.StringVar] = None
         self._current_zorder_var: Optional[tk.StringVar] = None
+        self._current_trace_key_var: Optional[tk.StringVar] = None
+        self._current_trace_key_map: Dict[str, str] = {}
         self._current_geom_vars: Dict[str, tk.Variable] = {}
         self._current_style_vars: Dict[str, tk.Variable] = {}
         self._pending_manual_changes = False
@@ -6791,6 +7254,10 @@ class AnnotationsPanel:
         label_text = merged.get("add_label_text")
         if not isinstance(label_text, str):
             label_text = _default_add_defaults()["add_label_text"]
+        trace_key = _normalize_trace_series_key(
+            merged.get("add_trace_key"),
+            default=str(_default_add_defaults().get("add_trace_key", "y2")),
+        )
         axis_target = _normalize_axes_target(merged.get("add_axis_target"))
         coord_space = str(merged.get("add_coord_space") or "data").strip().lower()
         if coord_space not in {"data", "axes"}:
@@ -6800,6 +7267,7 @@ class AnnotationsPanel:
             "add_fillcolor": fill_color,
             "add_alpha": alpha_value,
             "add_label_text": label_text,
+            "add_trace_key": trace_key,
             "add_axis_target": axis_target,
             "add_coord_space": coord_space,
         }
@@ -6919,6 +7387,8 @@ class AnnotationsPanel:
             ("Point / Marker", "point"),
             ("X-Span", "xspan"),
             ("Span + Label", "xspan_label"),
+            ("Trace Mask", "trace_mask"),
+            ("Trace Start", "trace_start"),
             ("Box Region", "rect"),
             ("Reference Line", "ref_line"),
             ("Freehand", "ink"),
@@ -6947,6 +7417,8 @@ class AnnotationsPanel:
                 "ref_line": "Click for vertical line. Shift + click for horizontal.",
                 "xspan": "Drag across plot; release to create.",
                 "xspan_label": "Drag across plot; release to create.",
+                "trace_mask": "Drag across plot to hide one trace in-range.",
+                "trace_start": "Click once to set where one trace starts.",
                 "ink": "Click-drag freehand.",
             }
             return hints.get(element_type, "Click to place.")
@@ -6988,6 +7460,21 @@ class AnnotationsPanel:
             self._add_coord_label_var.set(label)
 
         _sync_add_coord_label()
+        trace_choices = _trace_series_option_pairs()
+        trace_label_map = {label: key for label, key in trace_choices}
+        trace_value_map = {key: label for label, key in trace_choices}
+
+        # Closure captures _build_ui local context to keep helper logic scoped and invoked directly within _build_ui.
+        def _sync_add_trace_label() -> None:
+            """Perform sync add trace label.
+            Used to keep the workflow logic localized and testable."""
+            trace_key = _normalize_trace_series_key(self._add_trace_var.get(), default="y2")
+            self._add_trace_var.set(trace_key)
+            self._add_trace_label_var.set(
+                trace_value_map.get(trace_key, trace_choices[2][0])
+            )
+
+        _sync_add_trace_label()
         self._add_hint_var.set(_placement_hint_for_type(self._add_type_var.get()))
 
         ttk.Label(add_frame, text="Element Type:").grid(
@@ -7026,11 +7513,25 @@ class AnnotationsPanel:
         )
         add_coord_combo.grid(row=1, column=1, columnspan=3, sticky="w", padx=6, pady=2)
 
-        ttk.Label(add_frame, text="Color:").grid(
+        ttk.Label(add_frame, text="Target Trace:").grid(
             row=2, column=0, sticky="w", padx=6, pady=2
         )
+        self._add_trace_combo = ttk.Combobox(
+            add_frame,
+            values=[label for label, _ in trace_choices],
+            textvariable=self._add_trace_label_var,
+            state="readonly",
+            width=28,
+        )
+        self._add_trace_combo.grid(
+            row=2, column=1, columnspan=3, sticky="w", padx=6, pady=2
+        )
+
+        ttk.Label(add_frame, text="Color:").grid(
+            row=3, column=0, sticky="w", padx=6, pady=2
+        )
         add_color_frame = ttk.Frame(add_frame)
-        add_color_frame.grid(row=2, column=1, columnspan=3, sticky="w", padx=6, pady=2)
+        add_color_frame.grid(row=3, column=1, columnspan=3, sticky="w", padx=6, pady=2)
         self._add_color_swatch = tk.Label(add_color_frame, width=2, relief="groove")
         self._add_color_swatch.grid(row=0, column=0, padx=(0, 4))
 
@@ -7075,10 +7576,10 @@ class AnnotationsPanel:
         _update_add_color_swatch()
 
         ttk.Label(add_frame, text="Transparency:").grid(
-            row=3, column=0, sticky="w", padx=6, pady=2
+            row=4, column=0, sticky="w", padx=6, pady=2
         )
         add_alpha_frame = ttk.Frame(add_frame)
-        add_alpha_frame.grid(row=3, column=1, columnspan=3, sticky="ew", padx=6, pady=2)
+        add_alpha_frame.grid(row=4, column=1, columnspan=3, sticky="ew", padx=6, pady=2)
         add_alpha_entry = ttk.Entry(
             add_alpha_frame, textvariable=self._add_alpha_var, width=6
         )
@@ -7114,18 +7615,18 @@ class AnnotationsPanel:
         add_alpha_frame.grid_columnconfigure(1, weight=1)
 
         ttk.Label(add_frame, text="Label/Text:").grid(
-            row=4, column=0, sticky="w", padx=6, pady=2
+            row=5, column=0, sticky="w", padx=6, pady=2
         )
         self._add_label_entry = ttk.Entry(
             add_frame, textvariable=self._add_label_var, width=24
         )
         self._add_label_entry.grid(
-            row=4, column=1, columnspan=3, sticky="ew", padx=6, pady=2
+            row=5, column=1, columnspan=3, sticky="ew", padx=6, pady=2
         )
 
         action_frame = ttk.Frame(add_frame)
         action_frame.grid(
-            row=5, column=0, columnspan=4, sticky="ew", padx=6, pady=(4, 2)
+            row=6, column=0, columnspan=4, sticky="ew", padx=6, pady=(4, 2)
         )
         self._add_place_button = ttk.Button(
             action_frame, text="Place on Plot", command=self._on_place_add_element
@@ -7145,7 +7646,7 @@ class AnnotationsPanel:
             wraplength=600,
             justify="left",
         )
-        hint_label.grid(row=6, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 2))
+        hint_label.grid(row=7, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 2))
 
         status_label = ttk.Label(
             add_frame,
@@ -7154,7 +7655,7 @@ class AnnotationsPanel:
             justify="left",
         )
         status_label.grid(
-            row=7, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 6)
+            row=8, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 6)
         )
 
         # Closure captures _build_ui state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _build_ui.
@@ -7168,6 +7669,16 @@ class AnnotationsPanel:
             self._add_label_entry.configure(state="normal" if is_label else "disabled")
 
         # Closure captures _build_ui state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _build_ui.
+        def _update_add_trace_state() -> None:
+            """Update add trace state.
+            Used to keep add trace state in sync with current state."""
+            if self._add_trace_combo is None:
+                return
+            trace_types = {"trace_mask", "trace_start"}
+            enabled = self._add_type_var.get() in trace_types
+            self._add_trace_combo.configure(state="readonly" if enabled else "disabled")
+
+        # Closure captures _build_ui state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _build_ui.
         def _on_add_type_selected(_event: Any = None) -> None:
             """Handle add type selected.
             Used as an event callback for add type selected."""
@@ -7177,6 +7688,7 @@ class AnnotationsPanel:
                 self._persist_add_defaults(add_type=new_type)
             self._add_hint_var.set(_placement_hint_for_type(new_type))
             _update_add_label_state()
+            _update_add_trace_state()
             if self._add_armed:
                 self._on_cancel_add_element()
 
@@ -7197,6 +7709,17 @@ class AnnotationsPanel:
             new_coord = coord_label_map.get(self._add_coord_label_var.get(), "data")
             self._add_coord_var.set(new_coord)
             self._persist_add_defaults(add_coord_space=new_coord)
+            if self._add_armed:
+                self._on_cancel_add_element()
+
+        # Closure captures _build_ui state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _build_ui.
+        def _on_add_trace_selected(_event: Any = None) -> None:
+            """Handle add trace selected.
+            Used as an event callback for add trace selected."""
+            new_trace = trace_label_map.get(self._add_trace_label_var.get(), "y2")
+            normalized = _normalize_trace_series_key(new_trace, default="y2")
+            self._add_trace_var.set(normalized)
+            self._persist_add_defaults(add_trace_key=normalized)
             if self._add_armed:
                 self._on_cancel_add_element()
 
@@ -7248,11 +7771,14 @@ class AnnotationsPanel:
         if self._add_axis_combo is not None:
             self._add_axis_combo.bind("<<ComboboxSelected>>", _on_add_axis_selected)
         add_coord_combo.bind("<<ComboboxSelected>>", _on_add_coord_selected)
+        if self._add_trace_combo is not None:
+            self._add_trace_combo.bind("<<ComboboxSelected>>", _on_add_trace_selected)
         self._add_fill_var.trace_add("write", _on_add_fill_change)
         self._add_label_var.trace_add("write", _on_add_label_change)
         add_alpha_entry.bind("<Return>", _commit_add_alpha_entry)
         add_alpha_entry.bind("<FocusOut>", _commit_add_alpha_entry)
         _update_add_label_state()
+        _update_add_trace_state()
         self.set_add_placement_active(False)
 
         list_frame = ttk.LabelFrame(left_pane, text="Elements")
@@ -7602,11 +8128,13 @@ class AnnotationsPanel:
         coord_space = str(self._add_coord_var.get() or "data").strip().lower()
         if coord_space not in {"data", "axes"}:
             coord_space = "data"
+        trace_key = _normalize_trace_series_key(self._add_trace_var.get(), default="y2")
         self._persist_add_defaults(
             add_type=canonical,
             add_fillcolor=fill_color,
             add_alpha=alpha_value,
             add_label_text=label_text,
+            add_trace_key=trace_key,
             add_axis_target=axis_target,
             add_coord_space=coord_space,
         )
@@ -7631,6 +8159,8 @@ class AnnotationsPanel:
             geometry_seed.setdefault("text", label_text or "Label")
             geometry_seed["label_y_axes"] = 0.95
             geometry_seed["label_anchor"] = "center"
+        if canonical in {"trace_mask", "trace_start"}:
+            geometry_seed["trace_key"] = trace_key
         self._controller.set_mode(canonical)
         self._controller.begin_place_element(
             canonical,
@@ -7844,6 +8374,8 @@ class AnnotationsPanel:
         self._current_axis_map = {}
         self._current_axis_var = None
         self._current_zorder_var = None
+        self._current_trace_key_var = None
+        self._current_trace_key_map = {}
         self._current_geom_vars = {}
         self._current_style_vars = {}
         self._suppress_live_update = True
@@ -7911,18 +8443,49 @@ class AnnotationsPanel:
         ttk.Label(behavior_frame, text=coord_label).grid(
             row=1, column=1, sticky="w", padx=6, pady=2
         )
+        behavior_row = 2
+        if element_type in {"trace_mask", "trace_start"}:
+            trace_choices = _trace_series_option_pairs()
+            trace_label_map = {label: key for label, key in trace_choices}
+            trace_value_map = {key: label for label, key in trace_choices}
+            geometry = (
+                element.get("geometry")
+                if isinstance(element.get("geometry"), dict)
+                else {}
+            )
+            current_trace_key = _normalize_trace_series_key(
+                geometry.get("trace_key"), default="y2"
+            )
+            trace_key_var = tk.StringVar(
+                value=trace_value_map.get(current_trace_key, trace_choices[2][0])
+            )
+            self._current_trace_key_var = trace_key_var
+            self._current_trace_key_map = trace_label_map
+            ttk.Label(behavior_frame, text="Target Trace:").grid(
+                row=behavior_row, column=0, sticky="w", padx=6, pady=2
+            )
+            ttk.Combobox(
+                behavior_frame,
+                values=[label for label, _ in trace_choices],
+                textvariable=trace_key_var,
+                state="readonly",
+                width=22,
+            ).grid(row=behavior_row, column=1, sticky="w", padx=6, pady=2)
+            behavior_row += 1
 
         zorder_var = tk.StringVar(value=str(element.get("zorder", "")))
         self._current_zorder_var = zorder_var
         ttk.Label(behavior_frame, text="Z-Order:").grid(
-            row=2, column=0, sticky="w", padx=6, pady=2
+            row=behavior_row, column=0, sticky="w", padx=6, pady=2
         )
         ttk.Entry(behavior_frame, textvariable=zorder_var, width=10).grid(
-            row=2, column=1, sticky="w", padx=6, pady=2
+            row=behavior_row, column=1, sticky="w", padx=6, pady=2
         )
 
         zorder_frame = ttk.Frame(behavior_frame)
-        zorder_frame.grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=2)
+        zorder_frame.grid(
+            row=behavior_row + 1, column=0, columnspan=2, sticky="w", padx=6, pady=2
+        )
         ttk.Button(
             zorder_frame, text="Send Backward", command=lambda: self._nudge_zorder(-1)
         ).pack(side="left", padx=(0, 6))
@@ -7931,7 +8494,9 @@ class AnnotationsPanel:
         ).pack(side="left", padx=4)
 
         toggle_frame = ttk.Frame(behavior_frame)
-        toggle_frame.grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=2)
+        toggle_frame.grid(
+            row=behavior_row + 2, column=0, columnspan=2, sticky="w", padx=6, pady=2
+        )
         ttk.Button(
             toggle_frame, text="Toggle Visibility", command=self._toggle_visibility_selected
         ).pack(side="left", padx=(0, 6))
@@ -7953,8 +8518,9 @@ class AnnotationsPanel:
                 "Behind data",
             )
             span_layer_var = tk.StringVar(value=label_value)
+            span_layer_row = behavior_row + 3
             ttk.Label(behavior_frame, text="Span Layer:").grid(
-                row=5, column=0, sticky="w", padx=6, pady=2
+                row=span_layer_row, column=0, sticky="w", padx=6, pady=2
             )
             ttk.Combobox(
                 behavior_frame,
@@ -7962,7 +8528,7 @@ class AnnotationsPanel:
                 textvariable=span_layer_var,
                 state="readonly",
                 width=18,
-            ).grid(row=5, column=1, sticky="w", padx=6, pady=2)
+            ).grid(row=span_layer_row, column=1, sticky="w", padx=6, pady=2)
             style_vars["span_layer"] = span_layer_var
 
         geom_vars = {}
@@ -7989,8 +8555,11 @@ class AnnotationsPanel:
         self._current_style_vars = style_vars
         self._reset_manual_apply_tracking(element)
 
-        # Iterate over [axis_label_var, zorder_var] to apply the per-item logic.
-        for var in [axis_label_var, zorder_var]:
+        tracked_vars = [axis_label_var, zorder_var]
+        if self._current_trace_key_var is not None:
+            tracked_vars.append(self._current_trace_key_var)
+        # Iterate over tracked_vars to apply the per-item logic.
+        for var in tracked_vars:
             self._register_live_update(var)
         # Iterate over values from geom_vars to apply the per-item logic.
         for var in geom_vars.values():
@@ -8259,7 +8828,17 @@ class AnnotationsPanel:
             if zorder_candidate is not None
             else element.get("zorder")
         )
+        element_type = str(element.get("type") or "").strip().lower()
         geometry_updates: Dict[str, Any] = {}
+        if (
+            element_type in {"trace_mask", "trace_start"}
+            and self._current_trace_key_var is not None
+        ):
+            trace_label = self._current_trace_key_var.get()
+            trace_key_value = self._current_trace_key_map.get(trace_label, trace_label)
+            geometry_updates["trace_key"] = _normalize_trace_series_key(
+                trace_key_value, default="y2"
+            )
         string_geom_keys = {"text", "orientation", "label_anchor"}
         # Iterate over items from self._current_geom_vars to apply the per-item logic.
         for key, var in self._current_geom_vars.items():
@@ -8387,6 +8966,10 @@ class AnnotationsPanel:
             fields = [("x", "x"), ("y", "y")]
         elif element_type == "xspan":
             fields = [("x0", "x0"), ("x1", "x1")]
+        elif element_type == "trace_mask":
+            fields = [("x0", "x0"), ("x1", "x1")]
+        elif element_type == "trace_start":
+            fields = [("x_start", "x_start")]
         elif element_type == "xspan_label":
             fields = [("x0", "x0"), ("x1", "x1"), ("label_x", "label_x")]
             label_y_axes = _coerce_float(geometry.get("label_y_axes"))
@@ -19136,6 +19719,19 @@ def _plot_series(
         scatter_series_configs=scatter_series_configs,
     )
 
+    def _tag_series_artist(artist: Any) -> Any:
+        """Attach the normalized trace key onto one rendered artist.
+        Used so behavior filters can reliably target traces across all plot tabs."""
+        normalized_series_key = _normalize_trace_series_key(series_key, default="")
+        if not normalized_series_key:
+            return artist
+        try:
+            artist._gl260_series_key = normalized_series_key
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        return artist
+
     if force_line or not cfg.get("enabled"):
         marker_style = line_marker
         cfg_marker = cfg.get("marker")
@@ -19196,7 +19792,7 @@ def _plot_series(
             label=label,
             **line_kwargs,
         )
-        return artist
+        return _tag_series_artist(artist)
 
     marker = cfg.get("marker") or DEFAULT_SCATTER_SETTINGS["marker"]
 
@@ -19234,7 +19830,7 @@ def _plot_series(
         scatter_kwargs["linewidths"] = linewidth_value
 
     artist = ax.scatter(x_values, y_values, **scatter_kwargs)
-    return artist
+    return _tag_series_artist(artist)
 
 
 DEFAULT_STARTING_MATERIAL_NAME = ""
@@ -20134,6 +20730,9 @@ _apply_csv_import_settings_defaults(settings)
 
 settings["plot_elements"] = _normalize_plot_elements(settings.get("plot_elements"))
 settings["annotations_ui"] = _normalize_annotations_ui(settings.get("annotations_ui"))
+settings["combined_disable_second_refresh"] = bool(
+    settings.get("combined_disable_second_refresh", False)
+)
 settings["layout_profiles"] = _normalize_layout_profiles(
     settings.get("layout_profiles")
 )
@@ -29011,6 +29610,10 @@ class UnifiedApp(tk.Tk):
         self._scatter_pref_window = None
         self._data_columns_pref_window = None
         self._data_trace_settings_window = None
+        self._combined_disable_second_refresh_var = tk.BooleanVar(
+            value=bool(settings.get("combined_disable_second_refresh", False))
+        )
+        self._plot_render_settings_window = None
         self._per_sheet_mapping_window = None
         self._per_sheet_column_map_cache = None
         self._annotation_store = AnnotationStore(settings)
@@ -29180,6 +29783,10 @@ class UnifiedApp(tk.Tk):
         preferences_menu.add_command(
             label="Plot Settings...",
             command=self._open_plot_settings_for_active_tab,
+        )
+        preferences_menu.add_command(
+            label="Plot Render Settings...",
+            command=self._open_plot_render_settings_dialog,
         )
         preferences_menu.add_command(
             label="Axis Auto-Range Settings...",
@@ -33643,7 +34250,7 @@ class UnifiedApp(tk.Tk):
         frame._plot_auto_refresh_state = "scheduled"
         if plot_key == "fig_combined":
             self._log_plot_tab_debug("Combined auto-refresh scheduled.")
-            # Combined plots need two auto-refresh phases to stabilize layout.
+            # Combined plots begin with phase 1; phase 2 is preference/decision driven.
             frame._plot_auto_refresh_phase = 1
         else:
             frame._plot_auto_refresh_phase = None
@@ -33702,7 +34309,8 @@ class UnifiedApp(tk.Tk):
             Finalize auto refresh state and remove the loading overlay.
         Why:
             Ensures the first visible plot uses the refresh path output. Combined
-            plots require two refresh passes to fully settle margins before reveal.
+            plots can run one or two refresh passes depending on adaptive decision
+            signals and Plot Render Settings overrides before reveal.
         Inputs:
             frame: Plot tab frame hosting the plot.
         Outputs:
@@ -33726,60 +34334,67 @@ class UnifiedApp(tk.Tk):
         phase = getattr(frame, "_plot_auto_refresh_phase", None)
         after_id = getattr(frame, "_plot_auto_refresh_after_id", None)
         if plot_key == "fig_combined":
+            second_refresh_disabled = self._combined_second_refresh_disabled()
             if phase == 1:
-                frame._plot_auto_refresh_phase = 2
+                if second_refresh_disabled:
+                    frame._plot_auto_refresh_phase = None
+                    self._log_plot_tab_debug(
+                        "Combined auto-refresh phase 2 skipped by Plot Render Settings."
+                    )
+                else:
+                    frame._plot_auto_refresh_phase = 2
 
-                def _run_second_pass():
-                    """Trigger the second combined refresh pass before reveal.
+                    def _run_second_pass():
+                        """Trigger the second combined refresh pass before reveal.
 
-                    Purpose:
-                        Run the same refresh path a second time for combined plots.
-                    Why:
-                        Combined layouts need two passes to fully stabilize margins.
-                    Inputs:
-                        None.
-                    Outputs:
-                        None.
-                    Side Effects:
-                        Invokes the shared refresh path and keeps the overlay visible.
-                    Exceptions:
-                        Errors are caught to avoid breaking the UI loop.
-                    """
-                    frame._plot_auto_refresh_after_id = None
-                    if getattr(frame, "_plot_auto_refresh_state", None) != "refreshing":
-                        return
-                    if getattr(frame, "_plot_auto_refresh_phase", None) != 2:
-                        return
-                    try:
-                        if not frame.winfo_exists():
+                        Purpose:
+                            Run the same refresh path a second time for combined plots.
+                        Why:
+                            Combined layouts need two passes to fully stabilize margins.
+                        Inputs:
+                            None.
+                        Outputs:
+                            None.
+                        Side Effects:
+                            Invokes the shared refresh path and keeps the overlay visible.
+                        Exceptions:
+                            Errors are caught to avoid breaking the UI loop.
+                        """
+                        frame._plot_auto_refresh_after_id = None
+                        if getattr(frame, "_plot_auto_refresh_state", None) != "refreshing":
+                            return
+                        if getattr(frame, "_plot_auto_refresh_phase", None) != 2:
+                            return
+                        try:
+                            if not frame.winfo_exists():
+                                self._clear_plot_loading_overlay(frame)
+                                return
+                        except Exception:
+                            return
+                        _, canvas = self._find_plot_tab_canvas(plot_key)
+                        if canvas is None:
+                            # Fail closed: avoid leaving the overlay stuck if the canvas
+                            # is gone.
+                            frame._plot_auto_refresh_state = "done"
+                            frame._plot_auto_refresh_after_id = None
+                            frame._plot_auto_refresh_in_progress = False
+                            frame._plot_auto_refresh_phase = None
                             self._clear_plot_loading_overlay(frame)
                             return
-                    except Exception:
-                        return
-                    _, canvas = self._find_plot_tab_canvas(plot_key)
-                    if canvas is None:
-                        # Fail closed: avoid leaving the overlay stuck if the canvas
-                        # is gone.
-                        frame._plot_auto_refresh_state = "done"
-                        frame._plot_auto_refresh_after_id = None
-                        frame._plot_auto_refresh_in_progress = False
-                        frame._plot_auto_refresh_phase = None
-                        self._clear_plot_loading_overlay(frame)
-                        return
-                    # Use the same refresh path as the Refresh button.
-                    self._force_plot_refresh(
-                        frame,
-                        canvas,
-                        capture_combined_legend=True,
-                    )
+                        # Use the same refresh path as the Refresh button.
+                        self._force_plot_refresh(
+                            frame,
+                            canvas,
+                            capture_combined_legend=True,
+                        )
 
-                try:
-                    frame._plot_auto_refresh_after_id = self.after_idle(
-                        _run_second_pass
-                    )
-                except Exception:
-                    _run_second_pass()
-                return
+                    try:
+                        frame._plot_auto_refresh_after_id = self.after_idle(
+                            _run_second_pass
+                        )
+                    except Exception:
+                        _run_second_pass()
+                    return
             if phase == 2 and after_id is not None:
                 # Second pass is queued; keep the overlay until it completes.
                 return
@@ -34216,6 +34831,9 @@ class UnifiedApp(tk.Tk):
                         # Best-effort guard; ignore failures to avoid interrupting the workflow.
                         pass
                 try:
+                    default_target_refreshes = (
+                        self._combined_overlay_default_target_refreshes()
+                    )
                     frame._post_first_draw_refresh_done = False
                     frame._post_first_draw_refresh_invoked = False
                     frame._post_first_draw_refresh_hold_overlay = True
@@ -34226,8 +34844,10 @@ class UnifiedApp(tk.Tk):
                     frame._combined_overlay_decision_sig_baseline = None
                     frame._combined_overlay_decision_sig_last = None
                     frame._combined_overlay_data_sig_current = None
-                    frame._combined_overlay_need_second_refresh = True
-                    frame._combined_overlay_target_refreshes = 2
+                    frame._combined_overlay_need_second_refresh = (
+                        default_target_refreshes > 1
+                    )
+                    frame._combined_overlay_target_refreshes = default_target_refreshes
                     frame._combined_overlay_ready_seen = False
                     frame._combined_overlay_second_refresh_scheduled = False
                     frame._combined_placeholder_draw_logged = False
@@ -35147,6 +35767,7 @@ class UnifiedApp(tk.Tk):
             pass
 
         if completed_count == 1:
+            second_refresh_disabled = self._combined_second_refresh_disabled()
             baseline_bundle = getattr(frame, "_combined_overlay_decision_sig_baseline", None)
             if not isinstance(baseline_bundle, dict):
                 baseline_bundle = {
@@ -35193,6 +35814,10 @@ class UnifiedApp(tk.Tk):
                 need_second_refresh = False
             else:
                 need_second_refresh = bool(geometry_changed)
+            if second_refresh_disabled:
+                # Explicit preference override keeps adaptive policy testable by
+                # forcing a single-pass target regardless of signal state.
+                need_second_refresh = False
             target_refreshes = 2 if need_second_refresh else 1
             try:
                 frame._combined_overlay_need_second_refresh = need_second_refresh
@@ -35212,11 +35837,19 @@ class UnifiedApp(tk.Tk):
                     ambiguous,
                 )
             )
-        target_refreshes = getattr(frame, "_combined_overlay_target_refreshes", 2)
+            if second_refresh_disabled:
+                self._log_plot_tab_debug(
+                    "Combined adaptive refresh override active: forcing target=1 (second pass disabled)."
+                )
+        target_refreshes = getattr(
+            frame,
+            "_combined_overlay_target_refreshes",
+            self._combined_overlay_default_target_refreshes(),
+        )
         try:
             target_refreshes = int(target_refreshes)
         except Exception:
-            target_refreshes = 2
+            target_refreshes = self._combined_overlay_default_target_refreshes()
         if target_refreshes <= 0:
             target_refreshes = 1
         milestone_value = 98.0 if completed_count >= target_refreshes else 90.0
@@ -35942,7 +36575,16 @@ class UnifiedApp(tk.Tk):
         elements = elements_map.get(plot_id) if isinstance(elements_map, dict) else []
         self._clear_plot_element_artists(fig)
         axes_map = self._resolve_plot_element_axes(fig)
-        self._annotation_renderer.render(fig, axes_map, elements or [])
+        effective_elements = elements or []
+        self._annotation_renderer.render(fig, axes_map, effective_elements)
+        scatter_series_settings = settings.get("scatter_series", {})
+        self._annotation_renderer.apply_trace_behavior_filters(
+            fig,
+            effective_elements,
+            scatter_series_settings
+            if isinstance(scatter_series_settings, Mapping)
+            else {},
+        )
 
     def _apply_display_settings_for_plot(
         self,
@@ -39250,6 +39892,7 @@ class UnifiedApp(tk.Tk):
             frame._core_overlay_hold = not bool(is_real_core)
         if plot_key == "fig_combined":
             is_real_combined = self._is_real_combined_figure(fig)
+            default_target_refreshes = self._combined_overlay_default_target_refreshes()
             frame._combined_render_ready = False
             frame._post_first_draw_refresh_hold_overlay = True
             frame._combined_real_figure_installed = bool(is_real_combined)
@@ -39259,8 +39902,8 @@ class UnifiedApp(tk.Tk):
             frame._combined_overlay_decision_sig_baseline = None
             frame._combined_overlay_decision_sig_last = None
             frame._combined_overlay_data_sig_current = None
-            frame._combined_overlay_need_second_refresh = True
-            frame._combined_overlay_target_refreshes = 2
+            frame._combined_overlay_need_second_refresh = default_target_refreshes > 1
+            frame._combined_overlay_target_refreshes = default_target_refreshes
             frame._combined_overlay_ready_seen = False
             frame._combined_overlay_second_refresh_scheduled = False
             frame._combined_placeholder_draw_logged = False
@@ -40848,6 +41491,10 @@ class UnifiedApp(tk.Tk):
             zorder_val = _coerce_float(data.get("zorder"))
             if zorder_val is not None and math.isfinite(zorder_val):
                 result["zorder"] = zorder_val
+        if "start_x" in data:
+            start_x_val = _coerce_float(data.get("start_x"))
+            if start_x_val is not None and math.isfinite(start_x_val):
+                result["start_x"] = start_x_val
 
         # Iterate over ("marker", "edgecolor", "alpha", "linewidth") to apply the per-item logic.
         for key in ("marker", "edgecolor", "alpha", "linewidth"):
@@ -40961,7 +41608,7 @@ class UnifiedApp(tk.Tk):
                 stored_config = stored.get(key)
                 if isinstance(stored_config, dict):
                     # Preserve per-series overrides that are not surfaced in the Columns UI.
-                    for extra_key in ("marker", "edgecolor", "alpha", "zorder"):
+                    for extra_key in ("marker", "edgecolor", "alpha", "zorder", "start_x"):
                         if extra_key not in config and extra_key in stored_config:
                             config[extra_key] = stored_config[extra_key]
                 if config:
@@ -41708,7 +42355,8 @@ class UnifiedApp(tk.Tk):
         grid.grid_columnconfigure(5, weight=0)
         grid.grid_columnconfigure(6, weight=0)
         grid.grid_columnconfigure(7, weight=0)
-        grid.grid_columnconfigure(8, weight=1)
+        grid.grid_columnconfigure(8, weight=0)
+        grid.grid_columnconfigure(9, weight=1)
 
         headers = [
             ("Trace", 0),
@@ -41719,7 +42367,8 @@ class UnifiedApp(tk.Tk):
             ("Line Width (pt)", 5),
             ("Priority", 6),
             ("Z-Order Override", 7),
-            ("Effective Z", 8),
+            ("Start X", 8),
+            ("Effective Z", 9),
         ]
         header_widgets: Dict[str, ttk.Label] = {}
         # Iterate over headers to apply the per-item logic.
@@ -41901,6 +42550,15 @@ class UnifiedApp(tk.Tk):
                     else ""
                 )
             )
+            start_x_val = config.get("start_x")
+            start_x_var = tk.StringVar(
+                value=(
+                    f"{float(start_x_val):g}"
+                    if isinstance(start_x_val, (int, float))
+                    and math.isfinite(start_x_val)
+                    else ""
+                )
+            )
 
             priority_label = "Inherit"
             zorder_override_value = ""
@@ -41926,6 +42584,7 @@ class UnifiedApp(tk.Tk):
                 "linewidth": linewidth_var,
                 "priority": priority_var,
                 "zorder": zorder_var,
+                "start_x": start_x_var,
                 "effective_z": effective_z_var,
             }
 
@@ -42038,7 +42697,17 @@ class UnifiedApp(tk.Tk):
                 textvariable=effective_z_var,
                 width=14,
                 state="readonly",
-            ).grid(row=row_offset, column=8, sticky="w", padx=6, pady=6)
+            ).grid(row=row_offset, column=9, sticky="w", padx=6, pady=6)
+            start_x_frame = ttk.Frame(grid)
+            start_x_frame.grid(row=row_offset, column=8, sticky="w", padx=6, pady=6)
+            ttk.Entry(start_x_frame, textvariable=start_x_var, width=10).grid(
+                row=0, column=0, sticky="w"
+            )
+            ttk.Button(
+                start_x_frame,
+                text="Clear",
+                command=lambda v=start_x_var: v.set(""),
+            ).grid(row=0, column=1, padx=(4, 0))
             _wire_effective_z_updates(series_vars[series_key])
             _update_effective_z_display(series_vars[series_key])
 
@@ -42101,6 +42770,15 @@ class UnifiedApp(tk.Tk):
                 )
                 if linewidth_value is not None:
                     config["linewidth"] = linewidth_value
+
+                start_x_var = vars_map.get("start_x")
+                start_x_value = (
+                    self._parse_optional_float_entry(start_x_var.get(), positive=False)
+                    if start_x_var
+                    else None
+                )
+                if start_x_value is not None:
+                    config["start_x"] = start_x_value
 
                 zorder_var = vars_map.get("zorder")
                 zorder_override = (
@@ -46842,6 +47520,170 @@ class UnifiedApp(tk.Tk):
         }
         self._sync_combined_axis_display()
         self._persist_combined_axis_keys()
+
+    def _combined_second_refresh_disabled(self) -> bool:
+        """Return whether the combined second refresh pass is disabled by preference.
+
+        Purpose:
+            Centralize access to the user toggle for combined adaptive refresh pass 2.
+        Why:
+            Multiple combined refresh paths need one consistent on/off decision.
+        Inputs:
+            None.
+        Outputs:
+            Boolean flag indicating whether pass 2 must be disabled.
+        Side Effects:
+            None.
+        Exceptions:
+            None.
+        """
+        return bool(settings.get("combined_disable_second_refresh", False))
+
+    def _combined_overlay_default_target_refreshes(self) -> int:
+        """Return the default combined refresh pass target from current preferences.
+
+        Purpose:
+            Derive the baseline combined refresh pass count (1 or 2).
+        Why:
+            Reset paths and fallback reads should share one preference-aware target.
+        Inputs:
+            None.
+        Outputs:
+            Integer pass count (1 when disabled, otherwise 2).
+        Side Effects:
+            None.
+        Exceptions:
+            None.
+        """
+        return 1 if self._combined_second_refresh_disabled() else 2
+
+    def _close_plot_render_settings_dialog(self) -> None:
+        """Close the Plot Render Settings dialog.
+
+        Purpose:
+            Destroy the render settings window and clear tracked references.
+        Why:
+            Preferences dialogs must clean up state for reliable reopen behavior.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Destroys the dialog window when present.
+        Exceptions:
+            Destruction errors are guarded to avoid UI interruption.
+        """
+        window = getattr(self, "_plot_render_settings_window", None)
+        if window is not None:
+            try:
+                window.destroy()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._plot_render_settings_window = None
+
+    def _open_plot_render_settings_dialog(self) -> None:
+        """Open the Plot Render Settings preference dialog.
+
+        Purpose:
+            Expose render behavior toggles for combined triple-axis previews.
+        Why:
+            The second adaptive refresh pass needs a user-controlled disable switch
+            for validation and hardening of the combined render pipeline.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Creates/updates a preferences dialog, persists settings, and can
+            trigger a combined plot refresh for immediate feedback.
+        Exceptions:
+            Dialog and persistence errors are guarded to keep UI responsive.
+        """
+        existing = getattr(self, "_plot_render_settings_window", None)
+        if existing is not None and existing.winfo_exists():
+            try:
+                existing.deiconify()
+                existing.lift()
+                existing.focus_force()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            return
+
+        self._combined_disable_second_refresh_var.set(
+            self._combined_second_refresh_disabled()
+        )
+        window = tk.Toplevel(self)
+        window.title("Plot Render Settings")
+        window.transient(self)
+        window.resizable(False, False)
+        window.protocol("WM_DELETE_WINDOW", self._close_plot_render_settings_dialog)
+        self._plot_render_settings_window = window
+
+        container = ttk.Frame(window, padding=12)
+        container.grid(row=0, column=0, sticky="nsew")
+        container.grid_columnconfigure(0, weight=1)
+
+        ttk.Label(
+            container,
+            text=(
+                "Configure combined triple-axis render pass behavior for debugging "
+                "and adaptive refresh hardening."
+            ),
+            wraplength=520,
+            justify="left",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+        ttk.Checkbutton(
+            container,
+            text="Disable second refresh for combined triple-axis plot",
+            variable=self._combined_disable_second_refresh_var,
+        ).grid(row=1, column=0, sticky="w", pady=(0, 10))
+
+        button_frame = ttk.Frame(container)
+        button_frame.grid(row=2, column=0, sticky="e")
+
+        def _apply_settings(close_after: bool = False) -> None:
+            """Apply Plot Render Settings preferences to live state.
+
+            Purpose:
+                Persist combined second-pass toggle and refresh combined preview.
+            Why:
+                Users need immediate verification of adaptive refresh behavior.
+            Inputs:
+                close_after: When True, close the dialog after apply.
+            Outputs:
+                None.
+            Side Effects:
+                Updates settings, saves to disk, and refreshes combined plot tab.
+            Exceptions:
+                Persistence and refresh errors are guarded to avoid UI interruption.
+            """
+            disabled = bool(self._combined_disable_second_refresh_var.get())
+            settings["combined_disable_second_refresh"] = disabled
+            try:
+                _save_settings_to_disk()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            self._log_plot_tab_debug(
+                "Plot Render Settings applied: combined_disable_second_refresh=%s."
+                % disabled
+            )
+            self._refresh_plot_for_plot_id("fig_combined_triple_axis")
+            if close_after:
+                self._close_plot_render_settings_dialog()
+
+        ttk.Button(
+            button_frame, text="Apply", command=lambda: _apply_settings(False)
+        ).grid(row=0, column=0, padx=(0, 6))
+        ttk.Button(
+            button_frame, text="OK", command=lambda: _apply_settings(True)
+        ).grid(row=0, column=1, padx=(0, 6))
+        ttk.Button(
+            button_frame, text="Cancel", command=self._close_plot_render_settings_dialog
+        ).grid(row=0, column=2)
 
     def _close_axis_range_preferences(self) -> None:
         """Close axis range preferences.
@@ -55887,12 +56729,14 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 completed_count = 0
             target_refreshes = getattr(
-                target_frame, "_combined_overlay_target_refreshes", 2
+                target_frame,
+                "_combined_overlay_target_refreshes",
+                self._combined_overlay_default_target_refreshes(),
             )
             try:
                 target_refreshes = int(target_refreshes)
             except Exception:
-                target_refreshes = 2
+                target_refreshes = self._combined_overlay_default_target_refreshes()
             if target_refreshes <= 0:
                 target_refreshes = 1
             ready_seen = bool(
@@ -56334,12 +57178,14 @@ class UnifiedApp(tk.Tk):
                     except Exception:
                         completed_count = 0
                     target_refreshes = getattr(
-                        frame, "_combined_overlay_target_refreshes", 2
+                        frame,
+                        "_combined_overlay_target_refreshes",
+                        self._combined_overlay_default_target_refreshes(),
                     )
                     try:
                         target_refreshes = int(target_refreshes)
                     except Exception:
-                        target_refreshes = 2
+                        target_refreshes = self._combined_overlay_default_target_refreshes()
                     if target_refreshes <= 0:
                         target_refreshes = 1
                     if (
@@ -80520,7 +81366,9 @@ class UnifiedApp(tk.Tk):
                             fig=fig,
                         )
                         target_refreshes = getattr(
-                            target_frame, "_combined_overlay_target_refreshes", 2
+                            target_frame,
+                            "_combined_overlay_target_refreshes",
+                            self._combined_overlay_default_target_refreshes(),
                         )
                         self._log_plot_tab_debug(
                             "Combined auto-refresh completion recorded: invoked=%s completed=%s target=%s."
@@ -82279,6 +83127,7 @@ class UnifiedApp(tk.Tk):
         line_map = getattr(fig, "_gl260_combined_line_map", None)
         if not isinstance(line_map, dict) or not line_map:
             return fig
+        self._annotation_renderer.invalidate_trace_filter_baselines(fig, line_map.keys())
 
         series_map = data_ctx.get("series") or {}
         series_np = data_ctx.get("series_np") or {}
@@ -82406,6 +83255,21 @@ class UnifiedApp(tk.Tk):
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
+
+        elements_map = settings.get("plot_elements", {})
+        combined_elements = (
+            elements_map.get("fig_combined_triple_axis")
+            if isinstance(elements_map, Mapping)
+            else []
+        )
+        scatter_series_settings = settings.get("scatter_series", {})
+        self._annotation_renderer.apply_trace_behavior_filters(
+            fig,
+            combined_elements or [],
+            scatter_series_settings
+            if isinstance(scatter_series_settings, Mapping)
+            else {},
+        )
 
         legend_handles: List[Any] = []
         # Iterate over ("y1", "y3", "z", "z2", "y2") to apply the per-item logic.

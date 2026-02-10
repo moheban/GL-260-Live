@@ -71,6 +71,27 @@
           "text": "RB",
           "wrap_width_x": 0.788
         }
+      },
+      {
+        "id": "c67c9651-5b1f-4e34-8535-3e4efc7bc7f0",
+        "name": "Trace Mask 3",
+        "type": "trace_mask",
+        "axes_target": "primary",
+        "coord_space": "data",
+        "visible": true,
+        "locked": false,
+        "zorder": 12.0,
+        "style": {
+          "color": "#000000",
+          "alpha": 0.9,
+          "linewidth": 1.5,
+          "linestyle": "solid"
+        },
+        "geometry": {
+          "x0": 0.2858027364436083,
+          "x1": -0.10802072362146886,
+          "trace_key": "y2"
+        }
       }
     ],
     "fig_pressure_temp": [],
@@ -80,15 +101,16 @@
     "fig_combined_triple_axis": {
       "collapsed": false,
       "last_mode": "select",
-      "last_selected_id": null,
+      "last_selected_id": "c67c9651-5b1f-4e34-8535-3e4efc7bc7f0",
       "live_update": false,
       "editor_geometry": "1542x714+2112+162",
       "editor_sash": 821,
       "add_defaults": {
-        "add_type": "text",
+        "add_type": "trace_mask",
         "add_fillcolor": "#000000",
         "add_alpha": 0.9,
         "add_label_text": "RB",
+        "add_trace_key": "y2",
         "add_axis_target": "primary",
         "add_coord_space": "data"
       }
@@ -105,6 +127,7 @@
         "add_fillcolor": "#cccccc",
         "add_alpha": 0.9,
         "add_label_text": "Label",
+        "add_trace_key": "y2",
         "add_axis_target": "primary",
         "add_coord_space": "data"
       }
@@ -121,6 +144,7 @@
         "add_fillcolor": "#cccccc",
         "add_alpha": 0.9,
         "add_label_text": "Label",
+        "add_trace_key": "y2",
         "add_axis_target": "primary",
         "add_coord_space": "data"
       }
@@ -490,7 +514,9 @@
     4910,
     5112,
     5250,
-    5567
+    5567,
+    21553,
+    21982
   ],
   "cycle_manual_add_troughs": [
     184,
@@ -502,7 +528,9 @@
     5103,
     5241,
     5495,
-    21530
+    21530,
+    21943,
+    26764
   ],
   "cycle_manual_remove_peaks": [],
   "cycle_manual_remove_troughs": [],
@@ -510,7 +538,7 @@
   "combined_y_right_key": "z",
   "combined_y_third_key": "y2",
   "combined_center_plot_legend": false,
-  "window_geometry": "1587x855+26+26",
+  "window_geometry": "1587x855+108+48",
   "last_file_path": "C:/Users/mmoheban/Local Documents/Python/PR-24302 Sodium Bicarbonate MPT/PR-24302 Sodium Bicarbonate GL-260 Data for Analysis.xlsx",
   "last_sheet_name": "Batch 1 Rxn Day 4-5",
   "cycle_cached_markers": {
@@ -563,7 +591,7 @@
       "width": 1
     },
     "min_cycle_drop": -10.0,
-    "timestamp": 1770733874.7646377
+    "timestamp": 1770738889.9063513
   },
   "cycle_legend_anchor": [
     0.6589208483067334,
@@ -949,5 +977,6 @@
       "cycle_legend_ref_axis": "main",
       "cycle_legend_ref_corner": "center"
     }
-  }
+  },
+  "combined_disable_second_refresh": true
 }
