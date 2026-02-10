@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.13.0
+# Version: v2.13.1
 # Date: 2026-02-10
 
 import os
@@ -9241,7 +9241,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.13.0"
+APP_VERSION = "v2.13.1"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -18948,21 +18948,52 @@ def _warn_missing_scipy(feature: str, *, parent=None, kind: str = "warning") -> 
         print(msg, file=sys.stderr)
 
 
-def _make_legend_draggable(legend):
-    """Perform make legend draggable.
-    Used to keep the workflow logic localized and testable."""
+def _make_legend_draggable(
+    legend,
+    enabled: bool = True,
+    *,
+    update_mode: str = "loc",
+):
+    """Set legend draggability through one normalized helper path.
 
+    Purpose:
+        Enable or disable drag behavior for a Matplotlib legend artist.
+    Why:
+        Centralizing drag-state wiring keeps legend behavior consistent across
+        combined and non-combined plot builders.
+
+    Args:
+        legend: Matplotlib Legend to update. None is accepted and ignored.
+        enabled: True to enable drag, False to disable drag.
+        update_mode: Matplotlib drag update mode ("loc" or "bbox") used when
+            enabling drag. Invalid values fall back to "loc".
+
+    Returns:
+        The original legend reference, or None when legend is None.
+
+    Side Effects:
+        Calls legend.set_draggable(...) and may create or disconnect internal
+        Matplotlib drag callbacks on the legend's canvas.
+
+    Exceptions:
+        Errors are swallowed to avoid interrupting UI workflows.
+    """
+    if legend is None:
+        return legend
+    if update_mode not in {"loc", "bbox"}:
+        update_mode = "loc"
     try:
-
-        if legend is not None:
-
-            legend.set_draggable(True)
-
+        if enabled:
+            try:
+                legend.set_draggable(True, update=update_mode)
+            except TypeError:
+                # Matplotlib variants that do not expose the update kwarg.
+                legend.set_draggable(True)
+        else:
+            legend.set_draggable(False)
     except Exception:
-
         # Best-effort guard; ignore failures to avoid interrupting the workflow.
         pass
-
     return legend
 
 
@@ -23782,10 +23813,7 @@ def main_plotting_function(
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
-        try:
-            legend.set_draggable(True)
-        except Exception:
-            _make_legend_draggable(legend)
+        _make_legend_draggable(legend)
         return legend
 
     # Ranges
@@ -26719,10 +26747,7 @@ def build_combined_triple_axis_figure(
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
         _apply_combined_legend_layer(legend)
-        try:
-            legend.set_draggable(True)
-        except Exception:
-            _make_legend_draggable(legend)
+        _make_legend_draggable(legend)
         return legend
 
     primary_settings = _axis_settings(dataset_meta["y1"])
@@ -39470,10 +39495,7 @@ class UnifiedApp(tk.Tk):
                 bool(settings.get("combined_cycle_legend_enable_drag", True))
                 and not bool(settings.get("combined_cycle_legend_lock_position", False))
             ):
-                try:
-                    cycle_legend.set_draggable(True)
-                except Exception:
-                    _make_legend_draggable(cycle_legend)
+                _make_legend_draggable(cycle_legend)
 
             cycle_anchor_space = "axes"
             cycle_anchor_axis = axis_legend_axes.get(cycle_legend)
@@ -57139,12 +57161,7 @@ class UnifiedApp(tk.Tk):
                 if main_drag_enabled:
                     _make_legend_draggable(lg)
                 else:
-                    try:
-                        lg.set_draggable(False)
-                    except Exception:
-                        # Best-effort guard; ignore failures to avoid interrupting
-                        # the workflow.
-                        pass
+                    _make_legend_draggable(lg, enabled=False)
                 continue
             if getattr(lg, "_combined_cycle_legend", False) is True:
                 try:
@@ -57156,21 +57173,11 @@ class UnifiedApp(tk.Tk):
                 # Lock overrides drag to prevent accidental cycle legend movement.
                 if cycle_drag_enabled and not cycle_lock_enabled:
                     if defer_cycle_drag_enable:
-                        try:
-                            lg.set_draggable(False)
-                        except Exception:
-                            # Best-effort guard; ignore failures to avoid interrupting
-                            # the workflow.
-                            pass
+                        _make_legend_draggable(lg, enabled=False)
                     else:
                         _make_legend_draggable(lg)
                 else:
-                    try:
-                        lg.set_draggable(False)
-                    except Exception:
-                        # Best-effort guard; ignore failures to avoid interrupting
-                        # the workflow.
-                        pass
+                    _make_legend_draggable(lg, enabled=False)
                 continue
             _make_legend_draggable(lg)
         if main_legend is not None:
@@ -57988,10 +57995,7 @@ class UnifiedApp(tk.Tk):
                     and not cycle_lock_enabled
                 ):
                     # Re-enable drag after the saved anchor is applied once.
-                    try:
-                        cycle_legend.set_draggable(True)
-                    except Exception:
-                        _make_legend_draggable(cycle_legend)
+                    _make_legend_draggable(cycle_legend)
                 try:
                     self._debug_dump_cycle_legend(fig, "after_apply_saved_anchor")
                 except Exception:
@@ -58191,21 +58195,23 @@ class UnifiedApp(tk.Tk):
             """Handle motion notify event.
 
             Purpose:
-                Anchor a motion-event callback for debug wiring.
+                Track whether a cycle-legend drag has moved past click jitter.
             Why:
-                Connection IDs confirm the active canvas wiring in logs.
+                Movement thresholding avoids false drag captures while letting
+                Matplotlib's draggable legend keep cursor-relative positioning.
 
             Args:
-                _event: Matplotlib motion event payload (unused).
+                _event: Matplotlib motion event payload with display coordinates.
 
             Returns:
                 None.
 
             Side Effects:
-                None.
+                May set self._cycle_leg_drag_moved once drag distance exceeds
+                the movement threshold.
 
             Exceptions:
-                None.
+                None. Early returns are used for invalid event payloads.
             """
             if not getattr(self, "_cycle_leg_drag_active", False):
                 return
@@ -58216,51 +58222,13 @@ class UnifiedApp(tk.Tk):
                 return
             dx = event_x - start_xy[0]
             dy = event_y - start_xy[1]
-            use_loc_tuple_drag = bool(
-                getattr(self, "_cycle_leg_drag_use_loc_tuple", False)
-            )
-            if not use_loc_tuple_drag:
-                if (dx * dx + dy * dy) >= 9.0:
-                    self._cycle_leg_drag_moved = True
-                return
+            distance_sq = (dx * dx) + (dy * dy)
             if not getattr(self, "_cycle_leg_drag_moved", False):
-                if (dx * dx + dy * dy) < 9.0:
+                if distance_sq < 9.0:
                     return
                 self._cycle_leg_drag_moved = True
-            cycle_legend = self._get_combined_cycle_legend(fig)
-            if cycle_legend is None:
-                return
-            fig_obj = getattr(cycle_legend, "figure", None) or fig
-            if fig_obj is None:
-                return
-            fig_width = None
-            fig_height = None
-            try:
-                fig_width, fig_height = fig_obj.canvas.get_width_height()
-            except Exception:
-                fig_width = getattr(getattr(fig_obj, "bbox", None), "width", None)
-                fig_height = getattr(getattr(fig_obj, "bbox", None), "height", None)
-            if not fig_width or not fig_height:
-                return
-            try:
-                x_norm = float(event_x) / float(fig_width)
-                y_norm = float(event_y) / float(fig_height)
-            except Exception:
-                return
-            try:
-                cycle_legend.set_bbox_to_anchor(
-                    (0.0, 0.0, 1.0, 1.0), transform=fig_obj.transFigure
-                )
-                cycle_legend.set_loc((x_norm, y_norm))
-            except Exception:
-                return
-            try:
-                if fig_obj.canvas is not None:
-                    fig_obj.canvas.draw_idle()
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting
-                # the workflow.
-                pass
+            # Leave live movement to Matplotlib draggable legends so the cursor
+            # grab-point offset is preserved without manual coordinate remapping.
             return
 
         # Closure captures _register_combined_legend_tracking state for callback
@@ -84172,10 +84140,7 @@ class UnifiedApp(tk.Tk):
                 except Exception:
                     defer_drag_enable = False
                 if not defer_drag_enable:
-                    try:
-                        legend.set_draggable(True)
-                    except Exception:
-                        _make_legend_draggable(legend)
+                    _make_legend_draggable(legend)
                 return legend
 
             marker_state = getattr(fig, "_gl260_cycle_marker_artists", None)

@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.13.0)
+# GL-260 Data Analysis and Plotter (v2.13.1)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.13.0`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.13.1`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v2.13.1 Legend Drag Snap Offset Fix](#v2131-legend-drag-snap-offset-fix)
   - [v2.13.0 Plot Elements Close-Triggered Refresh Overlay](#v2130-plot-elements-close-triggered-refresh-overlay)
   - [v2.12.10 Core Overlay Adaptive Pass Targeting](#v21210-core-overlay-adaptive-pass-targeting)
   - [v2.12.9 Core Overlay Completion-Gated Refresh](#v2129-core-overlay-completion-gated-refresh)
@@ -894,6 +895,13 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v2.13.1 Legend Drag Snap Offset Fix
+- Fixed the cycle legend drag snap/offset issue by removing manual motion-time legend relocation that rewrote `loc` from absolute cursor coordinates.
+- Combined cycle legend dragging now relies on Matplotlib's native draggable movement path, preserving the click grab-point offset during drag.
+- Normalized runtime legend draggability enable/disable through `_make_legend_draggable(...)` so combined and non-combined plots use one consistent helper path.
+- Preserved existing cycle legend persistence semantics (`combined_cycle_legend_anchor_mode`, `combined_cycle_legend_loc`, `combined_cycle_legend_anchor_space`, and axis-offset keys) without schema changes.
+- Bumped application version metadata to `v2.13.1` in the script header and `APP_VERSION`.
 
 ### v2.13.0 Plot Elements Close-Triggered Refresh Overlay
 - Closing the Plot Elements editor now schedules one idle refresh for the owning plot tab via the shared `Refresh` path.
