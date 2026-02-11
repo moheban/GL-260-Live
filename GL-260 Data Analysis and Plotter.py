@@ -19903,6 +19903,20 @@ _SETTINGS_LOCK = threading.RLock()
 DISPLAY_MODE_REGULAR = "regular"
 DISPLAY_MODE_DARK = "dark"
 DISPLAY_MODE_OPTIONS = {DISPLAY_MODE_REGULAR, DISPLAY_MODE_DARK}
+PLOT_SETTINGS_CARD_ORDER_DEFAULT = [
+    "axes",
+    "titles",
+    "ticks",
+    "cycle_integration_legend",
+    "combined_axis",
+    "peak_trough",
+    "gas_model",
+    "starting_material",
+]
+PLOT_SETTINGS_CARD_ORDER_MIGRATION = {
+    "cycle_integration": "cycle_integration_legend",
+    "cycle_legend": "cycle_integration_legend",
+}
 
 
 def _normalize_ui_display_mode(value: Any) -> str:
@@ -19925,6 +19939,47 @@ def _normalize_ui_display_mode(value: Any) -> str:
     normalized = str(value or "").strip().lower()
     if normalized not in DISPLAY_MODE_OPTIONS:
         return DISPLAY_MODE_REGULAR
+    return normalized
+
+
+def _normalize_plot_settings_card_order(value: Any) -> List[str]:
+    """Normalize Plot Settings accordion order for persistence.
+
+    Purpose:
+        Coerce stored card-order payloads into the canonical stage-two key list.
+    Why:
+        Drag-reorder persistence must survive schema evolution, including the
+        merge from separate cycle cards to one combined cycle card.
+    Args:
+        value: Incoming settings value for `plot_settings_card_order`.
+    Returns:
+        List[str]: De-duplicated, valid card keys in render order.
+    Side Effects:
+        None.
+    Exceptions:
+        Falls back to `PLOT_SETTINGS_CARD_ORDER_DEFAULT` for invalid payloads.
+    """
+    normalized: List[str] = []
+    seen: Set[str] = set()
+    raw_items = value if isinstance(value, list) else []
+    # Iterate over stored items so legacy keys can be migrated deterministically.
+    for raw_item in raw_items:
+        key = str(raw_item or "").strip()
+        if not key:
+            continue
+        migrated = PLOT_SETTINGS_CARD_ORDER_MIGRATION.get(key, key)
+        if migrated not in PLOT_SETTINGS_CARD_ORDER_DEFAULT:
+            continue
+        if migrated in seen:
+            continue
+        normalized.append(migrated)
+        seen.add(migrated)
+    # Append missing defaults to keep future cards reachable after upgrades.
+    for default_key in PLOT_SETTINGS_CARD_ORDER_DEFAULT:
+        if default_key in seen:
+            continue
+        normalized.append(default_key)
+        seen.add(default_key)
     return normalized
 
 
@@ -21091,6 +21146,9 @@ else:
 
 settings["ui_display_mode"] = _normalize_ui_display_mode(
     settings.get("ui_display_mode")
+)
+settings["plot_settings_card_order"] = _normalize_plot_settings_card_order(
+    settings.get("plot_settings_card_order")
 )
 
 
@@ -50782,6 +50840,7 @@ class UnifiedApp(tk.Tk):
         expanded: bool = True,
         collapsible: bool = True,
         accent: bool = False,
+        reorderable: bool = False,
     ):
         """Create one Plot Settings card with optional collapse behavior.
 
@@ -50797,8 +50856,10 @@ class UnifiedApp(tk.Tk):
             expanded: Initial card-body visibility for collapsible cards.
             collapsible: True to add a toggleable body, False for fixed visibility.
             accent: True to apply highlighted styling for the pinned ranges card.
+            reorderable: True to render a dedicated drag handle in the card header.
         Returns:
-            Tuple[Any, ttk.Frame]: Card container widget and its content body frame.
+            Tuple[Any, ttk.Frame, Any]: Card container widget, content body frame,
+            and optional drag-handle widget (`None` when not reorderable).
         Side Effects:
             Creates child widgets and stores card state in `_plot_settings_card_states`.
         Exceptions:
@@ -50829,6 +50890,7 @@ class UnifiedApp(tk.Tk):
         header = ttk.Frame(container)
         header.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
         header.grid_columnconfigure(0, weight=1)
+        header.grid_columnconfigure(1, weight=0)
 
         body = ttk.Frame(container)
         body.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
@@ -50870,7 +50932,7 @@ class UnifiedApp(tk.Tk):
                 _bind_hover_border(title_label)
             else:
                 ttk.Label(header, text=title).grid(row=0, column=0, sticky="w")
-            return container, body
+            return container, body, None
 
         state_var = tk.BooleanVar(value=bool(expanded))
         if section_key:
@@ -50925,10 +50987,31 @@ class UnifiedApp(tk.Tk):
         _bind_hover_border(header)
         _bind_hover_border(button)
 
+        grip = None
+        if reorderable:
+            if ctk_module is not None:
+                grip = ctk_module.CTkLabel(
+                    header,
+                    text="|||",
+                    width=24,
+                    anchor="center",
+                    text_color=("black", "#F2F4F6"),
+                    font=(getattr(self, "_ui_font_family", "Verdana"), 12, "bold"),
+                )
+            else:
+                grip = ttk.Label(header, text="|||")
+            try:
+                grip.configure(cursor="fleur")
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            grip.grid(row=0, column=1, sticky="e", padx=(8, 0))
+            _bind_hover_border(grip)
+
         if not state_var.get():
             body.grid_remove()
         _refresh_header()
-        return container, body
+        return container, body, grip
 
     def _add_plot_settings_card(
         self,
@@ -50939,6 +51022,7 @@ class UnifiedApp(tk.Tk):
         expanded: bool = False,
         collapsible: bool = True,
         accent: bool = False,
+        reorderable: bool = True,
     ) -> ttk.Frame:
         """Create and place one accordion card in the Plot Settings stack.
 
@@ -50954,6 +51038,7 @@ class UnifiedApp(tk.Tk):
             expanded: Whether the card starts expanded.
             collapsible: Whether the card body can be toggled.
             accent: Whether to apply highlighted styling.
+            reorderable: Whether the card can be drag-reordered in the UI.
         Returns:
             ttk.Frame: Card body frame used by section-specific builders.
         Side Effects:
@@ -50963,23 +51048,487 @@ class UnifiedApp(tk.Tk):
         """
         row = int(getattr(self, "_plot_settings_next_row", 0))
         self._plot_settings_next_row = row + 1
-        card, body = self._create_plot_settings_card(
+        card, body, grip = self._create_plot_settings_card(
             parent,
             title,
             section_key=section_key,
             expanded=expanded,
             collapsible=collapsible,
             accent=accent,
+            reorderable=reorderable,
         )
         card.grid(row=row, column=0, columnspan=4, sticky="ew", padx=8, pady=(0, 8))
         try:
             self._plot_settings_card_order.append(section_key)
             self._plot_settings_card_bodies[section_key] = body
+            self._plot_settings_card_widgets[section_key] = card
+            self._plot_settings_card_reorderable[section_key] = bool(reorderable)
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+        if bool(reorderable) and grip is not None and section_key:
+            self._bind_plot_settings_drag_handle(section_key, grip)
         self._request_plot_settings_scroll_refresh()
         return body
+
+    def _default_plot_settings_card_order(self) -> List[str]:
+        """Return the canonical default order for reorderable Plot Settings cards.
+
+        Purpose:
+            Provide one stable source of truth for stage-two accordion ordering.
+        Why:
+            Drag-reorder persistence and schema migration both need the same
+            canonical key sequence to stay deterministic across app restarts.
+        Args:
+            None.
+        Returns:
+            List[str]: Default key order for reorderable (non-ranges) cards.
+        Side Effects:
+            None.
+        Exceptions:
+            None.
+        """
+        return list(PLOT_SETTINGS_CARD_ORDER_DEFAULT)
+
+    def _resolve_plot_settings_card_order(self) -> List[str]:
+        """Resolve and normalize stored Plot Settings card order.
+
+        Purpose:
+            Load persisted card ordering and map it to valid stage-two keys.
+        Why:
+            Legacy key migration and duplicate pruning must run before rendering
+            drag-reorderable cards so the UI never starts in an invalid order.
+        Args:
+            None.
+        Returns:
+            List[str]: Normalized reorderable card order.
+        Side Effects:
+            Updates and may persist `settings["plot_settings_card_order"]` when
+            stored values are missing, invalid, or legacy.
+        Exceptions:
+            Persistence failures are swallowed to avoid interrupting UI startup.
+        """
+        stored_order = settings.get("plot_settings_card_order")
+        normalized_order = _normalize_plot_settings_card_order(stored_order)
+        if stored_order != normalized_order:
+            settings["plot_settings_card_order"] = list(normalized_order)
+            try:
+                _save_settings_to_disk()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        return list(normalized_order)
+
+    def _persist_plot_settings_card_order(self, order: List[str]) -> None:
+        """Persist the reorderable Plot Settings card order globally.
+
+        Purpose:
+            Save drag-reordered accordion card order into global settings.
+        Why:
+            Users expect card arrangement preferences to survive application
+            restarts without relying on profile-level payloads.
+        Args:
+            order: Requested order of reorderable stage-two card keys.
+        Returns:
+            None.
+        Side Effects:
+            Writes normalized order to `settings["plot_settings_card_order"]` and
+            persists it to disk.
+        Exceptions:
+            Disk-write failures are swallowed to avoid interrupting user flows.
+        """
+        normalized_order = _normalize_plot_settings_card_order(order)
+        settings["plot_settings_card_order"] = list(normalized_order)
+        try:
+            _save_settings_to_disk()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _plot_settings_stage_two_card_registry(self) -> List[Dict[str, Any]]:
+        """Build the stage-two Plot Settings card registry.
+
+        Purpose:
+            Define card metadata (title, builder, defaults) in one place.
+        Why:
+            Rendering from a registry enables persisted reorder support without
+            hardcoding section construction order in the stage-two builder.
+        Args:
+            None.
+        Returns:
+            List[Dict[str, Any]]: Ordered card specifications keyed by section id.
+        Side Effects:
+            None.
+        Exceptions:
+            None.
+        """
+        return [
+            {
+                "key": "axes",
+                "title": "Axes",
+                "expanded": True,
+                "collapsible": True,
+                "reorderable": True,
+                "builder": self._build_plot_axes_section,
+            },
+            {
+                "key": "titles",
+                "title": "Titles",
+                "expanded": False,
+                "collapsible": True,
+                "reorderable": True,
+                "builder": self._build_plot_titles_section,
+            },
+            {
+                "key": "ticks",
+                "title": "Ticks",
+                "expanded": False,
+                "collapsible": True,
+                "reorderable": True,
+                "builder": self._build_plot_ticks_section,
+            },
+            {
+                "key": "cycle_integration_legend",
+                "title": "Cycle Integration & Legend Settings",
+                "expanded": False,
+                "collapsible": True,
+                "reorderable": True,
+                "builder": self._build_plot_cycle_integration_legend_section,
+            },
+            {
+                "key": "combined_axis",
+                "title": "Combined Triple-Axis Settings",
+                "expanded": False,
+                "collapsible": True,
+                "reorderable": True,
+                "builder": self._build_plot_combined_axis_section,
+            },
+            {
+                "key": "peak_trough",
+                "title": "Peak & Trough Detection",
+                "expanded": False,
+                "collapsible": True,
+                "reorderable": True,
+                "builder": self._build_plot_peak_section,
+            },
+            {
+                "key": "gas_model",
+                "title": "Gas Model (Van der Waals)",
+                "expanded": False,
+                "collapsible": True,
+                "reorderable": True,
+                "builder": self._build_plot_gas_section,
+            },
+            {
+                "key": "starting_material",
+                "title": "Starting Material Settings",
+                "expanded": False,
+                "collapsible": True,
+                "reorderable": True,
+                "builder": self._build_plot_starting_material_section,
+            },
+        ]
+
+    def _plot_settings_reorderable_keys(self) -> List[str]:
+        """Return reorderable Plot Settings keys in current visual order.
+
+        Purpose:
+            Enumerate currently rendered cards that can be drag-reordered.
+        Why:
+            Drag calculations should ignore fixed cards (like Ranges) while
+            preserving the user-visible order of reorderable sections.
+        Args:
+            None.
+        Returns:
+            List[str]: Reorderable section keys in current display order.
+        Side Effects:
+            None.
+        Exceptions:
+            Missing card maps are handled defensively and return an empty list.
+        """
+        order = list(getattr(self, "_plot_settings_card_order", []) or [])
+        reorderable_map = getattr(self, "_plot_settings_card_reorderable", {}) or {}
+        keys: List[str] = []
+        # Iterate over current order so drag logic matches on-screen sequence.
+        for key in order:
+            if not bool(reorderable_map.get(key)):
+                continue
+            keys.append(key)
+        return keys
+
+    def _bind_plot_settings_drag_handle(self, section_key: str, grip_widget: Any) -> None:
+        """Bind grip-handle events for Plot Settings card drag reordering.
+
+        Purpose:
+            Attach mouse bindings needed to start/move/end drag reorder.
+        Why:
+            Reorder interaction is intentionally constrained to a dedicated grip
+            so header clicks still behave as expand/collapse toggles.
+        Args:
+            section_key: Card key associated with the grip.
+            grip_widget: Widget acting as drag handle in the card header.
+        Returns:
+            None.
+        Side Effects:
+            Binds mouse event callbacks to the provided grip widget.
+        Exceptions:
+            Binding failures are ignored to keep card rendering resilient.
+        """
+        if not section_key or grip_widget is None:
+            return
+        try:
+            grip_widget.bind(
+                "<ButtonPress-1>",
+                lambda event, key=section_key: self._on_plot_settings_drag_start(
+                    key, event
+                ),
+                add="+",
+            )
+            grip_widget.bind("<B1-Motion>", self._on_plot_settings_drag_motion, add="+")
+            grip_widget.bind(
+                "<ButtonRelease-1>", self._on_plot_settings_drag_release, add="+"
+            )
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _on_plot_settings_drag_start(self, section_key: str, event: Any) -> str:
+        """Start drag-reordering for one Plot Settings card.
+
+        Purpose:
+            Capture drag context when the user presses a card grip handle.
+        Why:
+            Drag state must track the active section and insertion target before
+            motion events can compute live reorder previews.
+        Args:
+            section_key: Reorderable card key being dragged.
+            event: Tk mouse event carrying pointer and source widget data.
+        Returns:
+            str: `"break"` to stop event propagation into header toggle controls.
+        Side Effects:
+            Initializes `_plot_settings_drag_state` and attempts to grab pointer
+            events on the grip widget.
+        Exceptions:
+            Invalid keys or missing render state are ignored safely.
+        """
+        reorderable_keys = self._plot_settings_reorderable_keys()
+        if section_key not in reorderable_keys:
+            return "break"
+        grip_widget = getattr(event, "widget", None)
+        self._plot_settings_drag_state = {
+            "drag_key": section_key,
+            "target_index": reorderable_keys.index(section_key),
+            "grip_widget": grip_widget,
+        }
+        if grip_widget is not None:
+            try:
+                grip_widget.grab_set()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._on_plot_settings_drag_motion(event)
+        return "break"
+
+    def _on_plot_settings_drag_motion(self, event: Any) -> str:
+        """Update live insertion preview while dragging a Plot Settings card.
+
+        Purpose:
+            Recompute insertion target from pointer position and draw a preview line.
+        Why:
+            Users need immediate visual feedback for where the card will be placed
+            on drop without collapsing or rebuilding card content.
+        Args:
+            event: Tk mouse-motion event during active drag.
+        Returns:
+            str: `"break"` to keep drag events scoped to reorder behavior.
+        Side Effects:
+            Updates `_plot_settings_drag_state["target_index"]` and repositions a
+            live insertion marker in the scroll content frame.
+        Exceptions:
+            Missing drag state or widgets exits safely without raising.
+        """
+        state = getattr(self, "_plot_settings_drag_state", None)
+        if not isinstance(state, dict):
+            return "break"
+        drag_key = state.get("drag_key")
+        reorderable_keys = self._plot_settings_reorderable_keys()
+        if drag_key not in reorderable_keys:
+            return "break"
+        base_keys = [key for key in reorderable_keys if key != drag_key]
+        widgets = getattr(self, "_plot_settings_card_widgets", {}) or {}
+        target_index = len(base_keys)
+        pointer_root_y = getattr(event, "y_root", None)
+        if pointer_root_y is not None:
+            # Compare pointer against card midpoints to derive insertion slot.
+            for idx, key in enumerate(base_keys):
+                widget = widgets.get(key)
+                if widget is None or not widget.winfo_exists():
+                    continue
+                midpoint = widget.winfo_rooty() + (widget.winfo_height() / 2.0)
+                if pointer_root_y < midpoint:
+                    target_index = idx
+                    break
+        state["target_index"] = target_index
+
+        content = getattr(self, "_plot_settings_content_frame", None)
+        if content is None or not content.winfo_exists():
+            return "break"
+        try:
+            content.update_idletasks()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        preview_line = getattr(self, "_plot_settings_drag_preview_line", None)
+        if preview_line is None or not preview_line.winfo_exists():
+            preview_line = tk.Frame(content, height=2, bg="#1F6FD1")
+            self._plot_settings_drag_preview_line = preview_line
+        line_y = 0
+        if base_keys:
+            if target_index < len(base_keys):
+                anchor_key = base_keys[target_index]
+                anchor_widget = widgets.get(anchor_key)
+                if anchor_widget is not None and anchor_widget.winfo_exists():
+                    line_y = max(0, int(anchor_widget.winfo_y()) - 2)
+            else:
+                anchor_key = base_keys[-1]
+                anchor_widget = widgets.get(anchor_key)
+                if anchor_widget is not None and anchor_widget.winfo_exists():
+                    line_y = int(anchor_widget.winfo_y() + anchor_widget.winfo_height() + 2)
+        preview_line.place(x=8, y=line_y, relwidth=1.0, width=-16, height=2)
+        try:
+            preview_line.lift()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        return "break"
+
+    def _on_plot_settings_drag_release(self, event: Any) -> str:
+        """Commit Plot Settings card reorder when drag handle is released.
+
+        Purpose:
+            Finalize reorder and persist the new stage-two card sequence.
+        Why:
+            Drop-time commit keeps section state intact while applying only row
+            re-grid updates and one settings write.
+        Args:
+            event: Tk button-release event from the drag interaction.
+        Returns:
+            str: `"break"` to prevent release events from toggling card headers.
+        Side Effects:
+            Reorders card rows, persists global card order, and clears drag preview.
+        Exceptions:
+            Missing drag state exits gracefully without raising.
+        """
+        state = getattr(self, "_plot_settings_drag_state", None)
+        if not isinstance(state, dict):
+            return "break"
+        drag_key = state.get("drag_key")
+        target_index = int(state.get("target_index", 0))
+        reorderable_keys = self._plot_settings_reorderable_keys()
+        if drag_key in reorderable_keys:
+            base_keys = [key for key in reorderable_keys if key != drag_key]
+            if target_index < 0:
+                target_index = 0
+            if target_index > len(base_keys):
+                target_index = len(base_keys)
+            new_order = list(base_keys)
+            new_order.insert(target_index, drag_key)
+            if new_order != reorderable_keys:
+                self._apply_plot_settings_reorder(new_order, persist=True)
+        self._end_plot_settings_drag()
+        return "break"
+
+    def _end_plot_settings_drag(self) -> None:
+        """Clear transient drag-reorder state for Plot Settings cards.
+
+        Purpose:
+            Tear down drag preview UI and release any active pointer grab.
+        Why:
+            Reorder interactions must leave no sticky event state after drop.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Hides the insertion marker, releases grip grab, and resets
+            `_plot_settings_drag_state`.
+        Exceptions:
+            Cleanup guards suppress widget errors during teardown.
+        """
+        state = getattr(self, "_plot_settings_drag_state", None)
+        grip_widget = state.get("grip_widget") if isinstance(state, dict) else None
+        if grip_widget is not None:
+            try:
+                grip_widget.grab_release()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        preview_line = getattr(self, "_plot_settings_drag_preview_line", None)
+        if preview_line is not None and preview_line.winfo_exists():
+            try:
+                preview_line.place_forget()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._plot_settings_drag_state = None
+
+    def _apply_plot_settings_reorder(
+        self, reorderable_order: List[str], *, persist: bool
+    ) -> None:
+        """Apply a reordered stage-two card sequence to the live accordion.
+
+        Purpose:
+            Re-grid card containers to match a new reorderable section order.
+        Why:
+            Keeping card widgets in-place preserves expanded/collapsed state and
+            field values while applying drag reorder changes instantly.
+        Args:
+            reorderable_order: Requested order for reorderable card keys.
+            persist: True to save resulting order to global settings.
+        Returns:
+            None.
+        Side Effects:
+            Updates `_plot_settings_card_order`, re-grids card widgets, refreshes
+            scroll bounds, and optionally persists order to disk.
+        Exceptions:
+            Missing widgets are skipped safely to keep UI responsive.
+        """
+        reorderable_keys = self._plot_settings_reorderable_keys()
+        seen: Set[str] = set()
+        normalized_reorderable: List[str] = []
+        # Filter drag results to known keys and preserve first occurrence order.
+        for key in reorderable_order:
+            if key not in reorderable_keys or key in seen:
+                continue
+            normalized_reorderable.append(key)
+            seen.add(key)
+        for key in reorderable_keys:
+            if key in seen:
+                continue
+            normalized_reorderable.append(key)
+            seen.add(key)
+
+        current_order = list(getattr(self, "_plot_settings_card_order", []) or [])
+        reorderable_map = getattr(self, "_plot_settings_card_reorderable", {}) or {}
+        fixed_keys = [key for key in current_order if not bool(reorderable_map.get(key))]
+        new_order = fixed_keys + normalized_reorderable
+        self._plot_settings_card_order = list(new_order)
+
+        card_widgets = getattr(self, "_plot_settings_card_widgets", {}) or {}
+        # Re-grid each card in the new sequence without rebuilding section content.
+        for row_idx, key in enumerate(new_order):
+            widget = card_widgets.get(key)
+            if widget is None or not widget.winfo_exists():
+                continue
+            try:
+                widget.grid_configure(row=row_idx)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        if persist:
+            self._persist_plot_settings_card_order(normalized_reorderable)
+        self._request_plot_settings_scroll_refresh()
 
     def _build_plot_ranges_controls(self, parent) -> None:
         """Build pinned range controls for quick axis limit editing.
@@ -51519,6 +52068,37 @@ class UnifiedApp(tk.Tk):
             command=_apply_cycle_legend_controls,
         ).grid(row=2, column=1, sticky="w", padx=6, pady=4)
 
+    def _build_plot_cycle_integration_legend_section(
+        self, parent, pad: dict[str, int]
+    ) -> None:
+        """Build one merged card for cycle integration and legend settings.
+
+        Purpose:
+            Consolidate cycle marker toggles and combined-legend controls into one
+            workflow-centered accordion section.
+        Why:
+            Grouping related cycle controls reduces section count while preserving
+            all existing settings, callbacks, and tool-specific behavior.
+        Args:
+            parent: Card body frame produced by `_add_plot_settings_card`.
+            pad: Shared padding dictionary used by nested section builders.
+        Returns:
+            None.
+        Side Effects:
+            Creates nested frames and populates them through existing cycle
+            integration/legend builder methods.
+        Exceptions:
+            Downstream builder methods keep best-effort guard behavior.
+        """
+        parent.grid_columnconfigure(0, weight=1)
+        integration_host = ttk.Frame(parent)
+        integration_host.grid(row=0, column=0, sticky="ew")
+        legend_host = ttk.Frame(parent)
+        legend_host.grid(row=1, column=0, sticky="ew")
+        # Reuse existing builders to preserve callback wiring and variable ownership.
+        self._build_plot_cycle_integration_section(integration_host, pad)
+        self._build_plot_cycle_legend_section(legend_host, pad)
+
     def _build_plot_combined_axis_section(self, parent, pad: dict[str, int]) -> None:
         """Build the Combined Triple-Axis dataset selection card.
 
@@ -51837,9 +52417,14 @@ class UnifiedApp(tk.Tk):
 
         self._plot_settings_card_states = {}
         self._plot_settings_card_bodies = {}
+        self._plot_settings_card_widgets = {}
+        self._plot_settings_card_reorderable = {}
         self._plot_settings_card_order = []
         self._plot_settings_next_row = 0
         self._plot_settings_refresh_scroll_region = None
+        self._plot_settings_drag_state = None
+        self._plot_settings_drag_preview_line = None
+        self._plot_settings_content_frame = None
 
         scroll_shell = ttk.Frame(f)
         scroll_shell.grid(row=0, column=0, sticky="nsew", padx=8, pady=(8, 8))
@@ -51854,6 +52439,7 @@ class UnifiedApp(tk.Tk):
 
         content = ttk.Frame(canvas)
         settings_window = canvas.create_window((0, 0), window=content, anchor="nw")
+        self._plot_settings_content_frame = content
 
         def _refresh_scroll_region(_event=None) -> None:
             """Sync canvas scrollregion to current accordion content bounds."""
@@ -51913,6 +52499,7 @@ class UnifiedApp(tk.Tk):
             expanded=True,
             collapsible=False,
             accent=True,
+            reorderable=False,
         )
         self._build_plot_ranges_controls(ranges_body)
         self.after_idle(lambda: self._build_tab_plot_stage_two(content, pad))
@@ -51942,74 +52529,27 @@ class UnifiedApp(tk.Tk):
             return
         self._plot_tab_stage_two_built = True
 
-        axes_body = self._add_plot_settings_card(
-            f, "axes", "Axes", expanded=True, collapsible=True
-        )
-        self._build_plot_axes_section(axes_body, pad)
+        registry = self._plot_settings_stage_two_card_registry()
+        registry_map = {entry["key"]: entry for entry in registry}
+        stage_two_order = self._resolve_plot_settings_card_order()
 
-        titles_body = self._add_plot_settings_card(
-            f, "titles", "Titles", expanded=False, collapsible=True
-        )
-        self._build_plot_titles_section(titles_body, pad)
-
-        ticks_body = self._add_plot_settings_card(
-            f, "ticks", "Ticks", expanded=False, collapsible=True
-        )
-        self._build_plot_ticks_section(ticks_body, pad)
-
-        cycle_integration_body = self._add_plot_settings_card(
-            f,
-            "cycle_integration",
-            "Cycle Integration",
-            expanded=False,
-            collapsible=True,
-        )
-        self._build_plot_cycle_integration_section(cycle_integration_body, pad)
-
-        cycle_legend_body = self._add_plot_settings_card(
-            f,
-            "cycle_legend",
-            "Cycle Legend (Combined Plot)",
-            expanded=False,
-            collapsible=True,
-        )
-        self._build_plot_cycle_legend_section(cycle_legend_body, pad)
-
-        combined_axis_body = self._add_plot_settings_card(
-            f,
-            "combined_axis",
-            "Combined Triple-Axis Settings",
-            expanded=False,
-            collapsible=True,
-        )
-        self._build_plot_combined_axis_section(combined_axis_body, pad)
-
-        peak_body = self._add_plot_settings_card(
-            f,
-            "peak_trough",
-            "Peak & Trough Detection",
-            expanded=False,
-            collapsible=True,
-        )
-        self._build_plot_peak_section(peak_body, pad)
-
-        gas_body = self._add_plot_settings_card(
-            f,
-            "gas_model",
-            "Gas Model (Van der Waals)",
-            expanded=False,
-            collapsible=True,
-        )
-        self._build_plot_gas_section(gas_body, pad)
-
-        starting_body = self._add_plot_settings_card(
-            f,
-            "starting_material",
-            "Starting Material Settings",
-            expanded=False,
-            collapsible=True,
-        )
-        self._build_plot_starting_material_section(starting_body, pad)
+        # Iterate over the normalized persisted order so drag persistence controls
+        # the visual sequence without rebuilding card internals.
+        for key in stage_two_order:
+            entry = registry_map.get(key)
+            if entry is None:
+                continue
+            body = self._add_plot_settings_card(
+                f,
+                key,
+                str(entry.get("title", key)),
+                expanded=bool(entry.get("expanded", False)),
+                collapsible=bool(entry.get("collapsible", True)),
+                reorderable=bool(entry.get("reorderable", True)),
+            )
+            builder = entry.get("builder")
+            if callable(builder):
+                builder(body, pad)
 
         self._refresh_combined_axis_choices()
         self._request_plot_settings_scroll_refresh()
@@ -78688,10 +79228,69 @@ class UnifiedApp(tk.Tk):
         self._update_contamination_summary("\n".join(lines))
 
     def _build_tab_data(self):
-        """Build tab data.
-        Used to assemble tab data during UI or plot setup."""
+        """Build the Data tab with CTk controls and ttk/tk fallbacks.
 
+        Purpose:
+            Assemble file, sheet, and multi-sheet loading controls for the Data tab.
+        Why:
+            Stage-two migration introduces CTk interactive widgets here while
+            retaining existing callback wiring and listbox-based sheet selection.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Creates Data-tab widgets, stores widget references used by load/apply
+            flows, and refreshes initial mode/list state.
+        Exceptions:
+            Widget construction uses fallback paths when CTk is unavailable.
+        """
+        ctk_module = ctk
         f = self.tab_data
+
+        def _make_button(parent, text: str, command):
+            """Create one button using CTk when available, else ttk."""
+            if ctk_module is not None:
+                return ctk_module.CTkButton(parent, text=text, command=command)
+            return ttk.Button(parent, text=text, command=command)
+
+        def _make_entry(parent, *, textvariable=None):
+            """Create one text entry using CTk when available, else ttk."""
+            if ctk_module is not None:
+                return ctk_module.CTkEntry(parent, textvariable=textvariable)
+            return ttk.Entry(parent, textvariable=textvariable)
+
+        def _make_radio(parent, *, text: str, value: str, variable, command):
+            """Create one radio button using CTk when available, else ttk."""
+            if ctk_module is not None:
+                return ctk_module.CTkRadioButton(
+                    parent, text=text, value=value, variable=variable, command=command
+                )
+            return ttk.Radiobutton(
+                parent,
+                text=text,
+                value=value,
+                variable=variable,
+                command=command,
+            )
+
+        def _make_combo(parent, *, variable, values: List[str], state: str = "readonly"):
+            """Create one combobox using CTk when available, else ttk."""
+            if ctk_module is not None:
+                return ctk_module.CTkComboBox(
+                    parent, variable=variable, values=list(values), state=state
+                )
+            return ttk.Combobox(
+                parent, textvariable=variable, state=state, values=list(values)
+            )
+
+        def _make_scrollbar(parent, *, orient: str, command):
+            """Create one scrollbar using CTk when compatible, else ttk."""
+            if ctk_module is not None:
+                return ctk_module.CTkScrollbar(
+                    parent, orientation=orient, command=command
+                )
+            return ttk.Scrollbar(parent, orient=orient, command=command)
 
         f.grid_columnconfigure(1, weight=1)
 
@@ -78699,29 +79298,27 @@ class UnifiedApp(tk.Tk):
             row=0, column=0, sticky="w", padx=6, pady=6
         )
 
-        self.e_file = ttk.Entry(f)
-
+        self.e_file = _make_entry(f)
         self.e_file.grid(row=0, column=1, sticky="ew", padx=6, pady=6)
 
-        ttk.Button(f, text="Browse...", command=self._browse_file).grid(
+        _make_button(f, "Browse...", self._browse_file).grid(
             row=0, column=2, padx=6, pady=6
         )
-
-        ttk.Button(
-            f, text="Rescan File", command=self._load_sheets_from_current_path
-        ).grid(row=0, column=3, padx=6, pady=6)
+        _make_button(f, "Rescan File", self._load_sheets_from_current_path).grid(
+            row=0, column=3, padx=6, pady=6
+        )
 
         mode_frame = ttk.Frame(f)
         mode_frame.grid(row=1, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 6))
         ttk.Label(mode_frame, text="Mode").pack(side="left", padx=(0, 8))
-        ttk.Radiobutton(
+        _make_radio(
             mode_frame,
             text="Single Sheet",
             value="single",
             variable=self._multi_sheet_mode_var,
             command=self._on_multi_sheet_mode_change,
         ).pack(side="left", padx=(0, 8))
-        ttk.Radiobutton(
+        _make_radio(
             mode_frame,
             text="Multiple Sheets",
             value="multiple",
@@ -78736,25 +79333,21 @@ class UnifiedApp(tk.Tk):
         ttk.Label(self._data_single_frame, text="Sheet").grid(
             row=0, column=0, sticky="w", padx=6, pady=6
         )
-
-        self.om_sheet = ttk.Combobox(
+        self.om_sheet = _make_combo(
             self._data_single_frame,
-            textvariable=self.selected_sheet,
+            variable=self.selected_sheet,
+            values=list(self.sheet_names),
             state="readonly",
-            values=self.sheet_names,
         )
-
         self.om_sheet.grid(row=0, column=1, sticky="ew", padx=6, pady=6)
 
-        ttk.Button(
+        _make_button(self._data_single_frame, "Load Sheet Data", self._load_dataframe).grid(
+            row=0, column=2, padx=6, pady=6
+        )
+        _make_button(
             self._data_single_frame,
-            text="Load Sheet Data",
-            command=self._load_dataframe,
-        ).grid(row=0, column=2, padx=6, pady=6)
-        ttk.Button(
-            self._data_single_frame,
-            text="Import GL-260 CSV...",
-            command=self._open_csv_import_dialog,
+            "Import GL-260 CSV...",
+            self._open_csv_import_dialog,
         ).grid(row=0, column=3, padx=6, pady=6)
 
         self._data_multi_frame = ttk.Frame(f)
@@ -78777,7 +79370,7 @@ class UnifiedApp(tk.Tk):
             available_frame, exportselection=False, height=8
         )
         self._available_sheets_listbox.grid(row=1, column=0, sticky="nsew", padx=(0, 4))
-        available_scroll = ttk.Scrollbar(
+        available_scroll = _make_scrollbar(
             available_frame,
             orient="vertical",
             command=self._available_sheets_listbox.yview,
@@ -78787,12 +79380,12 @@ class UnifiedApp(tk.Tk):
 
         add_remove_frame = ttk.Frame(list_frame)
         add_remove_frame.grid(row=0, column=1, sticky="n", padx=6, pady=(18, 0))
-        ttk.Button(
-            add_remove_frame, text="Add >>", command=self._add_selected_sheets
-        ).pack(fill="x", pady=2)
-        ttk.Button(
-            add_remove_frame, text="<< Remove", command=self._remove_selected_sheets
-        ).pack(fill="x", pady=2)
+        _make_button(add_remove_frame, "Add >>", self._add_selected_sheets).pack(
+            fill="x", pady=2
+        )
+        _make_button(add_remove_frame, "<< Remove", self._remove_selected_sheets).pack(
+            fill="x", pady=2
+        )
 
         included_frame = ttk.Frame(list_frame)
         included_frame.grid(row=0, column=2, sticky="nsew")
@@ -78805,7 +79398,7 @@ class UnifiedApp(tk.Tk):
             included_frame, exportselection=False, height=8
         )
         self._included_sheets_listbox.grid(row=1, column=0, sticky="nsew", padx=(4, 0))
-        included_scroll = ttk.Scrollbar(
+        included_scroll = _make_scrollbar(
             included_frame,
             orient="vertical",
             command=self._included_sheets_listbox.yview,
@@ -78815,28 +79408,23 @@ class UnifiedApp(tk.Tk):
 
         move_frame = ttk.Frame(list_frame)
         move_frame.grid(row=0, column=3, sticky="n", padx=(6, 0), pady=(18, 0))
-        ttk.Button(
-            move_frame, text="Move Up", command=lambda: self._move_selected_sheet(-1)
+        _make_button(
+            move_frame, "Move Up", lambda: self._move_selected_sheet(-1)
         ).pack(fill="x", pady=2)
-        ttk.Button(
-            move_frame, text="Move Down", command=lambda: self._move_selected_sheet(1)
+        _make_button(
+            move_frame, "Move Down", lambda: self._move_selected_sheet(1)
         ).pack(fill="x", pady=2)
 
         multi_actions = ttk.Frame(self._data_multi_frame)
         multi_actions.grid(row=1, column=0, sticky="w", padx=6, pady=(0, 6))
-        ttk.Button(
-            multi_actions,
-            text="Load Selected Sheets",
-            command=self._load_dataframe,
-        ).pack(side="left")
-        ttk.Button(
-            multi_actions,
-            text="Import GL-260 CSV...",
-            command=self._open_csv_import_dialog,
+        _make_button(multi_actions, "Load Selected Sheets", self._load_dataframe).pack(
+            side="left"
+        )
+        _make_button(
+            multi_actions, "Import GL-260 CSV...", self._open_csv_import_dialog
         ).pack(side="left", padx=(6, 0))
 
         self.lbl_status = ttk.Label(f, text="No file loaded.")
-
         self.lbl_status.grid(row=4, column=0, columnspan=4, sticky="w", padx=6, pady=6)
 
         self._update_data_tab_mode()
@@ -79057,14 +79645,97 @@ class UnifiedApp(tk.Tk):
         return list(cols)
 
     def _refresh_columns_ui(self):
-        """Refresh columns UI.
-        Used to sync columns UI with current settings."""
+        """Refresh the Columns tab controls using CTk widgets when available.
 
+        Purpose:
+            Rebuild the main Columns-tab selector grid and action controls.
+        Why:
+            Stage-two migration moves the tab's interactive controls to CTk while
+            preserving existing variable bindings, callbacks, and business logic.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Destroys and recreates child widgets in `self.columns_frame`, updates
+            `self.columns_vars` / `self.scatter_series_vars`, and re-registers the
+            Apply button and indicator canvas.
+        Exceptions:
+            Uses ttk fallbacks when CTk is unavailable; no exceptions are raised for
+            fallback selection wiring.
+        """
+        ctk_module = ctk
         f = self.columns_frame
+
+        def _make_combo(
+            parent,
+            *,
+            variable: tk.StringVar,
+            values: Sequence[str],
+            ctk_width: Optional[int] = None,
+            ttk_width: Optional[int] = None,
+            on_select: Optional[Callable[[], None]] = None,
+        ):
+            """Create one readonly combo widget with CTk/ttk selection wiring."""
+            resolved_values = [str(v) for v in values]
+            if ctk_module is not None:
+                kwargs: Dict[str, Any] = {
+                    "variable": variable,
+                    "values": resolved_values,
+                    "state": "readonly",
+                }
+                if ctk_width is not None:
+                    kwargs["width"] = ctk_width
+                if callable(on_select):
+                    kwargs["command"] = lambda _value: on_select()
+                return ctk_module.CTkComboBox(parent, **kwargs)
+            kwargs = {
+                "textvariable": variable,
+                "values": resolved_values,
+                "state": "readonly",
+            }
+            if ttk_width is not None:
+                kwargs["width"] = ttk_width
+            combo = ttk.Combobox(parent, **kwargs)
+            if callable(on_select):
+                combo.bind("<<ComboboxSelected>>", lambda _e: on_select(), add="+")
+            return combo
+
+        def _make_entry(
+            parent,
+            *,
+            textvariable: tk.StringVar,
+            ctk_width: Optional[int] = None,
+            ttk_width: Optional[int] = None,
+        ):
+            """Create one text entry with CTk/ttk compatibility options."""
+            if ctk_module is not None:
+                kwargs: Dict[str, Any] = {"textvariable": textvariable}
+                if ctk_width is not None:
+                    kwargs["width"] = ctk_width
+                return ctk_module.CTkEntry(parent, **kwargs)
+            kwargs = {"textvariable": textvariable}
+            if ttk_width is not None:
+                kwargs["width"] = ttk_width
+            return ttk.Entry(parent, **kwargs)
+
+        def _make_button(
+            parent,
+            *,
+            text: str,
+            command: Callable[[], Any],
+            ctk_width: Optional[int] = None,
+        ):
+            """Create one push button with CTk/ttk fallback behavior."""
+            if ctk_module is not None:
+                kwargs: Dict[str, Any] = {"text": text, "command": command}
+                if ctk_width is not None:
+                    kwargs["width"] = ctk_width
+                return ctk_module.CTkButton(parent, **kwargs)
+            return ttk.Button(parent, text=text, command=command)
 
         # Iterate over f.winfo_children() to apply the per-item logic.
         for w in f.winfo_children():
-
             w.destroy()
 
         self.scatter_series_vars = {}
@@ -79082,16 +79753,12 @@ class UnifiedApp(tk.Tk):
                 ttk.Label(f, text="Load a sheet on the Data tab first.").pack(
                     anchor="w", padx=8, pady=8
                 )
-
                 self._refresh_cycle_temp_choices()
                 self._update_scatter_globals()
-
                 return
 
         cols = list(preview_cols if preview_only else self.df.columns)
-
         cols_with_none = ["None"] + cols
-
         labels = self._column_variable_label_map()
 
         if preview_only:
@@ -79103,9 +79770,7 @@ class UnifiedApp(tk.Tk):
             ).pack(anchor="w", padx=8, pady=(8, 0))
 
         grid = ttk.Frame(f)
-
         grid.pack(fill="x", padx=8, pady=(8, 0))
-
         grid.grid_columnconfigure(0, weight=0)
         grid.grid_columnconfigure(1, weight=1)
         grid.grid_columnconfigure(2, weight=1)
@@ -79114,7 +79779,6 @@ class UnifiedApp(tk.Tk):
 
         # Iterate over items from labels to apply the per-item logic.
         for key, label in labels.items():
-
             self._series_label_map[key] = label
             current_row = row
 
@@ -79124,34 +79788,27 @@ class UnifiedApp(tk.Tk):
 
             optional_keys = {"y2", "y3", "z", "z2", "dt"}
             choices = cols_with_none if key in optional_keys else cols
-
             default_val = self.columns.get(
                 key,
                 ("None" if key in optional_keys else (cols[0] if cols else "")),
             )
-
             var = tk.StringVar(value=default_val)
-
             self.columns_vars[key] = var
 
-            cb = ttk.Combobox(grid, textvariable=var, values=choices, state="readonly")
-
-            cb.grid(row=current_row, column=1, sticky="ew", padx=6, pady=6)
-
-            # When a column is changed, mirror into self.columns and flag the selection as dirty
-
-            # Closure captures _refresh_columns_ui state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _refresh_columns_ui.
-            def _on_combo(_e=None, k=key):
-                """Handle combo.
-                Used as an event callback for combo."""
-
+            def _on_combo(k=key) -> None:
+                """Mirror one selector value and mark the column state as dirty."""
                 self.columns[k] = self.columns_vars[k].get()
-
                 self._mark_columns_dirty(
                     reason="user selection changed", allow_during_apply=True
                 )
 
-            cb.bind("<<ComboboxSelected>>", _on_combo)
+            cb = _make_combo(
+                grid,
+                variable=var,
+                values=choices,
+                on_select=_on_combo,
+            )
+            cb.grid(row=current_row, column=1, sticky="ew", padx=6, pady=6)
 
             if key in SCATTER_SERIES_KEYS:
                 series_settings = self._stored_scatter_series.get(key, {})
@@ -79201,7 +79858,12 @@ class UnifiedApp(tk.Tk):
                 scatter_frame.grid_columnconfigure(9, weight=1)
 
                 ttk.Label(scatter_frame, text="Size").grid(row=0, column=0, sticky="w")
-                size_entry = ttk.Entry(scatter_frame, textvariable=size_var, width=6)
+                size_entry = _make_entry(
+                    scatter_frame,
+                    textvariable=size_var,
+                    ctk_width=72,
+                    ttk_width=6,
+                )
                 size_entry.grid(row=0, column=1, sticky="w", padx=(2, 6))
                 size_entry.bind(
                     "<FocusOut>", lambda _e, k=key: self._on_series_size_change(k)
@@ -79221,8 +79883,11 @@ class UnifiedApp(tk.Tk):
                 ttk.Label(scatter_frame, text="Line Width (pt)").grid(
                     row=0, column=2, sticky="w"
                 )
-                linewidth_entry = ttk.Entry(
-                    scatter_frame, textvariable=linewidth_var, width=7
+                linewidth_entry = _make_entry(
+                    scatter_frame,
+                    textvariable=linewidth_var,
+                    ctk_width=80,
+                    ttk_width=7,
                 )
                 linewidth_entry.grid(row=0, column=3, sticky="w", padx=(2, 6))
                 linewidth_entry.bind(
@@ -79236,10 +79901,10 @@ class UnifiedApp(tk.Tk):
                         "break",
                     )[1],
                 )
+
                 # Use a trace wrapper to avoid clearing partial input while typing.
                 def _on_linewidth_trace(*_args, k=key):
-                    """Handle linewidth trace.
-                    Used as a trace callback for linewidth changes."""
+                    """Run linewidth validation safely during active user typing."""
                     self._series_linewidth_trace_active = True
                     try:
                         self._on_series_linewidth_change(k)
@@ -79270,10 +79935,11 @@ class UnifiedApp(tk.Tk):
                     "Preview of the color applied to this series for both scatter points and line plots (blank uses the default line color).",
                 )
 
-                color_button = ttk.Button(
+                color_button = _make_button(
                     scatter_frame,
                     text="Pick",
                     command=lambda k=key: self._choose_series_color(k),
+                    ctk_width=58,
                 )
                 color_button.grid(row=0, column=6, padx=(2, 2))
                 self._attach_tooltip(
@@ -79281,10 +79947,11 @@ class UnifiedApp(tk.Tk):
                     "Choose a custom color for this series that will be used on both scatter and line plots.",
                 )
 
-                color_clear_btn = ttk.Button(
+                color_clear_btn = _make_button(
                     scatter_frame,
                     text="Clear",
                     command=lambda k=key: self._clear_series_color(k),
+                    ctk_width=62,
                 )
                 color_clear_btn.grid(row=0, column=7)
                 self._attach_tooltip(
@@ -79295,21 +79962,18 @@ class UnifiedApp(tk.Tk):
                 ttk.Label(scatter_frame, text="Line Style").grid(
                     row=0, column=8, sticky="w", padx=(8, 2)
                 )
-                linestyle_combo = ttk.Combobox(
+                linestyle_combo = _make_combo(
                     scatter_frame,
-                    textvariable=linestyle_var,
+                    variable=linestyle_var,
                     values=LINE_STYLE_CHOICES,
-                    state="readonly",
-                    width=24,
+                    ctk_width=220,
+                    ttk_width=24,
+                    on_select=lambda k=key: self._on_series_linestyle_change(k),
                 )
                 linestyle_combo.grid(row=0, column=9, sticky="ew")
                 self._attach_tooltip(
                     linestyle_combo,
                     "Select the line style used when this series is drawn as a line (choose Default to inherit settings).",
-                )
-                linestyle_combo.bind(
-                    "<<ComboboxSelected>>",
-                    lambda _e, k=key: self._on_series_linestyle_change(k),
                 )
 
             row += 1
@@ -79318,7 +79982,7 @@ class UnifiedApp(tk.Tk):
 
         button_frame = ttk.Frame(f)
         button_frame.pack(fill="x", padx=8, pady=8)
-        mapping_button = ttk.Button(
+        mapping_button = _make_button(
             button_frame,
             text="Per-Sheet Column Mapping...",
             command=self._open_per_sheet_column_mapping_window,
@@ -79329,10 +79993,11 @@ class UnifiedApp(tk.Tk):
             or (not self.selected_sheets)
             or (not self.file_path)
         ):
-            mapping_button.state(["disabled"])
+            self._set_widget_enabled(mapping_button, False)
+
         apply_frame = ttk.Frame(button_frame)
         apply_frame.pack(side="left", padx=(8, 0))
-        apply_button = ttk.Button(
+        apply_button = _make_button(
             apply_frame,
             text="Apply Column Selection",
             command=lambda: self._apply_columns(auto_refresh_axes=True),
@@ -79997,9 +80662,68 @@ class UnifiedApp(tk.Tk):
         buttons.append(button)
         self._apply_columns_buttons = buttons
 
+    def _set_widget_enabled(self, widget, enabled: bool) -> None:
+        """Set enabled/disabled state for tk, ttk, and CTk widgets.
+
+        Purpose:
+            Apply one consistent enabled/disabled state update across mixed widget
+            toolkits used during staged CTk migration.
+        Why:
+            Some code paths currently assume ttk `.state(...)`, while CTk widgets
+            require `configure(state=...)`; this helper prevents toolkit-specific
+            branching from leaking into feature logic.
+        Args:
+            widget: Target widget instance to update.
+            enabled: True to enable interaction, False to disable interaction.
+        Returns:
+            None.
+        Side Effects:
+            Mutates the widget state in-place when supported by the underlying
+            toolkit (`ttk`, `tk`, or `customtkinter`).
+        Exceptions:
+            Best-effort only; unsupported widgets are ignored silently.
+        """
+        if widget is None:
+            return
+        ttk_state = ["!disabled"] if enabled else ["disabled"]
+        tk_state = tk.NORMAL if enabled else tk.DISABLED
+        if hasattr(widget, "state"):
+            try:
+                widget.state(ttk_state)
+                return
+            except Exception:
+                # Fall through to configure/config for non-ttk widgets.
+                pass
+        if hasattr(widget, "configure"):
+            try:
+                widget.configure(state=tk_state)
+                return
+            except Exception:
+                pass
+        if hasattr(widget, "config"):
+            try:
+                widget.config(state=tk_state)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
     def _reset_apply_buttons_state(self):
-        """Apply buttons state.
-        Used by reset workflows to apply buttons state."""
+        """Reset tracked Apply buttons to a neutral enabled state.
+
+        Purpose:
+            Clear pressed/active visual state and ensure Apply buttons are enabled.
+        Why:
+            Columns UI now mixes ttk and CTk buttons, so reset behavior must avoid
+            toolkit-specific assumptions like tk `relief` configuration.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Iterates and updates widgets tracked in `_apply_columns_buttons`.
+        Exceptions:
+            Missing/destroyed widgets are skipped without raising.
+        """
         buttons = []
         # Iterate over getattr(self, "_apply_columns_buttons", []) to apply the per-item logic.
         for button in getattr(self, "_apply_columns_buttons", []):
@@ -80007,9 +80731,14 @@ class UnifiedApp(tk.Tk):
                 if not button.winfo_exists():
                     continue
                 if hasattr(button, "state"):
-                    button.state(["!pressed", "!active"])
-                else:
-                    button.config(relief=tk.RAISED, state=tk.NORMAL)
+                    try:
+                        button.state(["!pressed", "!active"])
+                    except Exception:
+                        # Continue to generic enable fallback below.
+                        pass
+                self._set_widget_enabled(button, True)
+                if isinstance(button, tk.Button):
+                    button.config(relief=tk.RAISED)
                 buttons.append(button)
             except Exception:
                 continue
