@@ -170,6 +170,36 @@ def _ui_radiobutton(parent, *args, **kwargs):
     return ctk.CTkRadioButton(parent, *args, **ctk_kwargs)
 
 
+def _normalize_ctk_input_width(width_value: Any) -> Any:
+    """Normalize entry/combobox width when constructing CTk widgets.
+
+    Purpose:
+        Translate legacy ttk-style character widths into readable CTk pixel widths.
+    Why:
+        The codebase historically uses ttk width values (character units), while CTk
+        interprets width in pixels. Without conversion, migrated inputs can render as
+        one-character boxes and become difficult to use.
+    Args:
+        width_value: Width value from widget kwargs (usually int/float, sometimes None).
+    Returns:
+        A pixel width for CTk-compatible numeric inputs, or the original value when
+        conversion is not applicable.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid or non-numeric values are passed through unchanged.
+    """
+    if isinstance(width_value, bool) or not isinstance(width_value, (int, float)):
+        return width_value
+    if width_value <= 0:
+        return width_value
+    width_int = int(round(float(width_value)))
+    # Widths at or below this threshold are most likely legacy ttk character widths.
+    if width_int <= 60:
+        return max(96, (width_int * 8) + 24)
+    return width_int
+
+
 def _ui_entry(parent, *args, **kwargs):
     """Create an entry widget using CTk when available, else ttk.
 
@@ -193,6 +223,12 @@ def _ui_entry(parent, *args, **kwargs):
     ctk_kwargs = dict(kwargs)
     if str(ctk_kwargs.get("state", "")).strip().lower() == "readonly":
         ctk_kwargs["state"] = "disabled"
+    if "width" in ctk_kwargs:
+        normalized_width = _normalize_ctk_input_width(ctk_kwargs.get("width"))
+        if normalized_width is None:
+            ctk_kwargs.pop("width", None)
+        else:
+            ctk_kwargs["width"] = normalized_width
     ctk_kwargs.pop("style", None)
     ctk_kwargs.pop("padding", None)
     return ctk.CTkEntry(parent, *args, **ctk_kwargs)
@@ -231,6 +267,12 @@ def _ui_combobox(parent, *args, **kwargs):
     ctk_kwargs.pop("style", None)
     ctk_kwargs.pop("padding", None)
     ctk_kwargs.pop("postcommand", None)
+    if "width" in ctk_kwargs:
+        normalized_width = _normalize_ctk_input_width(ctk_kwargs.get("width"))
+        if normalized_width is None:
+            ctk_kwargs.pop("width", None)
+        else:
+            ctk_kwargs["width"] = normalized_width
     widget = ctk.CTkComboBox(parent, *args, **ctk_kwargs)
 
     def _dispatch(selection_value: Any) -> None:
@@ -1514,8 +1556,22 @@ def _default_add_defaults() -> Dict[str, Any]:
 
 
 def _normalize_annotations_ui(value: Any) -> Dict[str, Dict[str, Any]]:
-    """Normalize annotations UI.
-    Used to keep annotations UI consistent across workflows and persistence."""
+    """Normalize persisted Plot Elements editor UI state.
+
+    Purpose:
+        Sanitize per-plot editor state loaded from settings before the UI consumes it.
+    Why:
+        The Plot Elements dialog depends on valid collapsed/sash defaults to keep both
+        panes visible and avoid startup with an unusable layout.
+    Args:
+        value: Raw settings payload from `settings["annotations_ui"]`.
+    Returns:
+        A normalized dictionary keyed by plot id containing safe UI state values.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid or malformed entries are skipped or coerced to safe defaults.
+    """
     if not isinstance(value, dict):
         return {}
     sanitized: Dict[str, Dict[str, Any]] = {}
@@ -1528,7 +1584,7 @@ def _normalize_annotations_ui(value: Any) -> Dict[str, Dict[str, Any]]:
         last_mode = state.get("last_mode")
         if not isinstance(last_mode, str) or last_mode not in ANNOTATION_MODES:
             last_mode = "select"
-        collapsed = bool(state.get("collapsed", True))
+        collapsed = bool(state.get("collapsed", False))
         selected_id = state.get("last_selected_id")
         if selected_id is not None and not isinstance(selected_id, str):
             selected_id = None
@@ -1563,6 +1619,8 @@ def _normalize_annotations_ui(value: Any) -> Dict[str, Dict[str, Any]]:
         if isinstance(editor_sash, bool):
             editor_sash = None
         if not isinstance(editor_sash, (int, float)):
+            editor_sash = None
+        if isinstance(editor_sash, (int, float)) and editor_sash <= 0:
             editor_sash = None
         live_update = bool(state.get("live_update", False))
         sanitized[plot_id] = {
@@ -2787,12 +2845,26 @@ class AnnotationStore:
         self._settings.setdefault("plot_elements", {})[plot_id] = normalized
 
     def ui_state_for(self, plot_id: str) -> Dict[str, Any]:
-        """Perform UI state for.
-        Used to keep the workflow logic localized and testable."""
+        """Return or initialize the persisted editor UI state for one plot.
+
+        Purpose:
+            Provide a normalized state bucket used by the Plot Elements panel.
+        Why:
+            The editor stores collapsed/sash/add-defaults state per plot and expects
+            this method to always return a complete dictionary.
+        Args:
+            plot_id: Plot identifier used as the persistence key.
+        Returns:
+            A mutable state dictionary for the requested plot.
+        Side Effects:
+            Initializes missing state in `settings["annotations_ui"]`.
+        Exceptions:
+            None; malformed existing values are replaced with defaults.
+        """
         state = self._settings.setdefault("annotations_ui", {}).get(plot_id)
         if not isinstance(state, dict):
             state = {
-                "collapsed": True,
+                "collapsed": False,
                 "last_mode": "select",
                 "last_selected_id": None,
                 "live_update": False,
@@ -7422,6 +7494,7 @@ class AnnotationsPanel:
         self._add_color_swatch: Optional[tk.Label] = None
         self._add_axis_combo: Optional[ttk.Combobox] = None
         self._add_trace_combo: Optional[ttk.Combobox] = None
+        self._collapse_button: Optional[Any] = None
         self._apply_button: Optional[ttk.Button] = None
         self._apply_keep_button: Optional[ttk.Button] = None
         self._revert_button: Optional[ttk.Button] = None
@@ -7452,7 +7525,7 @@ class AnnotationsPanel:
         self._zorder_pending_change = False
         self._zorder_initial_value: Optional[float] = None
         self._suppress_add_traces = False
-        self._collapsed = bool(self._store.ui_state_for(plot_id).get("collapsed", True))
+        self._collapsed = bool(self._store.ui_state_for(plot_id).get("collapsed", False))
         self._build_ui()
         self.set_collapsed(self._collapsed)
 
@@ -7576,20 +7649,21 @@ class AnnotationsPanel:
                 self._add_status_var.set(self._add_status_idle_text())
 
     def _build_ui(self) -> None:
-        """Build the CSV Import dialog user interface.
+        """Build the Plot Elements editor layout and wire panel controls.
 
         Purpose:
-            Construct the import popup layout, mapping controls, and action buttons.
+            Create the split-pane annotations editor, including add controls,
+            elements table, property editors, and apply/action button rows.
         Why:
-            The dialog is the primary entry point for converting raw CSV exports
-            into the standardized GL-260 workbook schema.
+            This panel is the primary workflow surface for adding, selecting, and
+            editing per-plot annotation elements.
         Args:
             None.
         Returns:
             None.
         Side Effects:
-            Creates Tk/CTk widgets, stores widget references, and wires callbacks
-            for previewing, mapping, and starting imports.
+            Creates Tk/CTk widgets, stores widget references, and registers
+            callbacks for selection/edit/apply interactions.
         Exceptions:
             Widget-construction errors are handled by Tkinter at runtime.
         """
@@ -7598,7 +7672,10 @@ class AnnotationsPanel:
 
         header = ttk.Frame(self._frame)
         header.grid(row=0, column=0, sticky="ew")
-        _ui_button(header, text="Collapse", command=self.toggle_collapsed).pack(
+        self._collapse_button = _ui_button(
+            header, text="Collapse", command=self.toggle_collapsed
+        )
+        self._collapse_button.pack(
             side="right", padx=4, pady=2
         )
 
@@ -8249,15 +8326,70 @@ class AnnotationsPanel:
         _bind(inner)
 
     def _restore_paned_sash(self) -> None:
-        """Perform restore paned sash.
-        Used to keep the workflow logic localized and testable."""
+        """Restore a safe split position for the Plot Elements paned editor.
+
+        Purpose:
+            Reapply the previously saved sash position while guaranteeing both panes
+            remain visible.
+        Why:
+            Legacy or invalid persisted sash values (for example `0`) can hide the
+            left pane and make element selection unavailable.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Updates paned split position and may persist a repaired sash value.
+        Exceptions:
+            Paned geometry and persistence operations are best-effort guarded.
+        """
         if self._paned is None:
             return
         state = self._store.ui_state_for(self._plot_id)
-        sash_pos = state.get("editor_sash")
-        if isinstance(sash_pos, (int, float)):
+        try:
+            self._paned.update_idletasks()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        total_width = int(self._paned.winfo_width() or 0)
+        if total_width <= 0:
             try:
-                self._paned.sashpos(0, int(sash_pos))
+                total_width = int(self._content.winfo_width() or 0)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                total_width = 0
+        if total_width <= 0:
+            return
+
+        # Keep both panes usable by clamping the sash inside a visible range.
+        min_left = max(240, int(total_width * 0.20))
+        max_left = max(min_left, total_width - max(300, int(total_width * 0.25)))
+        fallback = max(min_left, min(max_left, int(total_width * 0.40)))
+
+        raw_sash = state.get("editor_sash")
+        if isinstance(raw_sash, bool) or not isinstance(raw_sash, (int, float)):
+            raw_sash = None
+        if isinstance(raw_sash, (int, float)) and raw_sash <= 0:
+            raw_sash = None
+
+        repaired = False
+        target_sash = fallback if raw_sash is None else int(round(float(raw_sash)))
+        if target_sash < min_left or target_sash > max_left:
+            target_sash = max(min_left, min(max_left, target_sash))
+            repaired = True
+        if raw_sash is None:
+            repaired = True
+
+        try:
+            self._paned.sashpos(0, int(target_sash))
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            return
+
+        if repaired:
+            self._store.set_ui_state(self._plot_id, editor_sash=int(target_sash))
+            try:
+                _save_settings_to_disk()
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
@@ -8294,13 +8426,35 @@ class AnnotationsPanel:
         self.set_collapsed(not self._collapsed)
 
     def set_collapsed(self, collapsed: bool) -> None:
-        """Set collapsed.
-        Used to persist collapsed into the current state."""
+        """Show or hide the panel body and persist the collapsed state.
+
+        Purpose:
+            Apply collapsed/expanded visibility for the Plot Elements content area.
+        Why:
+            The dialog needs a compact mode while still making current state obvious.
+        Args:
+            collapsed: True to hide the panel content, False to show it.
+        Returns:
+            None.
+        Side Effects:
+            Toggles content visibility, updates header button label, and persists UI
+            state for the current plot.
+        Exceptions:
+            None.
+        """
         self._collapsed = bool(collapsed)
         if self._collapsed:
             self._content.grid_remove()
         else:
             self._content.grid()
+        if self._collapse_button is not None:
+            try:
+                self._collapse_button.configure(
+                    text="Expand" if self._collapsed else "Collapse"
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
         self._store.set_ui_state(self._plot_id, collapsed=self._collapsed)
 
     def refresh(self) -> None:
