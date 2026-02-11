@@ -40495,7 +40495,8 @@ class UnifiedApp(tk.Tk):
             Create a plot tab with toolbar controls and a Matplotlib canvas.
         Why:
             The UI renders plots into tabs so users can switch between figures
-            without losing per-plot controls or annotations.
+            without losing per-plot controls or annotations, and keeps export
+            format toggles on a dedicated second toolbar row for visibility.
         Inputs:
             title: Tab title string.
             fig: Matplotlib Figure to embed.
@@ -40589,11 +40590,14 @@ class UnifiedApp(tk.Tk):
 
             self._canvases = []
 
-        # --- Top bar: Matplotlib toolbar (left) + Save button (right)
-
-        topbar = ttk.Frame(frame)
-
+        # --- Two-row toolbar shell:
+        # Row 1 hosts action controls; Row 2 reserves space for export format toggles.
+        topbar_shell = ttk.Frame(frame)
+        topbar_shell.pack(side="top", fill="x")
+        topbar = ttk.Frame(topbar_shell)
         topbar.pack(side="top", fill="x")
+        topbar_format_row = ttk.Frame(topbar_shell)
+        topbar_format_row.pack(side="top", fill="x")
 
         plot_id = self._plot_key_to_plot_id(plot_key, title)
         frame._plot_id = plot_id
@@ -41238,9 +41242,9 @@ class UnifiedApp(tk.Tk):
                 command=_toggle_center_plot_legend,
             ).pack(side="left", padx=(0, 8))
 
-        checkbox_frame = ttk.Frame(save_controls)
-
-        checkbox_frame.pack(side="left")
+        # Keep format toggles on a dedicated row so PNG/PDF/SVG never clip.
+        checkbox_frame = ttk.Frame(topbar_format_row)
+        checkbox_frame.pack(side="left", padx=6, pady=(0, 4))
 
         # Iterate over format_order to apply the per-item logic.
         for fmt in format_order:
