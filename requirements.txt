@@ -14,3 +14,4 @@ isort
 great_tables
 tk
 tcl
+customtkinter
