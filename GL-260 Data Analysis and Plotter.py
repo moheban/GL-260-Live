@@ -34023,8 +34023,25 @@ class UnifiedApp(tk.Tk):
         return width <= screen_w and height <= screen_h
 
     def _apply_accessible_fonts(self, base_size=10, tab_bold=True):
-        """Apply accessible fonts.
-        Used to apply accessible fonts changes to live state."""
+        """Apply global accessible font settings and refresh dependent styles.
+
+        Purpose:
+            Recompute the active UI font family/size and apply them to ttk defaults.
+        Why:
+            The app supports zoom/font scaling and must keep text sizing coherent
+            across controls, menus, toolbars, and notebook tabs.
+        Inputs:
+            base_size: Requested base font size before display scaling.
+            tab_bold: Legacy flag for callers that previously preferred bold tabs.
+                Main tabs now intentionally follow button-style typography.
+        Outputs:
+            None.
+        Side Effects:
+            Updates Tk named fonts, ttk styles, settings persistence, menu fonts,
+            cycle button fonts, toolbar scaling, and main notebook tab styling.
+        Exceptions:
+            Best-effort guards avoid runtime interruption when toolkit operations fail.
+        """
         PREFERRED_FONTS = [
             "Lexend Deca",
             "Atkinson Hyperlegible",
@@ -34084,18 +34101,7 @@ class UnifiedApp(tk.Tk):
         combo_font_size = max(effective_size - 1, 9)
         style.configure("TCombobox", font=(chosen, combo_font_size))
 
-        tab_font = (
-            (chosen, self._tab_font_size, "bold")
-            if tab_bold
-            else (
-                chosen,
-                self._tab_font_size,
-            )
-        )
-        style.configure("TNotebook.Tab", font=tab_font)
         style.configure("TLabelFrame.Label", font=(chosen, effective_size, "bold"))
-        tab_margin = tuple(self._scale_length(v) for v in (2, 2, 2, 0))
-        style.configure("TNotebook", tabmargins=tab_margin)
         style.configure("Cycle.TButton", font=(chosen, self._tab_font_size))
         style.configure("CycleHint.TLabel", font=(chosen, self._tab_font_size))
         row_height = self._scale_length(28)
@@ -34119,10 +34125,56 @@ class UnifiedApp(tk.Tk):
             pass
 
         settings["ui_font_size"] = self._base_font_size
+        self._apply_main_notebook_style(style=style)
 
         self._refresh_cycle_button_fonts()
         self._refresh_menu_fonts()
         self._apply_toolbar_scaling(getattr(self, "_cycle_toolbar", None))
+
+    def _apply_main_notebook_style(self, style: Optional[ttk.Style] = None) -> None:
+        """Apply typography and spacing for the top-level notebook tabs only.
+
+        Purpose:
+            Keep main app tab labels visually aligned with CTk-era button typography.
+        Why:
+            Stage UI migration introduced compact CTk button text sizing; top-level
+            tab names should mirror that system without affecting nested notebooks.
+        Inputs:
+            style: Optional ttk style object to reuse; when omitted, a new instance is
+                created for this app context.
+        Outputs:
+            None.
+        Side Effects:
+            Configures `Main.TNotebook` / `Main.TNotebook.Tab` style definitions and
+            stores style-name attributes used when creating the main notebook widget.
+        Exceptions:
+            Best-effort guards protect against style/font resolution failures.
+        """
+        if style is None:
+            style = ttk.Style(self)
+        base_font = tkfont.nametofont("TkDefaultFont")
+        tab_family = getattr(self, "_ui_font_family", base_font.actual("family"))
+        effective_size = getattr(
+            self, "_effective_font_size", max(int(base_font.actual("size")), 8)
+        )
+        button_text_size = max(int(effective_size) - 1, 8)
+        tab_style_name = getattr(self, "_main_notebook_tab_style", "Main.TNotebook.Tab")
+        notebook_style_name = getattr(self, "_main_notebook_style", "Main.TNotebook")
+        self._main_notebook_tab_style = tab_style_name
+        self._main_notebook_style = notebook_style_name
+        tab_padding = (
+            self._scale_length(8),
+            self._scale_length(4),
+            self._scale_length(8),
+            self._scale_length(4),
+        )
+        tab_margins = tuple(self._scale_length(v) for v in (2, 2, 2, 0))
+        style.configure(
+            tab_style_name,
+            font=(tab_family, button_text_size),
+            padding=tab_padding,
+        )
+        style.configure(notebook_style_name, tabmargins=tab_margins)
 
     def _refresh_cycle_button_fonts(self):
         """Refresh cycle button fonts.
@@ -34289,23 +34341,14 @@ class UnifiedApp(tk.Tk):
 
         # Notebook lives inside the bordered shell
 
-        self.nb = ttk.Notebook(tabshell)
+        self._main_notebook_style = "Main.TNotebook"
+        self._main_notebook_tab_style = "Main.TNotebook.Tab"
+        self.nb = ttk.Notebook(tabshell, style=self._main_notebook_style)
 
         self.nb.pack(fill="both", expand=True)
 
-        # Optional: make tab labels chunkier/more visible
-
         style = ttk.Style(self)
-
-        # Tighter padding so text fits even when many tabs are open
-
-        tab_pad = (
-            self._scale_length(8),
-            self._scale_length(4),
-            self._scale_length(8),
-            self._scale_length(4),
-        )
-        style.configure("TNotebook.Tab", padding=tab_pad)  # L, T, R, B
+        self._apply_main_notebook_style(style=style)
 
         btn_font_family = getattr(self, "_ui_font_family", base_font.actual("family"))
 
@@ -43629,13 +43672,16 @@ class UnifiedApp(tk.Tk):
         Purpose:
             Provide a centralized editor for per-series trace styling overrides.
         Why:
-            Users need consistent, profile-persisted styling controls across plots.
+            Users need consistent, profile-persisted styling controls across plots,
+            and the dialog must stay compact enough to fit typical app window sizes.
         Args:
             None.
         Returns:
             None.
         Side Effects:
             Creates a modal dialog, updates settings on apply, and may refresh plots.
+            The trace-row editor region is rendered in a scrollable shell so narrow
+            windows remain usable without clipping controls.
         Exceptions:
             Best-effort guards keep the UI resilient to dialog failures.
         """
@@ -43655,6 +43701,118 @@ class UnifiedApp(tk.Tk):
         win.transient(self)
         win.resizable(True, True)
         self._data_trace_settings_window = win
+
+        try:
+            self.update_idletasks()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        parent_width = int(getattr(self, "winfo_width", lambda: 0)() or 0)
+        parent_height = int(getattr(self, "winfo_height", lambda: 0)() or 0)
+        if parent_width <= 0:
+            parent_width = int(self.winfo_screenwidth() * 0.9)
+        if parent_height <= 0:
+            parent_height = int(self.winfo_screenheight() * 0.9)
+        min_dialog_width = self._scale_length(620)
+        min_dialog_height = self._scale_length(360)
+        preferred_dialog_width = self._scale_length(1120)
+        preferred_dialog_height = self._scale_length(560)
+        max_dialog_width = max(min_dialog_width, int(parent_width * 0.95))
+        max_dialog_height = max(min_dialog_height, int(parent_height * 0.92))
+        dialog_width = max(min_dialog_width, min(preferred_dialog_width, max_dialog_width))
+        dialog_height = max(
+            min_dialog_height, min(preferred_dialog_height, max_dialog_height)
+        )
+        try:
+            root_x = int(self.winfo_rootx())
+            root_y = int(self.winfo_rooty())
+            parent_width_px = int(self.winfo_width() or dialog_width)
+            parent_height_px = int(self.winfo_height() or dialog_height)
+            pos_x = root_x + max((parent_width_px - dialog_width) // 2, 0)
+            pos_y = root_y + max((parent_height_px - dialog_height) // 2, 0)
+            win.geometry(f"{dialog_width}x{dialog_height}+{pos_x}+{pos_y}")
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            win.geometry(f"{dialog_width}x{dialog_height}")
+        try:
+            win.minsize(min_dialog_width, min_dialog_height)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+        compact_font_size = max(
+            8, int(getattr(self, "_tab_font_size", getattr(self, "_default_font_size", 10)))
+        )
+        compact_pad_x = self._scale_length(4)
+        compact_pad_y = self._scale_length(3)
+        compact_control_gap = self._scale_length(3)
+        compact_button_height = self._scale_length(26)
+        compact_instruction_wrap = max(self._scale_length(360), dialog_width - self._scale_length(84))
+
+        def _dialog_width(ttk_chars: int, ctk_pixels: int) -> int:
+            """Resolve per-dialog control widths for ttk/CTk compatibility.
+
+            Purpose:
+                Keep Data Trace controls compact without changing global wrappers.
+            Why:
+                ttk width uses character units while CTk width uses pixels.
+            Inputs:
+                ttk_chars: Width to use on ttk fallback paths.
+                ctk_pixels: Width to use when CTk widgets are active.
+            Outputs:
+                Integer width value for the active toolkit.
+            Side Effects:
+                None.
+            Exceptions:
+                None.
+            """
+            return int(ctk_pixels) if ctk is not None else int(ttk_chars)
+
+        def _compact_dialog_button(parent: tk.Widget, *, text: str, command) -> tk.Widget:
+            """Build a compact button for the Data Trace dialog only.
+
+            Purpose:
+                Keep row/action buttons tightly fitted to their text labels.
+            Why:
+                CTk buttons default to wide fixed widths that over-expand this dialog.
+            Inputs:
+                parent: Parent container for the button.
+                text: Button caption.
+                command: Callback invoked on button press.
+            Outputs:
+                Constructed button widget.
+            Side Effects:
+                Instantiates a Tk/CTk button with dialog-specific sizing.
+            Exceptions:
+                Font measurement falls back safely if toolkit metrics are unavailable.
+            """
+            if ctk is None:
+                return _ui_button(parent, text=text, command=command)
+            try:
+                base_font = tkfont.nametofont("TkDefaultFont")
+                family = str(base_font.actual("family"))
+                measured_size = int(base_font.actual("size"))
+                if measured_size < 0:
+                    measured_size = abs(measured_size)
+            except Exception:
+                family = "Verdana"
+                measured_size = 10
+            button_size = max(8, min(compact_font_size, measured_size))
+            measure_font = tkfont.Font(family=family, size=button_size)
+            try:
+                text_width = int(measure_font.measure(str(text)))
+            except Exception:
+                text_width = int(self._scale_length(42))
+            button_width = max(self._scale_length(56), text_width + self._scale_length(18))
+            return _ui_button(
+                parent,
+                text=text,
+                command=command,
+                width=button_width,
+                height=compact_button_height,
+                font=(family, button_size),
+            )
+
         try:
             win.grab_set()
         except Exception:
@@ -43667,23 +43825,65 @@ class UnifiedApp(tk.Tk):
         container = ttk.Frame(win, padding=12)
         container.grid(row=0, column=0, sticky="nsew")
         container.grid_columnconfigure(0, weight=1)
+        container.grid_rowconfigure(2, weight=1)
 
         ttk.Label(
             container,
             text="Blank fields inherit the default plot styling.",
-        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
-        ttk.Label(
+        ).grid(row=0, column=0, sticky="w", pady=(0, compact_pad_y))
+        detail_note_label = ttk.Label(
             container,
             text=(
                 "Cycle peak/trough markers are overlays and always render on top. "
                 "Priority and Z-Order Override in this dialog affect trace layers only."
             ),
-            wraplength=980,
+            wraplength=compact_instruction_wrap,
             justify="left",
-        ).grid(row=1, column=0, sticky="w", pady=(0, 10))
+        )
+        detail_note_label.grid(row=1, column=0, sticky="w", pady=(0, compact_pad_y))
 
-        grid = ttk.Frame(container)
-        grid.grid(row=2, column=0, sticky="nsew")
+        def _sync_dialog_wraplength(_event: Any = None) -> None:
+            """Keep instruction text wrapping aligned to current dialog width."""
+            try:
+                current_width = int(win.winfo_width() or dialog_width)
+            except Exception:
+                current_width = dialog_width
+            detail_note_label.configure(
+                wraplength=max(self._scale_length(320), current_width - self._scale_length(84))
+            )
+
+        win.bind("<Configure>", _sync_dialog_wraplength, add="+")
+
+        grid_shell = ttk.Frame(container)
+        grid_shell.grid(row=2, column=0, sticky="nsew", pady=(0, compact_pad_y))
+        grid_shell.grid_rowconfigure(0, weight=1)
+        grid_shell.grid_columnconfigure(0, weight=1)
+
+        # Keep dense row content reachable without forcing oversized dialog widths.
+        grid_canvas = tk.Canvas(grid_shell, borderwidth=0, highlightthickness=0)
+        grid_canvas.grid(row=0, column=0, sticky="nsew")
+        grid_vscroll = _ui_scrollbar(
+            grid_shell, orient="vertical", command=grid_canvas.yview
+        )
+        grid_vscroll.grid(row=0, column=1, sticky="ns")
+        grid_hscroll = _ui_scrollbar(
+            grid_shell, orient="horizontal", command=grid_canvas.xview
+        )
+        grid_hscroll.grid(row=1, column=0, sticky="ew")
+        grid_canvas.configure(
+            yscrollcommand=grid_vscroll.set,
+            xscrollcommand=grid_hscroll.set,
+        )
+
+        grid = ttk.Frame(grid_canvas)
+        grid_canvas.create_window((0, 0), window=grid, anchor="nw")
+
+        def _refresh_grid_scrollregion(_event: Any = None) -> None:
+            """Refresh the Data Trace grid canvas scrollregion."""
+            grid_canvas.configure(scrollregion=grid_canvas.bbox("all"))
+
+        grid.bind("<Configure>", _refresh_grid_scrollregion)
+
         grid.grid_columnconfigure(0, weight=0)
         grid.grid_columnconfigure(1, weight=0)
         grid.grid_columnconfigure(2, weight=0)
@@ -43711,7 +43911,13 @@ class UnifiedApp(tk.Tk):
         # Iterate over headers to apply the per-item logic.
         for label, column in headers:
             header_widget = ttk.Label(grid, text=label)
-            header_widget.grid(row=0, column=column, sticky="w", padx=6, pady=(0, 6))
+            header_widget.grid(
+                row=0,
+                column=column,
+                sticky="w",
+                padx=compact_pad_x,
+                pady=(0, compact_pad_y),
+            )
             header_widgets[label] = header_widget
 
         priority_tooltip_text = (
@@ -43926,11 +44132,21 @@ class UnifiedApp(tk.Tk):
             }
 
             ttk.Label(grid, text=display_label).grid(
-                row=row_offset, column=0, sticky="w", padx=6, pady=6
+                row=row_offset,
+                column=0,
+                sticky="w",
+                padx=compact_pad_x,
+                pady=compact_pad_y,
             )
 
             color_frame = ttk.Frame(grid)
-            color_frame.grid(row=row_offset, column=1, sticky="w", padx=6, pady=6)
+            color_frame.grid(
+                row=row_offset,
+                column=1,
+                sticky="w",
+                padx=compact_pad_x,
+                pady=compact_pad_y,
+            )
             color_preview = tk.Label(
                 color_frame,
                 width=4,
@@ -43938,117 +44154,183 @@ class UnifiedApp(tk.Tk):
                 borderwidth=1,
                 text="Auto",
             )
-            color_preview.grid(row=0, column=0, sticky="w", padx=(0, 4))
+            color_preview.grid(row=0, column=0, sticky="w", padx=(0, compact_control_gap))
             self._bind_color_preview(color_var, color_preview)
-            _ui_button(
+            _compact_dialog_button(
                 color_frame,
                 text="Pick",
                 command=lambda v=color_var, label=display_label: _pick_color(v, label),
-            ).grid(row=0, column=1, padx=(0, 4))
-            _ui_button(
+            ).grid(row=0, column=1, padx=(0, compact_control_gap))
+            _compact_dialog_button(
                 color_frame,
                 text="Clear",
                 command=lambda v=color_var: v.set(""),
             ).grid(row=0, column=2)
 
             marker_frame = ttk.Frame(grid)
-            marker_frame.grid(row=row_offset, column=2, sticky="w", padx=6, pady=6)
+            marker_frame.grid(
+                row=row_offset,
+                column=2,
+                sticky="w",
+                padx=compact_pad_x,
+                pady=compact_pad_y,
+            )
             marker_combo = _ui_combobox(
                 marker_frame,
                 textvariable=marker_var,
                 values=marker_choices,
                 state="readonly",
-                width=8,
+                width=_dialog_width(8, self._scale_length(98)),
             )
             marker_combo.grid(row=0, column=0, sticky="w")
-            _ui_button(
+            _compact_dialog_button(
                 marker_frame,
                 text="Clear",
                 command=lambda v=marker_var: v.set("Default"),
-            ).grid(row=0, column=1, padx=(4, 0))
+            ).grid(row=0, column=1, padx=(compact_control_gap, 0))
 
             size_frame = ttk.Frame(grid)
-            size_frame.grid(row=row_offset, column=3, sticky="w", padx=6, pady=6)
-            _ui_entry(size_frame, textvariable=size_var, width=8).grid(
+            size_frame.grid(
+                row=row_offset,
+                column=3,
+                sticky="w",
+                padx=compact_pad_x,
+                pady=compact_pad_y,
+            )
+            _ui_entry(
+                size_frame,
+                textvariable=size_var,
+                width=_dialog_width(8, self._scale_length(86)),
+            ).grid(
                 row=0, column=0, sticky="w"
             )
-            _ui_button(
+            _compact_dialog_button(
                 size_frame,
                 text="Clear",
                 command=lambda v=size_var: v.set(""),
-            ).grid(row=0, column=1, padx=(4, 0))
+            ).grid(row=0, column=1, padx=(compact_control_gap, 0))
 
             linestyle_frame = ttk.Frame(grid)
-            linestyle_frame.grid(row=row_offset, column=4, sticky="w", padx=6, pady=6)
+            linestyle_frame.grid(
+                row=row_offset,
+                column=4,
+                sticky="w",
+                padx=compact_pad_x,
+                pady=compact_pad_y,
+            )
             linestyle_combo = _ui_combobox(
                 linestyle_frame,
                 textvariable=linestyle_var,
                 values=LINE_STYLE_CHOICES,
                 state="readonly",
-                width=14,
+                width=_dialog_width(14, self._scale_length(122)),
             )
             linestyle_combo.grid(row=0, column=0, sticky="w")
-            _ui_button(
+            _compact_dialog_button(
                 linestyle_frame,
                 text="Clear",
                 command=lambda v=linestyle_var: v.set("Default"),
-            ).grid(row=0, column=1, padx=(4, 0))
+            ).grid(row=0, column=1, padx=(compact_control_gap, 0))
 
             linewidth_frame = ttk.Frame(grid)
-            linewidth_frame.grid(row=row_offset, column=5, sticky="w", padx=6, pady=6)
-            _ui_entry(linewidth_frame, textvariable=linewidth_var, width=8).grid(
+            linewidth_frame.grid(
+                row=row_offset,
+                column=5,
+                sticky="w",
+                padx=compact_pad_x,
+                pady=compact_pad_y,
+            )
+            _ui_entry(
+                linewidth_frame,
+                textvariable=linewidth_var,
+                width=_dialog_width(8, self._scale_length(86)),
+            ).grid(
                 row=0, column=0, sticky="w"
             )
-            _ui_button(
+            _compact_dialog_button(
                 linewidth_frame,
                 text="Clear",
                 command=lambda v=linewidth_var: v.set(""),
-            ).grid(row=0, column=1, padx=(4, 0))
+            ).grid(row=0, column=1, padx=(compact_control_gap, 0))
 
             priority_combo = _ui_combobox(
                 grid,
                 textvariable=priority_var,
                 values=DATA_TRACE_ZORDER_CHOICES,
                 state="readonly",
-                width=12,
+                width=_dialog_width(12, self._scale_length(118)),
             )
-            priority_combo.grid(row=row_offset, column=6, sticky="w", padx=6, pady=6)
+            priority_combo.grid(
+                row=row_offset,
+                column=6,
+                sticky="w",
+                padx=compact_pad_x,
+                pady=compact_pad_y,
+            )
             self._attach_tooltip(priority_combo, priority_tooltip_text)
 
             zorder_frame = ttk.Frame(grid)
-            zorder_frame.grid(row=row_offset, column=7, sticky="w", padx=6, pady=6)
-            zorder_entry = _ui_entry(zorder_frame, textvariable=zorder_var, width=10)
+            zorder_frame.grid(
+                row=row_offset,
+                column=7,
+                sticky="w",
+                padx=compact_pad_x,
+                pady=compact_pad_y,
+            )
+            zorder_entry = _ui_entry(
+                zorder_frame,
+                textvariable=zorder_var,
+                width=_dialog_width(10, self._scale_length(96)),
+            )
             zorder_entry.grid(row=0, column=0, sticky="w")
             self._attach_tooltip(zorder_entry, zorder_override_tooltip_text)
-            _ui_button(
+            _compact_dialog_button(
                 zorder_frame,
                 text="Clear",
                 command=lambda v=zorder_var, p=priority_var: (
                     v.set(""),
                     p.set("Inherit"),
                 ),
-            ).grid(row=0, column=1, padx=(4, 0))
+            ).grid(row=0, column=1, padx=(compact_control_gap, 0))
 
             _ui_entry(
                 grid,
                 textvariable=effective_z_var,
-                width=14,
+                width=_dialog_width(14, self._scale_length(120)),
                 state="readonly",
-            ).grid(row=row_offset, column=9, sticky="w", padx=6, pady=6)
+            ).grid(
+                row=row_offset,
+                column=9,
+                sticky="w",
+                padx=compact_pad_x,
+                pady=compact_pad_y,
+            )
             start_x_frame = ttk.Frame(grid)
-            start_x_frame.grid(row=row_offset, column=8, sticky="w", padx=6, pady=6)
-            _ui_entry(start_x_frame, textvariable=start_x_var, width=10).grid(
+            start_x_frame.grid(
+                row=row_offset,
+                column=8,
+                sticky="w",
+                padx=compact_pad_x,
+                pady=compact_pad_y,
+            )
+            _ui_entry(
+                start_x_frame,
+                textvariable=start_x_var,
+                width=_dialog_width(10, self._scale_length(96)),
+            ).grid(
                 row=0, column=0, sticky="w"
             )
-            _ui_button(
+            _compact_dialog_button(
                 start_x_frame,
                 text="Clear",
                 command=lambda v=start_x_var: v.set(""),
-            ).grid(row=0, column=1, padx=(4, 0))
+            ).grid(row=0, column=1, padx=(compact_control_gap, 0))
             _wire_effective_z_updates(series_vars[series_key])
             _update_effective_z_display(series_vars[series_key])
 
-        ttk.Separator(container).grid(row=3, column=0, sticky="ew", pady=(8, 8))
+        ttk.Separator(container).grid(
+            row=3, column=0, sticky="ew", pady=(compact_pad_y, compact_pad_y)
+        )
 
         button_frame = ttk.Frame(container)
         button_frame.grid(row=4, column=0, sticky="e")
@@ -44163,11 +44445,15 @@ class UnifiedApp(tk.Tk):
             if close_after:
                 _cancel()
 
-        _ui_button(
+        _compact_dialog_button(
             button_frame, text="Apply", command=lambda: _apply_updates(False)
-        ).grid(row=0, column=0, padx=(0, 6))
-        _ui_button(button_frame, text="OK", command=lambda: _apply_updates(True)).grid(
-            row=0, column=1, padx=(0, 6)
+        ).grid(row=0, column=0, padx=(0, compact_control_gap))
+        _compact_dialog_button(
+            button_frame, text="OK", command=lambda: _apply_updates(True)
+        ).grid(
+            row=0,
+            column=1,
+            padx=(0, compact_control_gap),
         )
 
         # Closure captures _open_data_trace_settings_dialog state for callback wiring.
@@ -44194,7 +44480,9 @@ class UnifiedApp(tk.Tk):
                 pass
             self._data_trace_settings_window = None
 
-        _ui_button(button_frame, text="Cancel", command=_cancel).grid(row=0, column=2)
+        _compact_dialog_button(button_frame, text="Cancel", command=_cancel).grid(
+            row=0, column=2
+        )
 
         # Closure captures _open_data_trace_settings_dialog state for callback wiring.
         def _on_close() -> None:
