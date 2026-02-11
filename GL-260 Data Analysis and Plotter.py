@@ -90,6 +90,231 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     ctk = None
 
+
+def _ui_button(parent, *args, **kwargs):
+    """Create a button using CTk when available, else ttk.
+
+    Purpose:
+        Provide one compatibility constructor for push-button controls.
+    Why:
+        Stage-wise CTk migration requires preserving existing callbacks and layout
+        code while avoiding repeated availability checks in each UI builder.
+    Args:
+        parent: Parent widget that owns the button.
+        *args: Positional arguments accepted by ttk/CTk constructors.
+        **kwargs: Keyword arguments such as text, command, width, and state.
+    Returns:
+        Widget instance (`ctk.CTkButton` or `ttk.Button`).
+    Side Effects:
+        None beyond widget construction.
+    Exceptions:
+        Unsupported CTk-only/ttk-only kwargs are ignored on the CTk branch.
+    """
+    if ctk is None:
+        return ttk.Button(parent, *args, **kwargs)
+    ctk_kwargs = dict(kwargs)
+    ctk_kwargs.pop("style", None)
+    ctk_kwargs.pop("padding", None)
+    return ctk.CTkButton(parent, *args, **ctk_kwargs)
+
+
+def _ui_checkbutton(parent, *args, **kwargs):
+    """Create a checkbutton using CTk when available, else ttk.
+
+    Purpose:
+        Normalize checkbutton creation across ttk and CTk toolkits.
+    Why:
+        CTk migration should not force callback/business-logic rewrites.
+    Args:
+        parent: Parent widget that owns the checkbutton.
+        *args: Positional constructor args.
+        **kwargs: Keyword args including text, variable, command, and state.
+    Returns:
+        Widget instance (`ctk.CTkCheckBox` or `ttk.Checkbutton`).
+    Side Effects:
+        None beyond widget construction.
+    Exceptions:
+        ttk-specific style kwargs are ignored on the CTk branch.
+    """
+    if ctk is None:
+        return ttk.Checkbutton(parent, *args, **kwargs)
+    ctk_kwargs = dict(kwargs)
+    ctk_kwargs.pop("style", None)
+    ctk_kwargs.pop("padding", None)
+    return ctk.CTkCheckBox(parent, *args, **ctk_kwargs)
+
+
+def _ui_radiobutton(parent, *args, **kwargs):
+    """Create a radio button using CTk when available, else ttk.
+
+    Purpose:
+        Provide one constructor for mutually-exclusive choice controls.
+    Why:
+        Reduces repetitive conditional widget creation in migrated dialogs/tabs.
+    Args:
+        parent: Parent widget for the radiobutton.
+        *args: Positional constructor args.
+        **kwargs: Keyword args such as text, value, variable, and command.
+    Returns:
+        Widget instance (`ctk.CTkRadioButton` or `ttk.Radiobutton`).
+    Side Effects:
+        None beyond widget construction.
+    Exceptions:
+        ttk-only style kwargs are ignored on the CTk branch.
+    """
+    if ctk is None:
+        return ttk.Radiobutton(parent, *args, **kwargs)
+    ctk_kwargs = dict(kwargs)
+    ctk_kwargs.pop("style", None)
+    ctk_kwargs.pop("padding", None)
+    return ctk.CTkRadioButton(parent, *args, **ctk_kwargs)
+
+
+def _ui_entry(parent, *args, **kwargs):
+    """Create an entry widget using CTk when available, else ttk.
+
+    Purpose:
+        Unify text-entry construction across ttk and CTk.
+    Why:
+        Keeps existing grid/pack wiring intact during incremental migration.
+    Args:
+        parent: Parent widget that owns the entry.
+        *args: Positional constructor args.
+        **kwargs: Keyword args, including `textvariable`, `width`, and `state`.
+    Returns:
+        Widget instance (`ctk.CTkEntry` or `ttk.Entry`).
+    Side Effects:
+        None beyond widget construction.
+    Exceptions:
+        ttk-specific style kwargs are ignored on the CTk branch.
+    """
+    if ctk is None:
+        return ttk.Entry(parent, *args, **kwargs)
+    ctk_kwargs = dict(kwargs)
+    if str(ctk_kwargs.get("state", "")).strip().lower() == "readonly":
+        ctk_kwargs["state"] = "disabled"
+    ctk_kwargs.pop("style", None)
+    ctk_kwargs.pop("padding", None)
+    return ctk.CTkEntry(parent, *args, **ctk_kwargs)
+
+
+def _ui_combobox(parent, *args, **kwargs):
+    """Create a combobox using CTk when available, else ttk.
+
+    Purpose:
+        Provide a toolkit-agnostic constructor for dropdown selectors.
+    Why:
+        CTk and ttk use different keyword names (`variable` vs `textvariable`);
+        this helper normalizes the call-site contract.
+    Args:
+        parent: Parent widget that owns the combobox.
+        *args: Positional constructor args.
+        **kwargs: Keyword args such as values, textvariable/variable, width, state.
+    Returns:
+        Widget instance (`ctk.CTkComboBox` or `ttk.Combobox`).
+    Side Effects:
+        None beyond widget construction.
+    Exceptions:
+        Unsupported kwargs are ignored on the CTk branch.
+    """
+    if ctk is None:
+        return ttk.Combobox(parent, *args, **kwargs)
+
+    ctk_kwargs = dict(kwargs)
+    user_command = ctk_kwargs.pop("command", None)
+    text_var = ctk_kwargs.pop("textvariable", None)
+    explicit_var = ctk_kwargs.pop("variable", None)
+    if explicit_var is None and text_var is not None:
+        ctk_kwargs["variable"] = text_var
+    elif explicit_var is not None:
+        ctk_kwargs["variable"] = explicit_var
+    ctk_kwargs.pop("style", None)
+    ctk_kwargs.pop("padding", None)
+    ctk_kwargs.pop("postcommand", None)
+    widget = ctk.CTkComboBox(parent, *args, **ctk_kwargs)
+
+    def _dispatch(selection_value: Any) -> None:
+        """Dispatch CTk combobox selection to command and virtual event hooks."""
+        if callable(user_command):
+            try:
+                user_command(selection_value)
+            except TypeError:
+                user_command()
+        try:
+            widget.event_generate("<<ComboboxSelected>>")
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    try:
+        widget.configure(command=_dispatch)
+    except Exception:
+        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+        pass
+    return widget
+
+
+def _ui_scrollbar(parent, *args, **kwargs):
+    """Create a scrollbar using CTk when available, else ttk.
+
+    Purpose:
+        Standardize vertical/horizontal scrollbar creation during migration.
+    Why:
+        Scrollable layouts appear in multiple tabs and dialogs with shared logic.
+    Args:
+        parent: Parent widget that owns the scrollbar.
+        *args: Positional constructor args.
+        **kwargs: Keyword args such as orient/orientation and command.
+    Returns:
+        Widget instance (`ctk.CTkScrollbar` or `ttk.Scrollbar`).
+    Side Effects:
+        None beyond widget construction.
+    Exceptions:
+        Orientation keyword is normalized for CTk when needed.
+    """
+    if ctk is None:
+        return ttk.Scrollbar(parent, *args, **kwargs)
+
+    ctk_kwargs = dict(kwargs)
+    orientation = ctk_kwargs.pop("orient", None)
+    if orientation is None:
+        orientation = ctk_kwargs.get("orientation", None)
+    if orientation is not None:
+        ctk_kwargs["orientation"] = orientation
+    ctk_kwargs.pop("style", None)
+    return ctk.CTkScrollbar(parent, *args, **ctk_kwargs)
+
+
+def _ui_scale(parent, *args, **kwargs):
+    """Create a slider/scale using CTk when available, else ttk.
+
+    Purpose:
+        Provide one constructor for numeric slider controls.
+    Why:
+        Some migrated tabs use scales heavily and should adopt CTk styling when
+        available without changing callback logic.
+    Args:
+        parent: Parent widget that owns the scale.
+        *args: Positional constructor args.
+        **kwargs: Keyword args including from_/to, variable, and command.
+    Returns:
+        Widget instance (`ctk.CTkSlider` or `ttk.Scale`).
+    Side Effects:
+        None beyond widget construction.
+    Exceptions:
+        Non-horizontal orientation falls back to ttk for compatibility.
+    """
+    if ctk is None:
+        return ttk.Scale(parent, *args, **kwargs)
+    orientation = kwargs.get("orient")
+    if orientation not in (None, "horizontal", tk.HORIZONTAL):
+        return ttk.Scale(parent, *args, **kwargs)
+    ctk_kwargs = dict(kwargs)
+    ctk_kwargs.pop("orient", None)
+    ctk_kwargs.pop("style", None)
+    ctk_kwargs.pop("length", None)
+    return ctk.CTkSlider(parent, *args, **ctk_kwargs)
+
 import json
 import csv
 import contextlib
@@ -7351,14 +7576,29 @@ class AnnotationsPanel:
                 self._add_status_var.set(self._add_status_idle_text())
 
     def _build_ui(self) -> None:
-        """Build UI.
-        Used to assemble UI during UI or plot setup."""
+        """Build the CSV Import dialog user interface.
+
+        Purpose:
+            Construct the import popup layout, mapping controls, and action buttons.
+        Why:
+            The dialog is the primary entry point for converting raw CSV exports
+            into the standardized GL-260 workbook schema.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Creates Tk/CTk widgets, stores widget references, and wires callbacks
+            for previewing, mapping, and starting imports.
+        Exceptions:
+            Widget-construction errors are handled by Tkinter at runtime.
+        """
         self._frame.grid_columnconfigure(0, weight=1)
         self._frame.grid_rowconfigure(1, weight=1)
 
         header = ttk.Frame(self._frame)
         header.grid(row=0, column=0, sticky="ew")
-        ttk.Button(header, text="Collapse", command=self.toggle_collapsed).pack(
+        _ui_button(header, text="Collapse", command=self.toggle_collapsed).pack(
             side="right", padx=4, pady=2
         )
 
@@ -7485,7 +7725,7 @@ class AnnotationsPanel:
         ttk.Label(add_frame, text="Element Type:").grid(
             row=0, column=0, sticky="w", padx=6, pady=2
         )
-        add_type_combo = ttk.Combobox(
+        add_type_combo = _ui_combobox(
             add_frame,
             values=[label for label, _ in add_type_options],
             textvariable=self._add_type_label_var,
@@ -7497,7 +7737,7 @@ class AnnotationsPanel:
         ttk.Label(add_frame, text="Target Axis:").grid(
             row=0, column=2, sticky="w", padx=6, pady=2
         )
-        self._add_axis_combo = ttk.Combobox(
+        self._add_axis_combo = _ui_combobox(
             add_frame,
             values=[label for label, _ in axis_choices],
             textvariable=self._add_axis_label_var,
@@ -7509,7 +7749,7 @@ class AnnotationsPanel:
         ttk.Label(add_frame, text="Coordinates:").grid(
             row=1, column=0, sticky="w", padx=6, pady=2
         )
-        add_coord_combo = ttk.Combobox(
+        add_coord_combo = _ui_combobox(
             add_frame,
             values=[label for label, _ in coord_choices],
             textvariable=self._add_coord_label_var,
@@ -7521,7 +7761,7 @@ class AnnotationsPanel:
         ttk.Label(add_frame, text="Target Trace:").grid(
             row=2, column=0, sticky="w", padx=6, pady=2
         )
-        self._add_trace_combo = ttk.Combobox(
+        self._add_trace_combo = _ui_combobox(
             add_frame,
             values=[label for label, _ in trace_choices],
             textvariable=self._add_trace_label_var,
@@ -7571,10 +7811,10 @@ class AnnotationsPanel:
                 self._suppress_add_traces = False
             self._persist_add_defaults(add_fillcolor=chosen)
 
-        ttk.Button(
+        _ui_button(
             add_color_frame, text="Color...", command=_choose_add_fill_color
         ).grid(row=0, column=1, padx=(0, 4))
-        ttk.Entry(add_color_frame, textvariable=self._add_fill_var, width=12).grid(
+        _ui_entry(add_color_frame, textvariable=self._add_fill_var, width=12).grid(
             row=0, column=2, sticky="ew"
         )
         add_color_frame.grid_columnconfigure(2, weight=1)
@@ -7585,7 +7825,7 @@ class AnnotationsPanel:
         )
         add_alpha_frame = ttk.Frame(add_frame)
         add_alpha_frame.grid(row=4, column=1, columnspan=3, sticky="ew", padx=6, pady=2)
-        add_alpha_entry = ttk.Entry(
+        add_alpha_entry = _ui_entry(
             add_alpha_frame, textvariable=self._add_alpha_var, width=6
         )
         add_alpha_entry.grid(row=0, column=0, sticky="w", padx=(0, 6))
@@ -7609,7 +7849,7 @@ class AnnotationsPanel:
                 self._suppress_add_traces = False
             self._persist_add_defaults(add_alpha=alpha_value)
 
-        add_alpha_scale = ttk.Scale(
+        add_alpha_scale = _ui_scale(
             add_alpha_frame,
             from_=0.0,
             to=1.0,
@@ -7622,7 +7862,7 @@ class AnnotationsPanel:
         ttk.Label(add_frame, text="Label/Text:").grid(
             row=5, column=0, sticky="w", padx=6, pady=2
         )
-        self._add_label_entry = ttk.Entry(
+        self._add_label_entry = _ui_entry(
             add_frame, textvariable=self._add_label_var, width=24
         )
         self._add_label_entry.grid(
@@ -7633,15 +7873,15 @@ class AnnotationsPanel:
         action_frame.grid(
             row=6, column=0, columnspan=4, sticky="ew", padx=6, pady=(4, 2)
         )
-        self._add_place_button = ttk.Button(
+        self._add_place_button = _ui_button(
             action_frame, text="Place on Plot", command=self._on_place_add_element
         )
         self._add_place_button.pack(side="left", padx=(0, 6))
-        self._add_cancel_button = ttk.Button(
+        self._add_cancel_button = _ui_button(
             action_frame, text="Cancel Placement", command=self._on_cancel_add_element
         )
         self._add_cancel_button.pack(side="left", padx=(0, 6))
-        ttk.Checkbutton(
+        _ui_checkbutton(
             action_frame, text="Keep placing", variable=self._add_keep_placing_var
         ).pack(side="left")
 
@@ -7794,14 +8034,14 @@ class AnnotationsPanel:
         mode_bar = ttk.Frame(list_frame)
         mode_bar.grid(row=0, column=0, sticky="ew", padx=4, pady=(4, 2))
         ttk.Label(mode_bar, text="Interaction:").pack(side="left")
-        ttk.Radiobutton(
+        _ui_radiobutton(
             mode_bar,
             text="Select / Edit",
             value="select",
             variable=self._mode_var,
             command=self._on_mode_changed,
         ).pack(side="left", padx=(6, 2))
-        ttk.Radiobutton(
+        _ui_radiobutton(
             mode_bar,
             text="Erase Ink",
             value="erase",
@@ -7826,7 +8066,7 @@ class AnnotationsPanel:
         tree.column("name", width=220, anchor="w")
         tree.bind("<<TreeviewSelect>>", self._on_tree_select)
         tree.bind("<Button-1>", self._on_tree_click, add="+")
-        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=tree.yview)
+        scrollbar = _ui_scrollbar(list_frame, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=scrollbar.set)
         tree.grid(row=1, column=0, sticky="nsew", padx=(4, 0))
         scrollbar.grid(row=1, column=1, sticky="ns")
@@ -7835,32 +8075,32 @@ class AnnotationsPanel:
         list_controls = ttk.Frame(list_frame)
         list_controls.grid(row=2, column=0, sticky="ew", padx=4, pady=(2, 4))
         ttk.Label(list_controls, text="Name:").pack(side="left")
-        name_entry = ttk.Entry(list_controls, textvariable=self._name_var, width=24)
+        name_entry = _ui_entry(list_controls, textvariable=self._name_var, width=24)
         name_entry.pack(side="left", padx=(2, 6), pady=4)
         name_entry.bind("<Return>", self._apply_name)
         name_entry.bind("<FocusOut>", self._apply_name)
-        ttk.Button(
+        _ui_button(
             list_controls, text="Send Backward", command=lambda: self._nudge_zorder(-1)
         ).pack(side="left", padx=4, pady=4)
-        ttk.Button(
+        _ui_button(
             list_controls, text="Bring Forward", command=lambda: self._nudge_zorder(1)
         ).pack(side="left", padx=4, pady=4)
-        ttk.Button(
+        _ui_button(
             list_controls, text="Duplicate", command=self._duplicate_selected
         ).pack(side="left", padx=4, pady=4)
-        ttk.Button(list_controls, text="Delete", command=self._delete_selected).pack(
+        _ui_button(list_controls, text="Delete", command=self._delete_selected).pack(
             side="left", padx=4, pady=4
         )
-        ttk.Button(
+        _ui_button(
             list_controls, text="Lock/Unlock", command=self._toggle_lock_selected
         ).pack(side="left", padx=4, pady=4)
 
         style_controls = ttk.Frame(list_frame)
         style_controls.grid(row=3, column=0, sticky="ew", padx=4, pady=(0, 4))
-        ttk.Button(
+        _ui_button(
             style_controls, text="Copy Style", command=self._copy_style
         ).pack(side="left", padx=4, pady=2)
-        ttk.Button(
+        _ui_button(
             style_controls, text="Paste Style", command=self._paste_style
         ).pack(side="left", padx=4, pady=2)
         ttk.Label(style_controls, text="Preset:").pack(side="left", padx=(12, 2))
@@ -7873,7 +8113,7 @@ class AnnotationsPanel:
             preset_labels.append(display)
         if self._style_preset_var.get() not in preset_labels:
             self._style_preset_var.set("None (Manual)")
-        preset_combo = ttk.Combobox(
+        preset_combo = _ui_combobox(
             style_controls,
             values=preset_labels,
             textvariable=self._style_preset_var,
@@ -7881,7 +8121,7 @@ class AnnotationsPanel:
             width=16,
         )
         preset_combo.pack(side="left", padx=2, pady=2)
-        ttk.Button(
+        _ui_button(
             style_controls, text="Apply Preset", command=self._apply_style_preset
         ).pack(side="left", padx=4, pady=2)
 
@@ -7893,7 +8133,7 @@ class AnnotationsPanel:
         # Canvas + inner frame keeps Properties scrollable when fields exceed the view.
         self._props_canvas = tk.Canvas(props_frame, highlightthickness=0)
         self._props_canvas.grid(row=0, column=0, sticky="nsew")
-        self._props_scrollbar = ttk.Scrollbar(
+        self._props_scrollbar = _ui_scrollbar(
             props_frame, orient="vertical", command=self._props_canvas.yview
         )
         self._props_scrollbar.grid(row=0, column=1, sticky="ns")
@@ -7932,29 +8172,29 @@ class AnnotationsPanel:
 
         apply_frame = ttk.Frame(right_pane)
         apply_frame.grid(row=1, column=0, sticky="ew", padx=4, pady=(0, 4))
-        self._apply_button = ttk.Button(
+        self._apply_button = _ui_button(
             apply_frame, text="Apply", command=self._apply_properties
         )
         self._apply_button.pack(side="left", padx=4, pady=4)
-        self._apply_keep_button = ttk.Button(
+        self._apply_keep_button = _ui_button(
             apply_frame,
             text="Apply + Keep Editing",
             command=lambda: self._apply_properties(keep_editing=True),
         )
         self._apply_keep_button.pack(side="left", padx=4, pady=4)
-        self._revert_button = ttk.Button(
+        self._revert_button = _ui_button(
             apply_frame, text="Revert", command=self._revert_properties
         )
         self._revert_button.pack(side="left", padx=4, pady=4)
-        self._undo_button = ttk.Button(
+        self._undo_button = _ui_button(
             apply_frame, text="Undo", command=self._controller.undo
         )
         self._undo_button.pack(side="left", padx=4, pady=4)
-        self._redo_button = ttk.Button(
+        self._redo_button = _ui_button(
             apply_frame, text="Redo", command=self._controller.redo
         )
         self._redo_button.pack(side="left", padx=4, pady=4)
-        ttk.Checkbutton(
+        _ui_checkbutton(
             apply_frame,
             text="Live Update",
             variable=self._live_update_var,
@@ -8433,7 +8673,7 @@ class AnnotationsPanel:
         ttk.Label(behavior_frame, text="Axis Target:").grid(
             row=0, column=0, sticky="w", padx=6, pady=2
         )
-        ttk.Combobox(
+        _ui_combobox(
             behavior_frame,
             values=[label for label, _ in axis_choices],
             textvariable=axis_label_var,
@@ -8469,7 +8709,7 @@ class AnnotationsPanel:
             ttk.Label(behavior_frame, text="Target Trace:").grid(
                 row=behavior_row, column=0, sticky="w", padx=6, pady=2
             )
-            ttk.Combobox(
+            _ui_combobox(
                 behavior_frame,
                 values=[label for label, _ in trace_choices],
                 textvariable=trace_key_var,
@@ -8483,7 +8723,7 @@ class AnnotationsPanel:
         ttk.Label(behavior_frame, text="Z-Order:").grid(
             row=behavior_row, column=0, sticky="w", padx=6, pady=2
         )
-        ttk.Entry(behavior_frame, textvariable=zorder_var, width=10).grid(
+        _ui_entry(behavior_frame, textvariable=zorder_var, width=10).grid(
             row=behavior_row, column=1, sticky="w", padx=6, pady=2
         )
 
@@ -8491,10 +8731,10 @@ class AnnotationsPanel:
         zorder_frame.grid(
             row=behavior_row + 1, column=0, columnspan=2, sticky="w", padx=6, pady=2
         )
-        ttk.Button(
+        _ui_button(
             zorder_frame, text="Send Backward", command=lambda: self._nudge_zorder(-1)
         ).pack(side="left", padx=(0, 6))
-        ttk.Button(
+        _ui_button(
             zorder_frame, text="Bring Forward", command=lambda: self._nudge_zorder(1)
         ).pack(side="left", padx=4)
 
@@ -8502,10 +8742,10 @@ class AnnotationsPanel:
         toggle_frame.grid(
             row=behavior_row + 2, column=0, columnspan=2, sticky="w", padx=6, pady=2
         )
-        ttk.Button(
+        _ui_button(
             toggle_frame, text="Toggle Visibility", command=self._toggle_visibility_selected
         ).pack(side="left", padx=(0, 6))
-        ttk.Button(
+        _ui_button(
             toggle_frame, text="Lock/Unlock", command=self._toggle_lock_selected
         ).pack(side="left", padx=4)
 
@@ -8527,7 +8767,7 @@ class AnnotationsPanel:
             ttk.Label(behavior_frame, text="Span Layer:").grid(
                 row=span_layer_row, column=0, sticky="w", padx=6, pady=2
             )
-            ttk.Combobox(
+            _ui_combobox(
                 behavior_frame,
                 values=list(span_layer_map.keys()),
                 textvariable=span_layer_var,
@@ -9009,7 +9249,7 @@ class AnnotationsPanel:
             )
             value = geometry.get(key, "")
             var = tk.StringVar(value=str(value) if value is not None else "")
-            ttk.Entry(parent, textvariable=var, width=20).grid(
+            _ui_entry(parent, textvariable=var, width=20).grid(
                 row=idx, column=1, sticky="w", padx=6, pady=2
             )
             vars_out[key] = var
@@ -9041,7 +9281,7 @@ class AnnotationsPanel:
             )
             value = style.get(key, "")
             var = tk.StringVar(value=str(value) if value is not None else "")
-            ttk.Entry(frame, textvariable=var, width=width).grid(
+            _ui_entry(frame, textvariable=var, width=width).grid(
                 row=row, column=1, sticky="w", padx=6, pady=2
             )
             vars_out[key] = var
@@ -9097,10 +9337,10 @@ class AnnotationsPanel:
                 if apply_callback is not None:
                     apply_callback()
 
-            ttk.Button(color_frame, text="Color...", command=_choose_color).grid(
+            _ui_button(color_frame, text="Color...", command=_choose_color).grid(
                 row=0, column=1, padx=(0, 4)
             )
-            entry = ttk.Entry(color_frame, textvariable=var, width=12)
+            entry = _ui_entry(color_frame, textvariable=var, width=12)
             entry.grid(row=0, column=2, sticky="ew")
             entry.bind("<Return>", _commit_color)
             entry.bind("<FocusOut>", _commit_color)
@@ -9132,7 +9372,7 @@ class AnnotationsPanel:
             _add_entry("Marker Size", "marker_size", width=8)
             _add_entry("Alpha", "alpha", width=8)
             snap_var = tk.BooleanVar(value=bool(style.get("snap_to_data", False)))
-            ttk.Checkbutton(frame, text="Snap to Data", variable=snap_var).grid(
+            _ui_checkbutton(frame, text="Snap to Data", variable=snap_var).grid(
                 row=row, column=0, columnspan=2, sticky="w", padx=6, pady=2
             )
             vars_out["snap_to_data"] = snap_var
@@ -9171,7 +9411,7 @@ class AnnotationsPanel:
             )
             value = geometry.get(key, "")
             var = tk.StringVar(value=str(value) if value is not None else "")
-            ttk.Entry(frame, textvariable=var, width=width).grid(
+            _ui_entry(frame, textvariable=var, width=width).grid(
                 row=row, column=1, sticky="w", padx=6, pady=2
             )
             geom_vars[key] = var
@@ -9186,7 +9426,7 @@ class AnnotationsPanel:
             )
             value = style.get(key, "")
             var = tk.StringVar(value=str(value) if value is not None else "")
-            ttk.Entry(frame, textvariable=var, width=width).grid(
+            _ui_entry(frame, textvariable=var, width=width).grid(
                 row=row, column=1, sticky="w", padx=6, pady=2
             )
             style_vars[key] = var
@@ -9197,7 +9437,7 @@ class AnnotationsPanel:
             Used to keep the workflow logic localized and testable."""
             nonlocal row
             var = tk.BooleanVar(value=bool(style.get(key, False)))
-            ttk.Checkbutton(frame, text=label, variable=var).grid(
+            _ui_checkbutton(frame, text=label, variable=var).grid(
                 row=row, column=0, columnspan=2, sticky="w", padx=6, pady=2
             )
             style_vars[key] = var
@@ -9224,7 +9464,7 @@ class AnnotationsPanel:
             and bbox_edge in {"", "none", "transparent"}
         )
         bbox_enabled_var = tk.BooleanVar(value=bbox_enabled)
-        ttk.Checkbutton(frame, text="BBox Enabled", variable=bbox_enabled_var).grid(
+        _ui_checkbutton(frame, text="BBox Enabled", variable=bbox_enabled_var).grid(
             row=row, column=0, columnspan=2, sticky="w", padx=6, pady=2
         )
         style_vars["bbox_enabled"] = bbox_enabled_var
@@ -9347,6 +9587,7 @@ CSV_IMPORT_DEFAULT_DAMPENING = 0.98
 CSV_IMPORT_DEFAULT_MOVING_AVG_WINDOW = 100
 CSV_IMPORT_MAPPING_FIELDS = OrderedDict(
     [
+        ("date_time", "Date & Time"),
         ("reactor_pressure", "Reactor Pressure (PSI)"),
         ("manifold_pressure", "Manifold Pressure (PSI)"),
         ("external_temp", "External Reactor Temperature"),
@@ -19904,7 +20145,6 @@ DISPLAY_MODE_REGULAR = "regular"
 DISPLAY_MODE_DARK = "dark"
 DISPLAY_MODE_OPTIONS = {DISPLAY_MODE_REGULAR, DISPLAY_MODE_DARK}
 PLOT_SETTINGS_CARD_ORDER_DEFAULT = [
-    "axes",
     "titles",
     "ticks",
     "cycle_integration_legend",
@@ -19916,6 +20156,8 @@ PLOT_SETTINGS_CARD_ORDER_DEFAULT = [
 PLOT_SETTINGS_CARD_ORDER_MIGRATION = {
     "cycle_integration": "cycle_integration_legend",
     "cycle_legend": "cycle_integration_legend",
+    # Axis controls were merged into the fixed first "Axis & Range" card.
+    "axes": "",
 }
 
 
@@ -19968,6 +20210,8 @@ def _normalize_plot_settings_card_order(value: Any) -> List[str]:
         if not key:
             continue
         migrated = PLOT_SETTINGS_CARD_ORDER_MIGRATION.get(key, key)
+        if not migrated:
+            continue
         if migrated not in PLOT_SETTINGS_CARD_ORDER_DEFAULT:
             continue
         if migrated in seen:
@@ -28656,11 +28900,11 @@ class CsvImportDialog:
         self.window.bind("<Escape>", lambda _event: self._close())
         self.window.grab_set()
 
-        self._mapping_combos: Dict[str, ttk.Combobox] = {}
+        self._mapping_combos: Dict[str, Any] = {}
         self._ignore_listbox: Optional[tk.Listbox] = None
         self._preview_text: Optional[scrolledtext.ScrolledText] = None
-        self._import_button: Optional[ttk.Button] = None
-        self._close_button: Optional[ttk.Button] = None
+        self._import_button: Optional[Any] = None
+        self._close_button: Optional[Any] = None
 
         self._build_ui()
         self._suggest_sheet_name(force=not bool(sheet_name))
@@ -28695,37 +28939,37 @@ class CsvImportDialog:
         ttk.Label(input_frame, text="CSV file").grid(
             row=0, column=0, sticky="w", padx=6, pady=4
         )
-        ttk.Entry(input_frame, textvariable=self._csv_path_var).grid(
+        _ui_entry(input_frame, textvariable=self._csv_path_var).grid(
             row=0, column=1, sticky="ew", padx=6, pady=4
         )
-        ttk.Button(input_frame, text="Browse...", command=self._browse_csv).grid(
+        _ui_button(input_frame, text="Browse...", command=self._browse_csv).grid(
             row=0, column=2, padx=6, pady=4
         )
-        ttk.Button(input_frame, text="Preview", command=self._refresh_preview).grid(
+        _ui_button(input_frame, text="Preview", command=self._refresh_preview).grid(
             row=0, column=3, padx=6, pady=4
         )
 
         ttk.Label(input_frame, text="Excel workbook").grid(
             row=1, column=0, sticky="w", padx=6, pady=4
         )
-        ttk.Entry(input_frame, textvariable=self._workbook_path_var).grid(
+        _ui_entry(input_frame, textvariable=self._workbook_path_var).grid(
             row=1, column=1, sticky="ew", padx=6, pady=4
         )
-        ttk.Button(input_frame, text="Browse...", command=self._browse_workbook).grid(
+        _ui_button(input_frame, text="Browse...", command=self._browse_workbook).grid(
             row=1, column=2, padx=6, pady=4
         )
 
         ttk.Label(input_frame, text="New sheet name").grid(
             row=2, column=0, sticky="w", padx=6, pady=4
         )
-        ttk.Entry(input_frame, textvariable=self._sheet_name_var).grid(
+        _ui_entry(input_frame, textvariable=self._sheet_name_var).grid(
             row=2, column=1, sticky="ew", padx=6, pady=4
         )
 
         ttk.Label(input_frame, text="If sheet exists").grid(
             row=3, column=0, sticky="w", padx=6, pady=4
         )
-        ttk.Combobox(
+        _ui_combobox(
             input_frame,
             textvariable=self._sheet_mode_var,
             values=list(CSV_IMPORT_SHEET_MODE_LABELS.values()),
@@ -28763,7 +29007,7 @@ class CsvImportDialog:
             ttk.Label(mapping_frame, text=label).grid(
                 row=row, column=0, sticky="w", padx=6, pady=3
             )
-            combo = ttk.Combobox(
+            combo = _ui_combobox(
                 mapping_frame, textvariable=self._mapping_vars[key], state="readonly"
             )
             combo.grid(row=row, column=1, sticky="ew", padx=6, pady=3)
@@ -28783,7 +29027,7 @@ class CsvImportDialog:
             exportselection=False,
         )
         listbox.grid(row=0, column=0, sticky="ew")
-        scroll = ttk.Scrollbar(ignore_frame, orient="vertical", command=listbox.yview)
+        scroll = _ui_scrollbar(ignore_frame, orient="vertical", command=listbox.yview)
         scroll.grid(row=0, column=1, sticky="ns")
         listbox.configure(yscrollcommand=scroll.set)
         listbox.bind("<<ListboxSelect>>", lambda _e: self._on_ignore_change())
@@ -28796,7 +29040,7 @@ class CsvImportDialog:
         ttk.Label(calc_frame, text="Derivative source").grid(
             row=0, column=0, sticky="w", padx=6, pady=4
         )
-        ttk.Combobox(
+        _ui_combobox(
             calc_frame,
             textvariable=self._derivative_source_var,
             values=list(CSV_IMPORT_DERIVATIVE_SOURCE_LABELS.values()),
@@ -28806,14 +29050,14 @@ class CsvImportDialog:
         ttk.Label(calc_frame, text="Smoothing dampening factor").grid(
             row=1, column=0, sticky="w", padx=6, pady=4
         )
-        ttk.Entry(calc_frame, textvariable=self._dampening_var, width=12).grid(
+        _ui_entry(calc_frame, textvariable=self._dampening_var, width=12).grid(
             row=1, column=1, sticky="w", padx=6, pady=4
         )
 
         ttk.Label(calc_frame, text="Moving average window (points)").grid(
             row=2, column=0, sticky="w", padx=6, pady=4
         )
-        ttk.Entry(calc_frame, textvariable=self._window_var, width=12).grid(
+        _ui_entry(calc_frame, textvariable=self._window_var, width=12).grid(
             row=2, column=1, sticky="w", padx=6, pady=4
         )
 
@@ -28835,11 +29079,11 @@ class CsvImportDialog:
 
         button_frame = ttk.Frame(container)
         button_frame.grid(row=6, column=0, sticky="e", pady=(0, 6))
-        import_button = ttk.Button(
+        import_button = _ui_button(
             button_frame, text="Import", command=self._start_import
         )
         import_button.pack(side="right")
-        close_button = ttk.Button(button_frame, text="Close", command=self._close)
+        close_button = _ui_button(button_frame, text="Close", command=self._close)
         close_button.pack(side="right", padx=(0, 8))
         self._import_button = import_button
         self._close_button = close_button
@@ -29051,13 +29295,31 @@ class CsvImportDialog:
         return [col for col in channel_cols if col not in self._ignored_columns]
 
     def _update_mapping_choices(self) -> None:
-        """Update mapping choices.
-        Used to keep mapping choices in sync with current state."""
+        """Refresh available channel-mapping options after preview changes.
+
+        Purpose:
+            Recompute dropdown choices for each mapping field.
+        Why:
+            The Date & Time channel has different source candidates than pressure/
+            temperature channels, and ignored columns must be removed dynamically.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Updates combobox value lists and clears now-invalid selections.
+        Exceptions:
+            None.
+        """
         available = self._available_mapping_columns()
+        datetime_options = list(self._detected_columns)
         # Iterate over items from self._mapping_combos to apply the per-item logic.
         for key, combo in self._mapping_combos.items():
-            values = list(available)
-            if key != "reactor_pressure":
+            if key == "date_time":
+                values = list(datetime_options)
+            else:
+                values = list(available)
+            if key not in {"reactor_pressure", "date_time"}:
                 values = ["(None)"] + values
             combo.configure(values=values)
             current = self._mapping_vars[key].get()
@@ -29065,14 +29327,30 @@ class CsvImportDialog:
                 self._mapping_vars[key].set("")
 
     def _apply_saved_mapping(self) -> None:
-        """Apply saved mapping.
-        Used to apply saved mapping changes to live state."""
-        available = set(self._available_mapping_columns())
+        """Apply persisted or auto-detected channel mappings to empty fields.
+
+        Purpose:
+            Pre-populate mapping inputs from settings and heuristics.
+        Why:
+            Reduces repetitive manual mapping work across repeated imports.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Writes candidate values into `self._mapping_vars`.
+        Exceptions:
+            None.
+        """
         saved_mapping = settings.get("csv_import_mapping", {})
         # Iterate over items from self._mapping_vars to apply the per-item logic.
         for key, var in self._mapping_vars.items():
             if var.get().strip():
                 continue
+            if key == "date_time":
+                available = set(self._detected_columns)
+            else:
+                available = set(self._available_mapping_columns())
             candidate = ""
             if isinstance(saved_mapping, dict):
                 saved_value = saved_mapping.get(key, "")
@@ -29084,8 +29362,25 @@ class CsvImportDialog:
                 var.set(candidate)
 
     def _auto_match_column(self, key: str, columns: Set[str]) -> str:
-        """Perform auto match column.
-        Used to keep the workflow logic localized and testable."""
+        """Infer the best column match for one logical channel key.
+
+        Purpose:
+            Select a likely CSV column when the user has not mapped one manually.
+        Why:
+            Auto-matching accelerates imports while preserving explicit overrides.
+        Args:
+            key: Logical mapping key (for example `date_time` or `reactor_pressure`).
+            columns: Candidate column names currently available for that key.
+        Returns:
+            str: The matched column name, or an empty string when no match is found.
+        Side Effects:
+            None.
+        Exceptions:
+            None.
+        """
+        if key == "date_time":
+            detected = _detect_gl260_datetime_column(list(columns))
+            return detected or ""
         # Iterate over columns to apply the per-item logic.
         for name in columns:
             lowered = name.lower()
@@ -29104,8 +29399,21 @@ class CsvImportDialog:
         return ""
 
     def _gather_mapping(self) -> Dict[str, str]:
-        """Perform gather mapping.
-        Used to keep the workflow logic localized and testable."""
+        """Collect the current mapping selections from dialog variables.
+
+        Purpose:
+            Convert combobox selections into a normalized mapping payload.
+        Why:
+            Import execution and settings persistence require one canonical dict.
+        Args:
+            None.
+        Returns:
+            Dict[str, str]: Mapping key to selected CSV column name (or empty string).
+        Side Effects:
+            None.
+        Exceptions:
+            None.
+        """
         mapping = {}
         # Iterate over items from self._mapping_vars to apply the per-item logic.
         for key, var in self._mapping_vars.items():
@@ -29116,8 +29424,24 @@ class CsvImportDialog:
         return mapping
 
     def _start_import(self) -> None:
-        """Import value.
-        Used by start workflows to import value."""
+        """Validate dialog inputs and launch asynchronous CSV import.
+
+        Purpose:
+            Start the end-to-end CSV-to-workbook conversion job.
+        Why:
+            Imports can be expensive; this method validates inputs up front and
+            delegates heavy processing to the shared task runner.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Updates status text, toggles busy UI state, and submits a background
+            task that can write rows into the target workbook.
+        Exceptions:
+            Validation failures show message boxes and return early; worker errors
+            are surfaced through the async error callback.
+        """
         if self._import_task_id is not None:
             self._set_status("Import already in progress...")
             return
@@ -29195,7 +29519,12 @@ class CsvImportDialog:
             """Perform worker.
             Used to keep the workflow logic localized and testable."""
             columns, rows = _parse_gl260_csv_table(csv_path)
-            dt_column = _detect_gl260_datetime_column(columns)
+            mapped_dt = (mapping_snapshot.get("date_time") or "").strip()
+            dt_column = mapped_dt or _detect_gl260_datetime_column(columns)
+            if mapped_dt and mapped_dt not in columns:
+                raise ValueError(
+                    f"Mapped Date & Time column '{mapped_dt}' was not found in the CSV."
+                )
             if not dt_column:
                 raise ValueError("Date & Time column not detected in CSV.")
             frame = pd.DataFrame(rows, columns=columns)
@@ -29261,8 +29590,28 @@ class CsvImportDialog:
         window: int,
         sheet_mode: str,
     ) -> None:
-        """Perform persist settings.
-        Used to keep the workflow logic localized and testable."""
+        """Persist CSV import dialog choices to global settings storage.
+
+        Purpose:
+            Save the latest import paths/options for future sessions.
+        Why:
+            Reusing prior mappings and defaults reduces repetitive setup work.
+        Args:
+            csv_path: Source CSV path selected by the user.
+            workbook_path: Destination workbook path.
+            sheet_name: Final sheet name used for the import output.
+            mapping: Channel-to-column mapping payload.
+            derivative_source: Selected pressure source for derivative calculation.
+            dampening: Exponential smoothing factor in [0, 1).
+            window: Moving-average window size in rows.
+            sheet_mode: Conflict behavior when the sheet already exists.
+        Returns:
+            None.
+        Side Effects:
+            Mutates `settings` keys and requests a disk save.
+        Exceptions:
+            Save failures are swallowed to avoid interrupting the UI workflow.
+        """
         settings["csv_import_last_csv_path"] = csv_path
         settings["csv_import_last_workbook_path"] = workbook_path
         settings["csv_import_last_sheet_name"] = sheet_name
@@ -29278,8 +29627,25 @@ class CsvImportDialog:
             pass
 
     def _update_app_after_import(self, workbook_path: str, sheet_name: str) -> None:
-        """Update app after import.
-        Used to keep app after import in sync with current state."""
+        """Synchronize the main app state after a successful CSV import.
+
+        Purpose:
+            Point the app at the updated workbook and refresh sheet/column context.
+        Why:
+            Users typically continue directly into sheet loading and stitching after
+            import, so workbook/file state must be updated immediately.
+        Args:
+            workbook_path: Workbook that received imported data.
+            sheet_name: Sheet name resolved by the import flow.
+        Returns:
+            None.
+        Side Effects:
+            Updates file-path UI, reloads sheet names, selects the imported sheet,
+            persists `last_file_path`, and defaults `columns["dt"]` to
+            `"Date & Time"` when unset to keep stitching ready.
+        Exceptions:
+            Uses best-effort guards; partial failures are ignored safely.
+        """
         try:
             self.app.file_path = workbook_path
         except Exception:
@@ -29306,6 +29672,21 @@ class CsvImportDialog:
             return
         try:
             self.app.selected_sheet.set(sheet_name)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            columns_map = (
+                self.app.columns if isinstance(getattr(self.app, "columns", None), dict) else {}
+            )
+            dt_value = str(columns_map.get("dt", "") or "").strip()
+            if not dt_value:
+                columns_map["dt"] = "Date & Time"
+                self.app.columns = columns_map
+                settings["columns"] = dict(columns_map)
+                _save_settings_to_disk()
+                if getattr(self.app, "columns_frame", None) is not None:
+                    self.app._refresh_columns_ui()
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
@@ -33898,25 +34279,25 @@ class UnifiedApp(tk.Tk):
         plot_select = ttk.Frame(btns)
         plot_select.grid(row=0, column=0, sticky="w")
 
-        ttk.Checkbutton(
+        _ui_checkbutton(
             plot_select,
             text="Pressure & Temperature vs Time",
             variable=self._plot_select_fig1_var,
         ).grid(row=0, column=0, sticky="w")
 
-        ttk.Checkbutton(
+        _ui_checkbutton(
             plot_select,
             text="Pressure & First Derivative vs Time",
             variable=self._plot_select_fig2_var,
         ).grid(row=0, column=1, sticky="w", padx=(self._scale_length(8), 0))
 
-        ttk.Checkbutton(
+        _ui_checkbutton(
             plot_select,
             text="Combined Triple-Axis Plot",
             variable=self._plot_select_combined_var,
         ).grid(row=0, column=2, sticky="w", padx=(self._scale_length(8), 0))
 
-        generate_btn = ttk.Button(
+        generate_btn = _ui_button(
             plot_select,
             text="Generate Plot",
             command=self._generate_selected_plots,
@@ -33929,7 +34310,7 @@ class UnifiedApp(tk.Tk):
         apply_frame = ttk.Frame(btns)
         apply_frame.grid(row=0, column=1, sticky="w", padx=(self._scale_length(8), 0))
         apply_frame.grid_columnconfigure(0, weight=1)
-        apply_button = ttk.Button(
+        apply_button = _ui_button(
             apply_frame,
             text="Apply Column Selection",
             command=lambda: self._apply_columns(auto_refresh_axes=True),
@@ -33940,7 +34321,7 @@ class UnifiedApp(tk.Tk):
             apply_frame, row=0, column=1, padx=(6, 0), sticky="w"
         )
 
-        ttk.Button(btns, text="Save Settings", command=self.save_settings).grid(
+        _ui_button(btns, text="Save Settings", command=self.save_settings).grid(
             row=0, column=2, sticky="ew", padx=(self._scale_length(8), 0)
         )
 
@@ -33948,7 +34329,7 @@ class UnifiedApp(tk.Tk):
 
         ttk.Label(btns, text="").grid(row=0, column=3, sticky="ew")
 
-        ttk.Button(
+        _ui_button(
             btns,
             text="Exit",
             command=self.save_and_close,
@@ -37166,8 +37547,25 @@ class UnifiedApp(tk.Tk):
     def _open_plot_elements_editor(
         self, fig: Figure, canvas: FigureCanvasTkAgg, plot_id: str
     ) -> None:
-        """Open plot elements editor.
-        Used by UI actions to open plot elements editor."""
+        """Open the Plot Elements editor for one rendered plot.
+
+        Purpose:
+            Launch the annotation/elements editor bound to a specific plot tab.
+        Why:
+            Users need a dedicated surface for per-plot visual elements without
+            crowding the main workflow tabs.
+        Args:
+            fig: Active Matplotlib figure for the selected plot tab.
+            canvas: Tk canvas hosting `fig`.
+            plot_id: Internal plot identifier used for controller/state lookup.
+        Returns:
+            None.
+        Side Effects:
+            Creates or focuses a modal editor window, wires callbacks that can
+            mutate figure annotations, and stores window references per plot.
+        Exceptions:
+            Best-effort guards prevent UI interruption if controller/window lookups fail.
+        """
         if not plot_id:
             return
         controller = self._plot_annotation_controllers.get(plot_id)
@@ -37355,22 +37753,22 @@ class UnifiedApp(tk.Tk):
                 except Exception:
                     _refresh_after_close()
 
-        ttk.Button(buttons, text="Refresh", command=_refresh_panel).pack(
+        _ui_button(buttons, text="Refresh", command=_refresh_panel).pack(
             side="left", padx=(0, 6)
         )
-        ttk.Button(buttons, text="Apply to Selected", command=_apply_selected).pack(
+        _ui_button(buttons, text="Apply to Selected", command=_apply_selected).pack(
             side="left", padx=(0, 6)
         )
-        ttk.Button(buttons, text="Duplicate", command=_duplicate_selected).pack(
+        _ui_button(buttons, text="Duplicate", command=_duplicate_selected).pack(
             side="left", padx=(0, 6)
         )
-        ttk.Button(buttons, text="Delete Selected", command=_delete_selected).pack(
+        _ui_button(buttons, text="Delete Selected", command=_delete_selected).pack(
             side="left", padx=(0, 6)
         )
-        ttk.Button(buttons, text="Clear All", command=_clear_all).pack(
+        _ui_button(buttons, text="Clear All", command=_clear_all).pack(
             side="left", padx=(0, 6)
         )
-        ttk.Button(buttons, text="Close", command=_close_editor).pack(
+        _ui_button(buttons, text="Close", command=_close_editor).pack(
             side="right", padx=(6, 0)
         )
 
@@ -37757,7 +38155,7 @@ class UnifiedApp(tk.Tk):
                 ("Delete", "delete"),
             ]
         ):
-            ttk.Radiobutton(
+            _ui_radiobutton(
                 tools_frame,
                 text=label,
                 value=value,
@@ -37776,7 +38174,7 @@ class UnifiedApp(tk.Tk):
             _axis_display_for("right"),
             _axis_display_for("third"),
         ]
-        axes_combo = ttk.Combobox(
+        axes_combo = _ui_combobox(
             props_frame,
             textvariable=axes_display_var,
             values=axes_options,
@@ -37788,7 +38186,7 @@ class UnifiedApp(tk.Tk):
         ttk.Label(props_frame, text="Attach to").grid(
             row=1, column=0, sticky="w", pady=2, padx=6
         )
-        coords_combo = ttk.Combobox(
+        coords_combo = _ui_combobox(
             props_frame,
             textvariable=coords_display_var,
             values=[label for label, _value in coords_display_options],
@@ -37843,10 +38241,10 @@ class UnifiedApp(tk.Tk):
             if state.get("selected_index") is not None:
                 _apply_properties(schedule_render=True, refresh=False)
 
-        ttk.Button(color_frame, text="Color...", command=_choose_color).grid(
+        _ui_button(color_frame, text="Color...", command=_choose_color).grid(
             row=0, column=1, padx=(0, 4)
         )
-        ttk.Entry(color_frame, textvariable=color_var, width=10).grid(
+        _ui_entry(color_frame, textvariable=color_var, width=10).grid(
             row=0, column=2, sticky="ew"
         )
         color_frame.grid_columnconfigure(2, weight=1)
@@ -37855,7 +38253,7 @@ class UnifiedApp(tk.Tk):
         ttk.Label(props_frame, text="Alpha").grid(
             row=3, column=0, sticky="w", pady=2, padx=6
         )
-        ttk.Entry(props_frame, textvariable=alpha_var, width=8).grid(
+        _ui_entry(props_frame, textvariable=alpha_var, width=8).grid(
             row=3, column=1, sticky="w", pady=2, padx=6
         )
 
@@ -37879,7 +38277,7 @@ class UnifiedApp(tk.Tk):
             if state.get("selected_index") is not None:
                 _apply_properties(schedule_render=True, refresh=False)
 
-        ttk.Scale(
+        _ui_scale(
             props_frame,
             from_=0.0,
             to=1.0,
@@ -37890,19 +38288,19 @@ class UnifiedApp(tk.Tk):
         ttk.Label(props_frame, text="Line width").grid(
             row=5, column=0, sticky="w", pady=2, padx=6
         )
-        ttk.Entry(props_frame, textvariable=linewidth_var, width=8).grid(
+        _ui_entry(props_frame, textvariable=linewidth_var, width=8).grid(
             row=5, column=1, sticky="w", pady=2, padx=6
         )
         ttk.Label(props_frame, text="Font size").grid(
             row=6, column=0, sticky="w", pady=2, padx=6
         )
-        ttk.Entry(props_frame, textvariable=fontsize_var, width=8).grid(
+        _ui_entry(props_frame, textvariable=fontsize_var, width=8).grid(
             row=6, column=1, sticky="w", pady=2, padx=6
         )
         ttk.Label(props_frame, text="Text").grid(
             row=7, column=0, sticky="w", pady=2, padx=6
         )
-        ttk.Entry(props_frame, textvariable=text_var).grid(
+        _ui_entry(props_frame, textvariable=text_var).grid(
             row=7, column=1, sticky="ew", pady=2, padx=6
         )
 
@@ -37979,7 +38377,7 @@ class UnifiedApp(tk.Tk):
         for idx, (label, coords) in enumerate(anchor_buttons):
             row = idx // 3
             col = idx % 3
-            ttk.Button(
+            _ui_button(
                 anchor_frame,
                 text=label,
                 command=lambda xy=coords: _apply_anchor_preset(xy[0], xy[1]),
@@ -38080,10 +38478,10 @@ class UnifiedApp(tk.Tk):
 
         remove_frame = ttk.Frame(list_frame)
         remove_frame.grid(row=1, column=0, sticky="e", padx=6, pady=(0, 6))
-        ttk.Button(
+        _ui_button(
             remove_frame, text="Remove Selected", command=_remove_selected_element
         ).grid(row=0, column=0, padx=(0, 6))
-        ttk.Button(remove_frame, text="Remove All", command=_remove_all_elements).grid(
+        _ui_button(remove_frame, text="Remove All", command=_remove_all_elements).grid(
             row=0, column=1
         )
 
@@ -38198,7 +38596,7 @@ class UnifiedApp(tk.Tk):
         text_var.trace_add("write", _on_property_change)
         color_var.trace_add("write", _on_color_change)
 
-        ttk.Button(
+        _ui_button(
             props_frame, text="Apply to Selected", command=_apply_properties
         ).grid(row=10, column=0, columnspan=2, pady=(6, 4))
 
@@ -38716,10 +39114,10 @@ class UnifiedApp(tk.Tk):
 
         buttons = ttk.Frame(main)
         buttons.grid(row=3, column=0, columnspan=2, sticky="e", pady=(8, 0))
-        ttk.Button(buttons, text="Save", command=_save_elements).grid(
+        _ui_button(buttons, text="Save", command=_save_elements).grid(
             row=0, column=0, padx=(0, 6)
         )
-        ttk.Button(buttons, text="Close", command=_close_editor).grid(row=0, column=1)
+        _ui_button(buttons, text="Close", command=_close_editor).grid(row=0, column=1)
 
         editor.protocol("WM_DELETE_WINDOW", _close_editor)
         editor.bind("<Delete>", lambda _event: _remove_selected_element())
@@ -40360,10 +40758,7 @@ class UnifiedApp(tk.Tk):
             Used to keep save button state in sync with current state."""
             if save_button is None:
                 return
-            if _selected_formats():
-                save_button.state(["!disabled"])
-            else:
-                save_button.state(["disabled"])
+            self._set_widget_enabled(save_button, bool(_selected_formats()))
 
         # Closure captures _add_plot_tab state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _add_plot_tab.
         def _on_format_toggle():
@@ -40748,11 +41143,11 @@ class UnifiedApp(tk.Tk):
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
 
-        btn_close = ttk.Button(topbar, text="Close Plot", command=_close_this_plot)
+        btn_close = _ui_button(topbar, text="Close Plot", command=_close_this_plot)
 
         btn_close.pack(side="right", padx=6, pady=4)
 
-        btn_refresh = ttk.Button(
+        btn_refresh = _ui_button(
             topbar,
             text="Refresh",
             command=_refresh_panel,
@@ -40762,7 +41157,7 @@ class UnifiedApp(tk.Tk):
 
         if plot_id:
             if plot_key == "fig_combined":
-                btn_elements = ttk.Button(
+                btn_elements = _ui_button(
                     topbar,
                     text="Plot Elements...",
                     command=lambda: self._open_plot_elements_editor(
@@ -40770,20 +41165,20 @@ class UnifiedApp(tk.Tk):
                     ),
                 )
                 btn_elements.pack(side="right", padx=6, pady=4)
-                btn_settings = ttk.Button(
+                btn_settings = _ui_button(
                     topbar,
                     text="Plot Settings...",
                     command=lambda: self._open_plot_settings_dialog(plot_id),
                 )
                 btn_settings.pack(side="right", padx=6, pady=4)
-                btn_trace_settings = ttk.Button(
+                btn_trace_settings = _ui_button(
                     topbar,
                     text="Data Trace Settings...",
                     command=self._open_data_trace_settings_dialog,
                 )
                 btn_trace_settings.pack(side="right", padx=6, pady=4)
             else:
-                btn_elements = ttk.Button(
+                btn_elements = _ui_button(
                     topbar,
                     text="Add Plot Elements...",
                     command=lambda: self._open_plot_elements_editor(
@@ -40791,13 +41186,13 @@ class UnifiedApp(tk.Tk):
                     ),
                 )
                 btn_elements.pack(side="right", padx=6, pady=4)
-                btn_settings = ttk.Button(
+                btn_settings = _ui_button(
                     topbar,
                     text="Plot Settings...",
                     command=lambda: self._open_plot_settings_dialog(plot_id),
                 )
                 btn_settings.pack(side="right", padx=6, pady=4)
-                btn_trace_settings = ttk.Button(
+                btn_trace_settings = _ui_button(
                     topbar,
                     text="Data Trace Settings...",
                     command=self._open_data_trace_settings_dialog,
@@ -40808,14 +41203,14 @@ class UnifiedApp(tk.Tk):
 
         save_controls.pack(side="left", padx=6, pady=4)
 
-        save_button = ttk.Button(
+        save_button = _ui_button(
             save_controls, text="Save As", command=_save_selected_formats
         )
 
         save_button.pack(side="left", padx=(0, 8))
 
         if plot_key == "fig_combined":
-            preview_button = ttk.Button(
+            preview_button = _ui_button(
                 save_controls,
                 text="Plot Preview",
                 command=lambda: self._open_plot_preview(plot_key, plot_id, title),
@@ -40836,7 +41231,7 @@ class UnifiedApp(tk.Tk):
                     pass
                 self._force_plot_refresh(frame, canvas)
 
-            ttk.Checkbutton(
+            _ui_checkbutton(
                 save_controls,
                 text="Center plot legend",
                 variable=self.center_combined_plot_legend,
@@ -40850,7 +41245,7 @@ class UnifiedApp(tk.Tk):
         # Iterate over format_order to apply the per-item logic.
         for fmt in format_order:
 
-            ttk.Checkbutton(
+            _ui_checkbutton(
                 checkbox_frame,
                 text=fmt.upper(),
                 variable=format_vars[fmt],
@@ -43387,12 +43782,12 @@ class UnifiedApp(tk.Tk):
             )
             color_preview.grid(row=0, column=0, sticky="w", padx=(0, 4))
             self._bind_color_preview(color_var, color_preview)
-            ttk.Button(
+            _ui_button(
                 color_frame,
                 text="Pick",
                 command=lambda v=color_var, label=display_label: _pick_color(v, label),
             ).grid(row=0, column=1, padx=(0, 4))
-            ttk.Button(
+            _ui_button(
                 color_frame,
                 text="Clear",
                 command=lambda v=color_var: v.set(""),
@@ -43400,7 +43795,7 @@ class UnifiedApp(tk.Tk):
 
             marker_frame = ttk.Frame(grid)
             marker_frame.grid(row=row_offset, column=2, sticky="w", padx=6, pady=6)
-            marker_combo = ttk.Combobox(
+            marker_combo = _ui_combobox(
                 marker_frame,
                 textvariable=marker_var,
                 values=marker_choices,
@@ -43408,7 +43803,7 @@ class UnifiedApp(tk.Tk):
                 width=8,
             )
             marker_combo.grid(row=0, column=0, sticky="w")
-            ttk.Button(
+            _ui_button(
                 marker_frame,
                 text="Clear",
                 command=lambda v=marker_var: v.set("Default"),
@@ -43416,10 +43811,10 @@ class UnifiedApp(tk.Tk):
 
             size_frame = ttk.Frame(grid)
             size_frame.grid(row=row_offset, column=3, sticky="w", padx=6, pady=6)
-            ttk.Entry(size_frame, textvariable=size_var, width=8).grid(
+            _ui_entry(size_frame, textvariable=size_var, width=8).grid(
                 row=0, column=0, sticky="w"
             )
-            ttk.Button(
+            _ui_button(
                 size_frame,
                 text="Clear",
                 command=lambda v=size_var: v.set(""),
@@ -43427,7 +43822,7 @@ class UnifiedApp(tk.Tk):
 
             linestyle_frame = ttk.Frame(grid)
             linestyle_frame.grid(row=row_offset, column=4, sticky="w", padx=6, pady=6)
-            linestyle_combo = ttk.Combobox(
+            linestyle_combo = _ui_combobox(
                 linestyle_frame,
                 textvariable=linestyle_var,
                 values=LINE_STYLE_CHOICES,
@@ -43435,7 +43830,7 @@ class UnifiedApp(tk.Tk):
                 width=14,
             )
             linestyle_combo.grid(row=0, column=0, sticky="w")
-            ttk.Button(
+            _ui_button(
                 linestyle_frame,
                 text="Clear",
                 command=lambda v=linestyle_var: v.set("Default"),
@@ -43443,16 +43838,16 @@ class UnifiedApp(tk.Tk):
 
             linewidth_frame = ttk.Frame(grid)
             linewidth_frame.grid(row=row_offset, column=5, sticky="w", padx=6, pady=6)
-            ttk.Entry(linewidth_frame, textvariable=linewidth_var, width=8).grid(
+            _ui_entry(linewidth_frame, textvariable=linewidth_var, width=8).grid(
                 row=0, column=0, sticky="w"
             )
-            ttk.Button(
+            _ui_button(
                 linewidth_frame,
                 text="Clear",
                 command=lambda v=linewidth_var: v.set(""),
             ).grid(row=0, column=1, padx=(4, 0))
 
-            priority_combo = ttk.Combobox(
+            priority_combo = _ui_combobox(
                 grid,
                 textvariable=priority_var,
                 values=DATA_TRACE_ZORDER_CHOICES,
@@ -43464,10 +43859,10 @@ class UnifiedApp(tk.Tk):
 
             zorder_frame = ttk.Frame(grid)
             zorder_frame.grid(row=row_offset, column=7, sticky="w", padx=6, pady=6)
-            zorder_entry = ttk.Entry(zorder_frame, textvariable=zorder_var, width=10)
+            zorder_entry = _ui_entry(zorder_frame, textvariable=zorder_var, width=10)
             zorder_entry.grid(row=0, column=0, sticky="w")
             self._attach_tooltip(zorder_entry, zorder_override_tooltip_text)
-            ttk.Button(
+            _ui_button(
                 zorder_frame,
                 text="Clear",
                 command=lambda v=zorder_var, p=priority_var: (
@@ -43476,7 +43871,7 @@ class UnifiedApp(tk.Tk):
                 ),
             ).grid(row=0, column=1, padx=(4, 0))
 
-            ttk.Entry(
+            _ui_entry(
                 grid,
                 textvariable=effective_z_var,
                 width=14,
@@ -43484,10 +43879,10 @@ class UnifiedApp(tk.Tk):
             ).grid(row=row_offset, column=9, sticky="w", padx=6, pady=6)
             start_x_frame = ttk.Frame(grid)
             start_x_frame.grid(row=row_offset, column=8, sticky="w", padx=6, pady=6)
-            ttk.Entry(start_x_frame, textvariable=start_x_var, width=10).grid(
+            _ui_entry(start_x_frame, textvariable=start_x_var, width=10).grid(
                 row=0, column=0, sticky="w"
             )
-            ttk.Button(
+            _ui_button(
                 start_x_frame,
                 text="Clear",
                 command=lambda v=start_x_var: v.set(""),
@@ -43610,10 +44005,10 @@ class UnifiedApp(tk.Tk):
             if close_after:
                 _cancel()
 
-        ttk.Button(
+        _ui_button(
             button_frame, text="Apply", command=lambda: _apply_updates(False)
         ).grid(row=0, column=0, padx=(0, 6))
-        ttk.Button(button_frame, text="OK", command=lambda: _apply_updates(True)).grid(
+        _ui_button(button_frame, text="OK", command=lambda: _apply_updates(True)).grid(
             row=0, column=1, padx=(0, 6)
         )
 
@@ -43641,7 +44036,7 @@ class UnifiedApp(tk.Tk):
                 pass
             self._data_trace_settings_window = None
 
-        ttk.Button(button_frame, text="Cancel", command=_cancel).grid(row=0, column=2)
+        _ui_button(button_frame, text="Cancel", command=_cancel).grid(row=0, column=2)
 
         # Closure captures _open_data_trace_settings_dialog state for callback wiring.
         def _on_close() -> None:
@@ -46274,7 +46669,7 @@ class UnifiedApp(tk.Tk):
         outer.grid_columnconfigure(0, weight=1)
 
         canvas = tk.Canvas(outer, borderwidth=0, highlightthickness=0)
-        vscroll = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        vscroll = _ui_scrollbar(outer, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=vscroll.set)
         canvas.grid(row=0, column=0, sticky="nsew")
         vscroll.grid(row=0, column=1, sticky="ns")
@@ -46640,7 +47035,7 @@ class UnifiedApp(tk.Tk):
                 ttk.Label(label_frame, text=label_text).grid(
                     row=row_index, column=0, sticky="w", padx=(0, 6), pady=2
                 )
-                entry = ttk.Entry(label_frame, textvariable=var, state=entry_state)
+                entry = _ui_entry(label_frame, textvariable=var, state=entry_state)
                 entry.grid(row=row_index, column=1, sticky="ew", pady=2)
 
             row_idx += 1
@@ -46651,7 +47046,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(spacing_frame, text="Derivative axis offset").grid(
                 row=0, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ttk.Entry(
+            _ui_entry(
                 spacing_frame,
                 textvariable=stage_vars[deriv_axis_offset_key],
                 width=8,
@@ -46661,7 +47056,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(spacing_frame, text="Primary Y label padding").grid(
                 row=1, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ttk.Entry(
+            _ui_entry(
                 spacing_frame,
                 textvariable=stage_vars[primary_labelpad_key],
                 width=8,
@@ -46670,7 +47065,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(spacing_frame, text="Derivative label padding").grid(
                 row=2, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            deriv_label_entry = ttk.Entry(
+            deriv_label_entry = _ui_entry(
                 spacing_frame,
                 textvariable=stage_vars[deriv_labelpad_key],
                 width=8,
@@ -46681,14 +47076,14 @@ class UnifiedApp(tk.Tk):
             ttk.Label(spacing_frame, text="Temperature label padding").grid(
                 row=3, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            temp_label_entry = ttk.Entry(
+            temp_label_entry = _ui_entry(
                 spacing_frame,
                 textvariable=stage_vars[temp_labelpad_key],
                 width=8,
                 state=temperature_axis_label_state,
             )
             temp_label_entry.grid(row=3, column=1, sticky="w", pady=2)
-            ttk.Checkbutton(
+            _ui_checkbutton(
                 spacing_frame,
                 text="Mirror attached right Y-axis label spacing to detached axis",
                 variable=stage_mirror_detached_labelpad,
@@ -46697,7 +47092,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(spacing_frame, text="Left padding (%)").grid(
                 row=5, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ttk.Entry(
+            _ui_entry(
                 spacing_frame,
                 textvariable=stage_vars[left_padding_key],
                 width=8,
@@ -46705,7 +47100,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(spacing_frame, text="Right padding (%)").grid(
                 row=6, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ttk.Entry(
+            _ui_entry(
                 spacing_frame,
                 textvariable=stage_vars[right_padding_key],
                 width=8,
@@ -46713,7 +47108,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(spacing_frame, text="Export padding (pt)").grid(
                 row=7, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ttk.Entry(
+            _ui_entry(
                 spacing_frame,
                 textvariable=stage_vars[export_pad_key],
                 width=8,
@@ -46730,7 +47125,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(spacing_frame, text="Title padding (pt)").grid(
                 row=9, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ttk.Entry(
+            _ui_entry(
                 spacing_frame,
                 textvariable=stage_vars[title_pad_key],
                 width=8,
@@ -46741,7 +47136,7 @@ class UnifiedApp(tk.Tk):
             ).grid(
                 row=10, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ttk.Entry(
+            _ui_entry(
                 spacing_frame,
                 textvariable=stage_vars[suptitle_pad_key],
                 width=8,
@@ -46749,7 +47144,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(spacing_frame, text="Suptitle (Job Information) Y (0-1)").grid(
                 row=11, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ttk.Entry(
+            _ui_entry(
                 spacing_frame,
                 textvariable=stage_vars[suptitle_y_key],
                 width=8,
@@ -46757,7 +47152,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(spacing_frame, text="Top margin above plot (%)").grid(
                 row=12, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ttk.Entry(
+            _ui_entry(
                 spacing_frame,
                 textvariable=stage_vars[top_margin_key],
                 width=8,
@@ -46823,7 +47218,7 @@ class UnifiedApp(tk.Tk):
                 ("B", bottom_var),
             ):
                 ttk.Label(row_frame, text=label).pack(side="left", padx=(0, 2))
-                ttk.Entry(row_frame, textvariable=var, width=7).pack(
+                _ui_entry(row_frame, textvariable=var, width=7).pack(
                     side="left", padx=(0, 6)
                 )
 
@@ -46864,13 +47259,13 @@ class UnifiedApp(tk.Tk):
             ttk.Label(font_frame, text="Font family").grid(
                 row=0, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ttk.Entry(
+            _ui_entry(
                 font_frame, textvariable=stage_vars[f"{key_prefix}_font_family"], width=18
             ).grid(row=0, column=1, sticky="w", pady=2)
             ttk.Label(font_frame, text="Suptitle (Job Information) size").grid(
                 row=1, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ttk.Entry(
+            _ui_entry(
                 font_frame,
                 textvariable=stage_vars[f"{key_prefix}_suptitle_fontsize"],
                 width=8,
@@ -46878,7 +47273,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(font_frame, text="Title size").grid(
                 row=2, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ttk.Entry(
+            _ui_entry(
                 font_frame,
                 textvariable=stage_vars[f"{key_prefix}_title_fontsize"],
                 width=8,
@@ -46886,7 +47281,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(font_frame, text="Axis label size").grid(
                 row=3, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ttk.Entry(
+            _ui_entry(
                 font_frame,
                 textvariable=stage_vars[f"{key_prefix}_label_fontsize"],
                 width=8,
@@ -46894,7 +47289,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(font_frame, text="Tick label size").grid(
                 row=4, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ttk.Entry(
+            _ui_entry(
                 font_frame,
                 textvariable=stage_vars[f"{key_prefix}_tick_fontsize"],
                 width=8,
@@ -46902,7 +47297,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(font_frame, text="Main legend size").grid(
                 row=5, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ttk.Entry(
+            _ui_entry(
                 font_frame,
                 textvariable=stage_vars[f"{key_prefix}_legend_fontsize"],
                 width=8,
@@ -46913,7 +47308,7 @@ class UnifiedApp(tk.Tk):
             cycle_legend_entry_state = (
                 "normal" if cycle_legend_available else "disabled"
             )
-            ttk.Entry(
+            _ui_entry(
                 font_frame,
                 textvariable=stage_vars[f"{key_prefix}_cycle_legend_fontsize"],
                 width=8,
@@ -46934,7 +47329,7 @@ class UnifiedApp(tk.Tk):
 
         if is_combined or is_core:
             key_prefix = "combined" if is_combined else "core"
-            ttk.Checkbutton(
+            _ui_checkbutton(
                 legend_frame,
                 text="Wrap legend into rows",
                 variable=stage_vars[f"{key_prefix}_legend_wrap"],
@@ -46943,7 +47338,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(legend_frame, text="Legend rows").grid(
                 row=1, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ttk.Entry(
+            _ui_entry(
                 legend_frame,
                 width=8,
                 textvariable=stage_vars[f"{key_prefix}_legend_rows"],
@@ -46958,7 +47353,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(legend_frame, text="Gap above legend (pt)").grid(
                 row=3, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ttk.Entry(
+            _ui_entry(
                 legend_frame,
                 width=8,
                 textvariable=stage_vars[f"{key_prefix}_legend_label_gap"],
@@ -46973,7 +47368,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(legend_frame, text="X-label spacing from x-ticks (pts)").grid(
                 row=5, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ttk.Entry(
+            _ui_entry(
                 legend_frame,
                 width=8,
                 textvariable=stage_vars[f"{key_prefix}_xlabel_tick_gap"],
@@ -46988,7 +47383,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(legend_frame, text="Bottom margin (pt)").grid(
                 row=7, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ttk.Entry(
+            _ui_entry(
                 legend_frame,
                 width=8,
                 textvariable=stage_vars[f"{key_prefix}_legend_bottom_margin"],
@@ -47001,7 +47396,7 @@ class UnifiedApp(tk.Tk):
             ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
             if is_combined:
-                ttk.Button(
+                _ui_button(
                     legend_frame,
                     text="Combined Plot Layout Tuner...",
                     command=self._open_combined_layout_tuner,
@@ -47106,7 +47501,7 @@ class UnifiedApp(tk.Tk):
                 legend_fill_preview,
                 default_text="Default",
             )
-            ttk.Entry(
+            _ui_entry(
                 legend_fill_frame,
                 textvariable=stage_vars["combined_legend_shadowbox_fill_color"],
                 width=12,
@@ -47131,12 +47526,12 @@ class UnifiedApp(tk.Tk):
                         str(hex_value).upper()
                     )
 
-            ttk.Button(
+            _ui_button(
                 legend_fill_frame,
                 text="Choose...",
                 command=_choose_legend_fill_color,
             ).pack(side="left", padx=(0, 4))
-            ttk.Button(
+            _ui_button(
                 legend_fill_frame,
                 text="Reset",
                 command=lambda: stage_vars[
@@ -47185,18 +47580,18 @@ class UnifiedApp(tk.Tk):
         )
         display_anchor_frame = ttk.Frame(legend_frame)
         display_anchor_frame.grid(row=anchor_row, column=1, sticky="w", pady=2)
-        ttk.Entry(
+        _ui_entry(
             display_anchor_frame,
             textvariable=stage_legend_anchor_y_display,
             width=8,
         ).pack(side="left")
-        ttk.Button(
+        _ui_button(
             display_anchor_frame,
             text="Up",
             width=4,
             command=lambda: _nudge_anchor(stage_legend_anchor_y_display, 1),
         ).pack(side="left", padx=(4, 2))
-        ttk.Button(
+        _ui_button(
             display_anchor_frame,
             text="Down",
             width=5,
@@ -47208,18 +47603,18 @@ class UnifiedApp(tk.Tk):
         )
         export_anchor_frame = ttk.Frame(legend_frame)
         export_anchor_frame.grid(row=anchor_row + 1, column=1, sticky="w", pady=2)
-        ttk.Entry(
+        _ui_entry(
             export_anchor_frame,
             textvariable=stage_legend_anchor_y_export,
             width=8,
         ).pack(side="left")
-        ttk.Button(
+        _ui_button(
             export_anchor_frame,
             text="Up",
             width=4,
             command=lambda: _nudge_anchor(stage_legend_anchor_y_export, 1),
         ).pack(side="left", padx=(4, 2))
-        ttk.Button(
+        _ui_button(
             export_anchor_frame,
             text="Down",
             width=5,
@@ -47479,10 +47874,10 @@ class UnifiedApp(tk.Tk):
             if close_after:
                 self._close_plot_settings_dialog()
 
-        ttk.Button(
+        _ui_button(
             button_frame, text="Apply", command=lambda: _apply_stage_values(False)
         ).grid(row=0, column=0, padx=(0, 6))
-        ttk.Button(
+        _ui_button(
             button_frame, text="Close", command=lambda: _apply_stage_values(True)
         ).grid(row=0, column=1)
 
@@ -51164,14 +51559,6 @@ class UnifiedApp(tk.Tk):
         """
         return [
             {
-                "key": "axes",
-                "title": "Axes",
-                "expanded": True,
-                "collapsible": True,
-                "reorderable": True,
-                "builder": self._build_plot_axes_section,
-            },
-            {
                 "key": "titles",
                 "title": "Titles",
                 "expanded": False,
@@ -51531,13 +51918,13 @@ class UnifiedApp(tk.Tk):
         self._request_plot_settings_scroll_refresh()
 
     def _build_plot_ranges_controls(self, parent) -> None:
-        """Build pinned range controls for quick axis limit editing.
+        """Build range controls for quick axis limit editing.
 
         Purpose:
-            Render frequently used min/max controls in the fixed top card.
+            Render frequently used min/max controls inside Plot Settings.
         Why:
-            Range tuning is the most common task, so those fields should remain
-            visible while lower-frequency settings scroll independently.
+            Range tuning is the most common task and should be grouped with axis
+            controls in the merged Axis & Range section.
         Args:
             parent: Body frame of the pinned ranges card.
         Returns:
@@ -51606,8 +51993,8 @@ class UnifiedApp(tk.Tk):
         Purpose:
             Render axis visibility, padding, and auto-range target controls.
         Why:
-            Axes settings are adjusted frequently after ranges, so they remain the
-            first expanded accordion section under the pinned ranges card.
+            Axes settings are adjusted frequently alongside range edits and are
+            composed into the merged Axis & Range section.
         Args:
             parent: Card body frame produced by `_add_plot_settings_card`.
             pad: Shared padding dictionary for section internals.
@@ -51703,6 +52090,34 @@ class UnifiedApp(tk.Tk):
             btn_auto_axis_settings,
             "Open Axis Auto-Range Settings in a dedicated popup.",
         )
+
+    def _build_plot_axis_range_section(self, parent, pad: dict[str, int]) -> None:
+        """Build one merged Axis & Range section for Plot Settings.
+
+        Purpose:
+            Render frequently edited range fields and axis behaviors in one card.
+        Why:
+            Users typically tune ranges and axis options together while plotting;
+            merging both surfaces reduces section switching and visual overhead.
+        Args:
+            parent: Card body frame produced by `_add_plot_settings_card`.
+            pad: Shared padding dictionary for section internals.
+        Returns:
+            None.
+        Side Effects:
+            Creates all range and axis widgets, preserving existing variable
+            bindings and callbacks (including refresh and auto-range controls).
+        Exceptions:
+            Downstream builders keep best-effort guard behavior.
+        """
+        parent.grid_columnconfigure(0, weight=1)
+        ranges_host = ttk.Frame(parent)
+        ranges_host.grid(row=0, column=0, sticky="ew")
+        axes_host = ttk.Frame(parent)
+        axes_host.grid(row=1, column=0, sticky="ew")
+        # Keep existing builders to preserve callback and variable wiring.
+        self._build_plot_ranges_controls(ranges_host)
+        self._build_plot_axes_section(axes_host, pad)
 
     def _build_plot_titles_section(self, parent, pad: dict[str, int]) -> None:
         """Build the Titles card content for Plot Settings.
@@ -52389,10 +52804,10 @@ class UnifiedApp(tk.Tk):
         """Build the redesigned Plot Settings tab shell.
 
         Purpose:
-            Assemble a fully scrollable Plot Settings card stack with ranges first.
+            Assemble a fully scrollable Plot Settings card stack with Axis & Range first.
         Why:
             A unified scroll surface keeps every section reachable with the wheel
-            while preserving range-first workflow order and existing controls.
+            while preserving axis/range-first workflow order and existing controls.
         Args:
             None.
         Returns:
@@ -52432,7 +52847,7 @@ class UnifiedApp(tk.Tk):
         scroll_shell.grid_columnconfigure(0, weight=1)
 
         canvas = tk.Canvas(scroll_shell, borderwidth=0, highlightthickness=0)
-        vscroll = ttk.Scrollbar(scroll_shell, orient="vertical", command=canvas.yview)
+        vscroll = _ui_scrollbar(scroll_shell, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=vscroll.set)
         canvas.grid(row=0, column=0, sticky="nsew")
         vscroll.grid(row=0, column=1, sticky="ns")
@@ -52492,23 +52907,23 @@ class UnifiedApp(tk.Tk):
 
         pad = {"padx": 8, "pady": 6}
         self._plot_tab_stage_two_built = False
-        ranges_body = self._add_plot_settings_card(
+        axis_range_body = self._add_plot_settings_card(
             content,
-            "ranges",
-            "Ranges",
+            "axis_range",
+            "Axis & Range",
             expanded=True,
             collapsible=False,
             accent=True,
             reorderable=False,
         )
-        self._build_plot_ranges_controls(ranges_body)
+        self._build_plot_axis_range_section(axis_range_body, pad)
         self.after_idle(lambda: self._build_tab_plot_stage_two(content, pad))
 
     def _build_tab_plot_stage_two(self, f, pad):
         """Build deferred accordion cards for Plot Settings.
 
         Purpose:
-            Render Plot Settings accordion sections after the ranges card is built.
+            Render Plot Settings accordion sections after Axis & Range is built.
         Why:
             Deferred build keeps initial tab paint responsive while still exposing
             the complete configuration surface.
@@ -52594,8 +53009,25 @@ class UnifiedApp(tk.Tk):
         self._start_cycle_tab_build()
 
     def _build_tab_cycle_stage_one(self, *, defer=True):
-        """Build tab cycle stage one.
-        Used to assemble tab cycle stage one during UI or plot setup."""
+        """Build stage-one structure for the Cycle Analysis tab.
+
+        Purpose:
+            Create the primary split layout and shared helpers used by later
+            Cycle Analysis build stages.
+        Why:
+            Staged construction keeps initial rendering responsive while still
+            preparing scrollable controls and plotting surfaces.
+        Args:
+            defer: When True, keeps stage orchestration compatible with deferred
+                build scheduling; retained for existing call paths.
+        Returns:
+            None.
+        Side Effects:
+            Initializes cycle build context, creates pane/canvas widgets, and
+            defines button-construction helpers consumed by stage two/three.
+        Exceptions:
+            Missing tab references short-circuit safely without raising.
+        """
         if not getattr(self, "tab_cycle", None):
             return
 
@@ -52680,11 +53112,10 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
-            btn = ttk.Button(
+            btn = _ui_button(
                 holder,
                 text=display_text,
                 command=command,
-                style="TButton",
             )
             btn.pack(fill="both", expand=True)
             if tooltip:
@@ -52713,7 +53144,7 @@ class UnifiedApp(tk.Tk):
         # Tkinter has no native scrollable frame; wrap Cycle controls in a canvas
         # so enlarged UI text does not clip buttons/outputs in the left panel.
         left_canvas = tk.Canvas(left_outer, borderwidth=0, highlightthickness=0)
-        left_scrollbar = ttk.Scrollbar(
+        left_scrollbar = _ui_scrollbar(
             left_outer, orient="vertical", command=left_canvas.yview
         )
         left_canvas.configure(yscrollcommand=left_scrollbar.set)
@@ -52841,8 +53272,24 @@ class UnifiedApp(tk.Tk):
             self._build_tab_cycle_stage_two(defer=False)
 
     def _build_tab_cycle_stage_two(self, *, defer=True):
-        """Build tab cycle stage two.
-        Used to assemble tab cycle stage two during UI or plot setup."""
+        """Build stage-two controls for Cycle Analysis workflows.
+
+        Purpose:
+            Populate the left/right Cycle Analysis panes with core actions,
+            marker workflows, and controls that depend on stage-one context.
+        Why:
+            Separating this stage keeps complex control wiring isolated while
+            preserving deferred-build responsiveness.
+        Args:
+            defer: Maintained for staged-build API compatibility.
+        Returns:
+            None.
+        Side Effects:
+            Creates interactive controls, binds callbacks, and updates cycle
+            UI state references in the shared build context.
+        Exceptions:
+            Returns early when stage-one context is unavailable.
+        """
         ctx = self._cycle_build_ctx
         left = ctx.get("left_frame")
         right = ctx.get("right_frame")
@@ -53013,7 +53460,7 @@ class UnifiedApp(tk.Tk):
                 advanced_visible.set(True)
                 advanced_toggle.configure(text="Hide Advanced / Recompute")
 
-        advanced_toggle = ttk.Button(
+        advanced_toggle = _ui_button(
             advanced_container,
             text="Show Advanced / Recompute",
             command=_toggle_advanced,
@@ -53111,7 +53558,7 @@ class UnifiedApp(tk.Tk):
             ),
         )
 
-        self._auto_detect_chk = ttk.Checkbutton(
+        self._auto_detect_chk = _ui_checkbutton(
             left,
             text="Enable automatic peak/trough detection",
             variable=self.auto_detect_cycles,
@@ -53146,7 +53593,7 @@ class UnifiedApp(tk.Tk):
             pady=scale_len(6),
         )
 
-        self._cycle_temp_combo = ttk.Combobox(
+        self._cycle_temp_combo = _ui_combobox(
             temp_frame,
             textvariable=self.cycle_temp_column,
             state="readonly",
@@ -53200,15 +53647,31 @@ class UnifiedApp(tk.Tk):
             self._build_tab_cycle_stage_three(defer=False)
 
     def _build_tab_cycle_stage_three(self, *, defer=True):
-        """Build tab cycle stage three.
-        Used to assemble tab cycle stage three during UI or plot setup."""
+        """Build stage-three summary/format controls for Cycle Analysis.
+
+        Purpose:
+            Add final-cycle formatting toggles and summary options once stage-two
+            controls are present.
+        Why:
+            This stage groups lower-frequency options separately from primary
+            detection actions to keep the workflow readable.
+        Args:
+            defer: Maintained for staged-build API compatibility.
+        Returns:
+            None.
+        Side Effects:
+            Creates additional checkboxes/frames and stores widget references
+            used by downstream cycle formatting logic.
+        Exceptions:
+            Returns safely when prerequisite stage context is missing.
+        """
         ctx = self._cycle_build_ctx
         left = ctx.get("left_frame")
         right = ctx.get("right_frame")
         if left is None or right is None:
             return
 
-        self.cb_include_moles_legend = ttk.Checkbutton(
+        self.cb_include_moles_legend = _ui_checkbutton(
             left,
             text="Include moles summary in Figure 3 legend",
             variable=self.include_moles_legend,
@@ -53227,25 +53690,25 @@ class UnifiedApp(tk.Tk):
         )
         lf_summary_fmt.grid_columnconfigure(0, weight=1)
 
-        ttk.Checkbutton(
+        _ui_checkbutton(
             lf_summary_fmt,
             text="Compact summary",
             variable=self.summary_compact,
         ).grid(row=0, column=0, sticky="w", padx=6, pady=(4, 2))
 
-        ttk.Checkbutton(
+        _ui_checkbutton(
             lf_summary_fmt,
             text="Include diagnostics",
             variable=self.summary_include_diagnostics,
         ).grid(row=1, column=0, sticky="w", padx=6, pady=2)
 
-        ttk.Checkbutton(
+        _ui_checkbutton(
             lf_summary_fmt,
             text="Include per-cycle gas mass",
             variable=self.summary_include_per_cycle_gas_mass,
         ).grid(row=2, column=0, sticky="w", padx=6, pady=2)
 
-        self._summary_include_conversion_chk = ttk.Checkbutton(
+        self._summary_include_conversion_chk = _ui_checkbutton(
             lf_summary_fmt,
             text="Include conversion estimate",
             variable=self.summary_include_conversion_estimate,
@@ -62932,8 +63395,23 @@ class UnifiedApp(tk.Tk):
         return workflow_key, guide_key, guide, workflow_meta
 
     def _update_sol_helper_visibility(self) -> None:
-        """Update sol helper visibility.
-        Used to keep sol helper visibility in sync with current state."""
+        """Update helper panel visibility and focus-button availability.
+
+        Purpose:
+            Show or hide the solubility helper panel based on user preference.
+        Why:
+            The helper panel is optional, but its focus button state must stay
+            consistent across ttk/CTk widgets when the panel is hidden/shown.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Updates `_sol_helper_visible`, toggles helper-frame visibility, and
+            disables the helper focus button when helper UI is hidden.
+        Exceptions:
+            Uses best-effort guards around geometry updates.
+        """
         frame = getattr(self, "_sol_helper_frame", None)
         btn = getattr(self, "_sol_helper_focus_btn", None)
         show = bool(
@@ -62951,7 +63429,7 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
         if not show and btn is not None:
-            btn.state(["disabled"])
+            self._set_widget_enabled(btn, False)
         if show:
             self._update_sol_helper_contents()
 
@@ -63051,8 +63529,24 @@ class UnifiedApp(tk.Tk):
         return low < value < high
 
     def _update_sol_helper_contents(self) -> None:
-        """Update sol helper contents.
-        Used to keep sol helper contents in sync with current state."""
+        """Recompute helper progress text and focus-button state.
+
+        Purpose:
+            Refresh guided-step completion status for the active solubility mode.
+        Why:
+            Users rely on helper progress and next-step focus cues while entering
+            workflow inputs, and button state must remain toolkit-compatible.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Updates helper summary/steps textvars, tracks the next incomplete
+            step in `_sol_helper_next_spec`, and enables/disables the helper
+            focus button.
+        Exceptions:
+            None.
+        """
         summary_var = getattr(self, "_sol_helper_summary_var", None)
         steps_var = getattr(self, "_sol_helper_steps_var", None)
         if summary_var is None or steps_var is None:
@@ -63094,9 +63588,9 @@ class UnifiedApp(tk.Tk):
         btn = getattr(self, "_sol_helper_focus_btn", None)
         if btn is not None:
             if self._sol_helper_visible and next_spec is not None:
-                btn.state(["!disabled"])
+                self._set_widget_enabled(btn, True)
             else:
-                btn.state(["disabled"])
+                self._set_widget_enabled(btn, False)
         extra_tips: List[str] = []
         if workflow_key == "Analysis":
             extra_tips.append(
@@ -64989,7 +65483,7 @@ class UnifiedApp(tk.Tk):
 
         canvas = tk.Canvas(container, highlightthickness=0)
         canvas.grid(row=0, column=0, sticky="nsew")
-        scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        scrollbar = _ui_scrollbar(container, orient="vertical", command=canvas.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
         canvas.configure(yscrollcommand=scrollbar.set)
 
@@ -65276,7 +65770,7 @@ class UnifiedApp(tk.Tk):
                     row=0, column=0, sticky="w", padx=(0, 8)
                 )
                 var = _ensure_sol_var(key)
-                entry = ttk.Entry(row_frame, textvariable=var, width=18)
+                entry = _ui_entry(row_frame, textvariable=var, width=18)
                 entry.grid(row=0, column=1, sticky="ew", padx=(0, 12))
                 default_value = SOL_PLANNING_DEFAULTS.get(key)
                 self._record_solubility_default(key, default_value)
@@ -65345,7 +65839,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(slider_frame, text="Target pH slider").grid(
                 row=0, column=0, sticky="w"
             )
-            ttk.Scale(
+            _ui_scale(
                 slider_frame,
                 from_=6.5,
                 to=9.5,
@@ -65434,7 +65928,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(model_frame, text="Speciation model").grid(
                 row=0, column=0, sticky="w", padx=(8, 6), pady=2
             )
-            spec_combo = ttk.Combobox(
+            spec_combo = _ui_combobox(
                 model_frame,
                 textvariable=spec_var,
                 values=list(self._workflow_model_display_map.keys()),
@@ -65448,7 +65942,7 @@ class UnifiedApp(tk.Tk):
                     key, event
                 ),
             )
-            ttk.Checkbutton(
+            _ui_checkbutton(
                 model_frame,
                 text="Use same model for speciation and predicted pH",
                 variable=use_same_var,
@@ -65462,7 +65956,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(ph_frame, text="Predicted pH model").grid(
                 row=0, column=0, sticky="w", padx=(0, 6), pady=2
             )
-            ph_combo = ttk.Combobox(
+            ph_combo = _ui_combobox(
                 ph_frame,
                 textvariable=ph_var,
                 values=list(self._workflow_model_display_map.keys()),
@@ -65503,12 +65997,12 @@ class UnifiedApp(tk.Tk):
             self._sync_planning_mass()
         helper_end_row = _insert_workflow_helper_section(planning_tab, planning_rows)
         button_row = helper_end_row
-        ttk.Button(
+        _ui_button(
             planning_tab,
             text="Run Planning Scenario",
             command=self._run_planning_scenario,
         ).grid(row=button_row, column=0, sticky="w", padx=8, pady=(2, 4))
-        ttk.Button(
+        _ui_button(
             planning_tab, text="Clear Inputs", command=self._clear_sol_helper_inputs
         ).grid(row=button_row, column=1, sticky="e", padx=8, pady=(2, 4))
 
@@ -65526,7 +66020,7 @@ class UnifiedApp(tk.Tk):
         ttk.Label(planning_tab, text=plot_ph_label).grid(
             row=button_row + 1, column=0, sticky="w", padx=8, pady=(6, 2)
         )
-        ttk.Entry(planning_tab, textvariable=planning_plot_var, width=10).grid(
+        _ui_entry(planning_tab, textvariable=planning_plot_var, width=10).grid(
             row=button_row + 1, column=1, sticky="w", padx=(0, 12), pady=(6, 2)
         )
 
@@ -65546,7 +66040,7 @@ class UnifiedApp(tk.Tk):
         ttk.Label(target_box, text="Target pH slider").grid(
             row=0, column=0, sticky="w", padx=(8, 4), pady=2
         )
-        ttk.Scale(
+        _ui_scale(
             target_box,
             from_=6.5,
             to=9.5,
@@ -65620,7 +66114,7 @@ class UnifiedApp(tk.Tk):
         ttk.Label(pco2_frame, text="pCO2 (atm)").grid(
             row=0, column=0, sticky="w", padx=(0, 4)
         )
-        pco2_entry = ttk.Entry(pco2_frame, textvariable=pco2_var, width=12)
+        pco2_entry = _ui_entry(pco2_frame, textvariable=pco2_var, width=12)
         pco2_entry.grid(row=0, column=1, sticky="w")
         self._solubility_field_meta["headspace_pco2_atm"]["entry"] = pco2_entry
         _register_planning_field("headspace_pco2_atm", pco2_frame, pco2_var, pco2_entry)
@@ -65630,7 +66124,7 @@ class UnifiedApp(tk.Tk):
         ttk.Label(kh_frame, text="Henry constant (mol/L/atm)").grid(
             row=0, column=0, sticky="w", padx=(0, 4)
         )
-        kh_entry = ttk.Entry(kh_frame, textvariable=kh_var, width=12)
+        kh_entry = _ui_entry(kh_frame, textvariable=kh_var, width=12)
         kh_entry.grid(row=0, column=1, sticky="w")
         self._solubility_field_meta["headspace_kh_m_per_atm"]["entry"] = kh_entry
         _register_planning_field("headspace_kh_m_per_atm", kh_frame, kh_var, kh_entry)
@@ -65640,7 +66134,7 @@ class UnifiedApp(tk.Tk):
         ttk.Label(headspace_vol_frame, text="Headspace Volume (L)").grid(
             row=0, column=0, sticky="w", padx=(0, 4)
         )
-        headspace_vol_entry = ttk.Entry(
+        headspace_vol_entry = _ui_entry(
             headspace_vol_frame, textvariable=planning_headspace_volume_var, width=12
         )
         headspace_vol_entry.grid(row=0, column=1, sticky="w", padx=(0, 12))
@@ -65669,7 +66163,7 @@ class UnifiedApp(tk.Tk):
         analysis_slider_row = helper_end_row
         _insert_shared_slider(analysis_tab, analysis_slider_row)
         analysis_button_row = analysis_slider_row + 1
-        ttk.Button(
+        _ui_button(
             analysis_tab,
             text="Import from Cycle Analysis",
             command=self._send_cycle_to_solubility,
@@ -65680,7 +66174,7 @@ class UnifiedApp(tk.Tk):
             padx=8,
             pady=(4, 2),
         )
-        ttk.Button(
+        _ui_button(
             analysis_tab, text="Run Analysis", command=self._run_analysis_scenario
         ).grid(
             row=analysis_button_row,
@@ -65760,7 +66254,7 @@ class UnifiedApp(tk.Tk):
         reprocess_slider_row = helper_end_row
         _insert_shared_slider(reprocess_tab, reprocess_slider_row)
         reprocess_button_row = reprocess_slider_row + 1
-        ttk.Button(
+        _ui_button(
             reprocess_tab,
             text="Run Reprocessing Plan",
             command=self._run_reprocessing_scenario,
@@ -65771,7 +66265,7 @@ class UnifiedApp(tk.Tk):
             padx=8,
             pady=(4, 2),
         )
-        ttk.Button(
+        _ui_button(
             reprocess_tab, text="Log Measurement", command=self._log_sol_measurement
         ).grid(
             row=reprocess_button_row,
@@ -65780,7 +66274,7 @@ class UnifiedApp(tk.Tk):
             padx=8,
             pady=(4, 2),
         )
-        ttk.Button(
+        _ui_button(
             reprocess_tab,
             text="Import from Cycle Analysis",
             command=self._import_cycle_to_reprocessing,
@@ -65813,7 +66307,7 @@ class UnifiedApp(tk.Tk):
         ]
         # Iterate over indexed elements from action_items to apply the per-item logic.
         for idx, (text, cmd) in enumerate(action_items):
-            ttk.Button(action_bar, text=text, command=cmd).grid(
+            _ui_button(action_bar, text=text, command=cmd).grid(
                 row=0, column=idx, sticky="w", padx=(0, 8)
             )
 
@@ -66035,7 +66529,7 @@ class UnifiedApp(tk.Tk):
         ):
             timeline_tree.heading(col, text=heading)
             timeline_tree.column(col, anchor="center", width=100)
-        vscroll = ttk.Scrollbar(
+        vscroll = _ui_scrollbar(
             tree_frame, orient="vertical", command=timeline_tree.yview
         )
         timeline_tree.configure(yscrollcommand=vscroll.set)
@@ -66086,37 +66580,37 @@ class UnifiedApp(tk.Tk):
         callout_text.grid(row=0, column=0, columnspan=5, sticky="nsew")
         self._enable_text_mousewheel(callout_text)
         self._sol_cycle_callouts = callout_text
-        export_csv_btn = ttk.Button(
+        export_csv_btn = _ui_button(
             callout_frame,
             text="Export Timeline CSV",
             command=self._export_cycle_timeline_csv,
         )
         export_csv_btn.grid(row=1, column=0, sticky="w", padx=4, pady=4)
-        export_plot_btn = ttk.Button(
+        export_plot_btn = _ui_button(
             callout_frame,
             text="Export Timeline Plot",
             command=self._export_cycle_timeline_plot,
         )
         export_plot_btn.grid(row=1, column=1, sticky="w", padx=4, pady=4)
-        export_table_btn = ttk.Button(
+        export_table_btn = _ui_button(
             callout_frame,
             text="Export Timeline Table",
             command=self._export_cycle_timeline_table,
         )
         export_table_btn.grid(row=1, column=2, sticky="w", padx=4, pady=4)
-        export_opts_btn = ttk.Button(
+        export_opts_btn = _ui_button(
             callout_frame,
             text="Export Options...",
             command=self._open_timeline_export_options,
         )
         export_opts_btn.grid(row=1, column=3, sticky="w", padx=4, pady=4)
-        expand_btn = ttk.Button(
+        expand_btn = _ui_button(
             callout_frame,
             text="Expand Timeline",
             command=self._open_timeline_viewer,
         )
         expand_btn.grid(row=1, column=4, sticky="w", padx=4, pady=4)
-        ttk.Button(
+        _ui_button(
             callout_frame,
             text="Scroll to Latest",
             command=self._scroll_callouts_to_latest,
@@ -66133,13 +66627,13 @@ class UnifiedApp(tk.Tk):
         math_box.grid_columnconfigure(0, weight=1)
         math_box.grid_columnconfigure(1, weight=0)
         self._sol_show_math_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
+        _ui_checkbutton(
             math_box,
             text="Show detailed math calculations",
             variable=self._sol_show_math_var,
             command=self._toggle_sol_math_block,
         ).grid(row=0, column=0, sticky="w", padx=8, pady=(4, 2))
-        self._sol_math_view_btn = ttk.Button(
+        self._sol_math_view_btn = _ui_button(
             math_box,
             text="Open math viewer",
             command=self._open_sol_math_viewer,
@@ -70171,18 +70665,35 @@ class UnifiedApp(tk.Tk):
         self._refresh_math_viewer_state()
 
     def _refresh_math_viewer_state(self) -> None:
-        """Refresh math viewer state.
-        Used to sync math viewer state with current settings."""
+        """Synchronize math-viewer button availability with current prerequisites.
+
+        Purpose:
+            Enable the math-viewer launch button only when detailed math output
+            is enabled and populated.
+        Why:
+            The button may be ttk or CTk after staged migration, so state updates
+            must use toolkit-agnostic handling.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Enables/disables `_sol_math_view_btn` and closes an open viewer when
+            prerequisites are not met.
+        Exceptions:
+            None.
+        """
         button = getattr(self, "_sol_math_view_btn", None)
         sections = getattr(self, "_sol_math_sections", [])
         if button is None:
             return
         toggle_var = getattr(self, "_sol_show_math_var", None)
         if not toggle_var or not toggle_var.get() or not sections:
-            button.state(["disabled"])
+            # Use shared state helper so ttk and CTk buttons behave consistently.
+            self._set_widget_enabled(button, False)
             self._close_sol_math_window()
             return
-        button.state(["!disabled"])
+        self._set_widget_enabled(button, True)
 
     def _open_sol_math_viewer(self) -> None:
         """Open sol math viewer.
@@ -73480,7 +73991,7 @@ class UnifiedApp(tk.Tk):
         # enable full-tab vertical scrolling without changing inner layout logic.
         final_report_canvas = tk.Canvas(outer, highlightthickness=0)
         final_report_canvas.grid(row=0, column=0, sticky="nsew")
-        final_report_scrollbar = ttk.Scrollbar(
+        final_report_scrollbar = _ui_scrollbar(
             outer, orient="vertical", command=final_report_canvas.yview
         )
         final_report_scrollbar.grid(row=0, column=1, sticky="ns")
@@ -73576,7 +74087,7 @@ class UnifiedApp(tk.Tk):
             row=0, column=0, sticky="w"
         )
         self._final_report_title_var = tk.StringVar()
-        ttk.Entry(
+        _ui_entry(
             top_frame,
             textvariable=self._final_report_title_var,
         ).grid(row=0, column=1, sticky="ew", padx=(8, 0))
@@ -73587,7 +74098,7 @@ class UnifiedApp(tk.Tk):
         self._final_report_combined_title_var = tk.StringVar(
             value=final_state.get("combined_plot_title_override", "")
         )
-        ttk.Entry(
+        _ui_entry(
             top_frame,
             textvariable=self._final_report_combined_title_var,
         ).grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(4, 0))
@@ -73605,7 +74116,7 @@ class UnifiedApp(tk.Tk):
         self._final_report_template_var = tk.StringVar(
             value=FINAL_REPORT_TEMPLATE_PLACEHOLDER
         )
-        self._final_report_template_combo = ttk.Combobox(
+        self._final_report_template_combo = _ui_combobox(
             template_frame,
             textvariable=self._final_report_template_var,
             state="readonly",
@@ -73618,17 +74129,17 @@ class UnifiedApp(tk.Tk):
         )
         template_button_bar = ttk.Frame(template_frame)
         template_button_bar.grid(row=0, column=2, padx=(8, 0))
-        ttk.Button(
+        _ui_button(
             template_button_bar,
             text="Save As Template",
             command=self._save_final_report_template,
         ).pack(side="left", padx=2)
-        ttk.Button(
+        _ui_button(
             template_button_bar,
             text="Update Template",
             command=self._update_final_report_template,
         ).pack(side="left", padx=2)
-        ttk.Button(
+        _ui_button(
             template_button_bar,
             text="Delete Template",
             command=self._delete_final_report_template,
@@ -73642,7 +74153,7 @@ class UnifiedApp(tk.Tk):
             row=0, column=0, sticky="w", padx=4, pady=4
         )
         self._final_report_layout_mode_var = tk.StringVar()
-        ttk.Combobox(
+        _ui_combobox(
             layout_frame,
             textvariable=self._final_report_layout_mode_var,
             values=list(FINAL_REPORT_LAYOUT_MODES),
@@ -73652,7 +74163,7 @@ class UnifiedApp(tk.Tk):
             row=1, column=0, sticky="w", padx=4, pady=4
         )
         self._final_report_fit_mode_var = tk.StringVar()
-        ttk.Combobox(
+        _ui_combobox(
             layout_frame,
             textvariable=self._final_report_fit_mode_var,
             values=list(FINAL_REPORT_FIT_MODES),
@@ -73662,7 +74173,7 @@ class UnifiedApp(tk.Tk):
             row=1, column=2, sticky="w", padx=4, pady=4
         )
         self._final_report_safe_margins_var = tk.StringVar()
-        ttk.Combobox(
+        _ui_combobox(
             layout_frame,
             textvariable=self._final_report_safe_margins_var,
             values=list(FINAL_REPORT_SAFE_MARGIN_PRESETS),
@@ -73699,7 +74210,7 @@ class UnifiedApp(tk.Tk):
         ).grid(row=0, column=3, sticky="w", padx=4, pady=4)
 
         self._final_report_show_page_numbers_var = tk.BooleanVar()
-        ttk.Checkbutton(
+        _ui_checkbutton(
             typography_frame,
             text="Show page numbers",
             variable=self._final_report_show_page_numbers_var,
@@ -73713,7 +74224,7 @@ class UnifiedApp(tk.Tk):
         )
 
         self._final_report_show_section_headers_var = tk.BooleanVar()
-        ttk.Checkbutton(
+        _ui_checkbutton(
             typography_frame,
             text="Show section headers",
             variable=self._final_report_show_section_headers_var,
@@ -73729,7 +74240,7 @@ class UnifiedApp(tk.Tk):
             row=2, column=0, sticky="w", padx=4, pady=(0, 8)
         )
         self._final_report_table_style_var = tk.StringVar()
-        ttk.Combobox(
+        _ui_combobox(
             typography_frame,
             textvariable=self._final_report_table_style_var,
             values=list(FINAL_REPORT_TABLE_STYLE_PRESETS),
@@ -73739,13 +74250,13 @@ class UnifiedApp(tk.Tk):
 
         action_frame = ttk.Frame(scroll_content)
         action_frame.pack(fill="x", padx=8, pady=(0, 8))
-        ttk.Button(
+        _ui_button(
             action_frame,
             text="Report Preview",
             command=self._open_final_report_preview_window,
             padding=(12, 4),
         ).pack(side="left", padx=(0, 8))
-        ttk.Button(
+        _ui_button(
             action_frame,
             text="Generate Final Report...",
             command=self._prompt_final_report_generation,
@@ -73796,7 +74307,7 @@ class UnifiedApp(tk.Tk):
                 row_frame.pack(fill="x", padx=4, pady=2)
                 var = tk.BooleanVar()
                 self._final_report_section_vars[section_id] = var
-                ttk.Checkbutton(
+                _ui_checkbutton(
                     row_frame,
                     text=metadata.get("label", section_id),
                     variable=var,
@@ -73807,7 +74318,7 @@ class UnifiedApp(tk.Tk):
                 control_col = 0
                 header_var = tk.BooleanVar()
                 self._final_report_section_header_vars[section_id] = header_var
-                ttk.Checkbutton(
+                _ui_checkbutton(
                     controls_frame,
                     text="Header",
                     variable=header_var,
@@ -73817,7 +74328,7 @@ class UnifiedApp(tk.Tk):
                 if metadata.get("type") in ("figure", "table"):
                     caption_var = tk.BooleanVar()
                     self._final_report_section_caption_vars[section_id] = caption_var
-                    ttk.Checkbutton(
+                    _ui_checkbutton(
                         controls_frame,
                         text="Caption",
                         variable=caption_var,
@@ -73830,7 +74341,7 @@ class UnifiedApp(tk.Tk):
                     self._final_report_section_caption_placement_vars[section_id] = (
                         placement_var
                     )
-                    placement_combo = ttk.Combobox(
+                    placement_combo = _ui_combobox(
                         controls_frame,
                         values=FINAL_REPORT_CAPTION_PLACEMENTS,
                         textvariable=placement_var,
@@ -73851,7 +74362,7 @@ class UnifiedApp(tk.Tk):
                         row=0, column=control_col, padx=(4, 0)
                     )
                     control_col += 1
-                    ttk.Combobox(
+                    _ui_combobox(
                         controls_frame,
                         values=FINAL_REPORT_ORIENTATION_OPTIONS,
                         textvariable=orientation_var,
@@ -73873,7 +74384,7 @@ class UnifiedApp(tk.Tk):
         self._final_report_section_order_listbox.pack(
             side="left", fill="both", expand=True, padx=(4, 0), pady=4
         )
-        order_scroll = ttk.Scrollbar(
+        order_scroll = _ui_scrollbar(
             order_frame,
             orient="vertical",
             command=self._final_report_section_order_listbox.yview,
@@ -73884,12 +74395,12 @@ class UnifiedApp(tk.Tk):
         )
         reorder_buttons = ttk.Frame(order_frame)
         reorder_buttons.pack(side="right", fill="y", padx=(0, 4), pady=4)
-        ttk.Button(
+        _ui_button(
             reorder_buttons,
             text="Move Up",
             command=self._move_final_report_section_up,
         ).pack(fill="x", pady=2)
-        ttk.Button(
+        _ui_button(
             reorder_buttons,
             text="Move Down",
             command=self._move_final_report_section_down,
@@ -73918,11 +74429,11 @@ class UnifiedApp(tk.Tk):
             preview_canvas_container, bg="white", highlightthickness=0, height=220
         )
         preview_canvas.grid(row=0, column=0, sticky="nsew")
-        preview_canvas_scroll_y = ttk.Scrollbar(
+        preview_canvas_scroll_y = _ui_scrollbar(
             preview_canvas_container, orient="vertical", command=preview_canvas.yview
         )
         preview_canvas_scroll_y.grid(row=0, column=1, sticky="ns")
-        preview_canvas_scroll_x = ttk.Scrollbar(
+        preview_canvas_scroll_x = _ui_scrollbar(
             preview_canvas_container, orient="horizontal", command=preview_canvas.xview
         )
         preview_canvas_scroll_x.grid(row=1, column=0, sticky="ew")
@@ -73945,17 +74456,17 @@ class UnifiedApp(tk.Tk):
         self._enable_text_mousewheel(self._final_report_preview_text)
         preview_buttons = ttk.Frame(preview_frame)
         preview_buttons.pack(fill="x", padx=6, pady=(0, 6))
-        ttk.Button(
+        _ui_button(
             preview_buttons,
             text="Open Preview Window",
             command=self._open_final_report_preview_window,
         ).pack(side="left", padx=(0, 4))
-        ttk.Button(
+        _ui_button(
             preview_buttons,
             text="Render Selected Page Preview",
             command=self._final_report_render_selected_page_preview,
         ).pack(side="left", padx=(0, 4))
-        ttk.Button(
+        _ui_button(
             preview_buttons,
             text="Update Layout Preview",
             command=self._refresh_final_report_preview,
@@ -73969,8 +74480,23 @@ class UnifiedApp(tk.Tk):
         self._refresh_final_report_preview()
 
     def _prompt_final_report_generation(self) -> None:
-        """Perform prompt final report generation.
-        Used to keep the workflow logic localized and testable."""
+        """Open the final-report export format prompt and dispatch generation.
+
+        Purpose:
+            Ask the user for output format before generating the Final Report.
+        Why:
+            The report pipeline supports multiple formats and needs an explicit
+            format choice at execution time.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Creates a modal dialog, captures format choice, and triggers report
+            generation callbacks on confirmation.
+        Exceptions:
+            Dialog callbacks use best-effort guards to avoid UI interruption.
+        """
         dialog = tk.Toplevel(self)
         dialog.title("Generate Final Report")
         dialog.transient(self)
@@ -73987,13 +74513,13 @@ class UnifiedApp(tk.Tk):
         choice_var = tk.StringVar(value="pdf")
         options_frame = ttk.Frame(dialog)
         options_frame.pack(fill="x", padx=pad_x)
-        ttk.Radiobutton(
+        _ui_radiobutton(
             options_frame, text="PDF", variable=choice_var, value="pdf"
         ).pack(anchor="w")
-        ttk.Radiobutton(
+        _ui_radiobutton(
             options_frame, text="PNG", variable=choice_var, value="png"
         ).pack(anchor="w")
-        ttk.Radiobutton(
+        _ui_radiobutton(
             options_frame, text="PDF + PNG", variable=choice_var, value="both"
         ).pack(anchor="w")
 
@@ -74031,9 +74557,9 @@ class UnifiedApp(tk.Tk):
             Used to keep the workflow logic localized and testable."""
             _close_dialog()
 
-        generate_btn = ttk.Button(button_frame, text="Generate", command=_generate)
+        generate_btn = _ui_button(button_frame, text="Generate", command=_generate)
         generate_btn.pack(side="right")
-        ttk.Button(button_frame, text="Cancel", command=_cancel).pack(
+        _ui_button(button_frame, text="Cancel", command=_cancel).pack(
             side="right", padx=(0, 8)
         )
 
@@ -83057,8 +83583,28 @@ class UnifiedApp(tk.Tk):
         auto_flags=None,
         df_snapshot=None,
     ):
-        """Compute axis ranges for snapshot.
-        Used to derive axis ranges for snapshot for analysis or plotting."""
+        """Compute auto-axis limits for a data snapshot using current preferences.
+
+        Purpose:
+            Derive time/pressure/temperature/derivative bounds from snapshot data.
+        Why:
+            Refresh Axis Ranges must honor auto-range flags and span padding while
+            falling back to current manual values when data is missing/invalid.
+        Args:
+            columns_snapshot: Mapping of logical channels (`x`, `y1`, etc.) to
+                selected dataframe column names.
+            axis_pad_pct: Padding percentage applied to each computed axis span.
+            fallback: Dict of fallback min/max values for all supported axes.
+            series_map: Optional precomputed series overrides by logical key.
+            auto_flags: Optional per-axis auto-enable flags.
+            df_snapshot: Optional dataframe override; defaults to `self.df`.
+        Returns:
+            Dict[str, float] | None: Computed limits or `None` when no dataframe exists.
+        Side Effects:
+            None; this method only computes and returns values.
+        Exceptions:
+            Internal per-axis failures fall back to provided values instead of raising.
+        """
 
         data_frame = df_snapshot if df_snapshot is not None else self.df
         if data_frame is None:
@@ -83178,10 +83724,11 @@ class UnifiedApp(tk.Tk):
                 try:
 
                     x_min_data, x_max_data = _series_extent(x_series)
-
-                    result["x_min"] = self._round_axis_value(x_min_data - 0.02)
-
-                    result["x_max"] = self._round_axis_value(x_max_data + 0.02)
+                    x_span = max(x_max_data - x_min_data, 0.0)
+                    # Use the same percent-based span padding rule as Y-axes.
+                    x_pad = max(pad_fraction * x_span, 0.02 if x_span == 0 else 0.0)
+                    result["x_min"] = self._round_axis_value(x_min_data - x_pad)
+                    result["x_max"] = self._round_axis_value(x_max_data + x_pad)
 
                 except Exception:
 
@@ -87839,17 +88386,32 @@ if __name__ == "__main__":
 
         sys.exit(0)
 
-    app = UnifiedApp()
-
-    app.mainloop()
-
+    app = None
     try:
-
-        plt.close("all")
-
+        app = UnifiedApp()
+        app.mainloop()
     except Exception:
+        # Tear down partially initialized Tk roots so pending `after(...)`
+        # callbacks do not fire against destroyed commands during startup failure.
+        try:
+            if app is not None:
+                app.destroy()
+            else:
+                default_root = getattr(tk, "_default_root", None)
+                if default_root is not None:
+                    default_root.destroy()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid masking root cause.
+            pass
+        raise
+    finally:
+        try:
 
-        # Best-effort guard; ignore failures to avoid interrupting the workflow.
-        pass
+            plt.close("all")
+
+        except Exception:
+
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
 
     sys.exit(0)
