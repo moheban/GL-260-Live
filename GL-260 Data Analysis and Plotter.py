@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.13.1
-# Date: 2026-02-10
+# Version: v2.14.0
+# Date: 2026-02-11
 
 import os
 import sys
@@ -84,6 +84,11 @@ from tkinter import (
     simpledialog,
     colorchooser,
 )
+
+try:
+    import customtkinter as ctk  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    ctk = None
 
 import json
 import csv
@@ -9241,7 +9246,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.13.1"
+APP_VERSION = "v2.14.0"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -49781,7 +49786,7 @@ class UnifiedApp(tk.Tk):
 
     # UI Builders
 
-    def _build_tab_plot(self):
+    def _build_tab_plot_legacy_pre_ctk(self):
         """Build the Plot Settings tab UI.
 
         Purpose:
@@ -50223,7 +50228,7 @@ class UnifiedApp(tk.Tk):
         if not getattr(self, "_plot_tab_stage_two_built", False):
             self._build_tab_plot_stage_two(content, pad)
 
-    def _build_tab_plot_stage_two(self, f, pad):
+    def _build_tab_plot_stage_two_legacy_pre_ctk(self, f, pad):
         """Build the second stage of the Plot Settings tab.
 
         Purpose:
@@ -50688,6 +50693,1240 @@ class UnifiedApp(tk.Tk):
         self._apply_auto_state(self.auto_deriv_ticks, self._tick_entries_deriv)
 
         self._refresh_combined_axis_choices()
+
+    def _request_plot_settings_scroll_refresh(self) -> None:
+        """Request a Plot Settings canvas scrollregion refresh.
+
+        Purpose:
+            Recalculate the scrollregion after accordion cards expand or collapse.
+        Why:
+            Dynamic card visibility changes the content height and the canvas bounds
+            must be updated to keep wheel/scrollbar behavior accurate.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Calls the cached scrollregion callback set by `_build_tab_plot`.
+        Exceptions:
+            Best-effort only; callback failures are ignored to avoid interrupting
+            normal UI use.
+        """
+        callback = getattr(self, "_plot_settings_refresh_scroll_region", None)
+        if not callable(callback):
+            return
+        try:
+            callback()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _create_plot_settings_card(
+        self,
+        parent,
+        title: str,
+        *,
+        section_key: str | None = None,
+        expanded: bool = True,
+        collapsible: bool = True,
+        accent: bool = False,
+    ):
+        """Create one Plot Settings card with optional collapse behavior.
+
+        Purpose:
+            Build a reusable card shell for the redesigned Plot Settings UI.
+        Why:
+            A shared constructor keeps CTk styling and ttk fallback behavior
+            consistent across all cards while preserving existing widget bindings.
+        Args:
+            parent: Parent widget that owns the card.
+            title: Header label shown at the top of the card.
+            section_key: Stable key for in-memory expanded/collapsed state tracking.
+            expanded: Initial card-body visibility for collapsible cards.
+            collapsible: True to add a toggleable body, False for fixed visibility.
+            accent: True to apply highlighted styling for the pinned ranges card.
+        Returns:
+            Tuple[Any, ttk.Frame]: Card container widget and its content body frame.
+        Side Effects:
+            Creates child widgets and stores card state in `_plot_settings_card_states`.
+        Exceptions:
+            Uses best-effort guards for styling/callback updates to keep startup stable.
+        """
+        ctk_module = ctk
+        if ctk_module is not None:
+            fg_color = ("#F4F8FF", "#1E2630") if accent else ("#FFFFFF", "#252526")
+            border_color = ("#BFD3EB", "#3E4C5E") if accent else ("#D6D6D6", "#46484D")
+            container = ctk_module.CTkFrame(
+                parent,
+                corner_radius=10,
+                border_width=1,
+                border_color=border_color,
+                fg_color=fg_color,
+            )
+        else:
+            container = tk.Frame(parent, bd=1, relief="solid", highlightthickness=0)
+
+        container.grid_columnconfigure(0, weight=1)
+        header = ttk.Frame(container)
+        header.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+        header.grid_columnconfigure(0, weight=1)
+
+        body = ttk.Frame(container)
+        body.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
+
+        if not collapsible:
+            if ctk_module is not None:
+                ctk_module.CTkLabel(
+                    header,
+                    text=title,
+                    anchor="w",
+                    font=(getattr(self, "_ui_font_family", "Verdana"), 14, "bold"),
+                ).grid(row=0, column=0, sticky="w")
+            else:
+                ttk.Label(header, text=title).grid(row=0, column=0, sticky="w")
+            return container, body
+
+        state_var = tk.BooleanVar(value=bool(expanded))
+        if section_key:
+            states = getattr(self, "_plot_settings_card_states", None)
+            if isinstance(states, dict):
+                states[section_key] = state_var
+
+        holder = {"button": None}
+
+        def _refresh_header() -> None:
+            """Refresh the card header text to match expanded/collapsed state."""
+            arrow = "[-]" if state_var.get() else "[+]"
+            caption = f"{arrow} {title}"
+            button = holder.get("button")
+            if button is None:
+                return
+            try:
+                button.configure(text=caption)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        def _toggle() -> None:
+            """Toggle card visibility and request scrollregion recomputation."""
+            state_var.set(not bool(state_var.get()))
+            if state_var.get():
+                body.grid()
+            else:
+                body.grid_remove()
+            _refresh_header()
+            self._request_plot_settings_scroll_refresh()
+
+        if ctk_module is not None:
+            button = ctk_module.CTkButton(
+                header,
+                text="",
+                command=_toggle,
+                anchor="w",
+                fg_color="transparent",
+                hover_color=("#E7EEF8", "#33404F"),
+                text_color=("black", "white"),
+                corner_radius=6,
+                height=28,
+            )
+        else:
+            button = ttk.Button(header, text="", command=_toggle)
+        holder["button"] = button
+        button.grid(row=0, column=0, sticky="ew")
+
+        if not state_var.get():
+            body.grid_remove()
+        _refresh_header()
+        return container, body
+
+    def _add_plot_settings_card(
+        self,
+        parent,
+        section_key: str,
+        title: str,
+        *,
+        expanded: bool = False,
+        collapsible: bool = True,
+        accent: bool = False,
+    ) -> ttk.Frame:
+        """Create and place one accordion card in the Plot Settings stack.
+
+        Purpose:
+            Centralize row tracking and card-placement behavior for scroll content.
+        Why:
+            Section order is now intent-driven; a single card-placement helper keeps
+            stacking predictable and avoids duplicated row math.
+        Args:
+            parent: Scroll content frame that owns the accordion cards.
+            section_key: Stable identifier for state/body tracking dictionaries.
+            title: Card header text.
+            expanded: Whether the card starts expanded.
+            collapsible: Whether the card body can be toggled.
+            accent: Whether to apply highlighted styling.
+        Returns:
+            ttk.Frame: Card body frame used by section-specific builders.
+        Side Effects:
+            Increments `_plot_settings_next_row` and updates card bookkeeping maps.
+        Exceptions:
+            Uses best-effort guards for optional bookkeeping updates.
+        """
+        row = int(getattr(self, "_plot_settings_next_row", 0))
+        self._plot_settings_next_row = row + 1
+        card, body = self._create_plot_settings_card(
+            parent,
+            title,
+            section_key=section_key,
+            expanded=expanded,
+            collapsible=collapsible,
+            accent=accent,
+        )
+        card.grid(row=row, column=0, columnspan=4, sticky="ew", padx=8, pady=(0, 8))
+        try:
+            self._plot_settings_card_order.append(section_key)
+            self._plot_settings_card_bodies[section_key] = body
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        self._request_plot_settings_scroll_refresh()
+        return body
+
+    def _build_plot_ranges_controls(self, parent) -> None:
+        """Build pinned range controls for quick axis limit editing.
+
+        Purpose:
+            Render frequently used min/max controls in the fixed top card.
+        Why:
+            Range tuning is the most common task, so those fields should remain
+            visible while lower-frequency settings scroll independently.
+        Args:
+            parent: Body frame of the pinned ranges card.
+        Returns:
+            None.
+        Side Effects:
+            Creates entry widgets bound to existing range Tk variables and wires
+            the range-refresh action.
+        Exceptions:
+            Tooltip wiring is best-effort and does not block UI rendering.
+        """
+        section = ttk.Frame(parent)
+        section.grid(row=0, column=0, sticky="ew")
+        section.grid_columnconfigure(0, weight=1)
+        section.grid_columnconfigure(1, weight=1)
+
+        def _add_range_pair(
+            row_idx: int,
+            col_idx: int,
+            label: str,
+            min_var: tk.Variable,
+            max_var: tk.Variable,
+        ) -> None:
+            """Render one min/max field pair inside the ranges card."""
+            frame = ttk.Frame(section)
+            frame.grid(row=row_idx, column=col_idx, sticky="ew", padx=4, pady=4)
+            ttk.Label(frame, text=label).grid(row=0, column=0, sticky="w")
+            ttk.Entry(frame, textvariable=min_var, width=10).grid(
+                row=0, column=1, padx=6
+            )
+            ttk.Entry(frame, textvariable=max_var, width=10).grid(
+                row=0, column=2, padx=6
+            )
+
+        _add_range_pair(0, 0, "Time (min / max)", self.min_time, self.max_time)
+        _add_range_pair(0, 1, "Pressure Y (min / max)", self.min_y, self.max_y)
+        _add_range_pair(
+            1,
+            0,
+            "Temp Y deg C (min / max)",
+            self.twin_y_min,
+            self.twin_y_max,
+        )
+        _add_range_pair(
+            1,
+            1,
+            "Derivative Y (min / max)",
+            self.deriv_y_min,
+            self.deriv_y_max,
+        )
+
+        actions = ttk.Frame(section)
+        actions.grid(row=2, column=0, columnspan=2, sticky="e", padx=4, pady=(6, 2))
+        btn_refresh = ttk.Button(
+            actions,
+            text="Refresh Axis Ranges",
+            command=self._refresh_axis_ranges,
+        )
+        btn_refresh.grid(row=0, column=0, padx=(0, 8))
+        self._attach_tooltip(
+            btn_refresh, "Recalculate and apply axis min/max from current data."
+        )
+
+    def _build_plot_axes_section(self, parent, pad: dict[str, int]) -> None:
+        """Build the Axes card content for Plot Settings.
+
+        Purpose:
+            Render axis visibility, padding, and auto-range target controls.
+        Why:
+            Axes settings are adjusted frequently after ranges, so they remain the
+            first expanded accordion section under the pinned ranges card.
+        Args:
+            parent: Card body frame produced by `_add_plot_settings_card`.
+            pad: Shared padding dictionary for section internals.
+        Returns:
+            None.
+        Side Effects:
+            Creates controls bound to existing axis-related Tk variables and wires
+            optional access to the legacy auto-range preferences popup.
+        Exceptions:
+            Tooltip binding is best-effort and does not block section rendering.
+        """
+        lf_axes = ttk.Frame(parent)
+        lf_axes.grid(row=0, column=0, sticky="ew", **pad)
+        for c in range(4):
+            lf_axes.grid_columnconfigure(c, weight=1)
+
+        ttk.Checkbutton(
+            lf_axes, text="Enable Temperature Axis", variable=self.enable_temp_axis
+        ).grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        ttk.Checkbutton(
+            lf_axes, text="Enable Derivative Axis", variable=self.enable_deriv_axis
+        ).grid(row=0, column=1, sticky="w", padx=6, pady=4)
+
+        lbl_pad = ttk.Label(lf_axes, text="Span Padding (%)")
+        lbl_pad.grid(row=0, column=2, sticky="e", padx=6, pady=4)
+        ent_pad = ttk.Entry(lf_axes, textvariable=self.axis_pad_pct, width=6)
+        ent_pad.grid(row=0, column=3, sticky="w", padx=6, pady=4)
+
+        fr_axis_offset = ttk.Frame(lf_axes)
+        fr_axis_offset.grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=4)
+        ttk.Label(fr_axis_offset, text="Combined derivative axis offset").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Entry(
+            fr_axis_offset, textvariable=self.combined_deriv_axis_offset, width=6
+        ).grid(row=0, column=1, padx=6)
+
+        auto_range_frame = ttk.Labelframe(lf_axes, text="Auto-Range Targets")
+        auto_range_frame.grid(
+            row=2, column=0, columnspan=4, sticky="ew", padx=6, pady=(6, 4)
+        )
+        auto_range_frame.grid_columnconfigure(0, weight=1)
+        auto_range_frame.grid_columnconfigure(1, weight=1)
+
+        cb_auto_time = ttk.Checkbutton(
+            auto_range_frame, text="Time (X-axis)", variable=self.axis_auto_time
+        )
+        cb_auto_time.grid(row=0, column=0, sticky="w", padx=6, pady=3)
+        cb_auto_pressure = ttk.Checkbutton(
+            auto_range_frame, text="Pressure Y axes", variable=self.axis_auto_pressure
+        )
+        cb_auto_pressure.grid(row=0, column=1, sticky="w", padx=6, pady=3)
+        cb_auto_temp = ttk.Checkbutton(
+            auto_range_frame, text="Temperature axis", variable=self.axis_auto_temp
+        )
+        cb_auto_temp.grid(row=1, column=0, sticky="w", padx=6, pady=3)
+        cb_auto_deriv = ttk.Checkbutton(
+            auto_range_frame, text="Derivative axis", variable=self.axis_auto_deriv
+        )
+        cb_auto_deriv.grid(row=1, column=1, sticky="w", padx=6, pady=3)
+
+        btn_auto_axis_settings = ttk.Button(
+            lf_axes,
+            text="Open Auto-Axis Dialog...",
+            command=self._open_axis_range_preferences,
+        )
+        btn_auto_axis_settings.grid(row=3, column=0, sticky="w", padx=6, pady=(4, 2))
+
+        self._attach_tooltip(
+            fr_axis_offset,
+            "Moves the derivative spine for the combined triple-axis plot. "
+            "Values >1.0 push it farther right so ticks stay readable.",
+        )
+        self._attach_tooltip(
+            lbl_pad,
+            "Y-axis padding as a percent of data span.\nDefault 5%. "
+            "Increase to add more vertical breathing room.",
+        )
+        self._attach_tooltip(
+            ent_pad, "Y-axis padding as a percent of data span.\nDefault 5%."
+        )
+        self._attach_tooltip(
+            cb_auto_time, "Allow automatic limits for the X/time axis."
+        )
+        self._attach_tooltip(
+            cb_auto_pressure, "Auto-range the primary pressure axes (y1/y3)."
+        )
+        self._attach_tooltip(
+            cb_auto_temp, "Auto-range temperature traces when present."
+        )
+        self._attach_tooltip(cb_auto_deriv, "Auto-range the first-derivative axis.")
+        self._attach_tooltip(
+            btn_auto_axis_settings,
+            "Open Axis Auto-Range Settings in a dedicated popup.",
+        )
+
+    def _build_plot_titles_section(self, parent, pad: dict[str, int]) -> None:
+        """Build the Titles card content for Plot Settings.
+
+        Purpose:
+            Render manual and auto-title configuration controls and preview output.
+        Why:
+            Title controls are important but edited less frequently than ranges/axes,
+            so they live in a collapsed card while keeping all existing behaviors.
+        Args:
+            parent: Card body frame produced by `_add_plot_settings_card`.
+            pad: Shared padding dictionary for section internals.
+        Returns:
+            None.
+        Side Effects:
+            Creates title widgets, stores widget references, and wires trace-based
+            synchronization between display labels and canonical title variables.
+        Exceptions:
+            Uses best-effort guard behavior in downstream callbacks already defined.
+        """
+        lf_titles = ttk.Frame(parent)
+        lf_titles.grid(row=0, column=0, sticky="ew", **pad)
+        lf_titles.grid_columnconfigure(1, weight=1)
+        lf_titles.grid_columnconfigure(2, weight=0)
+
+        ttk.Label(lf_titles, text="Suptitle (Job Information)").grid(
+            row=0, column=0, sticky="w", padx=6, pady=4
+        )
+        ttk.Entry(lf_titles, textvariable=self.suptitle_text).grid(
+            row=0, column=1, sticky="ew", padx=6, pady=4
+        )
+
+        ttk.Label(lf_titles, text="Title").grid(
+            row=1, column=0, sticky="w", padx=6, pady=4
+        )
+        title_entry = ttk.Entry(lf_titles, textvariable=self.title_text)
+        title_entry.grid(row=1, column=1, sticky="ew", padx=6, pady=4)
+        self._title_entry = title_entry
+
+        copy_btn = ttk.Button(
+            lf_titles,
+            text="Copy Auto Title -> Manual Title",
+            command=self._copy_auto_title_to_manual,
+        )
+        copy_btn.grid(row=1, column=2, sticky="e", padx=6, pady=4)
+        self._copy_auto_title_btn = copy_btn
+
+        auto_frame = ttk.Frame(lf_titles)
+        auto_frame.grid(row=2, column=0, columnspan=3, sticky="ew", padx=6, pady=(2, 6))
+        auto_frame.grid_columnconfigure(1, weight=1)
+
+        ttk.Checkbutton(
+            auto_frame,
+            text="Auto-generate Title",
+            variable=self.auto_title_enabled_var,
+        ).grid(row=0, column=0, sticky="w", pady=(2, 4))
+
+        ttk.Label(auto_frame, text="Data Type").grid(
+            row=1, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        type_choices = self._get_title_type_choices()
+        type_combo = ttk.Combobox(
+            auto_frame,
+            textvariable=self.title_data_type_var,
+            state="readonly",
+            values=type_choices,
+        )
+        type_combo.grid(row=1, column=1, sticky="ew", padx=6, pady=2)
+        self._title_type_combo = type_combo
+        ttk.Button(
+            auto_frame,
+            text="Manage Types...",
+            command=self._open_manage_title_types_dialog,
+        ).grid(row=1, column=2, sticky="e", padx=(6, 0), pady=2)
+
+        source_labels = {
+            AUTO_TITLE_SOURCE_FULL: "Full dataset (Columns tab)",
+            AUTO_TITLE_SOURCE_CURRENT: "Current view range",
+        }
+        source_label_to_value = {v: k for k, v in source_labels.items()}
+        source_display_var = tk.StringVar(
+            value=source_labels.get(
+                self.auto_title_source_var.get(), source_labels[AUTO_TITLE_SOURCE_FULL]
+            )
+        )
+        self._auto_title_source_display_var = source_display_var
+
+        ttk.Label(auto_frame, text="Auto Title uses").grid(
+            row=2, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        source_combo = ttk.Combobox(
+            auto_frame,
+            textvariable=source_display_var,
+            state="readonly",
+            values=list(source_labels.values()),
+        )
+        source_combo.grid(row=2, column=1, sticky="ew", padx=6, pady=2)
+        self._auto_title_source_combo = source_combo
+
+        day_mode_labels = {
+            AUTO_TITLE_DAY_DIFF: "Date diff (end-start)",
+            AUTO_TITLE_DAY_INCLUSIVE: "Inclusive (end-start+1)",
+        }
+        day_mode_label_to_value = {v: k for k, v in day_mode_labels.items()}
+        day_mode_display_var = tk.StringVar(
+            value=day_mode_labels.get(
+                self.auto_title_day_mode_var.get(), day_mode_labels[AUTO_TITLE_DAY_DIFF]
+            )
+        )
+        self._auto_title_day_mode_display_var = day_mode_display_var
+
+        ttk.Label(auto_frame, text="Day count mode").grid(
+            row=3, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        day_mode_combo = ttk.Combobox(
+            auto_frame,
+            textvariable=day_mode_display_var,
+            state="readonly",
+            values=list(day_mode_labels.values()),
+        )
+        day_mode_combo.grid(row=3, column=1, sticky="ew", padx=6, pady=2)
+        self._auto_title_day_mode_combo = day_mode_combo
+
+        ttk.Label(auto_frame, text="Template").grid(
+            row=4, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        template_entry = ttk.Entry(
+            auto_frame, textvariable=self.auto_title_template_var
+        )
+        template_entry.grid(row=4, column=1, sticky="ew", padx=6, pady=2)
+        self._auto_title_template_entry = template_entry
+        ttk.Button(
+            auto_frame, text="Edit...", command=self._open_auto_title_template_editor
+        ).grid(row=4, column=2, sticky="e", padx=(6, 0), pady=2)
+
+        ttk.Label(auto_frame, text="Auto Title Preview").grid(
+            row=5, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        ttk.Label(
+            auto_frame,
+            textvariable=self._auto_title_preview_var,
+            wraplength=540,
+        ).grid(row=5, column=1, columnspan=2, sticky="w", padx=6, pady=2)
+
+        def _sync_source_from_display(*_) -> None:
+            """Mirror display labels back to the stored Auto Title source."""
+            label = source_display_var.get()
+            value = source_label_to_value.get(label, AUTO_TITLE_SOURCE_FULL)
+            if value != self.auto_title_source_var.get():
+                self.auto_title_source_var.set(value)
+
+        def _sync_source_display(*_) -> None:
+            """Mirror stored Auto Title source to the display combobox."""
+            value = self.auto_title_source_var.get()
+            label = source_labels.get(value, source_labels[AUTO_TITLE_SOURCE_FULL])
+            if label != source_display_var.get():
+                source_display_var.set(label)
+
+        def _sync_day_mode_from_display(*_) -> None:
+            """Mirror display labels back to stored day-count mode."""
+            label = day_mode_display_var.get()
+            value = day_mode_label_to_value.get(label, AUTO_TITLE_DAY_DIFF)
+            if value != self.auto_title_day_mode_var.get():
+                self.auto_title_day_mode_var.set(value)
+
+        def _sync_day_mode_display(*_) -> None:
+            """Mirror stored day-count mode to the display combobox."""
+            value = self.auto_title_day_mode_var.get()
+            label = day_mode_labels.get(value, day_mode_labels[AUTO_TITLE_DAY_DIFF])
+            if label != day_mode_display_var.get():
+                day_mode_display_var.set(label)
+
+        source_display_var.trace_add("write", _sync_source_from_display)
+        self.auto_title_source_var.trace_add("write", _sync_source_display)
+        day_mode_display_var.trace_add("write", _sync_day_mode_from_display)
+        self.auto_title_day_mode_var.trace_add("write", _sync_day_mode_display)
+
+        for var in (
+            self.auto_title_enabled_var,
+            self.auto_title_source_var,
+            self.auto_title_template_var,
+            self.auto_title_day_mode_var,
+            self.title_data_type_var,
+        ):
+            var.trace_add("write", self._update_auto_title_preview)
+        self.auto_title_enabled_var.trace_add(
+            "write", self._update_auto_title_controls_state
+        )
+        self._update_auto_title_controls_state()
+        self._update_auto_title_preview()
+
+    def _build_plot_ticks_section(self, parent, pad: dict[str, int]) -> None:
+        """Build the Ticks card content for Plot Settings.
+
+        Purpose:
+            Render auto/manual major/minor tick controls for all supported axes.
+        Why:
+            Tick controls are less frequently changed during normal iteration, so
+            they remain in a collapsed card while preserving exact legacy behavior.
+        Args:
+            parent: Card body frame produced by `_add_plot_settings_card`.
+            pad: Shared padding dictionary for section internals.
+        Returns:
+            None.
+        Side Effects:
+            Creates tick widgets and installs trace-driven enable/disable wiring for
+            auto/manual switching.
+        Exceptions:
+            Relies on existing `_wire_auto_to_entries` guard behavior.
+        """
+        lf_ticks = ttk.Frame(parent)
+        lf_ticks.grid(row=0, column=0, sticky="ew", **pad)
+        for i in range(8):
+            lf_ticks.grid_columnconfigure(i, weight=1)
+
+        def add_tick_row(row, label, auto_var, maj_var, min_var):
+            """Render one tick row and connect auto/manual state logic."""
+            ttk.Label(lf_ticks, text=label).grid(
+                row=row, column=0, sticky="w", padx=6, pady=4
+            )
+            auto_btn = ttk.Checkbutton(lf_ticks, text="Auto", variable=auto_var)
+            auto_btn.grid(row=row, column=1, sticky="w", padx=6, pady=4)
+            e_major = ttk.Entry(lf_ticks, textvariable=maj_var, width=10)
+            e_minor = ttk.Entry(lf_ticks, textvariable=min_var, width=10)
+            ttk.Label(lf_ticks, text="Major").grid(
+                row=row, column=2, sticky="e", padx=6, pady=4
+            )
+            e_major.grid(row=row, column=3, sticky="w", padx=6, pady=4)
+            ttk.Label(lf_ticks, text="Minor").grid(
+                row=row, column=4, sticky="e", padx=6, pady=4
+            )
+            e_minor.grid(row=row, column=5, sticky="w", padx=6, pady=4)
+            self._wire_auto_to_entries(auto_var, [e_major, e_minor])
+            return (e_major, e_minor)
+
+        self._tick_entries_time = add_tick_row(
+            0, "Time Ticks", self.auto_time_ticks, self.xmaj_tick, self.xmin_tick
+        )
+        self._tick_entries_y = add_tick_row(
+            1, "Pressure Y Ticks", self.auto_y_ticks, self.ymaj_tick, self.ymin_tick
+        )
+        self._tick_entries_temp = add_tick_row(
+            2,
+            "Temp Y Ticks (deg C)",
+            self.auto_temp_ticks,
+            self.temp_maj_tick,
+            self.temp_min_tick,
+        )
+        self._tick_entries_deriv = add_tick_row(
+            3,
+            "Derivative Y Ticks",
+            self.auto_deriv_ticks,
+            self.deriv_maj_tick,
+            self.deriv_min_tick,
+        )
+        self._apply_auto_state(self.auto_time_ticks, self._tick_entries_time)
+        self._apply_auto_state(self.auto_y_ticks, self._tick_entries_y)
+        self._apply_auto_state(self.auto_temp_ticks, self._tick_entries_temp)
+        self._apply_auto_state(self.auto_deriv_ticks, self._tick_entries_deriv)
+
+    def _build_plot_cycle_integration_section(
+        self, parent, pad: dict[str, int]
+    ) -> None:
+        """Build the Cycle Integration card content for Plot Settings.
+
+        Purpose:
+            Render core-plot cycle marker and legend integration toggles.
+        Why:
+            These controls are usually set once per profile and should stay available
+            without occupying persistent space in the main working area.
+        Args:
+            parent: Card body frame produced by `_add_plot_settings_card`.
+            pad: Shared padding dictionary for section internals.
+        Returns:
+            None.
+        Side Effects:
+            Creates checkbuttons bound to persisted cycle integration variables.
+        Exceptions:
+            No custom exceptions; uses standard Tk widget construction.
+        """
+        lf_cycle_integration = ttk.Frame(parent)
+        lf_cycle_integration.grid(row=0, column=0, sticky="ew", **pad)
+        lf_cycle_integration.grid_columnconfigure(0, weight=1)
+        lf_cycle_integration.grid_columnconfigure(1, weight=1)
+
+        ttk.Checkbutton(
+            lf_cycle_integration,
+            text="Show Cycle Peaks/Troughs on Core Plots",
+            variable=self.show_cycle_markers_on_core,
+        ).grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        ttk.Checkbutton(
+            lf_cycle_integration,
+            text="Show Cycle Legend on Core Plots (Peaks/Troughs/Cycles/dP)",
+            variable=self.show_cycle_legend_on_core,
+        ).grid(row=0, column=1, sticky="w", padx=6, pady=4)
+        ttk.Checkbutton(
+            lf_cycle_integration,
+            text="Include Moles Summary in Core Plot Legend",
+            variable=self.include_moles_core_legend,
+        ).grid(row=1, column=0, sticky="w", padx=6, pady=4)
+
+    def _build_plot_cycle_legend_section(self, parent, pad: dict[str, int]) -> None:
+        """Build the combined-cycle legend controls card.
+
+        Purpose:
+            Render drag/lock/persist controls for the combined plot cycle legend.
+        Why:
+            Legend placement preferences are important for polished outputs but are
+            adjusted infrequently, making them a good fit for a collapsible card.
+        Args:
+            parent: Card body frame produced by `_add_plot_settings_card`.
+            pad: Shared padding dictionary for section internals.
+        Returns:
+            None.
+        Side Effects:
+            Wires controls that call `_sync_combined_cycle_legend_controls` and reset
+            legend anchor state when requested.
+        Exceptions:
+            No custom exceptions; downstream handlers provide best-effort guards.
+        """
+        lf_cycle_legend = ttk.Frame(parent)
+        lf_cycle_legend.grid(row=0, column=0, sticky="ew", **pad)
+        lf_cycle_legend.grid_columnconfigure(0, weight=1)
+        lf_cycle_legend.grid_columnconfigure(1, weight=1)
+
+        def _apply_cycle_legend_controls():
+            """Apply cycle legend control changes to the active combined figure."""
+            self._sync_combined_cycle_legend_controls(refresh_display=True)
+
+        ttk.Checkbutton(
+            lf_cycle_legend,
+            text="Enable Cycle Legend Dragging",
+            variable=self.combined_cycle_legend_enable_drag,
+            command=_apply_cycle_legend_controls,
+        ).grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        ttk.Checkbutton(
+            lf_cycle_legend,
+            text="Lock Cycle Legend Position",
+            variable=self.combined_cycle_legend_lock_position,
+            command=_apply_cycle_legend_controls,
+        ).grid(row=0, column=1, sticky="w", padx=6, pady=4)
+        ttk.Checkbutton(
+            lf_cycle_legend,
+            text="Persist Cycle Legend Position (Refresh/Rebuild)",
+            variable=self.combined_cycle_legend_persist_position,
+            command=_apply_cycle_legend_controls,
+        ).grid(row=1, column=0, sticky="w", padx=6, pady=4)
+        ttk.Checkbutton(
+            lf_cycle_legend,
+            text="Clamp Cycle Legend Inside Axes on Capture",
+            variable=self.combined_cycle_legend_clamp_to_axes,
+            command=_apply_cycle_legend_controls,
+        ).grid(row=1, column=1, sticky="w", padx=6, pady=4)
+        ttk.Button(
+            lf_cycle_legend,
+            text="Reset Cycle Legend Position",
+            command=self._reset_combined_cycle_legend_position,
+        ).grid(row=2, column=0, sticky="w", padx=6, pady=4)
+        ttk.Checkbutton(
+            lf_cycle_legend,
+            text="Enable Main Legend Dragging (Combined Plot)",
+            variable=self.combined_main_legend_enable_drag,
+            command=_apply_cycle_legend_controls,
+        ).grid(row=2, column=1, sticky="w", padx=6, pady=4)
+
+    def _build_plot_combined_axis_section(self, parent, pad: dict[str, int]) -> None:
+        """Build the Combined Triple-Axis dataset selection card.
+
+        Purpose:
+            Render dataset selector comboboxes for inner-left, inner-right, and
+            outer-right y-axes in the combined plot.
+        Why:
+            Dataset mapping changes infrequently but must remain available and
+            synchronized with display labels and stored axis keys.
+        Args:
+            parent: Card body frame produced by `_add_plot_settings_card`.
+            pad: Shared padding dictionary for section internals.
+        Returns:
+            None.
+        Side Effects:
+            Creates combobox widgets and binds selection handlers that update
+            combined-axis state through `_on_combined_axis_change`.
+        Exceptions:
+            Uses existing callback guards in downstream axis-change handlers.
+        """
+        lf_combined_axis = ttk.Frame(parent)
+        lf_combined_axis.grid(row=0, column=0, sticky="ew", **pad)
+        lf_combined_axis.grid_columnconfigure(1, weight=1)
+
+        ttk.Label(lf_combined_axis, text="Inner Left Y Axis Dataset").grid(
+            row=0, column=0, sticky="w", padx=6, pady=4
+        )
+        self._combined_left_combo = ttk.Combobox(
+            lf_combined_axis,
+            state="readonly",
+            textvariable=self._combined_left_display_var,
+        )
+        self._combined_left_combo.grid(row=0, column=1, sticky="ew", padx=6, pady=4)
+        self._combined_left_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _e: self._on_combined_axis_change(
+                "left", self._combined_left_display_var.get()
+            ),
+        )
+
+        ttk.Label(lf_combined_axis, text="Inner Right Y Axis Dataset").grid(
+            row=1, column=0, sticky="w", padx=6, pady=4
+        )
+        self._combined_right_combo = ttk.Combobox(
+            lf_combined_axis,
+            state="readonly",
+            textvariable=self._combined_right_display_var,
+        )
+        self._combined_right_combo.grid(row=1, column=1, sticky="ew", padx=6, pady=4)
+        self._combined_right_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _e: self._on_combined_axis_change(
+                "right", self._combined_right_display_var.get()
+            ),
+        )
+
+        ttk.Label(lf_combined_axis, text="Outer Right Y Axis Dataset").grid(
+            row=2, column=0, sticky="w", padx=6, pady=4
+        )
+        self._combined_third_combo = ttk.Combobox(
+            lf_combined_axis,
+            state="readonly",
+            textvariable=self._combined_third_display_var,
+        )
+        self._combined_third_combo.grid(row=2, column=1, sticky="ew", padx=6, pady=4)
+        self._combined_third_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _e: self._on_combined_axis_change(
+                "third", self._combined_third_display_var.get()
+            ),
+        )
+
+    def _build_plot_peak_section(self, parent, pad: dict[str, int]) -> None:
+        """Build the Peak & Trough Detection card content.
+
+        Purpose:
+            Render threshold controls for automatic cycle peak/trough detection.
+        Why:
+            Detection thresholds are important tuning parameters but are adjusted
+            less often than ranges; placing them in a card reduces visual clutter.
+        Args:
+            parent: Card body frame produced by `_add_plot_settings_card`.
+            pad: Shared padding dictionary for section internals.
+        Returns:
+            None.
+        Side Effects:
+            Creates threshold widgets bound to existing Tk variables and attaches
+            explanatory tooltips for cycle detection behavior.
+        Exceptions:
+            Tooltip attachment uses existing best-effort guard logic.
+        """
+        lf_peak = ttk.Frame(parent)
+        lf_peak.grid(row=0, column=0, sticky="ew", **pad)
+        for c in range(4):
+            lf_peak.grid_columnconfigure(c, weight=1)
+
+        lbl_prom = ttk.Label(lf_peak, text="Prominence (PSI)")
+        lbl_prom.grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        ent_prom = ttk.Entry(lf_peak, textvariable=self.pk_prominence, width=10)
+        ent_prom.grid(row=0, column=1, sticky="w", padx=6, pady=4)
+
+        lbl_dist = ttk.Label(lf_peak, text="Min Distance (samples)")
+        lbl_dist.grid(row=0, column=2, sticky="e", padx=6, pady=4)
+        ent_dist = ttk.Entry(lf_peak, textvariable=self.pk_distance, width=10)
+        ent_dist.grid(row=0, column=3, sticky="w", padx=6, pady=4)
+
+        lbl_min_dp = ttk.Label(lf_peak, text="Minimum dP for Valid Cycle (PSI)")
+        lbl_min_dp.grid(row=1, column=0, sticky="w", padx=6, pady=4)
+        ent_min_dp = ttk.Entry(lf_peak, textvariable=self.min_cycle_drop, width=10)
+        ent_min_dp.grid(row=1, column=1, sticky="w", padx=6, pady=4)
+
+        lbl_width = ttk.Label(lf_peak, text="Min Width (samples)")
+        lbl_width.grid(row=1, column=2, sticky="e", padx=6, pady=4)
+        ent_width = ttk.Entry(lf_peak, textvariable=self.pk_width, width=10)
+        ent_width.grid(row=1, column=3, sticky="w", padx=6, pady=4)
+
+        text_dist = (
+            "Min Distance: minimum separation between neighboring peaks (in samples).\n"
+            "Higher = peaks must be farther apart; "
+            "lower = allows closely spaced peaks.\n"
+            "If your sample rate is 1 Hz, a distance of 10 equals about 10 seconds.\n"
+        )
+        self._attach_tooltip(lbl_dist, text_dist)
+        self._attach_tooltip(ent_dist, text_dist)
+
+        text_min_dp = (
+            "Minimum delta-P for Valid Cycle: only cycles with peak-to-trough "
+            "drop at or above\n"
+            "this PSI threshold are counted for moles/uptake totals.\n"
+        )
+        self._attach_tooltip(lbl_min_dp, text_min_dp)
+        self._attach_tooltip(ent_min_dp, text_min_dp)
+
+        text_width = (
+            "Min Width: minimum peak width at half height (FWHM), in samples.\n"
+            "Higher = filters out narrow spikes; lower = allows sharp/narrow peaks."
+        )
+        self._attach_tooltip(lbl_width, text_width)
+        self._attach_tooltip(ent_width, text_width)
+
+    def _build_plot_gas_section(self, parent, pad: dict[str, int]) -> None:
+        """Build the Gas Model (Van der Waals) card content.
+
+        Purpose:
+            Render gas preset selection and editable Van der Waals parameters.
+        Why:
+            These values are typically configured once per profile, so they are
+            kept complete but collapsed by default to reduce day-to-day clutter.
+        Args:
+            parent: Card body frame produced by `_add_plot_settings_card`.
+            pad: Shared padding dictionary for section internals.
+        Returns:
+            None.
+        Side Effects:
+            Creates gas model widgets, stores entry references, and wires preset
+            selection/save/apply callbacks.
+        Exceptions:
+            Validation and persistence behavior is handled in existing callbacks.
+        """
+        lf_vdw = ttk.Frame(parent)
+        lf_vdw.grid(row=0, column=0, sticky="ew", **pad)
+        lf_vdw.grid_columnconfigure(1, weight=1)
+        lf_vdw.grid_columnconfigure(2, weight=0)
+
+        ttk.Label(lf_vdw, text="Preset").grid(
+            row=0, column=0, sticky="w", padx=6, pady=4
+        )
+        cb_gas = ttk.Combobox(
+            lf_vdw,
+            textvariable=self.v_gas,
+            state="readonly",
+            values=list(GAS_PRESETS.keys()),
+        )
+        cb_gas.grid(row=0, column=1, sticky="ew", padx=6, pady=4)
+        self._gas_combo = cb_gas
+        self._refresh_gas_preset_choices()
+        cb_gas.bind("<<ComboboxSelected>>", self._on_gas_selected)
+        ttk.Button(
+            lf_vdw, text="Save Preset", command=self._save_custom_gas_preset
+        ).grid(row=0, column=2, sticky="e", padx=6, pady=4)
+
+        ttk.Label(lf_vdw, text="Vessel Volume (L)").grid(
+            row=1, column=0, sticky="w", padx=6, pady=4
+        )
+        self.e_vol = ttk.Entry(lf_vdw, textvariable=self.v_volume)
+        self.e_vol.grid(row=1, column=1, sticky="ew", padx=6, pady=4)
+
+        apply_vdw_frame = ttk.Frame(lf_vdw)
+        apply_vdw_frame.grid(row=1, column=2, sticky="e", padx=6, pady=4)
+        apply_vdw_frame.grid_columnconfigure(0, weight=1)
+        ttk.Button(apply_vdw_frame, text="Apply VDW", command=self._apply_vdw).grid(
+            row=0, column=0, sticky="e"
+        )
+        self._create_vdw_indicator(
+            apply_vdw_frame, row=0, column=1, padx=(6, 0), sticky="w"
+        )
+
+        ttk.Label(lf_vdw, text="VDW a (L^2*atm/mol^2)").grid(
+            row=2, column=0, sticky="w", padx=6, pady=4
+        )
+        self.e_a = ttk.Entry(lf_vdw, textvariable=self.v_a)
+        self.e_a.grid(row=2, column=1, sticky="ew", padx=6, pady=4)
+
+        ttk.Label(lf_vdw, text="VDW b (L/mol)").grid(
+            row=3, column=0, sticky="w", padx=6, pady=4
+        )
+        self.e_b = ttk.Entry(lf_vdw, textvariable=self.v_b)
+        self.e_b.grid(row=3, column=1, sticky="ew", padx=6, pady=4)
+
+        ttk.Label(lf_vdw, text="Gaseous Reagent Molar Mass (g/mol)").grid(
+            row=4, column=0, sticky="w", padx=6, pady=4
+        )
+        self.e_gas_molar_mass = ttk.Entry(lf_vdw, textvariable=self.v_gas_molar_mass)
+        self.e_gas_molar_mass.grid(row=4, column=1, sticky="ew", padx=6, pady=4)
+
+    def _build_plot_starting_material_section(
+        self, parent, pad: dict[str, int]
+    ) -> None:
+        """Build the Starting Material Settings card content.
+
+        Purpose:
+            Render starting-material naming, mass, and stoichiometry controls.
+        Why:
+            These profile-level settings are required but infrequently changed, so
+            the section stays fully available while defaulting to collapsed state.
+        Args:
+            parent: Card body frame produced by `_add_plot_settings_card`.
+            pad: Shared padding dictionary for section internals.
+        Returns:
+            None.
+        Side Effects:
+            Creates entry widgets and binds focus/Enter events to
+            `_apply_product_settings` for existing validation and persistence.
+        Exceptions:
+            Input validation and messagebox handling remain in existing callbacks.
+        """
+        lf_reagent = ttk.Frame(parent)
+        lf_reagent.grid(row=0, column=0, sticky="ew", **pad)
+        lf_reagent.grid_columnconfigure(1, weight=1)
+
+        ttk.Label(
+            lf_reagent,
+            text="Starting material reacting with selected gas",
+        ).grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        ent_display_name = ttk.Entry(
+            lf_reagent, textvariable=self.v_starting_material_display_name
+        )
+        ent_display_name.grid(row=0, column=1, sticky="ew", padx=6, pady=4)
+        ent_display_name.bind("<FocusOut>", self._apply_product_settings)
+        ent_display_name.bind("<Return>", self._apply_product_settings)
+
+        ttk.Label(lf_reagent, text="Starting material note (optional)").grid(
+            row=1, column=0, sticky="w", padx=6, pady=4
+        )
+        ent_display_note = ttk.Entry(
+            lf_reagent, textvariable=self.v_starting_material_display_note
+        )
+        ent_display_note.grid(row=1, column=1, sticky="ew", padx=6, pady=4)
+        ent_display_note.bind("<FocusOut>", self._apply_product_settings)
+        ent_display_note.bind("<Return>", self._apply_product_settings)
+
+        ttk.Label(lf_reagent, text="Starting Material Molar Mass (g/mol)").grid(
+            row=2, column=0, sticky="w", padx=6, pady=4
+        )
+        ent_molar = ttk.Entry(lf_reagent, textvariable=self.v_product_molar_mass)
+        ent_molar.grid(row=2, column=1, sticky="ew", padx=6, pady=4)
+        ent_molar.bind("<FocusOut>", self._apply_product_settings)
+        ent_molar.bind("<Return>", self._apply_product_settings)
+
+        ttk.Label(lf_reagent, text="Starting Material Mass (g)").grid(
+            row=3, column=0, sticky="w", padx=6, pady=4
+        )
+        ent_start = ttk.Entry(lf_reagent, textvariable=self.v_starting_mass)
+        ent_start.grid(row=3, column=1, sticky="ew", padx=6, pady=4)
+        ent_start.bind("<FocusOut>", self._apply_product_settings)
+        ent_start.bind("<Return>", self._apply_product_settings)
+
+        ttk.Label(
+            lf_reagent,
+            text="Stoichiometry (mol gas per mol starting)",
+        ).grid(row=4, column=0, sticky="w", padx=6, pady=4)
+        ent_stoich = ttk.Entry(lf_reagent, textvariable=self.v_starting_stoich)
+        ent_stoich.grid(row=4, column=1, sticky="ew", padx=6, pady=4)
+        ent_stoich.bind("<FocusOut>", self._apply_product_settings)
+        ent_stoich.bind("<Return>", self._apply_product_settings)
+
+    def _build_tab_plot(self):
+        """Build the redesigned Plot Settings tab shell.
+
+        Purpose:
+            Assemble a fixed top ranges card plus a scrollable accordion of the
+            remaining Plot Settings controls.
+        Why:
+            Separating high-frequency range edits from lower-frequency settings
+            reduces visual density while preserving all existing controls.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Rebuilds Plot Settings widgets, initializes card-state bookkeeping, and
+            schedules stage-two section construction on the Tk idle queue.
+        Exceptions:
+            UI cleanup and wheel-binding steps use best-effort guards to avoid
+            interrupting startup if a widget teardown/bind fails.
+        """
+        f = self.tab_plot
+        for child in f.winfo_children():
+            try:
+                child.destroy()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        f.grid_rowconfigure(0, weight=0)
+        f.grid_rowconfigure(1, weight=1)
+        f.grid_columnconfigure(0, weight=1)
+
+        self._plot_settings_card_states = {}
+        self._plot_settings_card_bodies = {}
+        self._plot_settings_card_order = []
+        self._plot_settings_next_row = 0
+        self._plot_settings_refresh_scroll_region = None
+
+        pinned = ttk.Frame(f)
+        pinned.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+        pinned.grid_columnconfigure(0, weight=1)
+        ranges_card, ranges_body = self._create_plot_settings_card(
+            pinned,
+            "Ranges",
+            section_key="ranges",
+            expanded=True,
+            collapsible=False,
+            accent=True,
+        )
+        ranges_card.grid(row=0, column=0, sticky="ew")
+        self._build_plot_ranges_controls(ranges_body)
+
+        scroll_shell = ttk.Frame(f)
+        scroll_shell.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        scroll_shell.grid_rowconfigure(0, weight=1)
+        scroll_shell.grid_columnconfigure(0, weight=1)
+
+        canvas = tk.Canvas(scroll_shell, borderwidth=0, highlightthickness=0)
+        vscroll = ttk.Scrollbar(scroll_shell, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vscroll.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        vscroll.grid(row=0, column=1, sticky="ns")
+
+        content = ttk.Frame(canvas)
+        settings_window = canvas.create_window((0, 0), window=content, anchor="nw")
+
+        def _refresh_scroll_region(_event=None) -> None:
+            """Sync canvas scrollregion to current accordion content bounds."""
+            try:
+                canvas.configure(scrollregion=canvas.bbox("all"))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        def _expand_width(event) -> None:
+            """Keep scroll content width matched to visible canvas width."""
+            try:
+                canvas.itemconfigure(settings_window, width=event.width)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        content.bind("<Configure>", _refresh_scroll_region)
+        canvas.bind("<Configure>", _expand_width)
+        self._plot_settings_refresh_scroll_region = _refresh_scroll_region
+
+        def _bind_mousewheel(widget) -> None:
+            """Bind wheel-scrolling recursively for Plot Settings widgets."""
+
+            def _on_mousewheel(event):
+                delta = event.delta
+                if delta == 0:
+                    return
+                step = -1 if delta > 0 else 1
+                if abs(delta) >= 120:
+                    step = int(-delta / 120)
+                canvas.yview_scroll(step, "units")
+                return "break"
+
+            widget.bind("<MouseWheel>", _on_mousewheel, add="+")
+            widget.bind(
+                "<Button-4>", lambda _event: canvas.yview_scroll(-1, "units"), add="+"
+            )
+            widget.bind(
+                "<Button-5>", lambda _event: canvas.yview_scroll(1, "units"), add="+"
+            )
+            for child in widget.winfo_children():
+                _bind_mousewheel(child)
+
+        self.after_idle(lambda: _bind_mousewheel(content))
+        for i in range(4):
+            content.grid_columnconfigure(i, weight=1)
+
+        pad = {"padx": 8, "pady": 6}
+        self._plot_tab_stage_two_built = False
+        self.after_idle(lambda: self._build_tab_plot_stage_two(content, pad))
+
+    def _build_tab_plot_stage_two(self, f, pad):
+        """Build deferred accordion cards for Plot Settings.
+
+        Purpose:
+            Render all non-pinned Plot Settings sections after shell creation.
+        Why:
+            Deferred build keeps initial tab paint responsive while still exposing
+            the complete configuration surface.
+        Args:
+            f: Scroll-content frame that hosts accordion cards.
+            pad: Shared padding dictionary for section internals.
+        Returns:
+            None.
+        Side Effects:
+            Creates accordion cards, instantiates all section widgets, and refreshes
+            combined-axis selector choices once controls exist.
+        Exceptions:
+            If the target frame no longer exists, the build exits silently.
+        """
+        if getattr(self, "_plot_tab_stage_two_built", False):
+            return
+        if f is None or not f.winfo_exists():
+            return
+        self._plot_tab_stage_two_built = True
+
+        axes_body = self._add_plot_settings_card(
+            f, "axes", "Axes", expanded=True, collapsible=True
+        )
+        self._build_plot_axes_section(axes_body, pad)
+
+        titles_body = self._add_plot_settings_card(
+            f, "titles", "Titles", expanded=False, collapsible=True
+        )
+        self._build_plot_titles_section(titles_body, pad)
+
+        ticks_body = self._add_plot_settings_card(
+            f, "ticks", "Ticks", expanded=False, collapsible=True
+        )
+        self._build_plot_ticks_section(ticks_body, pad)
+
+        cycle_integration_body = self._add_plot_settings_card(
+            f,
+            "cycle_integration",
+            "Cycle Integration",
+            expanded=False,
+            collapsible=True,
+        )
+        self._build_plot_cycle_integration_section(cycle_integration_body, pad)
+
+        cycle_legend_body = self._add_plot_settings_card(
+            f,
+            "cycle_legend",
+            "Cycle Legend (Combined Plot)",
+            expanded=False,
+            collapsible=True,
+        )
+        self._build_plot_cycle_legend_section(cycle_legend_body, pad)
+
+        combined_axis_body = self._add_plot_settings_card(
+            f,
+            "combined_axis",
+            "Combined Triple-Axis Settings",
+            expanded=False,
+            collapsible=True,
+        )
+        self._build_plot_combined_axis_section(combined_axis_body, pad)
+
+        peak_body = self._add_plot_settings_card(
+            f,
+            "peak_trough",
+            "Peak & Trough Detection",
+            expanded=False,
+            collapsible=True,
+        )
+        self._build_plot_peak_section(peak_body, pad)
+
+        gas_body = self._add_plot_settings_card(
+            f,
+            "gas_model",
+            "Gas Model (Van der Waals)",
+            expanded=False,
+            collapsible=True,
+        )
+        self._build_plot_gas_section(gas_body, pad)
+
+        starting_body = self._add_plot_settings_card(
+            f,
+            "starting_material",
+            "Starting Material Settings",
+            expanded=False,
+            collapsible=True,
+        )
+        self._build_plot_starting_material_section(starting_body, pad)
+
+        self._refresh_combined_axis_choices()
+        self._request_plot_settings_scroll_refresh()
 
     def _start_cycle_tab_build(self, *, defer=True):
         """Build value.
