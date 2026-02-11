@@ -19900,6 +19900,32 @@ _SETTINGS_BACKUP_PATH = None
 
 settings = {}
 _SETTINGS_LOCK = threading.RLock()
+DISPLAY_MODE_REGULAR = "regular"
+DISPLAY_MODE_DARK = "dark"
+DISPLAY_MODE_OPTIONS = {DISPLAY_MODE_REGULAR, DISPLAY_MODE_DARK}
+
+
+def _normalize_ui_display_mode(value: Any) -> str:
+    """Normalize display mode for persistence.
+
+    Purpose:
+        Coerce stored UI display mode values into a known set.
+    Why:
+        Keeps startup behavior stable when settings contain legacy or invalid
+        mode values.
+    Args:
+        value: Incoming settings value for the UI display mode.
+    Returns:
+        str: One of `"regular"` or `"dark"`.
+    Side Effects:
+        None.
+    Exceptions:
+        Falls back to `"regular"` for invalid or missing values.
+    """
+    normalized = str(value or "").strip().lower()
+    if normalized not in DISPLAY_MODE_OPTIONS:
+        return DISPLAY_MODE_REGULAR
+    return normalized
 
 
 def _normalize_debug_categories(value: Any) -> Dict[str, bool]:
@@ -21062,6 +21088,10 @@ elif _normalize_gas_name(_saved_vdw_name) in _custom_preset_normalized_names:
     pass
 else:
     settings["vdw_gas"] = "Custom"
+
+settings["ui_display_mode"] = _normalize_ui_display_mode(
+    settings.get("ui_display_mode")
+)
 
 
 def _save_settings_to_disk() -> None:
@@ -29292,6 +29322,13 @@ class UnifiedApp(tk.Tk):
 
         self._registered_menus: List[tk.Menu] = []
 
+        display_mode_default = _normalize_ui_display_mode(
+            settings.get("ui_display_mode")
+        )
+        settings["ui_display_mode"] = display_mode_default
+        self._display_mode_var = tk.StringVar(value=display_mode_default)
+        self._apply_display_mode(display_mode_default, persist=False)
+
         self._ui_scale = 1.0
         self._initial_ui_scale = self._initialize_ui_scaling()
 
@@ -29812,6 +29849,20 @@ class UnifiedApp(tk.Tk):
             variable=self._auto_jump_plot_var,
             command=self._update_auto_jump_plot_pref,
         )
+        display_mode_menu = self._register_menu(tk.Menu(preferences_menu, tearoff=0))
+        display_mode_menu.add_radiobutton(
+            label="Regular",
+            variable=self._display_mode_var,
+            value=DISPLAY_MODE_REGULAR,
+            command=self._on_display_mode_changed,
+        )
+        display_mode_menu.add_radiobutton(
+            label="Dark",
+            variable=self._display_mode_var,
+            value=DISPLAY_MODE_DARK,
+            command=self._on_display_mode_changed,
+        )
+        preferences_menu.add_cascade(label="Display Mode", menu=display_mode_menu)
         preferences_menu.add_separator()
         preferences_menu.add_command(
             label="Scatter Plot Settings...", command=self._open_scatter_preferences
@@ -29930,6 +29981,7 @@ class UnifiedApp(tk.Tk):
         self._menubar.add_cascade(label="Tools", menu=tools_menu)
 
         self.config(menu=self._menubar)
+        self._apply_display_mode(self._display_mode_var.get(), persist=False)
         self._refresh_menu_fonts()
 
         # Start at last saved normal size (fallback to a scaled default)
@@ -50753,14 +50805,21 @@ class UnifiedApp(tk.Tk):
             Uses best-effort guards for styling/callback updates to keep startup stable.
         """
         ctk_module = ctk
+        ctk_border_default = None
+        ctk_border_hover = None
         if ctk_module is not None:
-            fg_color = ("#F4F8FF", "#1E2630") if accent else ("#FFFFFF", "#252526")
-            border_color = ("#BFD3EB", "#3E4C5E") if accent else ("#D6D6D6", "#46484D")
+            if accent:
+                fg_color = ("#F5F9FF", "#1D2633")
+                ctk_border_default = ("#B6C9E4", "#425166")
+            else:
+                fg_color = ("#FFFFFF", "#252526")
+                ctk_border_default = ("#C7CDD3", "#51545A")
+            ctk_border_hover = ("#1F6FD1", "#8CB4E8")
             container = ctk_module.CTkFrame(
                 parent,
                 corner_radius=10,
                 border_width=1,
-                border_color=border_color,
+                border_color=ctk_border_default,
                 fg_color=fg_color,
             )
         else:
@@ -50774,14 +50833,41 @@ class UnifiedApp(tk.Tk):
         body = ttk.Frame(container)
         body.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
 
+        def _set_hover_border(enabled: bool) -> None:
+            """Apply card-border highlight for hover feedback on CTk cards."""
+            if (
+                ctk_module is None
+                or ctk_border_default is None
+                or ctk_border_hover is None
+            ):
+                return
+            target_border = ctk_border_hover if enabled else ctk_border_default
+            try:
+                container.configure(border_color=target_border)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        def _bind_hover_border(widget) -> None:
+            """Bind enter/leave events so card headers get clear hover affordance."""
+            if widget is None:
+                return
+            widget.bind("<Enter>", lambda _event: _set_hover_border(True), add="+")
+            widget.bind("<Leave>", lambda _event: _set_hover_border(False), add="+")
+
         if not collapsible:
             if ctk_module is not None:
-                ctk_module.CTkLabel(
+                title_label = ctk_module.CTkLabel(
                     header,
                     text=title,
                     anchor="w",
                     font=(getattr(self, "_ui_font_family", "Verdana"), 14, "bold"),
-                ).grid(row=0, column=0, sticky="w")
+                    text_color=("black", "#F2F4F6"),
+                )
+                title_label.grid(row=0, column=0, sticky="w")
+                _bind_hover_border(container)
+                _bind_hover_border(header)
+                _bind_hover_border(title_label)
             else:
                 ttk.Label(header, text=title).grid(row=0, column=0, sticky="w")
             return container, body
@@ -50824,15 +50910,20 @@ class UnifiedApp(tk.Tk):
                 command=_toggle,
                 anchor="w",
                 fg_color="transparent",
-                hover_color=("#E7EEF8", "#33404F"),
-                text_color=("black", "white"),
+                hover_color=("#EBF2FD", "#3A4758"),
+                text_color=("black", "#F2F4F6"),
+                text_color_disabled=("black", "#F2F4F6"),
                 corner_radius=6,
                 height=28,
+                font=(getattr(self, "_ui_font_family", "Verdana"), 13, "bold"),
             )
         else:
             button = ttk.Button(header, text="", command=_toggle)
         holder["button"] = button
         button.grid(row=0, column=0, sticky="ew")
+        _bind_hover_border(container)
+        _bind_hover_border(header)
+        _bind_hover_border(button)
 
         if not state_var.get():
             body.grid_remove()
@@ -51086,20 +51177,20 @@ class UnifiedApp(tk.Tk):
         lf_titles = ttk.Frame(parent)
         lf_titles.grid(row=0, column=0, sticky="ew", **pad)
         lf_titles.grid_columnconfigure(1, weight=1)
-        lf_titles.grid_columnconfigure(2, weight=0)
+        lf_titles.grid_columnconfigure(2, weight=1)
 
         ttk.Label(lf_titles, text="Suptitle (Job Information)").grid(
             row=0, column=0, sticky="w", padx=6, pady=4
         )
-        ttk.Entry(lf_titles, textvariable=self.suptitle_text).grid(
-            row=0, column=1, sticky="ew", padx=6, pady=4
+        ttk.Entry(lf_titles, textvariable=self.suptitle_text, width=72).grid(
+            row=0, column=1, columnspan=2, sticky="ew", padx=6, pady=4
         )
 
         ttk.Label(lf_titles, text="Title").grid(
             row=1, column=0, sticky="w", padx=6, pady=4
         )
-        title_entry = ttk.Entry(lf_titles, textvariable=self.title_text)
-        title_entry.grid(row=1, column=1, sticky="ew", padx=6, pady=4)
+        title_entry = ttk.Entry(lf_titles, textvariable=self.title_text, width=72)
+        title_entry.grid(row=1, column=1, columnspan=2, sticky="ew", padx=6, pady=4)
         self._title_entry = title_entry
 
         copy_btn = ttk.Button(
@@ -51107,11 +51198,11 @@ class UnifiedApp(tk.Tk):
             text="Copy Auto Title -> Manual Title",
             command=self._copy_auto_title_to_manual,
         )
-        copy_btn.grid(row=1, column=2, sticky="e", padx=6, pady=4)
+        copy_btn.grid(row=2, column=1, columnspan=2, sticky="w", padx=6, pady=(0, 6))
         self._copy_auto_title_btn = copy_btn
 
         auto_frame = ttk.Frame(lf_titles)
-        auto_frame.grid(row=2, column=0, columnspan=3, sticky="ew", padx=6, pady=(2, 6))
+        auto_frame.grid(row=3, column=0, columnspan=3, sticky="ew", padx=6, pady=(2, 6))
         auto_frame.grid_columnconfigure(1, weight=1)
 
         ttk.Checkbutton(
@@ -51190,7 +51281,7 @@ class UnifiedApp(tk.Tk):
             row=4, column=0, sticky="w", padx=(0, 6), pady=2
         )
         template_entry = ttk.Entry(
-            auto_frame, textvariable=self.auto_title_template_var
+            auto_frame, textvariable=self.auto_title_template_var, width=56
         )
         template_entry.grid(row=4, column=1, sticky="ew", padx=6, pady=2)
         self._auto_title_template_entry = template_entry
@@ -51673,7 +51764,7 @@ class UnifiedApp(tk.Tk):
             text="Starting material reacting with selected gas",
         ).grid(row=0, column=0, sticky="w", padx=6, pady=4)
         ent_display_name = ttk.Entry(
-            lf_reagent, textvariable=self.v_starting_material_display_name
+            lf_reagent, textvariable=self.v_starting_material_display_name, width=56
         )
         ent_display_name.grid(row=0, column=1, sticky="ew", padx=6, pady=4)
         ent_display_name.bind("<FocusOut>", self._apply_product_settings)
@@ -51683,7 +51774,7 @@ class UnifiedApp(tk.Tk):
             row=1, column=0, sticky="w", padx=6, pady=4
         )
         ent_display_note = ttk.Entry(
-            lf_reagent, textvariable=self.v_starting_material_display_note
+            lf_reagent, textvariable=self.v_starting_material_display_note, width=56
         )
         ent_display_note.grid(row=1, column=1, sticky="ew", padx=6, pady=4)
         ent_display_note.bind("<FocusOut>", self._apply_product_settings)
@@ -51718,11 +51809,10 @@ class UnifiedApp(tk.Tk):
         """Build the redesigned Plot Settings tab shell.
 
         Purpose:
-            Assemble a fixed top ranges card plus a scrollable accordion of the
-            remaining Plot Settings controls.
+            Assemble a fully scrollable Plot Settings card stack with ranges first.
         Why:
-            Separating high-frequency range edits from lower-frequency settings
-            reduces visual density while preserving all existing controls.
+            A unified scroll surface keeps every section reachable with the wheel
+            while preserving range-first workflow order and existing controls.
         Args:
             None.
         Returns:
@@ -51742,8 +51832,7 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
 
-        f.grid_rowconfigure(0, weight=0)
-        f.grid_rowconfigure(1, weight=1)
+        f.grid_rowconfigure(0, weight=1)
         f.grid_columnconfigure(0, weight=1)
 
         self._plot_settings_card_states = {}
@@ -51752,22 +51841,8 @@ class UnifiedApp(tk.Tk):
         self._plot_settings_next_row = 0
         self._plot_settings_refresh_scroll_region = None
 
-        pinned = ttk.Frame(f)
-        pinned.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
-        pinned.grid_columnconfigure(0, weight=1)
-        ranges_card, ranges_body = self._create_plot_settings_card(
-            pinned,
-            "Ranges",
-            section_key="ranges",
-            expanded=True,
-            collapsible=False,
-            accent=True,
-        )
-        ranges_card.grid(row=0, column=0, sticky="ew")
-        self._build_plot_ranges_controls(ranges_body)
-
         scroll_shell = ttk.Frame(f)
-        scroll_shell.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        scroll_shell.grid(row=0, column=0, sticky="nsew", padx=8, pady=(8, 8))
         scroll_shell.grid_rowconfigure(0, weight=1)
         scroll_shell.grid_columnconfigure(0, weight=1)
 
@@ -51820,22 +51895,33 @@ class UnifiedApp(tk.Tk):
             widget.bind(
                 "<Button-5>", lambda _event: canvas.yview_scroll(1, "units"), add="+"
             )
+            # Recursively binding descendants keeps wheel scrolling responsive even
+            # when focus sits on nested entries or combobox controls.
             for child in widget.winfo_children():
                 _bind_mousewheel(child)
 
-        self.after_idle(lambda: _bind_mousewheel(content))
+        self.after_idle(lambda: _bind_mousewheel(canvas))
         for i in range(4):
             content.grid_columnconfigure(i, weight=1)
 
         pad = {"padx": 8, "pady": 6}
         self._plot_tab_stage_two_built = False
+        ranges_body = self._add_plot_settings_card(
+            content,
+            "ranges",
+            "Ranges",
+            expanded=True,
+            collapsible=False,
+            accent=True,
+        )
+        self._build_plot_ranges_controls(ranges_body)
         self.after_idle(lambda: self._build_tab_plot_stage_two(content, pad))
 
     def _build_tab_plot_stage_two(self, f, pad):
         """Build deferred accordion cards for Plot Settings.
 
         Purpose:
-            Render all non-pinned Plot Settings sections after shell creation.
+            Render Plot Settings accordion sections after the ranges card is built.
         Why:
             Deferred build keeps initial tab paint responsive while still exposing
             the complete configuration surface.
@@ -62673,6 +62759,74 @@ class UnifiedApp(tk.Tk):
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+
+    def _apply_display_mode(self, mode: str, *, persist: bool = True) -> None:
+        """Apply the selected UI display mode and persist it if requested.
+
+        Purpose:
+            Synchronize the application's visual appearance mode with user
+            preferences.
+        Why:
+            Keeps CTk-based controls readable and consistent across sessions by
+            storing one global mode in settings.
+        Args:
+            mode: Requested display mode key (`"regular"` or `"dark"`).
+            persist: True to save the normalized value to disk immediately.
+        Returns:
+            None.
+        Side Effects:
+            Updates `settings["ui_display_mode"]`, updates `_display_mode_var`,
+            and changes CustomTkinter appearance mode when available.
+        Exceptions:
+            Uses best-effort guards so appearance updates do not break runtime use.
+        """
+        normalized_mode = _normalize_ui_display_mode(mode)
+        appearance_mode = "dark" if normalized_mode == DISPLAY_MODE_DARK else "light"
+        if ctk is not None:
+            try:
+                ctk.set_appearance_mode(appearance_mode)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        settings["ui_display_mode"] = normalized_mode
+        mode_var = getattr(self, "_display_mode_var", None)
+        if isinstance(mode_var, tk.StringVar):
+            try:
+                if mode_var.get() != normalized_mode:
+                    mode_var.set(normalized_mode)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        if not persist:
+            return
+        try:
+            _save_settings_to_disk()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _on_display_mode_changed(self) -> None:
+        """Handle display mode changes from Preferences menu selections.
+
+        Purpose:
+            React to user mode selections from the Display Mode submenu.
+        Why:
+            Centralizes mode normalization, appearance application, and persistence
+            in one callback to avoid duplicated menu command logic.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Applies mode to CTk, updates settings, and writes settings to disk.
+        Exceptions:
+            Delegates guarded behavior to `_apply_display_mode`.
+        """
+        mode_var = getattr(self, "_display_mode_var", None)
+        selected = mode_var.get() if isinstance(mode_var, tk.StringVar) else ""
+        self._apply_display_mode(selected, persist=True)
 
     def _build_sol_mode_context(
         self,
