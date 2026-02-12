@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v3.0.1
+# Version: v3.0.2
 # Date: 2026-02-12
 
 import os
@@ -8151,25 +8151,30 @@ class AnnotationsPanel:
 
         list_controls = ttk.Frame(list_frame)
         list_controls.grid(row=2, column=0, sticky="ew", padx=4, pady=(2, 4))
-        ttk.Label(list_controls, text="Name:").pack(side="left")
-        name_entry = _ui_entry(list_controls, textvariable=self._name_var, width=24)
+        list_controls.grid_columnconfigure(0, weight=1)
+        name_row = ttk.Frame(list_controls)
+        name_row.grid(row=0, column=0, sticky="ew")
+        action_row = ttk.Frame(list_controls)
+        action_row.grid(row=1, column=0, sticky="w", pady=(2, 0))
+        ttk.Label(name_row, text="Name:").pack(side="left")
+        name_entry = _ui_entry(name_row, textvariable=self._name_var, width=24)
         name_entry.pack(side="left", padx=(2, 6), pady=4)
         name_entry.bind("<Return>", self._apply_name)
         name_entry.bind("<FocusOut>", self._apply_name)
         _ui_button(
-            list_controls, text="Send Backward", command=lambda: self._nudge_zorder(-1)
+            name_row, text="Send Backward", command=lambda: self._nudge_zorder(-1)
         ).pack(side="left", padx=4, pady=4)
         _ui_button(
-            list_controls, text="Bring Forward", command=lambda: self._nudge_zorder(1)
+            name_row, text="Bring Forward", command=lambda: self._nudge_zorder(1)
         ).pack(side="left", padx=4, pady=4)
         _ui_button(
-            list_controls, text="Duplicate", command=self._duplicate_selected
+            action_row, text="Duplicate", command=self._duplicate_selected
         ).pack(side="left", padx=4, pady=4)
-        _ui_button(list_controls, text="Delete", command=self._delete_selected).pack(
+        _ui_button(action_row, text="Delete", command=self._delete_selected).pack(
             side="left", padx=4, pady=4
         )
         _ui_button(
-            list_controls, text="Lock/Unlock", command=self._toggle_lock_selected
+            action_row, text="Lock/Unlock", command=self._toggle_lock_selected
         ).pack(side="left", padx=4, pady=4)
 
         style_controls = ttk.Frame(list_frame)
@@ -8362,9 +8367,9 @@ class AnnotationsPanel:
             return
 
         # Keep both panes usable by clamping the sash inside a visible range.
-        min_left = max(240, int(total_width * 0.20))
-        max_left = max(min_left, total_width - max(300, int(total_width * 0.25)))
-        fallback = max(min_left, min(max_left, int(total_width * 0.40)))
+        min_left = max(360, int(total_width * 0.33))
+        max_left = max(min_left, total_width - max(320, int(total_width * 0.24)))
+        fallback = max(min_left, min(max_left, int(total_width * 0.55)))
 
         raw_sash = state.get("editor_sash")
         if isinstance(raw_sash, bool) or not isinstance(raw_sash, (int, float)):
@@ -9640,7 +9645,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v3.0.1"
+APP_VERSION = "v3.0.2"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -34983,6 +34988,107 @@ class UnifiedApp(tk.Tk):
             return True
         return width <= screen_w and height <= screen_h
 
+    def _apply_plot_elements_editor_geometry(
+        self, editor: tk.Toplevel, ui_state: Mapping[str, Any]
+    ) -> None:
+        """Apply screen-safe geometry defaults for the Plot Elements editor.
+
+        Purpose:
+            Normalize persisted Plot Elements editor geometry before opening.
+        Why:
+            Persisted geometry can become oversized or partially off-screen after
+            monitor/layout changes, which can hide key controls.
+        Args:
+            editor: Plot Elements toplevel window receiving geometry updates.
+            ui_state: Persisted per-plot annotations UI state dictionary.
+        Returns:
+            None.
+        Side Effects:
+            Updates editor geometry and initial on-screen position.
+        Exceptions:
+            Uses best-effort guards so geometry issues do not block editor open.
+        """
+        min_w = int(self._scale_length(960))
+        min_h = int(self._scale_length(620))
+        preferred_w = int(self._scale_length(1160))
+        preferred_h = int(self._scale_length(740))
+
+        try:
+            screen_w = int(editor.winfo_screenwidth())
+            screen_h = int(editor.winfo_screenheight())
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            screen_w = 0
+            screen_h = 0
+
+        max_w = max(
+            min_w, int(screen_w * 0.92) if screen_w > 0 else int(preferred_w)
+        )
+        max_h = max(
+            min_h, int(screen_h * 0.90) if screen_h > 0 else int(preferred_h)
+        )
+        fallback_w = max(min_w, min(preferred_w, max_w))
+        fallback_h = max(min_h, min(preferred_h, max_h))
+
+        raw_geometry = (
+            ui_state.get("editor_geometry") if isinstance(ui_state, Mapping) else None
+        )
+        parsed_width: Optional[int] = None
+        parsed_height: Optional[int] = None
+        parsed_x: Optional[int] = None
+        parsed_y: Optional[int] = None
+        if isinstance(raw_geometry, str):
+            match = re.match(
+                r"^\s*(\d+)x(\d+)(?:\+(-?\d+)\+(-?\d+))?\s*$", raw_geometry.strip()
+            )
+            if match is not None:
+                try:
+                    parsed_width = int(match.group(1))
+                    parsed_height = int(match.group(2))
+                    if match.group(3) is not None and match.group(4) is not None:
+                        parsed_x = int(match.group(3))
+                        parsed_y = int(match.group(4))
+                except Exception:
+                    parsed_width = None
+                    parsed_height = None
+                    parsed_x = None
+                    parsed_y = None
+
+        width = (
+            fallback_w
+            if parsed_width is None
+            else max(min_w, min(max_w, int(parsed_width)))
+        )
+        height = (
+            fallback_h
+            if parsed_height is None
+            else max(min_h, min(max_h, int(parsed_height)))
+        )
+
+        # Keep restored origin visible; otherwise center defaults for first open.
+        if screen_w > 0 and screen_h > 0:
+            max_x = max(0, screen_w - width)
+            max_y = max(0, screen_h - height)
+            if parsed_x is None or parsed_y is None:
+                pos_x = max(0, int((screen_w - width) / 2))
+                pos_y = max(0, int((screen_h - height) / 2))
+            else:
+                pos_x = max(0, min(max_x, int(parsed_x)))
+                pos_y = max(0, min(max_y, int(parsed_y)))
+        else:
+            pos_x = 60 if parsed_x is None else max(0, int(parsed_x))
+            pos_y = 60 if parsed_y is None else max(0, int(parsed_y))
+
+        try:
+            editor.geometry(f"{width}x{height}+{pos_x}+{pos_y}")
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            try:
+                editor.geometry(f"{width}x{height}")
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
     def _apply_accessible_fonts(self, base_size=10, tab_bold=True):
         """Apply global accessible font settings and refresh dependent styles.
 
@@ -38888,13 +38994,7 @@ class UnifiedApp(tk.Tk):
         editor.resizable(False, False)
         self._plot_element_windows[plot_id] = editor
 
-        geometry = ui_state.get("editor_geometry")
-        if isinstance(geometry, str) and geometry.strip():
-            try:
-                editor.geometry(geometry)
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
+        self._apply_plot_elements_editor_geometry(editor, ui_state)
 
         main = ttk.Frame(editor, padding=10)
         main.grid(row=0, column=0, sticky="nsew")
