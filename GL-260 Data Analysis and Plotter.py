@@ -41781,8 +41781,8 @@ class UnifiedApp(tk.Tk):
             Create a plot tab with toolbar controls and a Matplotlib canvas.
         Why:
             The UI renders plots into tabs so users can switch between figures
-            without losing per-plot controls or annotations, and keeps export
-            format toggles on a dedicated second toolbar row for visibility.
+            without losing per-plot controls or annotations, while keeping save
+            controls and format toggles grouped together.
         Inputs:
             title: Tab title string.
             fig: Matplotlib Figure to embed.
@@ -41862,28 +41862,22 @@ class UnifiedApp(tk.Tk):
             pass
 
         try:
-
             self.nb.update_idletasks()
 
         except Exception:
-
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
         if not hasattr(self, "_plot_tabs"):
-
             self._plot_tabs = []
 
             self._canvases = []
 
-        # --- Two-row toolbar shell:
-        # Row 1 hosts action controls; Row 2 reserves space for export format toggles.
+        # --- Toolbar shell for action controls and export format toggles.
         topbar_shell = ttk.Frame(frame)
         topbar_shell.pack(side="top", fill="x")
         topbar = ttk.Frame(topbar_shell)
         topbar.pack(side="top", fill="x")
-        topbar_format_row = ttk.Frame(topbar_shell)
-        topbar_format_row.pack(side="top", fill="x")
 
         plot_id = self._plot_key_to_plot_id(plot_key, title)
         frame._plot_id = plot_id
@@ -41937,7 +41931,9 @@ class UnifiedApp(tk.Tk):
             pass
 
         overlay_message = (
-            "Loading combined plot..." if plot_key == "fig_combined" else "Loading plot..."
+            "Loading combined plot..."
+            if plot_key == "fig_combined"
+            else "Loading plot..."
         )
         # Hide the initial render behind a loading overlay until auto-refresh completes.
         self._install_plot_loading_overlay(frame, widget, message=overlay_message)
@@ -42009,7 +42005,9 @@ class UnifiedApp(tk.Tk):
 
         format_defaults = _get_plot_export_formats_defaulted()
         format_vars = {
-            fmt: tk.BooleanVar(master=frame, value=bool(format_defaults.get(fmt, False)))
+            fmt: tk.BooleanVar(
+                master=frame, value=bool(format_defaults.get(fmt, False))
+            )
             # Iterate to apply the per-item logic.
             for fmt in format_order
         }
@@ -42067,16 +42065,13 @@ class UnifiedApp(tk.Tk):
             selected_formats = _selected_formats()
 
             if not selected_formats:
-
                 try:
-
                     messagebox.showinfo(
                         "No File Type Selected",
                         "Select at least one file type before saving.",
                     )
 
                 except Exception:
-
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
 
@@ -42099,13 +42094,11 @@ class UnifiedApp(tk.Tk):
             )
 
             if not path:
-
                 return
 
             base, _ = os.path.splitext(path)
 
             if not base:
-
                 base = path
 
             prev_size = fig.get_size_inches()
@@ -42122,7 +42115,6 @@ class UnifiedApp(tk.Tk):
             resized_current_fig = False
 
             try:
-
                 if plot_key == "fig_combined":
                     try:
                         preview_fig = getattr(self, "_combined_plot_preview_fig", None)
@@ -42234,27 +42226,21 @@ class UnifiedApp(tk.Tk):
 
                 # Iterate over selected_formats to apply the per-item logic.
                 for fmt in selected_formats:
-
                     out_path = f"{base}.{fmt}"
 
                     try:
-
                         save_kwargs = {"format": fmt}
 
                         if fmt.lower() in {"png", "pdf"}:
-
                             save_kwargs["dpi"] = export_dpi
 
                         export_fig.savefig(out_path, **save_kwargs)
 
                     except Exception as exc:
-
                         errors.append((fmt, exc))
 
                 if errors:
-
                     try:
-
                         messagebox.showerror(
                             "Save Error",
                             "The following files could not be saved:\n"
@@ -42262,24 +42248,18 @@ class UnifiedApp(tk.Tk):
                         )
 
                     except Exception:
-
                         # Iterate over errors to apply the per-item logic.
                         for _, exc in errors:
-
                             print(f"Save Error: {exc}")
 
             finally:
-
                 if resized_current_fig:
-
                     try:
-
                         fig.set_size_inches(prev_size, forward=False)
 
                         fig.set_dpi(prev_dpi)
 
                     except Exception:
-
                         # Best-effort guard; ignore failures to avoid interrupting the workflow.
                         pass
                     if plot_id and plot_key != "fig_combined":
@@ -42290,22 +42270,17 @@ class UnifiedApp(tk.Tk):
                             pass
 
                 if close_export_fig and export_fig is not fig:
-
                     try:
-
                         plt.close(export_fig)
 
                     except Exception:
-
                         # Best-effort guard; ignore failures to avoid interrupting the workflow.
                         pass
 
                 try:
-
                     canvas.draw_idle()
 
                 except Exception:
-
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
 
@@ -42379,46 +42354,37 @@ class UnifiedApp(tk.Tk):
                         pass
 
             try:
-
                 self.nb.forget(frame)
 
             except Exception:
-
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
 
             try:
-
                 frame.destroy()
 
             except Exception:
-
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
 
             try:
-
                 idx = self._plot_tabs.index(frame)
 
                 del self._plot_tabs[idx]
 
                 if idx < len(self._canvases):
-
                     del self._canvases[idx]
 
             except Exception:
-
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
 
             try:
-
                 import matplotlib.pyplot as plt
 
                 plt.close(fig)
 
             except Exception:
-
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
 
@@ -42507,34 +42473,11 @@ class UnifiedApp(tk.Tk):
             )
             preview_button.pack(side="left", padx=(0, 8))
 
-            # Closure captures _add_plot_tab state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _add_plot_tab.
-            def _toggle_center_plot_legend():
-                """Toggle center plot legend.
-                Used to flip center plot legend and refresh dependent views."""
-                settings["combined_center_plot_legend"] = bool(
-                    self.center_combined_plot_legend.get()
-                )
-                try:
-                    _save_settings_to_disk()
-                except Exception:
-                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                    pass
-                self._force_plot_refresh(frame, canvas)
-
-            _ui_checkbutton(
-                save_controls,
-                text="Center plot legend",
-                variable=self.center_combined_plot_legend,
-                command=_toggle_center_plot_legend,
-            ).pack(side="left", padx=(0, 8))
-
-        # Keep format toggles on a dedicated row so PNG/PDF/SVG never clip.
-        checkbox_frame = ttk.Frame(topbar_format_row)
-        checkbox_frame.pack(side="left", padx=6, pady=(0, 4))
+        checkbox_frame = ttk.Frame(save_controls)
+        checkbox_frame.pack(side="left", padx=(0, 6))
 
         # Iterate over format_order to apply the per-item logic.
         for fmt in format_order:
-
             _ui_checkbutton(
                 checkbox_frame,
                 text=fmt.upper(),
@@ -42570,7 +42513,6 @@ class UnifiedApp(tk.Tk):
             """
 
             if refresh_state["scheduled"]:
-
                 return
             if plot_key == "fig_combined" and not getattr(
                 frame, "_combined_render_ready", False
@@ -42590,19 +42532,15 @@ class UnifiedApp(tk.Tk):
                 self._refresh_canvas_display(frame, canvas, trigger_resize=False)
 
             try:
-
                 self.after_idle(_do_refresh)
 
             except Exception:
-
                 _do_refresh()
 
         try:
-
             widget.bind("<Configure>", _schedule_canvas_sync, add="+")
 
         except Exception:
-
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
@@ -46283,7 +46221,8 @@ class UnifiedApp(tk.Tk):
         Returns:
             None.
         Side Effects:
-            Creates Tk widgets, binds callbacks, and captures dialog references.
+            Creates Tk widgets, measures profile-name content width to size the
+            initial window geometry, binds callbacks, and captures dialog references.
         Exceptions:
             Best-effort guards keep UI focus and window creation resilient.
         """
@@ -46301,10 +46240,27 @@ class UnifiedApp(tk.Tk):
         window = tk.Toplevel(self)
         window.title("Process Profiles")
         window.transient(self)
-        window.minsize(520, 320)
         window.resizable(True, True)
         window.grab_set()
         self._profile_manager_window = window
+
+        profile_names = self._list_profile_names()
+        max_profile_name_chars = max(
+            [len(str(name)) for name in profile_names] + [len("Profile Name")]
+        )
+        try:
+            measure_font = tkfont.nametofont("TkDefaultFont")
+        except Exception:
+            measure_font = tkfont.Font(
+                family=getattr(self, "_ui_font_family", "Verdana"), size=10
+            )
+        try:
+            longest_profile_name_px = max(
+                [int(measure_font.measure(str(name))) for name in profile_names]
+                + [int(measure_font.measure("Profile Name"))]
+            )
+        except Exception:
+            longest_profile_name_px = max_profile_name_chars * self._scale_length(8)
 
         # Closure captures _open_profile_manager state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _open_profile_manager.
         def _close_window() -> None:
@@ -46356,7 +46312,12 @@ class UnifiedApp(tk.Tk):
         list_shell.grid_rowconfigure(0, weight=1)
         list_shell.grid_columnconfigure(0, weight=1)
 
-        listbox = tk.Listbox(list_shell, exportselection=False, height=10)
+        listbox = tk.Listbox(
+            list_shell,
+            exportselection=False,
+            height=10,
+            width=max(36, min(96, max_profile_name_chars + 2)),
+        )
         listbox.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
 
         if ctk_module is not None:
@@ -46465,6 +46426,64 @@ class UnifiedApp(tk.Tk):
             text="Include dataset file path",
             variable=self._profile_include_path_var,
         ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+        try:
+            self.update_idletasks()
+            window.update_idletasks()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+        min_list_px = self._scale_length(420)
+        max_list_px = self._scale_length(980)
+        measured_list_px = longest_profile_name_px + self._scale_length(56)
+        # Clamp measured name width so long profiles improve visibility while
+        # preserving screen-safe geometry on smaller displays.
+        list_target_px = max(min_list_px, min(measured_list_px, max_list_px))
+        button_col_reqwidth = self._scale_length(180)
+        try:
+            button_col_reqwidth = max(
+                button_col_reqwidth, int(button_frame.winfo_reqwidth())
+            )
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        min_dialog_width = self._scale_length(760)
+        min_dialog_height = self._scale_length(360)
+        preferred_dialog_width = (
+            list_target_px + button_col_reqwidth + self._scale_length(72)
+        )
+        preferred_dialog_height = self._scale_length(420)
+        parent_width = int(getattr(self, "winfo_width", lambda: 0)() or 0)
+        parent_height = int(getattr(self, "winfo_height", lambda: 0)() or 0)
+        if parent_width <= 0:
+            parent_width = int(window.winfo_screenwidth() * 0.9)
+        if parent_height <= 0:
+            parent_height = int(window.winfo_screenheight() * 0.9)
+        max_dialog_width = max(min_dialog_width, int(parent_width * 0.95))
+        max_dialog_height = max(min_dialog_height, int(parent_height * 0.92))
+        dialog_width = max(
+            min_dialog_width, min(preferred_dialog_width, max_dialog_width)
+        )
+        dialog_height = max(
+            min_dialog_height, min(preferred_dialog_height, max_dialog_height)
+        )
+        try:
+            root_x = int(self.winfo_rootx())
+            root_y = int(self.winfo_rooty())
+            parent_width_px = int(self.winfo_width() or dialog_width)
+            parent_height_px = int(self.winfo_height() or dialog_height)
+            pos_x = root_x + max((parent_width_px - dialog_width) // 2, 0)
+            pos_y = root_y + max((parent_height_px - dialog_height) // 2, 0)
+            window.geometry(f"{dialog_width}x{dialog_height}+{pos_x}+{pos_y}")
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            window.geometry(f"{dialog_width}x{dialog_height}")
+        try:
+            window.minsize(min_dialog_width, min_dialog_height)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
 
         self._refresh_profile_listbox()
 
