@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v2.13.1)
+# GL-260 Data Analysis and Plotter (v3.0.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v2.13.1`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v3.0.0`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v3.0.0 Import CSV Dialog UX Refresh and Major Version Rollforward](#v300-import-csv-dialog-ux-refresh-and-major-version-rollforward)
   - [v2.13.1 Legend Drag Snap Offset Fix](#v2131-legend-drag-snap-offset-fix)
   - [v2.13.0 Plot Elements Close-Triggered Refresh Overlay](#v2130-plot-elements-close-triggered-refresh-overlay)
   - [v2.12.10 Core Overlay Adaptive Pass Targeting](#v21210-core-overlay-adaptive-pass-targeting)
@@ -228,6 +229,11 @@ Workflow:
   - Exponential smoothing dampening factor (default: 0.98).
   - Moving average window (default: 100 points).
 - Import writes numeric values only (no Excel formulas) and freezes the header row.
+
+Dialog behavior (`v3.0.0`):
+- The settings area is now vertically scrollable to keep all sections reachable on shorter displays.
+- `Import` and `Close` stay fixed in the footer and remain visible while scrolling.
+- The Ignore columns selector uses a tighter listbox/scrollbar layout to reduce empty gray space and improve readability.
 
 Output schema (fixed):
 - Date & Time
@@ -895,6 +901,14 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v3.0.0 Import CSV Dialog UX Refresh and Major Version Rollforward
+- Refreshed the `Import GL-260 CSV` popup layout so the settings body is scrollable while the action footer stays fixed.
+- Kept `Import` and `Close` always visible at the bottom of the dialog, including on constrained laptop-height windows.
+- Cleaned up the Ignore columns selector layout with tighter listbox/scrollbar alignment and reduced dead space.
+- Updated README user-manual content for the revised Import CSV dialog behavior.
+- Bumped application version metadata to `v3.0.0` in the script header and `APP_VERSION`.
+- This is the first release using explicit `vX.Y.Z` semantics for this project phase; `X=3` was selected for a major UI/UX rollforward milestone, with `Y=0` and `Z=0` reset at the major boundary.
 
 ### v2.13.1 Legend Drag Snap Offset Fix
 - Fixed the cycle legend drag snap/offset issue by removing manual motion-time legend relocation that rewrote `loc` from absolute cursor coordinates.

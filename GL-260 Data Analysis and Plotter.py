@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: v2.14.0
-# Date: 2026-02-11
+# Version: v3.0.0
+# Date: 2026-02-12
 
 import os
 import sys
@@ -9640,7 +9640,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v2.14.0"
+APP_VERSION = "v3.0.0"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -28963,8 +28963,26 @@ class CsvImportDialog:
     def __init__(
         self, app: tk.Tk, *, on_close: Optional[Callable[[], None]] = None
     ) -> None:
-        """Initialize CsvImportDialog instance.
-        Used at object creation to configure initial state and bindings."""
+        """Initialize the CSV import dialog state and window shell.
+
+        Purpose:
+            Prepare dialog variables, mapping state, and widget references used by
+            the GL-260 CSV import workflow.
+        Why:
+            The dialog reuses persisted defaults and needs deterministic startup
+            state before controls are rendered and callbacks fire.
+        Args:
+            app: Parent application window that owns this modal dialog.
+            on_close: Optional callback invoked after the dialog closes.
+        Returns:
+            None.
+        Side Effects:
+            Creates a modal `tk.Toplevel`, configures geometry and bindings, and
+            initializes Tk variables for import settings.
+        Exceptions:
+            Best-effort guards in downstream helpers prevent UI setup failures
+            from interrupting the parent workflow.
+        """
         self.app = app
         self._on_close = on_close
         self._preview_task_id: Optional[int] = None
@@ -29059,7 +29077,11 @@ class CsvImportDialog:
         self._preview_text: Optional[scrolledtext.ScrolledText] = None
         self._import_button: Optional[Any] = None
         self._close_button: Optional[Any] = None
+        self._content_canvas: Optional[tk.Canvas] = None
+        self._content_window_id: Optional[int] = None
+        self._content_container: Optional[ttk.Frame] = None
 
+        self._configure_dialog_geometry()
         self._build_ui()
         self._suggest_sheet_name(force=not bool(sheet_name))
         if csv_path and os.path.exists(csv_path):
@@ -29077,14 +29099,264 @@ class CsvImportDialog:
                 return int(value)
         return int(value)
 
+    def _configure_dialog_geometry(self) -> None:
+        """Apply compact, screen-safe geometry defaults for the import dialog.
+
+        Purpose:
+            Size and position the import popup for typical laptop displays while
+            preserving resize support for larger workflows.
+        Why:
+            The legacy dialog opened too tall for constrained screens, which could
+            hide action buttons and block the import flow.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Updates dialog geometry, minimum size, and initial on-screen position.
+        Exceptions:
+            Uses best-effort guards so geometry issues do not prevent dialog open.
+        """
+        min_width = self._scale_length(720)
+        min_height = self._scale_length(520)
+        preferred_width = self._scale_length(940)
+        preferred_height = self._scale_length(700)
+        try:
+            self.app.update_idletasks()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        parent_width = int(getattr(self.app, "winfo_width", lambda: 0)() or 0)
+        parent_height = int(getattr(self.app, "winfo_height", lambda: 0)() or 0)
+        if parent_width <= 0:
+            parent_width = int(self.window.winfo_screenwidth() * 0.9)
+        if parent_height <= 0:
+            parent_height = int(self.window.winfo_screenheight() * 0.9)
+        max_width = max(min_width, int(parent_width * 0.95))
+        max_height = max(min_height, int(parent_height * 0.92))
+        dialog_width = max(min_width, min(preferred_width, max_width))
+        dialog_height = max(min_height, min(preferred_height, max_height))
+        try:
+            root_x = int(self.app.winfo_rootx())
+            root_y = int(self.app.winfo_rooty())
+            parent_width_px = int(self.app.winfo_width() or dialog_width)
+            parent_height_px = int(self.app.winfo_height() or dialog_height)
+            pos_x = root_x + max((parent_width_px - dialog_width) // 2, 0)
+            pos_y = root_y + max((parent_height_px - dialog_height) // 2, 0)
+            self.window.geometry(f"{dialog_width}x{dialog_height}+{pos_x}+{pos_y}")
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            self.window.geometry(f"{dialog_width}x{dialog_height}")
+        try:
+            self.window.minsize(min_width, min_height)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _refresh_dialog_scrollregion(self, _event: Optional[Any] = None) -> None:
+        """Sync the dialog canvas scrollregion to the content frame bounds.
+
+        Purpose:
+            Keep vertical scrolling accurate as sections expand, collapse, or
+            repopulate with preview and mapping content.
+        Why:
+            Canvas-backed dialog bodies require explicit scrollregion updates or
+            lower controls can become unreachable.
+        Args:
+            _event: Optional Tk configure event triggering the refresh.
+        Returns:
+            None.
+        Side Effects:
+            Recomputes `scrollregion` on the import-dialog content canvas.
+        Exceptions:
+            Uses best-effort guards to avoid UI interruptions during resize events.
+        """
+        canvas = self._content_canvas
+        if canvas is None:
+            return
+        try:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _expand_dialog_content_width(self, event: Any) -> None:
+        """Expand the canvas window item so content tracks the visible width.
+
+        Purpose:
+            Make the inner content frame match the current canvas width.
+        Why:
+            Without width synchronization, sections can clip or leave dead space
+            when users resize the import dialog.
+        Args:
+            event: Tk configure event from the canvas widget.
+        Returns:
+            None.
+        Side Effects:
+            Updates the embedded canvas window width for the scrollable body.
+        Exceptions:
+            Uses best-effort guards for resize timing edge cases.
+        """
+        canvas = self._content_canvas
+        content_window_id = self._content_window_id
+        if canvas is None or content_window_id is None:
+            return
+        try:
+            canvas.itemconfigure(content_window_id, width=event.width)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _widget_owns_vertical_scroll(self, widget: Any) -> bool:
+        """Check whether a widget should keep its own mousewheel behavior.
+
+        Purpose:
+            Detect controls that already provide native vertical scrolling.
+        Why:
+            The dialog body should scroll globally, but text/list widgets must keep
+            direct wheel control so selection and preview browsing stay intuitive.
+        Args:
+            widget: Event target widget from mousewheel callbacks.
+        Returns:
+            True when wheel events should not be redirected to the dialog canvas.
+        Side Effects:
+            None.
+        Exceptions:
+            Returns False when widget inspection fails.
+        """
+        if widget is None:
+            return False
+        if isinstance(widget, (tk.Text, tk.Listbox, ttk.Treeview)):
+            return True
+        try:
+            widget_class = str(widget.winfo_class()).strip().lower()
+        except Exception:
+            return False
+        return widget_class in {"text", "listbox", "treeview"}
+
+    def _on_dialog_mousewheel(self, event: Any) -> Optional[str]:
+        """Route mousewheel input to the scrollable dialog body when appropriate.
+
+        Purpose:
+            Provide consistent wheel scrolling across all controls in the import
+            settings area.
+        Why:
+            Users need to navigate long forms quickly, but controls with local
+            scrolling should retain their native behavior.
+        Args:
+            event: Mousewheel or button-scroll event from Tk.
+        Returns:
+            `"break"` when the event is consumed by the dialog canvas; otherwise
+            `None` so widget-local scrolling can proceed.
+        Side Effects:
+            Scrolls the import dialog content canvas in unit steps.
+        Exceptions:
+            Best-effort guards suppress event-handler failures.
+        """
+        canvas = self._content_canvas
+        if canvas is None:
+            return None
+        if self._widget_owns_vertical_scroll(getattr(event, "widget", None)):
+            return None
+        delta = int(getattr(event, "delta", 0) or 0)
+        step = 0
+        if delta != 0:
+            step = -1 if delta > 0 else 1
+            if abs(delta) >= 120:
+                step = int(-delta / 120)
+        else:
+            num = int(getattr(event, "num", 0) or 0)
+            if num == 4:
+                step = -1
+            elif num == 5:
+                step = 1
+        if step == 0:
+            return None
+        try:
+            canvas.yview_scroll(step, "units")
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            return None
+        return "break"
+
+    def _bind_dialog_mousewheel_recursive(self, widget: Any) -> None:
+        """Bind wheel events recursively so the form scrolls from any child control.
+
+        Purpose:
+            Attach cross-platform wheel handlers to the content tree.
+        Why:
+            Canvas scrolling in Tkinter only responds when bound widgets receive
+            events; recursive binding avoids dead areas in a dense form.
+        Args:
+            widget: Root widget whose subtree should receive wheel bindings.
+        Returns:
+            None.
+        Side Effects:
+            Registers `<MouseWheel>`, `<Button-4>`, and `<Button-5>` handlers on
+            the provided widget and all descendants.
+        Exceptions:
+            Best-effort guards skip widgets that reject event bindings.
+        """
+        if widget is None:
+            return
+        try:
+            widget.bind("<MouseWheel>", self._on_dialog_mousewheel, add="+")
+            widget.bind("<Button-4>", self._on_dialog_mousewheel, add="+")
+            widget.bind("<Button-5>", self._on_dialog_mousewheel, add="+")
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        children_getter = getattr(widget, "winfo_children", None)
+        if not callable(children_getter):
+            return
+        # Recursively bind descendants so wheel gestures work across nested sections.
+        for child in children_getter():
+            self._bind_dialog_mousewheel_recursive(child)
+
     def _build_ui(self) -> None:
-        """Build UI.
-        Used to assemble UI during UI or plot setup."""
-        container = ttk.Frame(self.window, padding=12)
-        container.grid(row=0, column=0, sticky="nsew")
+        """Build the CSV import dialog UI with scrollable content and fixed footer.
+
+        Purpose:
+            Assemble all import workflow controls, preview widgets, and action
+            buttons for GL-260 CSV ingestion.
+        Why:
+            The import form can exceed available window height, so the settings
+            body must scroll independently while action buttons remain visible.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Creates Tk widgets, configures canvas scrolling, stores control
+            references, and binds wheel handlers for the form content.
+        Exceptions:
+            Widget construction uses best-effort guards in helper callbacks.
+        """
         self.window.grid_rowconfigure(0, weight=1)
+        self.window.grid_rowconfigure(1, weight=0)
         self.window.grid_columnconfigure(0, weight=1)
+
+        scroll_shell = ttk.Frame(self.window, padding=(12, 12, 12, 0))
+        scroll_shell.grid(row=0, column=0, sticky="nsew")
+        scroll_shell.grid_rowconfigure(0, weight=1)
+        scroll_shell.grid_columnconfigure(0, weight=1)
+
+        canvas = tk.Canvas(scroll_shell, borderwidth=0, highlightthickness=0)
+        vscroll = _ui_scrollbar(scroll_shell, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vscroll.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        vscroll.grid(row=0, column=1, sticky="ns", padx=(8, 0))
+
+        container = ttk.Frame(canvas)
+        container_id = canvas.create_window((0, 0), window=container, anchor="nw")
         container.grid_columnconfigure(0, weight=1)
+        self._content_canvas = canvas
+        self._content_window_id = container_id
+        self._content_container = container
+        container.bind("<Configure>", self._refresh_dialog_scrollregion)
+        canvas.bind("<Configure>", self._expand_dialog_content_width)
+        self.window.after_idle(lambda: self._bind_dialog_mousewheel_recursive(container))
+        self.window.after_idle(self._refresh_dialog_scrollregion)
 
         input_frame = ttk.Labelframe(container, text="Input / Output")
         input_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
@@ -29131,7 +29403,7 @@ class CsvImportDialog:
         ).grid(row=3, column=1, sticky="w", padx=6, pady=4)
 
         preview_frame = ttk.Labelframe(container, text="CSV Parsing")
-        preview_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 10))
+        preview_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
         preview_frame.grid_columnconfigure(0, weight=1)
 
         ttk.Label(
@@ -29171,16 +29443,18 @@ class CsvImportDialog:
         ttk.Label(mapping_frame, text="Ignore columns (optional)").grid(
             row=row, column=0, sticky="nw", padx=6, pady=(6, 4)
         )
+        mapping_frame.grid_rowconfigure(row, weight=1)
         ignore_frame = ttk.Frame(mapping_frame)
-        ignore_frame.grid(row=row, column=1, sticky="ew", padx=6, pady=(6, 4))
+        ignore_frame.grid(row=row, column=1, sticky="nsew", padx=6, pady=(6, 4))
+        ignore_frame.grid_rowconfigure(0, weight=1)
         ignore_frame.grid_columnconfigure(0, weight=1)
         listbox = tk.Listbox(
             ignore_frame,
             selectmode="multiple",
-            height=5,
+            height=6,
             exportselection=False,
         )
-        listbox.grid(row=0, column=0, sticky="ew")
+        listbox.grid(row=0, column=0, sticky="nsew")
         scroll = _ui_scrollbar(ignore_frame, orient="vertical", command=listbox.yview)
         scroll.grid(row=0, column=1, sticky="ns")
         listbox.configure(yscrollcommand=scroll.set)
@@ -29227,12 +29501,14 @@ class CsvImportDialog:
             justify="left",
         ).grid(row=1, column=0, sticky="w", padx=6, pady=(0, 6))
 
-        ttk.Label(container, textvariable=self._status_var).grid(
-            row=5, column=0, sticky="w", padx=6, pady=(0, 6)
+        footer = ttk.Frame(self.window, padding=(12, 8, 12, 10))
+        footer.grid(row=1, column=0, sticky="ew")
+        footer.grid_columnconfigure(0, weight=1)
+        ttk.Label(footer, textvariable=self._status_var).grid(
+            row=0, column=0, sticky="w", padx=(0, 8)
         )
-
-        button_frame = ttk.Frame(container)
-        button_frame.grid(row=6, column=0, sticky="e", pady=(0, 6))
+        button_frame = ttk.Frame(footer)
+        button_frame.grid(row=0, column=1, sticky="e")
         import_button = _ui_button(
             button_frame, text="Import", command=self._start_import
         )
