@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v3.0.0)
+# GL-260 Data Analysis and Plotter (v3.0.1)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v3.0.0`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v3.0.1`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v3.0.1 Startup Splash + Background Startup Orchestration](#v301-startup-splash--background-startup-orchestration)
   - [v3.0.0 Import CSV Dialog UX Refresh and Major Version Rollforward](#v300-import-csv-dialog-ux-refresh-and-major-version-rollforward)
   - [v2.13.1 Legend Drag Snap Offset Fix](#v2131-legend-drag-snap-offset-fix)
   - [v2.13.0 Plot Elements Close-Triggered Refresh Overlay](#v2130-plot-elements-close-triggered-refresh-overlay)
@@ -901,6 +902,14 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v3.0.1 Startup Splash + Background Startup Orchestration
+- Added a startup splash window with a determinate loading bar so launch progress is visible immediately and remains visible until startup completion gates are satisfied.
+- Added startup orchestration gates that hold splash teardown until the main UI build, deferred Plot Settings stage-two build, deferred Cycle Analysis stage-four build, and startup restore state all report complete.
+- Switched initial Cycle Analysis tab construction from synchronous mode to deferred staged mode to reduce launch-time UI blocking.
+- Kept workbook/session restore on the existing background worker path and integrated restore status milestones with startup splash progress messaging.
+- Guarded initial Data-tab warm-up selection while the startup splash is active to avoid competing tab-switch churn during launch.
+- Bumped application version metadata to `v3.0.1` in the script header and `APP_VERSION`.
 
 ### v3.0.0 Import CSV Dialog UX Refresh and Major Version Rollforward
 - Refreshed the `Import GL-260 CSV` popup layout so the settings body is scrollable while the action footer stays fixed.

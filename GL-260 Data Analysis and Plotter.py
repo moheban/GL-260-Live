@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v3.0.0
+# Version: v3.0.1
 # Date: 2026-02-12
 
 import os
@@ -9640,7 +9640,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v3.0.0"
+APP_VERSION = "v3.0.1"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -30177,6 +30177,22 @@ class UnifiedApp(tk.Tk):
 
         super().__init__()
 
+        self._startup_loading_overlay = None
+        self._startup_loading_label = None
+        self._startup_loading_progress_var = None
+        self._startup_loading_bar = None
+        self._startup_loading_progress_label = None
+        self._startup_loading_progress_value = 0.0
+        self._startup_loading_poll_after_id = None
+        self._startup_ui_built = False
+        self._startup_plot_stage_two_ready = False
+        self._startup_cycle_ready = False
+        self._startup_tab_warmup_done = False
+        self._startup_restore_state = "pending"
+        self._install_startup_loading_splash(
+            message="Initializing startup...", progress=2.0
+        )
+
         # Persisted settings wiring:
         # Prior callbacks wrote to getattr(self, "settings", {}) which returned a fresh
         # empty dict because self.settings was never set. Model selections and workflow
@@ -31619,6 +31635,10 @@ class UnifiedApp(tk.Tk):
 
         # Build UI
 
+        self._update_startup_loading_splash_progress(
+            progress=12.0,
+            message="Building application interface...",
+        )
         self._build_ui()
 
         fig1_var = getattr(self, "_plot_select_fig1_var", None)
@@ -31674,8 +31694,15 @@ class UnifiedApp(tk.Tk):
 
         # Kick off last-session restoration without blocking the window from showing
 
+        self._mark_startup_restore_state("pending")
         self.after(200, self._restore_last_session_async)
         self.after(400, self._maybe_warn_gil_reenabled_import)
+        try:
+            self._startup_loading_poll_after_id = self.after(
+                120, self._poll_startup_loading_completion
+            )
+        except Exception:
+            self._startup_loading_poll_after_id = None
 
         if _SETTINGS_LOAD_ERROR is not None:
 
@@ -31928,14 +31955,628 @@ class UnifiedApp(tk.Tk):
             pass
         self._combined_render_cursor = None
 
+    def _install_startup_loading_splash(
+        self,
+        *,
+        message: str = "Starting GL-260...",
+        progress: float = 0.0,
+    ) -> None:
+        """Create or refresh the startup splash overlay window.
+
+        Purpose:
+            Display a determinate startup splash while launch tasks complete.
+        Why:
+            Startup can involve expensive UI construction and workbook restore, so
+            users need immediate progress feedback instead of an apparently frozen app.
+        Inputs:
+            message: Splash status text shown under the title.
+            progress: Initial progress value in the 0..100 range.
+        Outputs:
+            None.
+        Side Effects:
+            Creates a top-level splash window, initializes progress widgets, and
+            stores widget references on the app instance for later updates.
+        Exceptions:
+            Best-effort guards avoid interrupting startup if splash creation fails.
+        """
+        overlay = getattr(self, "_startup_loading_overlay", None)
+        if overlay is not None:
+            try:
+                if overlay.winfo_exists():
+                    overlay.lift()
+                    self._update_startup_loading_splash_progress(
+                        progress=progress,
+                        message=message,
+                        reset=True,
+                    )
+                    return
+            except Exception:
+                overlay = None
+
+        try:
+            overlay = tk.Toplevel(self)
+        except Exception:
+            return
+        try:
+            overlay.title("Starting GL-260")
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            overlay.resizable(False, False)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            overlay.transient(self)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            overlay.attributes("-topmost", True)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            overlay.protocol("WM_DELETE_WINDOW", lambda: None)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+        width = 420
+        height = 165
+        try:
+            screen_w = int(self.winfo_screenwidth())
+            screen_h = int(self.winfo_screenheight())
+            pos_x = max(0, int((screen_w - width) / 2))
+            pos_y = max(0, int((screen_h - height) / 2))
+            overlay.geometry(f"{width}x{height}+{pos_x}+{pos_y}")
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+        label = None
+        progress_var = None
+        progress_bar = None
+        progress_label = None
+        try:
+            body = ttk.Frame(overlay, padding=14)
+            body.pack(fill="both", expand=True)
+            ttk.Label(
+                body,
+                text=f"GL-260 Data Analysis & Processing Engine {APP_VERSION}",
+                anchor="w",
+            ).pack(fill="x", pady=(0, 8))
+            label = ttk.Label(
+                body, text=str(message or "Starting GL-260..."), anchor="w"
+            )
+            label.pack(fill="x")
+            progress_var = tk.DoubleVar(master=overlay, value=0.0)
+            progress_bar = ttk.Progressbar(
+                body,
+                mode="determinate",
+                maximum=100.0,
+                variable=progress_var,
+                length=360,
+            )
+            progress_bar.pack(fill="x", pady=(10, 0))
+            progress_label = ttk.Label(body, text="0%", anchor="e")
+            progress_label.pack(fill="x", pady=(6, 0))
+        except Exception:
+            label = None
+            progress_var = None
+            progress_bar = None
+            progress_label = None
+
+        self._startup_loading_overlay = overlay
+        self._startup_loading_label = label
+        self._startup_loading_progress_var = progress_var
+        self._startup_loading_bar = progress_bar
+        self._startup_loading_progress_label = progress_label
+        self._startup_loading_progress_value = 0.0
+        self._update_startup_loading_splash_progress(
+            progress=progress,
+            message=message,
+            reset=True,
+        )
+        try:
+            # Force the first splash frame to paint before startup-heavy work begins.
+            overlay.update_idletasks()
+            overlay.update()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _update_startup_loading_splash_progress(
+        self,
+        *,
+        progress: Optional[float] = None,
+        message: Optional[str] = None,
+        reset: bool = False,
+    ) -> None:
+        """Update startup splash message and determinate progress value.
+
+        Purpose:
+            Keep startup splash progress synchronized with launch milestones.
+        Why:
+            Startup operations can complete out of order; monotonic updates prevent
+            visible regressions while still surfacing useful status messages.
+        Inputs:
+            progress: Optional new progress value in the 0..100 range.
+            message: Optional status message shown on the splash.
+            reset: When True, reset tracked progress before applying updates.
+        Outputs:
+            None.
+        Side Effects:
+            Mutates splash labels/progress bar and updates cached progress state.
+        Exceptions:
+            Missing/destroyed splash widgets are ignored by best-effort guards.
+        """
+        overlay = getattr(self, "_startup_loading_overlay", None)
+        if overlay is None:
+            return
+        try:
+            if not overlay.winfo_exists():
+                return
+        except Exception:
+            return
+
+        if reset:
+            self._startup_loading_progress_value = 0.0
+
+        current_value = getattr(self, "_startup_loading_progress_value", 0.0)
+        try:
+            current_value = float(current_value)
+        except Exception:
+            current_value = 0.0
+        if not math.isfinite(current_value):
+            current_value = 0.0
+        target_value = current_value
+        if progress is not None:
+            try:
+                candidate = float(progress)
+            except Exception:
+                candidate = current_value
+            if not math.isfinite(candidate):
+                candidate = current_value
+            candidate = max(0.0, min(100.0, candidate))
+            target_value = candidate if reset else max(current_value, candidate)
+
+        label = getattr(self, "_startup_loading_label", None)
+        if label is not None and message is not None:
+            try:
+                label.configure(text=str(message))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        progress_var = getattr(self, "_startup_loading_progress_var", None)
+        if progress_var is not None:
+            try:
+                progress_var.set(float(target_value))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        progress_bar = getattr(self, "_startup_loading_bar", None)
+        if progress_bar is not None:
+            try:
+                progress_bar.configure(value=float(target_value), maximum=100.0)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        progress_label = getattr(self, "_startup_loading_progress_label", None)
+        if progress_label is not None:
+            try:
+                progress_label.configure(text=f"{int(round(target_value))}%")
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        self._startup_loading_progress_value = float(target_value)
+        try:
+            overlay.lift()
+            overlay.update_idletasks()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _clear_startup_loading_splash(self) -> None:
+        """Destroy startup splash widgets and cancel pending splash timers.
+
+        Purpose:
+            Remove startup splash UI once launch completion gates are satisfied.
+        Why:
+            Splash teardown must be deterministic to avoid leaked top-level windows
+            or orphaned timer callbacks after startup completion.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Cancels splash polling timer, destroys splash window, and clears all
+            cached startup-splash widget references.
+        Exceptions:
+            Best-effort guards swallow teardown errors so startup can proceed.
+        """
+        after_id = getattr(self, "_startup_loading_poll_after_id", None)
+        if after_id is not None:
+            try:
+                self.after_cancel(after_id)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            self._startup_loading_poll_after_id = None
+
+        overlay = getattr(self, "_startup_loading_overlay", None)
+        if overlay is not None:
+            try:
+                overlay.destroy()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        self._startup_loading_overlay = None
+        self._startup_loading_label = None
+        self._startup_loading_progress_var = None
+        self._startup_loading_bar = None
+        self._startup_loading_progress_label = None
+        self._startup_loading_progress_value = 0.0
+
+    def _poll_startup_loading_completion(self) -> None:
+        """Evaluate startup completion gates and close splash when fully ready.
+
+        Purpose:
+            Keep startup splash open until all launch stages and async restore
+            operations are complete.
+        Why:
+            Launch work spans UI-thread staged builders and background restore tasks;
+            a single gate checker prevents early splash removal.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Updates splash progress/message, reschedules itself, and clears splash
+            once all completion gates pass.
+        Exceptions:
+            Missing splash state short-circuits safely without raising.
+        """
+        self._startup_loading_poll_after_id = None
+        overlay = getattr(self, "_startup_loading_overlay", None)
+        if overlay is None:
+            return
+        try:
+            if not overlay.winfo_exists():
+                return
+        except Exception:
+            return
+
+        restore_state = str(
+            getattr(self, "_startup_restore_state", "pending") or "pending"
+        )
+        ui_ready = bool(getattr(self, "_startup_ui_built", False))
+        plot_ready = bool(getattr(self, "_startup_plot_stage_two_ready", False))
+        cycle_ready = bool(getattr(self, "_startup_cycle_ready", False))
+        tab_warmup_ready = bool(getattr(self, "_startup_tab_warmup_done", False))
+        restore_ready = restore_state in {"success", "failed", "skipped"}
+
+        progress_target = 8.0
+        if ui_ready:
+            progress_target = 62.0
+        if plot_ready:
+            progress_target = 74.0
+        if cycle_ready:
+            progress_target = 84.0
+        if restore_ready:
+            progress_target = 94.0
+        if tab_warmup_ready:
+            progress_target = 98.0
+
+        if (
+            ui_ready
+            and plot_ready
+            and cycle_ready
+            and restore_ready
+            and not tab_warmup_ready
+        ):
+            self._update_startup_loading_splash_progress(
+                progress=96.0,
+                message="Warming startup tabs...",
+            )
+            self._run_startup_tab_warmup_under_splash()
+            tab_warmup_ready = bool(getattr(self, "_startup_tab_warmup_done", False))
+
+        if (
+            ui_ready
+            and plot_ready
+            and cycle_ready
+            and restore_ready
+            and tab_warmup_ready
+        ):
+            self._finalize_startup_to_data_tab()
+            self._update_startup_loading_splash_progress(
+                progress=100.0,
+                message="Startup complete. Opening workspace...",
+            )
+            try:
+                overlay.after(60, self._clear_startup_loading_splash)
+            except Exception:
+                self._clear_startup_loading_splash()
+            return
+
+        if not ui_ready:
+            message = "Building main interface..."
+        elif not plot_ready:
+            message = "Finalizing Plot Settings controls..."
+        elif not cycle_ready:
+            message = "Finalizing Cycle Analysis tab..."
+        elif restore_state == "running":
+            message = "Restoring last session workbook..."
+        elif not tab_warmup_ready:
+            message = "Warming startup tabs..."
+        else:
+            message = "Finalizing startup checks..."
+        self._update_startup_loading_splash_progress(
+            progress=progress_target,
+            message=message,
+        )
+        try:
+            self._startup_loading_poll_after_id = self.after(
+                90, self._poll_startup_loading_completion
+            )
+        except Exception:
+            self._startup_loading_poll_after_id = None
+
+    def _run_startup_tab_warmup_under_splash(self) -> None:
+        """Warm all startup tabs once while splash is visible.
+
+        Purpose:
+            Prebuild notebook tab layouts during startup without exposing tab changes.
+        Why:
+            Selecting each major tab once avoids first-click render delays while the
+            splash is still on screen, so users do not see tab cycling.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Iterates notebook tab selection, performs idle layout updates, restores
+            Data tab selection, and marks startup warmup completion state.
+        Exceptions:
+            Missing notebook/widgets short-circuit safely; per-tab failures are ignored.
+        """
+        if bool(getattr(self, "_startup_tab_warmup_done", False)):
+            return
+
+        nb = getattr(self, "nb", None)
+        data_tab = getattr(self, "tab_data", None)
+        if (
+            nb is None
+            or data_tab is None
+            or not getattr(nb, "winfo_exists", lambda: False)()
+        ):
+            return
+
+        try:
+            current_tab = nb.select()
+        except Exception:
+            current_tab = None
+
+        warm_tabs = []
+        # Iterate startup tabs to prevent first-click cold-build delays after splash.
+        for attr in (
+            "tab_data",
+            "tab_columns",
+            "tab_plot",
+            "tab_cycle",
+            "tab_contamination",
+            "tab_solubility",
+            "tab_solubility_new",
+            "tab_final_report",
+        ):
+            tab_obj = getattr(self, attr, None)
+            if tab_obj is None:
+                continue
+            warm_tabs.append(tab_obj)
+
+        for tab_obj in warm_tabs:
+            try:
+                nb.select(tab_obj)
+                nb.update_idletasks()
+                tab_obj.update_idletasks()
+            except Exception:
+                continue
+
+        target_tab = data_tab or current_tab
+        if target_tab is not None:
+            try:
+                nb.select(target_tab)
+            except Exception:
+                if current_tab is not None:
+                    try:
+                        nb.select(current_tab)
+                    except Exception:
+                        pass
+
+        try:
+            nb.update_idletasks()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            self.update_idletasks()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        self._startup_tab_warmup_done = True
+
+    def _finalize_startup_to_data_tab(self) -> None:
+        """Force a stable, interactive Data-tab state at startup completion.
+
+        Purpose:
+            Ensure Data is selected and focusable when startup is declared complete.
+        Why:
+            Users should not need extra tab interactions after splash dismissal.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Cancels pending initial-tab timers, selects Data, flushes idle geometry,
+            and sets keyboard focus on a stable Data-tab widget when possible.
+        Exceptions:
+            Best-effort guards prevent focus/selection issues from blocking startup.
+        """
+        after_id = getattr(self, "_initial_tab_after_id", None)
+        if after_id is not None:
+            try:
+                self.after_cancel(after_id)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            self._initial_tab_after_id = None
+
+        nb = getattr(self, "nb", None)
+        data_tab = getattr(self, "tab_data", None)
+        if (
+            nb is not None
+            and data_tab is not None
+            and getattr(nb, "winfo_exists", lambda: False)()
+        ):
+            try:
+                nb.select(data_tab)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            try:
+                nb.update_idletasks()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        try:
+            self.update_idletasks()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+        focus_widget = getattr(self, "e_file", None)
+        if (
+            focus_widget is not None
+            and getattr(focus_widget, "winfo_exists", lambda: False)()
+        ):
+            try:
+                focus_widget.focus_set()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        elif (
+            data_tab is not None and getattr(data_tab, "winfo_exists", lambda: False)()
+        ):
+            try:
+                data_tab.focus_set()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        self._initial_tab_shown = True
+
+    def _mark_startup_restore_state(
+        self,
+        state: str,
+        *,
+        path: Optional[str] = None,
+        error: Optional[BaseException] = None,
+    ) -> None:
+        """Record startup restore state and publish splash progress milestones.
+
+        Purpose:
+            Centralize startup-restore status updates for poll-gated splash logic.
+        Why:
+            Restore can be skipped, running, successful, or failed; a single setter
+            keeps progress messaging and completion gating deterministic.
+        Inputs:
+            state: Restore state value (`pending`, `running`, `success`, `failed`,
+                or `skipped`).
+            path: Optional workbook path associated with the state transition.
+            error: Optional exception used for failure diagnostics/log messaging.
+        Outputs:
+            None.
+        Side Effects:
+            Updates startup restore state and splash message/progress milestones.
+        Exceptions:
+            Invalid states are normalized to `pending`; widget updates are best-effort.
+        """
+        normalized_state = str(state or "").strip().lower()
+        if normalized_state not in {"pending", "running", "success", "failed", "skipped"}:
+            normalized_state = "pending"
+        self._startup_restore_state = normalized_state
+
+        if normalized_state == "pending":
+            self._update_startup_loading_splash_progress(
+                progress=40.0,
+                message="Preparing startup restore...",
+            )
+            return
+        if normalized_state == "running":
+            filename = ""
+            try:
+                filename = os.path.basename(path or "")
+            except Exception:
+                filename = ""
+            message = (
+                f"Restoring last session from {filename}..."
+                if filename
+                else "Restoring last session workbook..."
+            )
+            self._update_startup_loading_splash_progress(
+                progress=70.0,
+                message=message,
+            )
+            return
+        if normalized_state == "success":
+            self._update_startup_loading_splash_progress(
+                progress=90.0,
+                message="Last session restored.",
+            )
+            return
+        if normalized_state == "failed":
+            _ = error
+            self._update_startup_loading_splash_progress(
+                progress=90.0,
+                message="Restore failed. Continuing startup...",
+            )
+            return
+        self._update_startup_loading_splash_progress(
+            progress=90.0,
+            message="No previous session to restore.",
+        )
+
     def _restore_last_session_async(self):
-        """Perform restore last session async.
-        Used to keep the workflow logic localized and testable."""
+        """Start asynchronous workbook restore for the previous session.
+
+        Purpose:
+            Restore the most recently used workbook/sheet without blocking launch.
+        Why:
+            Reading workbook metadata/data can be expensive and should run in a
+            background worker while the startup splash remains responsive.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Updates startup restore state, seeds file entry/status UI, and submits
+            the restore worker to `TkTaskRunner`.
+        Exceptions:
+            Missing file paths short-circuit to a skipped restore state.
+        """
 
         path = settings.get("last_file_path")
 
         if not path or not os.path.exists(path):
-
+            self._mark_startup_restore_state("skipped")
             return
 
         # Snapshot inputs on the UI thread for thread safety/no-GIL readiness.
@@ -31943,6 +32584,7 @@ class UnifiedApp(tk.Tk):
         last_sheet = settings.get("last_sheet_name", "")
         last_sheet_snapshot = last_sheet
 
+        self._mark_startup_restore_state("running", path=path_snapshot)
         self._startup_restore_path = path_snapshot
 
         self.file_path = path_snapshot
@@ -32005,13 +32647,35 @@ class UnifiedApp(tk.Tk):
             Used as an event callback for err."""
             self._handle_restore_failure(path_snapshot, exc)
 
-        self._startup_restore_task_id = self._task_runner.submit(
-            "restore_session", _worker, _on_ok, _on_err
-        )
+        try:
+            self._startup_restore_task_id = self._task_runner.submit(
+                "restore_session", _worker, _on_ok, _on_err
+            )
+        except Exception as exc:
+            self._startup_restore_task_id = None
+            self._startup_restore_path = path_snapshot
+            self._mark_startup_restore_state("failed", path=path_snapshot, error=exc)
+            self._handle_restore_failure(path_snapshot, exc)
 
     def _handle_restore_failure(self, path, exc):
-        """Handle restore failure.
-        Used as an event callback for restore failure."""
+        """Handle startup restore worker failure on the UI thread.
+
+        Purpose:
+            Finalize restore state and inform the user when auto-restore fails.
+        Why:
+            Failed startup restore should not block launch, but users need clear
+            context about what file failed and why.
+        Inputs:
+            path: Workbook path associated with the failing restore request.
+            exc: Exception raised by the background restore task.
+        Outputs:
+            None.
+        Side Effects:
+            Clears restore task tracking, updates splash/status text, and shows a
+            warning dialog describing the restore failure.
+        Exceptions:
+            Path mismatches are ignored to avoid stale callback side effects.
+        """
 
         if path != self._startup_restore_path:
 
@@ -32020,6 +32684,7 @@ class UnifiedApp(tk.Tk):
         self._startup_restore_task_id = None
 
         self._startup_restore_path = None
+        self._mark_startup_restore_state("failed", path=path, error=exc)
 
         self.lbl_status.config(text="Ready. Select a file to begin.")
 
@@ -32032,8 +32697,27 @@ class UnifiedApp(tk.Tk):
     def _finish_restore_last_session(
         self, path, sheet_names, selected_sheet, dataframe, dataframe_error
     ):
-        """Perform finish restore last session.
-        Used to keep the workflow logic localized and testable."""
+        """Finalize startup restore results on the UI thread.
+
+        Purpose:
+            Apply restore worker outputs to workbook/sheet/data UI state.
+        Why:
+            Worker threads must not touch Tk widgets directly, so completion logic
+            runs on the main thread after worker success.
+        Inputs:
+            path: Workbook path used by the completed restore task.
+            sheet_names: Resolved worksheet names from the workbook.
+            selected_sheet: Sheet name selected for initial dataframe load.
+            dataframe: Optional dataframe loaded for `selected_sheet`.
+            dataframe_error: Optional exception from dataframe loading step.
+        Outputs:
+            None.
+        Side Effects:
+            Updates sheet selectors, cached dataframe state, persisted settings, and
+            marks the startup restore state as completed.
+        Exceptions:
+            Stale callbacks (path mismatch) are ignored.
+        """
 
         if path != self._startup_restore_path:
 
@@ -32042,6 +32726,7 @@ class UnifiedApp(tk.Tk):
         self._startup_restore_task_id = None
 
         self._startup_restore_path = None
+        self._mark_startup_restore_state("success", path=path)
 
         self.sheet_names = list(sheet_names)
         self._sheet_names_loaded = True
@@ -34472,30 +35157,26 @@ class UnifiedApp(tk.Tk):
                 continue
 
     def _ensure_initial_data_tab_visible(self, _event=None):
-        """Perform ensure initial data tab visible.
-        Used to keep the workflow logic localized and testable."""
-        if getattr(self, "_initial_tab_shown", False):
-            return
+        """Finalize Data-tab visibility once startup sequencing is complete.
 
-        nb = getattr(self, "nb", None)
-        data_tab = getattr(self, "tab_data", None)
+        Purpose:
+            Keep the Data tab selected and interactive after startup transitions.
+        Why:
+            Startup warmup now runs under splash gating, so this callback should
+            only retry while splash is present and avoid visible tab cycling.
+        Inputs:
+            _event: Optional Tk event payload from `<Map>` or timer callbacks.
+        Outputs:
+            None.
+        Side Effects:
+            Clears timer bookkeeping, reschedules itself while splash exists, and
+            finalizes Data-tab selection/focus once the notebook is ready.
+        Exceptions:
+            Best-effort guards prevent failures during early-launch widget churn.
+        """
+        _ = _event
 
-        if (
-            nb is None
-            or data_tab is None
-            or not getattr(nb, "winfo_exists", lambda: False)()
-        ):
-            if getattr(self, "_initial_tab_after_id", None) is None:
-                try:
-                    self._initial_tab_after_id = self.after(
-                        150, self._ensure_initial_data_tab_visible
-                    )
-                except Exception:
-                    self._initial_tab_after_id = None
-            return
-
-        self._initial_tab_shown = True
-
+        # Keep only one retry callback active to avoid stacked startup reschedules.
         after_id = getattr(self, "_initial_tab_after_id", None)
         if after_id is not None:
             try:
@@ -34503,66 +35184,45 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
-            self._initial_tab_after_id = None
+        self._initial_tab_after_id = None
 
-        try:
-            current_tab = nb.select()
-        except Exception:
-            current_tab = None
-
-        warm_tabs = []
-        # Iterate to apply the per-item logic.
-        for attr in (
-            "tab_data",
-            "tab_columns",
-            "tab_plot",
-            "tab_cycle",
-            "tab_contamination",
-            "tab_solubility",
-            "tab_final_report",
+        if getattr(self, "_initial_tab_shown", False) and bool(
+            getattr(self, "_startup_tab_warmup_done", False)
         ):
-            tab_obj = getattr(self, attr, None)
-            if tab_obj is None:
-                continue
-            warm_tabs.append(tab_obj)
+            return
 
-        # Iterate over warm_tabs to apply the per-item logic.
-        for tab_obj in warm_tabs:
+        startup_overlay = getattr(self, "_startup_loading_overlay", None)
+        if startup_overlay is not None:
             try:
-                nb.select(tab_obj)
-                nb.update_idletasks()
-                tab_obj.update_idletasks()
-            except Exception:
-                continue
-
-        target_tab = getattr(self, "tab_data", None) or current_tab
-        if target_tab is not None:
-            try:
-                nb.select(target_tab)
-            except Exception:
-                if current_tab is not None:
+                if startup_overlay.winfo_exists():
                     try:
-                        nb.select(current_tab)
+                        self._initial_tab_after_id = self.after(
+                            150, self._ensure_initial_data_tab_visible
+                        )
                     except Exception:
-                        pass
-        elif current_tab is not None:
-            try:
-                nb.select(current_tab)
+                        self._initial_tab_after_id = None
+                    return
             except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                # Best-effort guard; continue with default flow.
                 pass
 
-        try:
-            nb.update_idletasks()
-        except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-            pass
+        nb = getattr(self, "nb", None)
+        data_tab = getattr(self, "tab_data", None)
+        if (
+            nb is None
+            or data_tab is None
+            or not getattr(nb, "winfo_exists", lambda: False)()
+        ):
+            try:
+                self._initial_tab_after_id = self.after(
+                    150, self._ensure_initial_data_tab_visible
+                )
+            except Exception:
+                self._initial_tab_after_id = None
+            return
 
-        try:
-            self.update_idletasks()
-        except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-            pass
+        # Keep fallback behavior deterministic: finalize Data tab, no visible cycling.
+        self._finalize_startup_to_data_tab()
 
     def _handle_font_increase(self, event):
         """Handle font increase.
@@ -34591,6 +35251,10 @@ class UnifiedApp(tk.Tk):
         Side effects: Creates/grids widgets, stores widget references, and binds events.
         Exceptions: Best-effort guards are used internally; no intentional raises.
         """
+        self._update_startup_loading_splash_progress(
+            progress=16.0,
+            message="Building Data, Columns, and Plot tabs...",
+        )
 
         # Root uses grid: row 0 (Notebook) grows, row 1 (buttons) stays fixed
 
@@ -34682,10 +35346,18 @@ class UnifiedApp(tk.Tk):
         self._build_tab_columns()
 
         self._build_tab_plot()
+        self._update_startup_loading_splash_progress(
+            progress=34.0,
+            message="Building deferred Cycle Analysis layout...",
+        )
 
-        # Cycle Analysis tab: build immediately so it is ready before data is applied.
+        # Cycle Analysis tab builds in deferred stages to reduce startup blocking.
 
-        self._start_cycle_tab_build(defer=False)
+        self._start_cycle_tab_build(defer=True)
+        self._update_startup_loading_splash_progress(
+            progress=44.0,
+            message="Building secondary analysis tabs...",
+        )
 
         self._build_tab_contamination()
 
@@ -34695,6 +35367,10 @@ class UnifiedApp(tk.Tk):
         self._build_tab_solubility_new()
         self.nb.add(self.tab_final_report, text="Final Report")
         self._build_tab_final_report()
+        self._update_startup_loading_splash_progress(
+            progress=58.0,
+            message="Finalizing base startup layout...",
+        )
 
         self._apply_solubility_tab_visibility(initial=True)
         self._apply_tab_order_from_settings(initial=True)
@@ -34807,6 +35483,11 @@ class UnifiedApp(tk.Tk):
             text="Exit",
             command=self.save_and_close,
         ).grid(row=0, column=4, sticky="ew", padx=(0, 0))
+        self._startup_ui_built = True
+        self._update_startup_loading_splash_progress(
+            progress=62.0,
+            message="Main interface ready. Finalizing deferred startup tasks...",
+        )
 
     def _log_plot_tab_debug(self, message: str):
         """Emit plot tab debug output.
@@ -53690,6 +54371,11 @@ class UnifiedApp(tk.Tk):
 
         self._refresh_combined_axis_choices()
         self._request_plot_settings_scroll_refresh()
+        self._startup_plot_stage_two_ready = True
+        self._update_startup_loading_splash_progress(
+            progress=74.0,
+            message="Plot Settings controls ready.",
+        )
 
     def _start_cycle_tab_build(self, *, defer=True):
         """Build value.
@@ -54492,8 +55178,24 @@ class UnifiedApp(tk.Tk):
             self._build_tab_cycle_stage_four()
 
     def _build_tab_cycle_stage_four(self):
-        """Build tab cycle stage four.
-        Used to assemble tab cycle stage four during UI or plot setup."""
+        """Finalize Cycle Analysis UI construction and interactive plot wiring.
+
+        Purpose:
+            Create the Cycle Analysis Matplotlib canvas, toolbar, and interaction
+            hooks after staged control construction completes.
+        Why:
+            The cycle tab is built in deferred stages to keep startup responsive;
+            this final stage marks cycle readiness for startup splash gating.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Instantiates cycle figure/canvas widgets, binds interaction callbacks,
+            restores cached marker edits, and updates startup readiness flags.
+        Exceptions:
+            Returns early when stage context is missing; widget errors are guarded.
+        """
         ctx = self._cycle_build_ctx
         right = ctx.get("right_frame")
         if right is None:
@@ -54592,6 +55294,11 @@ class UnifiedApp(tk.Tk):
         self._cycle_loading_label = None
 
         self._cycle_ui_built = True
+        self._startup_cycle_ready = True
+        self._update_startup_loading_splash_progress(
+            progress=84.0,
+            message="Cycle Analysis tab ready.",
+        )
 
         if getattr(self, "_pending_cycle_tab_focus", False):
             self.after_idle(self._focus_cycle_tab_when_ready)
