@@ -38610,6 +38610,138 @@ class UnifiedApp(tk.Tk):
                     pass
             break
 
+    def _prepare_plot_refresh_overlay_for_settings(
+        self, plot_id: Optional[str]
+    ) -> None:
+        """Re-arm overlay orchestration before a settings-triggered plot refresh.
+
+        Purpose:
+            Ensure settings-driven refreshes keep plot overlays visible until final
+            layout stabilization passes complete.
+        Why:
+            Plot Settings apply can run after prior refresh state has already settled;
+            without resetting per-frame counters and hold flags, overlays can clear
+            too early and expose late layout margin snaps.
+        Args:
+            plot_id: Plot identifier targeted by the settings dialog apply action.
+        Returns:
+            None.
+        Side Effects:
+            Cancels stale scheduled callbacks, resets per-frame auto-refresh counters
+            and signatures, and re-enables core/combined overlay hold flags so the
+            refresh pipeline completes behind the loading overlay.
+        Exceptions:
+            Best-effort guards ignore callback-cancel and attribute-write failures to
+            avoid interrupting the UI workflow.
+        """
+        if not plot_id:
+            return
+        plot_tabs = list(getattr(self, "_plot_tabs", []) or [])
+        canvases = list(getattr(self, "_canvases", []) or [])
+
+        def _cancel_after(callback_id: Any, tk_widget: Optional[Any]) -> None:
+            """Cancel one scheduled Tk callback id using widget/root fallbacks.
+
+            Purpose:
+                Clear stale scheduled callback handles before re-arming refresh state.
+            Why:
+                Old `after` callbacks can race with settings-triggered refresh passes
+                and prematurely clear overlay guards.
+            Args:
+                callback_id: Tk callback handle returned by `after`/`after_idle`.
+                tk_widget: Optional widget used to cancel widget-scoped callbacks.
+            Returns:
+                None.
+            Side Effects:
+                Cancels queued callbacks when they still exist.
+            Exceptions:
+                Uses best-effort guards and ignores invalid/expired callback ids.
+            """
+            if callback_id is None:
+                return
+            if tk_widget is not None:
+                try:
+                    tk_widget.after_cancel(callback_id)
+                    return
+                except Exception:
+                    # Best-effort guard; fallback to root-level cancellation.
+                    pass
+            try:
+                self.after_cancel(callback_id)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        # Iterate over indexed tab frames so canvas references stay aligned.
+        for idx, frame in enumerate(plot_tabs):
+            if getattr(frame, "_plot_id", None) != plot_id:
+                continue
+            canvas = canvases[idx] if idx < len(canvases) else None
+            tk_widget = None
+            if canvas is not None:
+                try:
+                    tk_widget = canvas.get_tk_widget()
+                except Exception:
+                    tk_widget = None
+
+            scheduled_after_id = getattr(frame, "_plot_auto_refresh_after_id", None)
+            _cancel_after(scheduled_after_id, tk_widget)
+            try:
+                frame._plot_auto_refresh_after_id = None
+                frame._plot_auto_refresh_in_progress = False
+                frame._plot_auto_refresh_phase = None
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+            if plot_id in {"fig_pressure_temp", "fig_pressure_derivative"}:
+                try:
+                    frame._core_overlay_refresh_invoked_count = 0
+                    frame._core_overlay_refresh_completed_count = 0
+                    frame._core_overlay_layout_sig_baseline = None
+                    frame._core_overlay_need_second_refresh = True
+                    frame._core_overlay_target_refreshes = 2
+                    frame._core_overlay_ready_seen = False
+                    frame._core_overlay_second_refresh_scheduled = False
+                    frame._core_overlay_hold = True
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            elif plot_id == "fig_combined_triple_axis":
+                prior_finalize_after_id = getattr(
+                    frame, "_combined_overlay_finalize_after_id", None
+                )
+                _cancel_after(prior_finalize_after_id, tk_widget)
+                default_target_refreshes = (
+                    self._combined_overlay_default_target_refreshes()
+                )
+                try:
+                    frame._post_first_draw_refresh_done = False
+                    frame._post_first_draw_refresh_invoked = False
+                    frame._post_first_draw_refresh_hold_overlay = True
+                    frame._post_first_draw_refresh_retry_count = 0
+                    frame._combined_overlay_refresh_invoked_count = 0
+                    frame._combined_overlay_refresh_completed_count = 0
+                    frame._combined_overlay_layout_sig_baseline = None
+                    frame._combined_overlay_decision_sig_baseline = None
+                    frame._combined_overlay_decision_sig_last = None
+                    frame._combined_overlay_data_sig_current = None
+                    frame._combined_overlay_need_second_refresh = (
+                        default_target_refreshes > 1
+                    )
+                    frame._combined_overlay_target_refreshes = default_target_refreshes
+                    frame._combined_overlay_ready_seen = False
+                    frame._combined_overlay_second_refresh_scheduled = False
+                    frame._combined_placeholder_draw_logged = False
+                    frame._combined_overlay_last_geometry_sig = None
+                    frame._combined_overlay_stable_draw_count = 0
+                    frame._combined_overlay_finalize_started_at = None
+                    frame._combined_overlay_finalize_after_id = None
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            break
+
     def _open_plot_settings_for_active_tab(self) -> None:
         """Open plot settings for active tab.
         Used by UI actions to open plot settings for active tab."""
@@ -46192,70 +46324,143 @@ class UnifiedApp(tk.Tk):
             self._profile_manager_listbox = None
 
         window.protocol("WM_DELETE_WINDOW", _close_window)
-
-        container = ttk.Frame(window, padding=12)
-        container.grid(row=0, column=0, sticky="nsew")
+        ctk_module = ctk
+        if ctk_module is not None:
+            container: Any = ctk_module.CTkFrame(window, corner_radius=10)
+            container.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+        else:
+            container = ttk.Frame(window, padding=12)
+            container.grid(row=0, column=0, sticky="nsew")
         window.grid_rowconfigure(0, weight=1)
         window.grid_columnconfigure(0, weight=1)
         container.grid_rowconfigure(1, weight=1)
         container.grid_columnconfigure(0, weight=1)
 
-        ttk.Label(container, text="Profiles").grid(row=0, column=0, sticky="w")
+        if ctk_module is not None:
+            ctk_module.CTkLabel(
+                container,
+                text="Profiles",
+                anchor="w",
+                font=(getattr(self, "_ui_font_family", "Verdana"), 14, "bold"),
+            ).grid(row=0, column=0, sticky="w")
+        else:
+            ttk.Label(container, text="Profiles").grid(row=0, column=0, sticky="w")
 
-        listbox = tk.Listbox(container, exportselection=False, height=10)
-        listbox.grid(row=1, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(container, orient="vertical", command=listbox.yview)
-        scroll.grid(row=1, column=1, sticky="ns")
+        list_shell: Any
+        if ctk_module is not None:
+            list_shell = ctk_module.CTkFrame(container, corner_radius=8)
+            list_shell.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+        else:
+            list_shell = ttk.Frame(container)
+            list_shell.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+        list_shell.grid_rowconfigure(0, weight=1)
+        list_shell.grid_columnconfigure(0, weight=1)
+
+        listbox = tk.Listbox(list_shell, exportselection=False, height=10)
+        listbox.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+
+        if ctk_module is not None:
+            appearance_mode = ""
+            try:
+                appearance_mode = str(ctk_module.get_appearance_mode() or "").lower()
+            except Exception:
+                appearance_mode = ""
+            is_dark_mode = (
+                appearance_mode == "dark"
+                or _normalize_ui_display_mode(settings.get("ui_display_mode"))
+                == DISPLAY_MODE_DARK
+            )
+            if is_dark_mode:
+                colors = {
+                    "background": "#1F252D",
+                    "foreground": "#F1F3F5",
+                    "selectbackground": "#2F80ED",
+                    "selectforeground": "#FFFFFF",
+                    "border": "#4A5568",
+                }
+            else:
+                colors = {
+                    "background": "#F6F8FA",
+                    "foreground": "#111827",
+                    "selectbackground": "#1F6FD1",
+                    "selectforeground": "#FFFFFF",
+                    "border": "#C7CDD3",
+                }
+            try:
+                listbox.configure(
+                    bg=colors["background"],
+                    fg=colors["foreground"],
+                    selectbackground=colors["selectbackground"],
+                    selectforeground=colors["selectforeground"],
+                    highlightthickness=1,
+                    highlightbackground=colors["border"],
+                    highlightcolor=colors["border"],
+                    borderwidth=1,
+                    relief="flat",
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        scroll = _ui_scrollbar(list_shell, orient="vertical", command=listbox.yview)
+        scroll.grid(row=0, column=1, sticky="ns", pady=4)
         listbox.configure(yscrollcommand=scroll.set)
         self._profile_manager_listbox = listbox
 
-        button_frame = ttk.Frame(container)
+        button_frame = (
+            ctk_module.CTkFrame(container, fg_color="transparent")
+            if ctk_module is not None
+            else ttk.Frame(container)
+        )
         button_frame.grid(row=1, column=2, sticky="n", padx=(12, 0))
-        ttk.Button(
+        _ui_button(
             button_frame,
             text="New Profile",
             command=self._profile_new_blank,
         ).pack(fill="x", pady=2)
-        ttk.Button(
+        _ui_button(
             button_frame,
             text="Save Current As...",
             command=self._profile_save_current_as,
         ).pack(fill="x", pady=2)
-        ttk.Button(
+        _ui_button(
             button_frame,
             text="Load",
             command=self._profile_load_selected,
         ).pack(fill="x", pady=2)
-        ttk.Button(
+        _ui_button(
             button_frame,
             text="Overwrite",
             command=self._profile_overwrite_selected,
         ).pack(fill="x", pady=2)
-        ttk.Button(
+        _ui_button(
             button_frame,
             text="Rename",
             command=self._profile_rename_selected,
         ).pack(fill="x", pady=2)
-        ttk.Button(
+        _ui_button(
             button_frame,
             text="Delete",
             command=self._profile_delete_selected,
         ).pack(fill="x", pady=2)
-        ttk.Separator(button_frame, orient="horizontal").pack(
-            fill="x", pady=(6, 6)
-        )
-        ttk.Button(
+        if ctk_module is not None:
+            ctk_module.CTkFrame(
+                button_frame, height=1, corner_radius=0, fg_color=("#C7CDD3", "#4A5568")
+            ).pack(fill="x", pady=(6, 6))
+        else:
+            ttk.Separator(button_frame, orient="horizontal").pack(fill="x", pady=(6, 6))
+        _ui_button(
             button_frame,
             text="Export",
             command=self._profile_export_selected,
         ).pack(fill="x", pady=2)
-        ttk.Button(
+        _ui_button(
             button_frame,
             text="Import",
             command=self._profile_import_profile,
         ).pack(fill="x", pady=2)
 
-        ttk.Checkbutton(
+        _ui_checkbutton(
             container,
             text="Include dataset file path",
             variable=self._profile_include_path_var,
@@ -46404,9 +46609,7 @@ class UnifiedApp(tk.Tk):
             value=_format_float(self.v_gas_molar_mass.get())
         )
 
-        product_preset_var = tk.StringVar(
-            value=str(self.v_product_preset.get() or "")
-        )
+        product_preset_var = tk.StringVar(value=str(self.v_product_preset.get() or ""))
         product_molar_mass_var = tk.StringVar(
             value=_format_float(self.v_product_molar_mass.get())
         )
@@ -46415,102 +46618,164 @@ class UnifiedApp(tk.Tk):
         )
         stoich_var = tk.StringVar(value=_format_float(self.v_starting_stoich.get()))
 
-        container = ttk.Frame(window, padding=12)
-        container.grid(row=0, column=0, sticky="nsew")
+        ctk_module = ctk
+        if ctk_module is not None:
+            container: Any = ctk_module.CTkFrame(window, corner_radius=10)
+            container.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+        else:
+            container = ttk.Frame(window, padding=12)
+            container.grid(row=0, column=0, sticky="nsew")
         window.grid_rowconfigure(0, weight=1)
         window.grid_columnconfigure(0, weight=1)
 
-        info_frame = ttk.Labelframe(container, text="Profile Info")
-        info_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        info_frame.grid_columnconfigure(1, weight=1)
+        def _make_section(parent_widget: Any, title: str) -> Tuple[Any, Any]:
+            """Create one profile-configuration section with CTk/ttk compatibility.
 
-        ttk.Label(info_frame, text="Profile name").grid(
+            Purpose:
+                Build titled section containers for the profile configuration form.
+            Why:
+                The dialog should mirror CTk styling where available while keeping
+                a robust ttk fallback path.
+            Args:
+                parent_widget: Container widget that owns the section.
+                title: Section title text.
+            Returns:
+                Tuple of `(section_widget, content_frame)` used for layout and child
+                control placement.
+            Side Effects:
+                Creates widgets and applies basic column-weight configuration.
+            Exceptions:
+                None; callers receive fallback widgets when CTk is unavailable.
+            """
+            if ctk_module is not None:
+                section_widget = ctk_module.CTkFrame(parent_widget, corner_radius=8)
+                section_widget.grid_columnconfigure(0, weight=1)
+                ctk_module.CTkLabel(
+                    section_widget,
+                    text=title,
+                    anchor="w",
+                    font=(getattr(self, "_ui_font_family", "Verdana"), 13, "bold"),
+                ).grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 4))
+                content_frame: Any = ctk_module.CTkFrame(
+                    section_widget, fg_color="transparent"
+                )
+                content_frame.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
+                content_frame.grid_columnconfigure(1, weight=1)
+                return section_widget, content_frame
+            section_widget = ttk.Labelframe(parent_widget, text=title)
+            section_widget.grid_columnconfigure(1, weight=1)
+            return section_widget, section_widget
+
+        def _label(parent_widget: Any, text: str) -> Any:
+            """Create one section label with CTk/ttk compatibility.
+
+            Purpose:
+                Standardize label construction for the profile configuration form.
+            Why:
+                The dialog uses mixed toolkit support and should keep one label
+                call-site contract during CTk migration.
+            Args:
+                parent_widget: Widget that owns the label.
+                text: Label text content.
+            Returns:
+                Constructed label widget instance.
+            Side Effects:
+                Creates one label widget in the dialog layout tree.
+            Exceptions:
+                None; ttk fallback is used when CTk is unavailable.
+            """
+            if ctk_module is not None:
+                return ctk_module.CTkLabel(parent_widget, text=text, anchor="w")
+            return ttk.Label(parent_widget, text=text)
+
+        info_frame, info_body = _make_section(container, "Profile Info")
+        info_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+
+        _label(info_body, "Profile name").grid(
             row=0, column=0, sticky="w", padx=6, pady=4
         )
-        name_entry = ttk.Entry(info_frame, textvariable=profile_name_var)
+        name_entry = _ui_entry(info_body, textvariable=profile_name_var)
         name_entry.grid(row=0, column=1, sticky="ew", padx=6, pady=4)
-        ttk.Label(info_frame, text="Suptitle (Job Information)").grid(
+        _label(info_body, "Suptitle (Job Information)").grid(
             row=1, column=0, sticky="w", padx=6, pady=4
         )
-        ttk.Entry(info_frame, textvariable=suptitle_var).grid(
+        _ui_entry(info_body, textvariable=suptitle_var).grid(
             row=1, column=1, sticky="ew", padx=6, pady=4
         )
 
-        vdw_frame = ttk.Labelframe(container, text="Gas Model (Van der Waals)")
+        vdw_frame, vdw_body = _make_section(container, "Gas Model (Van der Waals)")
         vdw_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
-        vdw_frame.grid_columnconfigure(1, weight=1)
 
-        ttk.Label(vdw_frame, text="Preset").grid(
-            row=0, column=0, sticky="w", padx=6, pady=4
-        )
-        gas_combo = ttk.Combobox(
-            vdw_frame,
+        _label(vdw_body, "Preset").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        gas_combo = _ui_combobox(
+            vdw_body,
             textvariable=gas_preset_var,
             state="readonly",
             values=list(GAS_PRESETS.keys()),
         )
         gas_combo.grid(row=0, column=1, sticky="ew", padx=6, pady=4)
 
-        ttk.Label(vdw_frame, text="Vessel Volume (L)").grid(
+        _label(vdw_body, "Vessel Volume (L)").grid(
             row=1, column=0, sticky="w", padx=6, pady=4
         )
-        ttk.Entry(vdw_frame, textvariable=volume_var).grid(
+        _ui_entry(vdw_body, textvariable=volume_var).grid(
             row=1, column=1, sticky="ew", padx=6, pady=4
         )
-        ttk.Label(vdw_frame, text="VDW a (L^2*atm/mol^2)").grid(
+        _label(vdw_body, "VDW a (L^2*atm/mol^2)").grid(
             row=2, column=0, sticky="w", padx=6, pady=4
         )
-        ttk.Entry(vdw_frame, textvariable=vdw_a_var).grid(
+        _ui_entry(vdw_body, textvariable=vdw_a_var).grid(
             row=2, column=1, sticky="ew", padx=6, pady=4
         )
-        ttk.Label(vdw_frame, text="VDW b (L/mol)").grid(
+        _label(vdw_body, "VDW b (L/mol)").grid(
             row=3, column=0, sticky="w", padx=6, pady=4
         )
-        ttk.Entry(vdw_frame, textvariable=vdw_b_var).grid(
+        _ui_entry(vdw_body, textvariable=vdw_b_var).grid(
             row=3, column=1, sticky="ew", padx=6, pady=4
         )
-        ttk.Label(vdw_frame, text="Gaseous Reagent Molar Mass (g/mol)").grid(
+        _label(vdw_body, "Gaseous Reagent Molar Mass (g/mol)").grid(
             row=4, column=0, sticky="w", padx=6, pady=4
         )
-        ttk.Entry(vdw_frame, textvariable=gas_molar_mass_var).grid(
+        _ui_entry(vdw_body, textvariable=gas_molar_mass_var).grid(
             row=4, column=1, sticky="ew", padx=6, pady=4
         )
 
-        reagent_frame = ttk.Labelframe(container, text="Starting Material")
+        reagent_frame, reagent_body = _make_section(container, "Starting Material")
         reagent_frame.grid(row=2, column=0, sticky="ew", pady=(0, 8))
-        reagent_frame.grid_columnconfigure(1, weight=1)
 
-        ttk.Label(reagent_frame, text="Preset").grid(
-            row=0, column=0, sticky="w", padx=6, pady=4
-        )
-        product_combo = ttk.Combobox(
-            reagent_frame,
+        _label(reagent_body, "Preset").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        product_combo = _ui_combobox(
+            reagent_body,
             textvariable=product_preset_var,
             state="readonly",
             values=list(PRODUCT_PRESETS.keys()),
         )
         product_combo.grid(row=0, column=1, sticky="ew", padx=6, pady=4)
 
-        ttk.Label(reagent_frame, text="Starting Material Molar Mass (g/mol)").grid(
+        _label(reagent_body, "Starting Material Molar Mass (g/mol)").grid(
             row=1, column=0, sticky="w", padx=6, pady=4
         )
-        ttk.Entry(reagent_frame, textvariable=product_molar_mass_var).grid(
+        _ui_entry(reagent_body, textvariable=product_molar_mass_var).grid(
             row=1, column=1, sticky="ew", padx=6, pady=4
         )
-        ttk.Label(reagent_frame, text="Starting Material Mass (g)").grid(
+        _label(reagent_body, "Starting Material Mass (g)").grid(
             row=2, column=0, sticky="w", padx=6, pady=4
         )
-        ttk.Entry(reagent_frame, textvariable=starting_mass_var).grid(
+        _ui_entry(reagent_body, textvariable=starting_mass_var).grid(
             row=2, column=1, sticky="ew", padx=6, pady=4
         )
-        ttk.Label(reagent_frame, text="Stoichiometry (mol gas per mol starting)").grid(
+        _label(reagent_body, "Stoichiometry (mol gas per mol starting)").grid(
             row=3, column=0, sticky="w", padx=6, pady=4
         )
-        ttk.Entry(reagent_frame, textvariable=stoich_var).grid(
+        _ui_entry(reagent_body, textvariable=stoich_var).grid(
             row=3, column=1, sticky="ew", padx=6, pady=4
         )
 
-        buttons = ttk.Frame(container)
+        buttons = (
+            ctk_module.CTkFrame(container, fg_color="transparent")
+            if ctk_module is not None
+            else ttk.Frame(container)
+        )
         buttons.grid(row=3, column=0, sticky="e", pady=(4, 0))
 
         def _close_window() -> None:
@@ -46715,8 +46980,8 @@ class UnifiedApp(tk.Tk):
         _sync_gas_preset()
         _sync_product_preset()
 
-        ttk.Button(buttons, text="Cancel", command=_cancel).pack(side="right")
-        ttk.Button(buttons, text="Create Profile", command=_confirm).pack(
+        _ui_button(buttons, text="Cancel", command=_cancel).pack(side="right")
+        _ui_button(buttons, text="Create Profile", command=_confirm).pack(
             side="right", padx=(0, 8)
         )
 
@@ -48069,10 +48334,17 @@ class UnifiedApp(tk.Tk):
         outer = ttk.Frame(window)
         outer.grid(row=0, column=0, sticky="nsew")
         outer.grid_rowconfigure(0, weight=1)
+        outer.grid_rowconfigure(1, weight=0)
+        outer.grid_rowconfigure(2, weight=0)
         outer.grid_columnconfigure(0, weight=1)
 
-        canvas = tk.Canvas(outer, borderwidth=0, highlightthickness=0)
-        vscroll = _ui_scrollbar(outer, orient="vertical", command=canvas.yview)
+        scroll_shell = ttk.Frame(outer)
+        scroll_shell.grid(row=0, column=0, sticky="nsew")
+        scroll_shell.grid_rowconfigure(0, weight=1)
+        scroll_shell.grid_columnconfigure(0, weight=1)
+
+        canvas = tk.Canvas(scroll_shell, borderwidth=0, highlightthickness=0)
+        vscroll = _ui_scrollbar(scroll_shell, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=vscroll.set)
         canvas.grid(row=0, column=0, sticky="nsew")
         vscroll.grid(row=0, column=1, sticky="ns")
@@ -48080,6 +48352,10 @@ class UnifiedApp(tk.Tk):
         container = ttk.Frame(canvas, padding=12)
         container_id = canvas.create_window((0, 0), window=container, anchor="nw")
         container.grid_columnconfigure(0, weight=1)
+        ttk.Separator(outer, orient="horizontal").grid(row=1, column=0, sticky="ew")
+        footer = ttk.Frame(outer, padding=(12, 8, 12, 10))
+        footer.grid(row=2, column=0, sticky="ew")
+        footer.grid_columnconfigure(0, weight=1)
 
         # Closure captures _open_plot_settings_dialog state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _open_plot_settings_dialog.
         def _refresh_scroll_region(_event=None):
@@ -48108,6 +48384,7 @@ class UnifiedApp(tk.Tk):
         def _bind_mousewheel(widget):
             """Perform bind mousewheel.
             Used to keep the workflow logic localized and testable."""
+
             # Closure captures _bind_mousewheel state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _bind_mousewheel.
             def _on_mousewheel(event):
                 """Handle mousewheel.
@@ -48219,7 +48496,9 @@ class UnifiedApp(tk.Tk):
                 "combined_legend_wrap": tk.BooleanVar(
                     value=bool(self.combined_legend_wrap.get())
                 ),
-                "combined_legend_rows": tk.IntVar(value=self.combined_legend_rows.get()),
+                "combined_legend_rows": tk.IntVar(
+                    value=self.combined_legend_rows.get()
+                ),
                 "combined_legend_label_gap": tk.DoubleVar(
                     value=self.combined_legend_label_gap.get()
                 ),
@@ -48261,57 +48540,118 @@ class UnifiedApp(tk.Tk):
                     value=float(core_stage_profile.get("third_axis_offset", 1.12))
                 ),
                 "core_primary_labelpad": tk.DoubleVar(
-                    value=float(core_stage_profile.get("primary_labelpad", yaxis_labelpad_amount))
+                    value=float(
+                        core_stage_profile.get(
+                            "primary_labelpad", yaxis_labelpad_amount
+                        )
+                    )
                 ),
                 "core_deriv_labelpad": tk.DoubleVar(
-                    value=float(core_stage_profile.get("third_labelpad", twinyaxis_labelpad_amount))
+                    value=float(
+                        core_stage_profile.get(
+                            "third_labelpad", twinyaxis_labelpad_amount
+                        )
+                    )
                 ),
                 "core_temp_labelpad": tk.DoubleVar(
-                    value=float(core_stage_profile.get("right_labelpad", twinyaxis_labelpad_amount))
+                    value=float(
+                        core_stage_profile.get(
+                            "right_labelpad", twinyaxis_labelpad_amount
+                        )
+                    )
                 ),
                 "core_left_padding_pct": tk.DoubleVar(
-                    value=float(core_stage_profile.get("left_padding_pct", DEFAULT_COMBINED_LEFT_PAD_PCT))
+                    value=float(
+                        core_stage_profile.get(
+                            "left_padding_pct", DEFAULT_COMBINED_LEFT_PAD_PCT
+                        )
+                    )
                 ),
                 "core_right_padding_pct": tk.DoubleVar(
-                    value=float(core_stage_profile.get("right_padding_pct", DEFAULT_COMBINED_RIGHT_PAD_PCT))
+                    value=float(
+                        core_stage_profile.get(
+                            "right_padding_pct", DEFAULT_COMBINED_RIGHT_PAD_PCT
+                        )
+                    )
                 ),
                 "core_export_pad_pts": tk.DoubleVar(
-                    value=float(core_stage_profile.get("export_pad_pts", DEFAULT_COMBINED_EXPORT_PAD_PTS))
+                    value=float(
+                        core_stage_profile.get(
+                            "export_pad_pts", DEFAULT_COMBINED_EXPORT_PAD_PTS
+                        )
+                    )
                 ),
                 "core_title_pad_pts": tk.DoubleVar(
-                    value=float(core_stage_profile.get("title_pad_pts", DEFAULT_COMBINED_TITLE_PAD_PTS))
+                    value=float(
+                        core_stage_profile.get(
+                            "title_pad_pts", DEFAULT_COMBINED_TITLE_PAD_PTS
+                        )
+                    )
                 ),
                 "core_suptitle_pad_pts": tk.DoubleVar(
-                    value=float(core_stage_profile.get("suptitle_pad_pts", DEFAULT_COMBINED_SUPTITLE_PAD_PTS))
+                    value=float(
+                        core_stage_profile.get(
+                            "suptitle_pad_pts", DEFAULT_COMBINED_SUPTITLE_PAD_PTS
+                        )
+                    )
                 ),
                 "core_suptitle_y": tk.DoubleVar(
-                    value=float(core_stage_profile.get("suptitle_y", DEFAULT_COMBINED_SUPTITLE_Y))
+                    value=float(
+                        core_stage_profile.get(
+                            "suptitle_y", DEFAULT_COMBINED_SUPTITLE_Y
+                        )
+                    )
                 ),
                 "core_top_margin_pct": tk.DoubleVar(
-                    value=float(core_stage_profile.get("top_margin_pct", DEFAULT_COMBINED_TOP_MARGIN_PCT))
+                    value=float(
+                        core_stage_profile.get(
+                            "top_margin_pct", DEFAULT_COMBINED_TOP_MARGIN_PCT
+                        )
+                    )
                 ),
                 "core_font_family": tk.StringVar(
                     value=str(core_stage_profile.get("font_family", "") or "")
                 ),
                 "core_suptitle_fontsize": tk.DoubleVar(
-                    value=float(core_stage_profile.get("suptitle_fontsize", DEFAULT_COMBINED_SUPTITLE_FONTSIZE))
+                    value=float(
+                        core_stage_profile.get(
+                            "suptitle_fontsize", DEFAULT_COMBINED_SUPTITLE_FONTSIZE
+                        )
+                    )
                 ),
                 "core_title_fontsize": tk.DoubleVar(
-                    value=float(core_stage_profile.get("title_fontsize", DEFAULT_COMBINED_TITLE_FONTSIZE))
+                    value=float(
+                        core_stage_profile.get(
+                            "title_fontsize", DEFAULT_COMBINED_TITLE_FONTSIZE
+                        )
+                    )
                 ),
                 "core_label_fontsize": tk.DoubleVar(
-                    value=float(core_stage_profile.get("label_fontsize", DEFAULT_COMBINED_LABEL_FONTSIZE))
+                    value=float(
+                        core_stage_profile.get(
+                            "label_fontsize", DEFAULT_COMBINED_LABEL_FONTSIZE
+                        )
+                    )
                 ),
                 "core_tick_fontsize": tk.DoubleVar(
-                    value=float(core_stage_profile.get("tick_fontsize", DEFAULT_COMBINED_TICK_FONTSIZE))
+                    value=float(
+                        core_stage_profile.get(
+                            "tick_fontsize", DEFAULT_COMBINED_TICK_FONTSIZE
+                        )
+                    )
                 ),
                 "core_legend_fontsize": tk.DoubleVar(
-                    value=float(core_stage_profile.get("legend_fontsize", self.core_legend_fontsize.get()))
+                    value=float(
+                        core_stage_profile.get(
+                            "legend_fontsize", self.core_legend_fontsize.get()
+                        )
+                    )
                 ),
                 "core_cycle_legend_fontsize": tk.DoubleVar(
                     value=float(
                         core_stage_profile.get(
-                            "cycle_legend_fontsize", self.core_cycle_legend_fontsize.get()
+                            "cycle_legend_fontsize",
+                            self.core_cycle_legend_fontsize.get(),
                         )
                     )
                 ),
@@ -48322,29 +48662,49 @@ class UnifiedApp(tk.Tk):
                     value=int(core_stage_profile.get("legend_rows", 2))
                 ),
                 "core_legend_label_gap": tk.DoubleVar(
-                    value=float(core_stage_profile.get("legend_label_gap_pts", DEFAULT_COMBINED_LEGEND_GAP_PTS))
+                    value=float(
+                        core_stage_profile.get(
+                            "legend_label_gap_pts", DEFAULT_COMBINED_LEGEND_GAP_PTS
+                        )
+                    )
                 ),
                 "core_xlabel_tick_gap": tk.DoubleVar(
-                    value=float(core_stage_profile.get("xlabel_tick_gap_pts", DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS))
+                    value=float(
+                        core_stage_profile.get(
+                            "xlabel_tick_gap_pts", DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS
+                        )
+                    )
                 ),
                 "core_legend_bottom_margin": tk.DoubleVar(
                     value=float(
                         core_stage_profile.get(
-                            "legend_bottom_margin_pts", DEFAULT_COMBINED_LEGEND_MARGIN_PTS
+                            "legend_bottom_margin_pts",
+                            DEFAULT_COMBINED_LEGEND_MARGIN_PTS,
                         )
                     )
                 ),
                 "core_legend_alignment": tk.StringVar(
-                    value=str(core_stage_profile.get("legend_alignment", "center") or "center")
+                    value=str(
+                        core_stage_profile.get("legend_alignment", "center") or "center"
+                    )
                 ),
                 "core_cycle_legend_loc_choice": tk.StringVar(
-                    value=str(core_stage_profile.get("cycle_legend_loc_choice", "upper right") or "upper right")
+                    value=str(
+                        core_stage_profile.get("cycle_legend_loc_choice", "upper right")
+                        or "upper right"
+                    )
                 ),
                 "core_cycle_legend_ref_axis": tk.StringVar(
-                    value=str(core_stage_profile.get("cycle_legend_ref_axis", "main") or "main")
+                    value=str(
+                        core_stage_profile.get("cycle_legend_ref_axis", "main")
+                        or "main"
+                    )
                 ),
                 "core_cycle_legend_ref_corner": tk.StringVar(
-                    value=str(core_stage_profile.get("cycle_legend_ref_corner", "upper right") or "upper right")
+                    value=str(
+                        core_stage_profile.get("cycle_legend_ref_corner", "upper right")
+                        or "upper right"
+                    )
                 ),
             }
         stage_vars["combined_legend_shadowbox_fill_color"] = tk.StringVar(
@@ -48384,9 +48744,13 @@ class UnifiedApp(tk.Tk):
                 else f"{float(legend_anchor_export):.4f}"
             )
         )
-        stage_mirror_detached_labelpad = tk.BooleanVar(
-            value=bool(layout_profile.get("mirror_detached_labelpad", False))
-        ) if is_combined else tk.BooleanVar(value=False)
+        stage_mirror_detached_labelpad = (
+            tk.BooleanVar(
+                value=bool(layout_profile.get("mirror_detached_labelpad", False))
+            )
+            if is_combined
+            else tk.BooleanVar(value=False)
+        )
         is_core_pressure_temp = plot_id == "fig_pressure_temp"
         is_core_pressure_derivative = plot_id == "fig_pressure_derivative"
 
@@ -48536,9 +48900,7 @@ class UnifiedApp(tk.Tk):
             ttk.Label(
                 spacing_frame,
                 text="Suptitle (Job Information) padding (pt)",
-            ).grid(
-                row=10, column=0, sticky="w", padx=(0, 6), pady=2
-            )
+            ).grid(row=10, column=0, sticky="w", padx=(0, 6), pady=2)
             _ui_entry(
                 spacing_frame,
                 textvariable=stage_vars[suptitle_pad_key],
@@ -48571,7 +48933,6 @@ class UnifiedApp(tk.Tk):
             ).grid(row=13, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
             if is_combined:
-
                 # Closure captures _open_plot_settings_dialog local context to keep helper logic scoped and invoked directly within _open_plot_settings_dialog.
                 def _sync_detached_labelpad(*_):
                     """Perform sync detached labelpad.
@@ -48592,7 +48953,9 @@ class UnifiedApp(tk.Tk):
                             # Best-effort guard; ignore failures to avoid interrupting the workflow.
                             pass
 
-                stage_mirror_detached_labelpad.trace_add("write", _sync_detached_labelpad)
+                stage_mirror_detached_labelpad.trace_add(
+                    "write", _sync_detached_labelpad
+                )
                 stage_vars["combined_temp_labelpad"].trace_add(
                     "write", _sync_detached_labelpad
                 )
@@ -48663,7 +49026,9 @@ class UnifiedApp(tk.Tk):
                 row=0, column=0, sticky="w", padx=(0, 6), pady=2
             )
             _ui_entry(
-                font_frame, textvariable=stage_vars[f"{key_prefix}_font_family"], width=18
+                font_frame,
+                textvariable=stage_vars[f"{key_prefix}_font_family"],
+                width=18,
             ).grid(row=0, column=1, sticky="w", pady=2)
             ttk.Label(font_frame, text="Suptitle (Job Information) size").grid(
                 row=1, column=0, sticky="w", padx=(0, 6), pady=2
@@ -48847,7 +49212,9 @@ class UnifiedApp(tk.Tk):
             cycle_loc_menu.grid(row=11, column=1, sticky="w", pady=2)
 
             ref_axis_var = stage_vars[f"{key_prefix}_cycle_legend_ref_axis"]
-            if (ref_axis_var.get() or "").strip().lower() not in COMBINED_CYCLE_REF_AXIS_CHOICES:
+            if (
+                ref_axis_var.get() or ""
+            ).strip().lower() not in COMBINED_CYCLE_REF_AXIS_CHOICES:
                 ref_axis_var.set("main")
             ttk.Label(legend_frame, text="Cycle Legend Reference Axis").grid(
                 row=12, column=0, sticky="w", padx=(0, 6), pady=2
@@ -48864,9 +49231,8 @@ class UnifiedApp(tk.Tk):
 
             ref_corner_var = stage_vars[f"{key_prefix}_cycle_legend_ref_corner"]
             if (
-                (ref_corner_var.get() or "").strip().lower()
-                not in COMBINED_CYCLE_REF_CORNER_CHOICES
-            ):
+                ref_corner_var.get() or ""
+            ).strip().lower() not in COMBINED_CYCLE_REF_CORNER_CHOICES:
                 ref_corner_var.set("upper right")
             ttk.Label(legend_frame, text="Cycle Legend Reference Corner").grid(
                 row=13, column=0, sticky="w", padx=(0, 6), pady=2
@@ -48888,9 +49254,7 @@ class UnifiedApp(tk.Tk):
                 row=legend_fill_row, column=0, sticky="w", padx=(0, 6), pady=2
             )
             legend_fill_frame = ttk.Frame(legend_frame)
-            legend_fill_frame.grid(
-                row=legend_fill_row, column=1, sticky="w", pady=2
-            )
+            legend_fill_frame.grid(row=legend_fill_row, column=1, sticky="w", pady=2)
             legend_fill_preview = tk.Label(
                 legend_fill_frame,
                 width=6,
@@ -48937,9 +49301,9 @@ class UnifiedApp(tk.Tk):
             _ui_button(
                 legend_fill_frame,
                 text="Reset",
-                command=lambda: stage_vars[
-                    "combined_legend_shadowbox_fill_color"
-                ].set(DEFAULT_LEGEND_SHADOWBOX_FILL_COLOR),
+                command=lambda: stage_vars["combined_legend_shadowbox_fill_color"].set(
+                    DEFAULT_LEGEND_SHADOWBOX_FILL_COLOR
+                ),
             ).pack(side="left")
             ttk.Label(
                 legend_frame,
@@ -49033,8 +49397,8 @@ class UnifiedApp(tk.Tk):
 
         row_idx += 1
 
-        button_frame = ttk.Frame(container)
-        button_frame.grid(row=row_idx, column=0, sticky="e", pady=(8, 0))
+        button_frame = ttk.Frame(footer)
+        button_frame.grid(row=0, column=1, sticky="e")
 
         default_display_margins = _default_layout_margins(plot_id, "display")
         default_export_margins = _default_layout_margins(plot_id, "export")
@@ -49059,37 +49423,133 @@ class UnifiedApp(tk.Tk):
             """Return a normalized core render profile from staged dialog values."""
             defaults = _default_core_plot_render_profile(seed_source=settings)
             raw_profile = {
-                "x_axis_label": str(stage_vars.get("core_x_axis_label").get() if stage_vars.get("core_x_axis_label") is not None else ""),
-                "primary_axis_label": str(stage_vars.get("core_primary_axis_label").get() if stage_vars.get("core_primary_axis_label") is not None else ""),
-                "right_axis_label": str(stage_vars.get("core_temp_axis_label").get() if stage_vars.get("core_temp_axis_label") is not None else ""),
-                "third_axis_label": str(stage_vars.get("core_deriv_axis_label").get() if stage_vars.get("core_deriv_axis_label") is not None else ""),
-                "primary_labelpad": _safe_stage_float(stage_vars.get("core_primary_labelpad"), yaxis_labelpad_amount),
-                "right_labelpad": _safe_stage_float(stage_vars.get("core_temp_labelpad"), twinyaxis_labelpad_amount),
-                "third_labelpad": _safe_stage_float(stage_vars.get("core_deriv_labelpad"), twinyaxis_labelpad_amount),
-                "third_axis_offset": _safe_stage_float(stage_vars.get("core_deriv_axis_offset"), 1.12),
-                "left_padding_pct": _safe_stage_float(stage_vars.get("core_left_padding_pct"), DEFAULT_COMBINED_LEFT_PAD_PCT),
-                "right_padding_pct": _safe_stage_float(stage_vars.get("core_right_padding_pct"), DEFAULT_COMBINED_RIGHT_PAD_PCT),
-                "export_pad_pts": _safe_stage_float(stage_vars.get("core_export_pad_pts"), DEFAULT_COMBINED_EXPORT_PAD_PTS),
-                "title_pad_pts": _safe_stage_float(stage_vars.get("core_title_pad_pts"), DEFAULT_COMBINED_TITLE_PAD_PTS),
-                "suptitle_pad_pts": _safe_stage_float(stage_vars.get("core_suptitle_pad_pts"), DEFAULT_COMBINED_SUPTITLE_PAD_PTS),
-                "suptitle_y": _safe_stage_float(stage_vars.get("core_suptitle_y"), DEFAULT_COMBINED_SUPTITLE_Y),
-                "top_margin_pct": _safe_stage_float(stage_vars.get("core_top_margin_pct"), DEFAULT_COMBINED_TOP_MARGIN_PCT),
-                "font_family": str(stage_vars.get("core_font_family").get() if stage_vars.get("core_font_family") is not None else ""),
-                "suptitle_fontsize": _safe_stage_float(stage_vars.get("core_suptitle_fontsize"), DEFAULT_COMBINED_SUPTITLE_FONTSIZE),
-                "title_fontsize": _safe_stage_float(stage_vars.get("core_title_fontsize"), DEFAULT_COMBINED_TITLE_FONTSIZE),
-                "label_fontsize": _safe_stage_float(stage_vars.get("core_label_fontsize"), DEFAULT_COMBINED_LABEL_FONTSIZE),
-                "tick_fontsize": _safe_stage_float(stage_vars.get("core_tick_fontsize"), DEFAULT_COMBINED_TICK_FONTSIZE),
-                "legend_fontsize": _safe_stage_float(stage_vars.get("core_legend_fontsize"), settings.get("core_legend_fontsize", label_fontsize)),
-                "cycle_legend_fontsize": _safe_stage_float(stage_vars.get("core_cycle_legend_fontsize"), settings.get("core_cycle_legend_fontsize", settings.get("core_legend_fontsize", label_fontsize))),
-                "legend_wrap": bool(stage_vars.get("core_legend_wrap").get()) if stage_vars.get("core_legend_wrap") is not None else False,
-                "legend_rows": int(_safe_stage_float(stage_vars.get("core_legend_rows"), 2)),
-                "legend_label_gap_pts": _safe_stage_float(stage_vars.get("core_legend_label_gap"), DEFAULT_COMBINED_LEGEND_GAP_PTS),
-                "xlabel_tick_gap_pts": _safe_stage_float(stage_vars.get("core_xlabel_tick_gap"), DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS),
-                "legend_bottom_margin_pts": _safe_stage_float(stage_vars.get("core_legend_bottom_margin"), DEFAULT_COMBINED_LEGEND_MARGIN_PTS),
-                "legend_alignment": str(stage_vars.get("core_legend_alignment").get() if stage_vars.get("core_legend_alignment") is not None else "center"),
-                "cycle_legend_loc_choice": str(stage_vars.get("core_cycle_legend_loc_choice").get() if stage_vars.get("core_cycle_legend_loc_choice") is not None else "upper right"),
-                "cycle_legend_ref_axis": str(stage_vars.get("core_cycle_legend_ref_axis").get() if stage_vars.get("core_cycle_legend_ref_axis") is not None else "main"),
-                "cycle_legend_ref_corner": str(stage_vars.get("core_cycle_legend_ref_corner").get() if stage_vars.get("core_cycle_legend_ref_corner") is not None else "upper right"),
+                "x_axis_label": str(
+                    stage_vars.get("core_x_axis_label").get()
+                    if stage_vars.get("core_x_axis_label") is not None
+                    else ""
+                ),
+                "primary_axis_label": str(
+                    stage_vars.get("core_primary_axis_label").get()
+                    if stage_vars.get("core_primary_axis_label") is not None
+                    else ""
+                ),
+                "right_axis_label": str(
+                    stage_vars.get("core_temp_axis_label").get()
+                    if stage_vars.get("core_temp_axis_label") is not None
+                    else ""
+                ),
+                "third_axis_label": str(
+                    stage_vars.get("core_deriv_axis_label").get()
+                    if stage_vars.get("core_deriv_axis_label") is not None
+                    else ""
+                ),
+                "primary_labelpad": _safe_stage_float(
+                    stage_vars.get("core_primary_labelpad"), yaxis_labelpad_amount
+                ),
+                "right_labelpad": _safe_stage_float(
+                    stage_vars.get("core_temp_labelpad"), twinyaxis_labelpad_amount
+                ),
+                "third_labelpad": _safe_stage_float(
+                    stage_vars.get("core_deriv_labelpad"), twinyaxis_labelpad_amount
+                ),
+                "third_axis_offset": _safe_stage_float(
+                    stage_vars.get("core_deriv_axis_offset"), 1.12
+                ),
+                "left_padding_pct": _safe_stage_float(
+                    stage_vars.get("core_left_padding_pct"),
+                    DEFAULT_COMBINED_LEFT_PAD_PCT,
+                ),
+                "right_padding_pct": _safe_stage_float(
+                    stage_vars.get("core_right_padding_pct"),
+                    DEFAULT_COMBINED_RIGHT_PAD_PCT,
+                ),
+                "export_pad_pts": _safe_stage_float(
+                    stage_vars.get("core_export_pad_pts"),
+                    DEFAULT_COMBINED_EXPORT_PAD_PTS,
+                ),
+                "title_pad_pts": _safe_stage_float(
+                    stage_vars.get("core_title_pad_pts"), DEFAULT_COMBINED_TITLE_PAD_PTS
+                ),
+                "suptitle_pad_pts": _safe_stage_float(
+                    stage_vars.get("core_suptitle_pad_pts"),
+                    DEFAULT_COMBINED_SUPTITLE_PAD_PTS,
+                ),
+                "suptitle_y": _safe_stage_float(
+                    stage_vars.get("core_suptitle_y"), DEFAULT_COMBINED_SUPTITLE_Y
+                ),
+                "top_margin_pct": _safe_stage_float(
+                    stage_vars.get("core_top_margin_pct"),
+                    DEFAULT_COMBINED_TOP_MARGIN_PCT,
+                ),
+                "font_family": str(
+                    stage_vars.get("core_font_family").get()
+                    if stage_vars.get("core_font_family") is not None
+                    else ""
+                ),
+                "suptitle_fontsize": _safe_stage_float(
+                    stage_vars.get("core_suptitle_fontsize"),
+                    DEFAULT_COMBINED_SUPTITLE_FONTSIZE,
+                ),
+                "title_fontsize": _safe_stage_float(
+                    stage_vars.get("core_title_fontsize"),
+                    DEFAULT_COMBINED_TITLE_FONTSIZE,
+                ),
+                "label_fontsize": _safe_stage_float(
+                    stage_vars.get("core_label_fontsize"),
+                    DEFAULT_COMBINED_LABEL_FONTSIZE,
+                ),
+                "tick_fontsize": _safe_stage_float(
+                    stage_vars.get("core_tick_fontsize"), DEFAULT_COMBINED_TICK_FONTSIZE
+                ),
+                "legend_fontsize": _safe_stage_float(
+                    stage_vars.get("core_legend_fontsize"),
+                    settings.get("core_legend_fontsize", label_fontsize),
+                ),
+                "cycle_legend_fontsize": _safe_stage_float(
+                    stage_vars.get("core_cycle_legend_fontsize"),
+                    settings.get(
+                        "core_cycle_legend_fontsize",
+                        settings.get("core_legend_fontsize", label_fontsize),
+                    ),
+                ),
+                "legend_wrap": bool(stage_vars.get("core_legend_wrap").get())
+                if stage_vars.get("core_legend_wrap") is not None
+                else False,
+                "legend_rows": int(
+                    _safe_stage_float(stage_vars.get("core_legend_rows"), 2)
+                ),
+                "legend_label_gap_pts": _safe_stage_float(
+                    stage_vars.get("core_legend_label_gap"),
+                    DEFAULT_COMBINED_LEGEND_GAP_PTS,
+                ),
+                "xlabel_tick_gap_pts": _safe_stage_float(
+                    stage_vars.get("core_xlabel_tick_gap"),
+                    DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS,
+                ),
+                "legend_bottom_margin_pts": _safe_stage_float(
+                    stage_vars.get("core_legend_bottom_margin"),
+                    DEFAULT_COMBINED_LEGEND_MARGIN_PTS,
+                ),
+                "legend_alignment": str(
+                    stage_vars.get("core_legend_alignment").get()
+                    if stage_vars.get("core_legend_alignment") is not None
+                    else "center"
+                ),
+                "cycle_legend_loc_choice": str(
+                    stage_vars.get("core_cycle_legend_loc_choice").get()
+                    if stage_vars.get("core_cycle_legend_loc_choice") is not None
+                    else "upper right"
+                ),
+                "cycle_legend_ref_axis": str(
+                    stage_vars.get("core_cycle_legend_ref_axis").get()
+                    if stage_vars.get("core_cycle_legend_ref_axis") is not None
+                    else "main"
+                ),
+                "cycle_legend_ref_corner": str(
+                    stage_vars.get("core_cycle_legend_ref_corner").get()
+                    if stage_vars.get("core_cycle_legend_ref_corner") is not None
+                    else "upper right"
+                ),
             }
             return _normalize_core_plot_render_profile(raw_profile, defaults=defaults)
 
@@ -49112,16 +49572,19 @@ class UnifiedApp(tk.Tk):
                     snapshot[key] = value
             display_margins = {
                 "left": _safe_stage_float(
-                    stage_layout_display_left, default_display_margins.get("left", 0.125)
+                    stage_layout_display_left,
+                    default_display_margins.get("left", 0.125),
                 ),
                 "right": _safe_stage_float(
-                    stage_layout_display_right, default_display_margins.get("right", 0.9)
+                    stage_layout_display_right,
+                    default_display_margins.get("right", 0.9),
                 ),
                 "top": _safe_stage_float(
                     stage_layout_display_top, default_display_margins.get("top", 0.88)
                 ),
                 "bottom": _safe_stage_float(
-                    stage_layout_display_bottom, default_display_margins.get("bottom", 0.11)
+                    stage_layout_display_bottom,
+                    default_display_margins.get("bottom", 0.11),
                 ),
             }
             export_margins = {
@@ -49200,10 +49663,16 @@ class UnifiedApp(tk.Tk):
                 staged_core_profile = staged_snapshot.get("core_render_profile")
                 applied_core_profile = _set_core_plot_render_profile(
                     plot_id,
-                    staged_core_profile if isinstance(staged_core_profile, Mapping) else {},
+                    staged_core_profile
+                    if isinstance(staged_core_profile, Mapping)
+                    else {},
                 )
                 self.core_legend_fontsize.set(
-                    float(applied_core_profile.get("legend_fontsize", self.core_legend_fontsize.get()))
+                    float(
+                        applied_core_profile.get(
+                            "legend_fontsize", self.core_legend_fontsize.get()
+                        )
+                    )
                 )
                 self.core_cycle_legend_fontsize.set(
                     float(
@@ -49256,6 +49725,10 @@ class UnifiedApp(tk.Tk):
                         canvas_plot_id = getattr(plot_tabs[idx], "_plot_id", None)
                     self._apply_gl260_legend_sizing(fig, plot_id=canvas_plot_id)
                     if fig.canvas is not None:
+                        if canvas_plot_id == plot_id:
+                            # Keep target-plot layout work inside the overlay-controlled
+                            # refresh path so post-overlay snaps are not visible.
+                            continue
                         fig.canvas.draw_idle()
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
@@ -49272,6 +49745,7 @@ class UnifiedApp(tk.Tk):
                 pass
             if is_combined:
                 self._schedule_combined_preview_refresh()
+            self._prepare_plot_refresh_overlay_for_settings(plot_id)
             self._refresh_plot_for_plot_id(plot_id)
             baseline_snapshot = _normalized_plot_settings_snapshot()
             if close_after:
@@ -81229,7 +81703,9 @@ class UnifiedApp(tk.Tk):
                 command=command,
             )
 
-        def _make_combo(parent, *, variable, values: List[str], state: str = "readonly"):
+        def _make_combo(
+            parent, *, variable, values: List[str], state: str = "readonly"
+        ):
             """Create one combobox using CTk when available, else ttk."""
             if ctk_module is not None:
                 return ctk_module.CTkComboBox(
@@ -81296,14 +81772,19 @@ class UnifiedApp(tk.Tk):
         )
         self.om_sheet.grid(row=0, column=1, sticky="ew", padx=6, pady=6)
 
-        _make_button(self._data_single_frame, "Load Sheet Data", self._load_dataframe).grid(
-            row=0, column=2, padx=6, pady=6
-        )
+        _make_button(
+            self._data_single_frame, "Load Sheet Data", self._load_dataframe
+        ).grid(row=0, column=2, padx=6, pady=6)
         _make_button(
             self._data_single_frame,
             "Import GL-260 CSV...",
             self._open_csv_import_dialog,
         ).grid(row=0, column=3, padx=6, pady=6)
+        _make_button(
+            self._data_single_frame,
+            "Open Profiles",
+            self._open_profile_manager,
+        ).grid(row=0, column=4, padx=6, pady=6)
 
         self._data_multi_frame = ttk.Frame(f)
         self._data_multi_frame.grid(row=3, column=0, columnspan=4, sticky="nsew")
@@ -81322,7 +81803,10 @@ class UnifiedApp(tk.Tk):
             row=0, column=0, sticky="w", padx=(0, 4)
         )
         self._available_sheets_listbox = tk.Listbox(
-            available_frame, exportselection=False, height=8
+            available_frame,
+            selectmode="extended",
+            exportselection=False,
+            height=8,
         )
         self._available_sheets_listbox.grid(row=1, column=0, sticky="nsew", padx=(0, 4))
         available_scroll = _make_scrollbar(
@@ -81341,6 +81825,9 @@ class UnifiedApp(tk.Tk):
         _make_button(add_remove_frame, "<< Remove", self._remove_selected_sheets).pack(
             fill="x", pady=2
         )
+        _make_button(
+            add_remove_frame, "Remove All Sheets", self._remove_all_sheets
+        ).pack(fill="x", pady=2)
 
         included_frame = ttk.Frame(list_frame)
         included_frame.grid(row=0, column=2, sticky="nsew")
@@ -81350,7 +81837,10 @@ class UnifiedApp(tk.Tk):
             row=0, column=0, sticky="w", padx=(4, 0)
         )
         self._included_sheets_listbox = tk.Listbox(
-            included_frame, exportselection=False, height=8
+            included_frame,
+            selectmode="extended",
+            exportselection=False,
+            height=8,
         )
         self._included_sheets_listbox.grid(row=1, column=0, sticky="nsew", padx=(4, 0))
         included_scroll = _make_scrollbar(
@@ -81363,9 +81853,9 @@ class UnifiedApp(tk.Tk):
 
         move_frame = ttk.Frame(list_frame)
         move_frame.grid(row=0, column=3, sticky="n", padx=(6, 0), pady=(18, 0))
-        _make_button(
-            move_frame, "Move Up", lambda: self._move_selected_sheet(-1)
-        ).pack(fill="x", pady=2)
+        _make_button(move_frame, "Move Up", lambda: self._move_selected_sheet(-1)).pack(
+            fill="x", pady=2
+        )
         _make_button(
             move_frame, "Move Down", lambda: self._move_selected_sheet(1)
         ).pack(fill="x", pady=2)
@@ -81378,6 +81868,9 @@ class UnifiedApp(tk.Tk):
         _make_button(
             multi_actions, "Import GL-260 CSV...", self._open_csv_import_dialog
         ).pack(side="left", padx=(6, 0))
+        _make_button(multi_actions, "Open Profiles", self._open_profile_manager).pack(
+            side="left", padx=(6, 0)
+        )
 
         self.lbl_status = ttk.Label(f, text="No file loaded.")
         self.lbl_status.grid(row=4, column=0, columnspan=4, sticky="w", padx=6, pady=6)
@@ -81529,29 +82022,70 @@ class UnifiedApp(tk.Tk):
         self._set_selected_sheets(updated)
         self._refresh_multi_sheet_lists()
 
+    def _remove_all_sheets(self) -> None:
+        """Remove every included sheet and return it to the available list.
+
+        Purpose:
+            Provide a one-click reset for multi-sheet inclusion selections.
+        Why:
+            Users often need to clear all included sheets before rebuilding a new
+            stitched ordering, and repeated per-row removal is inefficient.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Clears `self.selected_sheets`, persists that state through
+            `_set_selected_sheets`, and refreshes both multi-sheet listboxes.
+        Exceptions:
+            None. Empty included-state is treated as a no-op.
+        """
+        if not self.selected_sheets:
+            return
+        self._set_selected_sheets([])
+        self._refresh_multi_sheet_lists()
+
     def _move_selected_sheet(self, direction: int):
-        """Perform move selected sheet.
-        Used to keep the workflow logic localized and testable."""
+        """Move selected included sheets up or down as one contiguous action.
+
+        Purpose:
+            Reorder selected entries in the Included Sheets list.
+        Why:
+            Multi-select workflows need deterministic group moves while preserving
+            relative ordering between selected rows.
+        Args:
+            direction: Negative values move up; positive values move down.
+        Returns:
+            None.
+        Side Effects:
+            Mutates `self.selected_sheets`, persists order via
+            `_set_selected_sheets`, refreshes listboxes, and restores row
+            selection after re-render.
+        Exceptions:
+            None. Invalid or empty selection requests are ignored.
+        """
         included_listbox = getattr(self, "_included_sheets_listbox", None)
         if included_listbox is None:
             return
-        indices = list(included_listbox.curselection())
+        indices = sorted(list(included_listbox.curselection()))
         if not indices:
             return
         updated = list(self.selected_sheets)
         count = len(updated)
+        # Keep group semantics strict: if any selected row is at a boundary,
+        # block the full move so the selected group stays coherent.
+        if direction < 0 and indices[0] <= 0:
+            return
+        if direction > 0 and indices[-1] >= (count - 1):
+            return
         if direction < 0:
             # Iterate over sorted(indices) to apply the per-item logic.
-            for idx in sorted(indices):
-                if idx <= 0:
-                    continue
+            for idx in indices:
                 updated[idx - 1], updated[idx] = updated[idx], updated[idx - 1]
             new_indices = [max(0, idx - 1) for idx in indices]
         else:
             # Iterate over sorted(indices, reverse=True) to apply the per-item logic.
             for idx in sorted(indices, reverse=True):
-                if idx >= count - 1:
-                    continue
                 updated[idx + 1], updated[idx] = updated[idx], updated[idx + 1]
             new_indices = [min(count - 1, idx + 1) for idx in indices]
         self._set_selected_sheets(updated)
