@@ -8374,9 +8374,42 @@ class AnnotationsPanel:
         if total_width <= 0:
             return
 
-        # Keep both panes usable by clamping the sash inside a visible range.
-        min_left = max(360, int(total_width * 0.33))
-        max_left = max(min_left, total_width - max(320, int(total_width * 0.24)))
+        # Use requested pane widths to keep the left controls visible at current scale.
+        pane_names: Tuple[str, ...] = ()
+        try:
+            pane_names = tuple(self._paned.panes())
+        except Exception:
+            pane_names = ()
+        left_req = 360
+        right_req = 320
+        if len(pane_names) >= 2:
+            try:
+                left_widget = self._paned.nametowidget(pane_names[0])
+                right_widget = self._paned.nametowidget(pane_names[1])
+                left_req = max(left_req, int(left_widget.winfo_reqwidth() or 0) + 28)
+                right_req = max(right_req, int(right_widget.winfo_reqwidth() or 0) + 24)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        min_left_floor = max(240, int(total_width * 0.22))
+        min_right_floor = max(240, int(total_width * 0.22))
+        min_left = max(min_left_floor, left_req)
+        min_right = max(min_right_floor, right_req)
+        # If requested minimums overflow available width, relax toward hard floors.
+        overflow = (min_left + min_right) - total_width
+        if overflow > 0:
+            shrink_left_cap = max(0, min_left - min_left_floor)
+            shrink_left = min(shrink_left_cap, overflow)
+            min_left -= shrink_left
+            overflow -= shrink_left
+        if overflow > 0:
+            shrink_right_cap = max(0, min_right - min_right_floor)
+            shrink_right = min(shrink_right_cap, overflow)
+            min_right -= shrink_right
+            overflow -= shrink_right
+        if overflow > 0:
+            min_left = max(min_left_floor, total_width - min_right)
+        max_left = max(min_left, total_width - max(min_right_floor, min_right))
         fallback = max(min_left, min(max_left, int(total_width * 0.55)))
 
         raw_sash = state.get("editor_sash")
@@ -8523,11 +8556,51 @@ class AnnotationsPanel:
             self._on_cancel_add_element()
         self._controller.set_mode(self._mode_var.get())
 
+    def _resolve_selected_add_type(self) -> Optional[str]:
+        """Resolve add-element type from visible selector and synchronize state.
+
+        Purpose:
+            Derive one canonical add-element type from the UI selection widgets.
+        Why:
+            The visible combobox label and the internal value can drift out of sync
+            when a toolkit callback path does not fire; placement must follow the
+            visible user selection deterministically.
+        Args:
+            None.
+        Returns:
+            Canonical element type string, or None when no valid type can be resolved.
+        Side Effects:
+            May update `_add_type_var` so internal placement state matches what the
+            user sees in the Element Type dropdown.
+        Exceptions:
+            None; invalid values are normalized to safe fallbacks.
+        """
+        label_to_value = {
+            "Text": "text",
+            "Callout": "callout",
+            "Arrow": "arrow",
+            "Point / Marker": "point",
+            "X-Span": "xspan",
+            "Span + Label": "xspan_label",
+            "Trace Mask": "trace_mask",
+            "Trace Start": "trace_start",
+            "Box Region": "rect",
+            "Reference Line": "ref_line",
+            "Freehand": "ink",
+        }
+        visible_label = str(self._add_type_label_var.get() or "").strip()
+        candidate = label_to_value.get(visible_label, self._add_type_var.get())
+        canonical = _canonicalize_annotation_type(candidate)
+        if canonical is None:
+            canonical = _canonicalize_annotation_type(self._add_type_var.get())
+        if canonical is not None and canonical != self._add_type_var.get():
+            self._add_type_var.set(canonical)
+        return canonical
+
     def _on_place_add_element(self) -> None:
         """Handle place add element.
         Used as an event callback for place add element."""
-        element_type = self._add_type_var.get()
-        canonical = _canonicalize_annotation_type(element_type)
+        canonical = self._resolve_selected_add_type()
         if not canonical:
             return
         fill_color = _normalize_mpl_color(self._add_fill_var.get())
@@ -39291,7 +39364,8 @@ class UnifiedApp(tk.Tk):
         editor = tk.Toplevel(self)
         editor.title("Plot Elements")
         editor.transient(self)
-        editor.resizable(False, False)
+        editor.resizable(True, True)
+        editor.minsize(int(self._scale_length(960)), int(self._scale_length(620)))
         self._plot_element_windows[plot_id] = editor
 
         self._apply_plot_elements_editor_geometry(editor, ui_state)
@@ -42873,17 +42947,27 @@ class UnifiedApp(tk.Tk):
             )
             preview_button.pack(side="left", padx=(0, 8))
 
+        combined_export_row = plot_key == "fig_combined"
         checkbox_frame = ttk.Frame(save_controls)
-        checkbox_frame.pack(side="left", padx=(0, 6))
+        checkbox_frame.pack(side="left", padx=(0, 2) if combined_export_row else (0, 6))
 
         # Iterate over format_order to apply the per-item logic.
         for fmt in format_order:
-            _ui_checkbutton(
-                checkbox_frame,
-                text=fmt.upper(),
-                variable=format_vars[fmt],
-                command=_on_format_toggle,
-            ).pack(side="left", padx=(0, 6))
+            if combined_export_row:
+                check_widget = ttk.Checkbutton(
+                    checkbox_frame,
+                    text=fmt.upper(),
+                    variable=format_vars[fmt],
+                    command=_on_format_toggle,
+                )
+            else:
+                check_widget = _ui_checkbutton(
+                    checkbox_frame,
+                    text=fmt.upper(),
+                    variable=format_vars[fmt],
+                    command=_on_format_toggle,
+                )
+            check_widget.pack(side="left", padx=(0, 1) if combined_export_row else (0, 6))
 
         _update_save_button_state()
 
