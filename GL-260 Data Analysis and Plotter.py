@@ -30196,6 +30196,7 @@ class UnifiedApp(tk.Tk):
         self._startup_plot_stage_two_ready = False
         self._startup_cycle_ready = False
         self._startup_tab_warmup_done = False
+        self._startup_tab_readiness_reason = ""
         self._startup_restore_state = "pending"
         self._install_startup_loading_splash(
             message="Initializing startup...", progress=2.0
@@ -32248,31 +32249,83 @@ class UnifiedApp(tk.Tk):
         self._startup_loading_progress_value = 0.0
 
     def _startup_visible_tab_widgets(self) -> List[ttk.Frame]:
-        """Return visible startup tab frames in configured display order.
+        """Return notebook-visible startup tab frames in display order.
 
         Purpose:
             Resolve the notebook tabs that should participate in startup readiness.
         Why:
-            Startup gating should honor tab visibility preferences so hidden optional
-            tabs do not delay splash teardown or force unnecessary warmup work.
+            Startup readiness should use the notebook's actual attached tabs rather
+            than inferring visibility from settings that may be stale during launch.
         Inputs:
             None.
         Outputs:
-            List[ttk.Frame]: Visible tab frames ordered by persisted tab order.
+            List[ttk.Frame]: Notebook-attached tab frames ordered by notebook index.
         Side Effects:
             None.
         Exceptions:
-            Missing tab-order metadata or frames are handled by best-effort guards.
+            Missing notebook/widgets short-circuit to an empty list.
         """
-        visible_keys = self._resolved_tab_order(include_hidden=False)
+        nb = getattr(self, "nb", None)
+        if nb is None or not getattr(nb, "winfo_exists", lambda: False)():
+            return []
+        try:
+            tab_ids = list(nb.tabs())
+        except Exception:
+            return []
+
         resolved_tabs: List[ttk.Frame] = []
-        # Iterate over visible tab keys so readiness order mirrors notebook order.
-        for key in visible_keys:
-            tab_obj = self._tab_frame_for_key(key)
-            if tab_obj is None:
+        # Resolve notebook tab IDs to widgets so readiness only checks attached tabs.
+        for tab_id in tab_ids:
+            try:
+                tab_obj = nb.nametowidget(tab_id)
+            except Exception:
+                continue
+            if not isinstance(tab_obj, ttk.Frame):
                 continue
             resolved_tabs.append(tab_obj)
         return resolved_tabs
+
+    def _startup_tab_readiness_message(self) -> str:
+        """Return splash status text for tab readiness verification.
+
+        Purpose:
+            Build deterministic readiness messaging for splash progress updates.
+        Why:
+            Keeping the current blocking reason in the message helps diagnose
+            startup stalls without requiring external logs.
+        Inputs:
+            None.
+        Outputs:
+            str: Human-readable readiness message for the startup splash.
+        Side Effects:
+            None.
+        Exceptions:
+            Missing readiness-reason state falls back to a generic message.
+        """
+        reason = str(getattr(self, "_startup_tab_readiness_reason", "") or "").strip()
+        if not reason:
+            return "Verifying startup tab readiness..."
+        return f"Verifying startup tab readiness ({reason})..."
+
+    def _set_startup_tab_readiness_failure(self, reason: str) -> bool:
+        """Record startup tab readiness failure reason and return False.
+
+        Purpose:
+            Capture the current blocking reason for startup tab readiness checks.
+        Why:
+            Polling logic needs a deterministic reason string for splash messaging
+            and diagnostics when readiness remains incomplete.
+        Inputs:
+            reason: Human-readable summary of the first failing readiness condition.
+        Outputs:
+            bool: Always `False` so callers can return directly from guard checks.
+        Side Effects:
+            Updates `_startup_tab_readiness_reason` on the app instance.
+        Exceptions:
+            Non-string inputs are normalized to a safe string representation.
+        """
+        self._startup_tab_readiness_reason = str(reason or "").strip()
+        return False
 
     def _startup_visible_tabs_ready_for_interaction(self) -> bool:
         """Check whether visible startup tabs are initialized for interaction.
@@ -32297,17 +32350,20 @@ class UnifiedApp(tk.Tk):
             getattr(self, "_startup_restore_state", "pending") or "pending"
         )
         restore_ready = restore_state in {"success", "failed", "skipped"}
-        if not (
-            bool(getattr(self, "_startup_ui_built", False))
-            and bool(getattr(self, "_startup_plot_stage_two_ready", False))
-            and bool(getattr(self, "_startup_cycle_ready", False))
-            and restore_ready
-        ):
-            return False
+        if not bool(getattr(self, "_startup_ui_built", False)):
+            return self._set_startup_tab_readiness_failure("main interface not ready")
+        if not bool(getattr(self, "_startup_plot_stage_two_ready", False)):
+            return self._set_startup_tab_readiness_failure("plot controls not ready")
+        if not bool(getattr(self, "_startup_cycle_ready", False)):
+            return self._set_startup_tab_readiness_failure("cycle tab not ready")
+        if not restore_ready:
+            return self._set_startup_tab_readiness_failure(
+                "startup restore not complete"
+            )
 
         nb = getattr(self, "nb", None)
         if nb is None or not getattr(nb, "winfo_exists", lambda: False)():
-            return False
+            return self._set_startup_tab_readiness_failure("notebook unavailable")
 
         try:
             self.update_idletasks()
@@ -32319,31 +32375,47 @@ class UnifiedApp(tk.Tk):
         try:
             notebook_tabs = set(nb.tabs())
         except Exception:
-            return False
+            return self._set_startup_tab_readiness_failure(
+                "notebook tabs unavailable"
+            )
 
         visible_tabs = self._startup_visible_tab_widgets()
         if not visible_tabs:
-            return False
+            return self._set_startup_tab_readiness_failure("no visible tabs attached")
         # Verify each visible tab exists and is currently attached to the notebook.
         for tab_obj in visible_tabs:
             if not getattr(tab_obj, "winfo_exists", lambda: False)():
-                return False
+                return self._set_startup_tab_readiness_failure(
+                    "visible tab widget missing"
+                )
             if str(tab_obj) not in notebook_tabs:
-                return False
+                return self._set_startup_tab_readiness_failure(
+                    "visible tab not attached"
+                )
 
         plot_tab = getattr(self, "tab_plot", None)
-        if plot_tab in visible_tabs and not bool(
-            getattr(self, "_plot_tab_stage_two_built", False)
+        if (
+            plot_tab is not None
+            and str(plot_tab) in notebook_tabs
+            and not bool(
+                getattr(self, "_plot_tab_stage_two_built", False)
+            )
         ):
-            return False
+            return self._set_startup_tab_readiness_failure(
+                "plot tab stage-two build pending"
+            )
 
         cycle_tab = getattr(self, "tab_cycle", None)
-        if cycle_tab in visible_tabs:
+        if cycle_tab is not None and str(cycle_tab) in notebook_tabs:
             if not bool(getattr(self, "_cycle_ui_built", False)):
-                return False
+                return self._set_startup_tab_readiness_failure(
+                    "cycle tab build pending"
+                )
             cycle_canvas = getattr(self, "_cycle_canvas", None)
             if cycle_canvas is None:
-                return False
+                return self._set_startup_tab_readiness_failure(
+                    "cycle canvas not initialized"
+                )
             try:
                 cycle_widget = cycle_canvas.get_tk_widget()
             except Exception:
@@ -32351,7 +32423,10 @@ class UnifiedApp(tk.Tk):
             if cycle_widget is None or not getattr(
                 cycle_widget, "winfo_exists", lambda: False
             )():
-                return False
+                return self._set_startup_tab_readiness_failure(
+                    "cycle canvas widget unavailable"
+                )
+        self._startup_tab_readiness_reason = ""
         return True
 
     def _poll_startup_loading_completion(self) -> None:
@@ -32426,7 +32501,7 @@ class UnifiedApp(tk.Tk):
             if disable_tab_cycling:
                 self._update_startup_loading_splash_progress(
                     progress=96.0,
-                    message="Verifying startup tab readiness...",
+                    message=self._startup_tab_readiness_message(),
                 )
                 tab_warmup_ready = self._startup_visible_tabs_ready_for_interaction()
                 if tab_warmup_ready:
@@ -32465,11 +32540,14 @@ class UnifiedApp(tk.Tk):
             message = "Finalizing Plot Settings controls..."
         elif not cycle_ready:
             message = "Finalizing Cycle Analysis tab..."
-        elif restore_state == "running":
-            message = "Restoring last session workbook..."
+        elif not restore_ready:
+            if restore_state == "running":
+                message = "Restoring last session workbook..."
+            else:
+                message = "Finalizing startup restore..."
         elif not tab_warmup_ready:
             if disable_tab_cycling:
-                message = "Verifying startup tab readiness..."
+                message = self._startup_tab_readiness_message()
             else:
                 message = "Warming startup tabs..."
         else:
@@ -32720,39 +32798,65 @@ class UnifiedApp(tk.Tk):
             Updates startup restore state, seeds file entry/status UI, and submits
             the restore worker to `TkTaskRunner`.
         Exceptions:
-            Missing file paths short-circuit to a skipped restore state.
+            Missing or malformed file paths short-circuit to a skipped restore
+            state; unexpected preflight errors are marked failed so startup can
+            continue without a stuck pending gate.
         """
-
-        path = settings.get("last_file_path")
-
-        if not path or not os.path.exists(path):
-            self._mark_startup_restore_state("skipped")
-            return
-
-        # Snapshot inputs on the UI thread for thread safety/no-GIL readiness.
-        path_snapshot = path
-        last_sheet = settings.get("last_sheet_name", "")
-        last_sheet_snapshot = last_sheet
-
-        self._mark_startup_restore_state("running", path=path_snapshot)
-        self._startup_restore_path = path_snapshot
-
-        self.file_path = path_snapshot
-
+        path_snapshot = ""
+        last_sheet_snapshot = ""
         try:
+            raw_path = settings.get("last_file_path")
+            path_candidate = ""
+            if raw_path is not None:
+                try:
+                    path_candidate = os.fspath(raw_path)
+                except TypeError:
+                    path_candidate = ""
+            if isinstance(path_candidate, bytes):
+                path_candidate = os.fsdecode(path_candidate)
+            path = str(path_candidate or "").strip()
+            if not path or not os.path.exists(path):
+                self._mark_startup_restore_state("skipped")
+                return
 
-            self.e_file.delete(0, tk.END)
+            # Snapshot inputs on the UI thread for thread safety/no-GIL readiness.
+            path_snapshot = path
+            last_sheet_snapshot = str(settings.get("last_sheet_name", "") or "")
 
-            self.e_file.insert(0, path_snapshot)
+            self._mark_startup_restore_state("running", path=path_snapshot)
+            self._startup_restore_path = path_snapshot
+            self.file_path = path_snapshot
 
-        except Exception:
+            try:
+                self.e_file.delete(0, tk.END)
+                self.e_file.insert(0, path_snapshot)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
 
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-            pass
-
-        self.lbl_status.config(
-            text=f"Restoring last session from {os.path.basename(path_snapshot)}..."
-        )
+            try:
+                status_text = (
+                    "Restoring last session from "
+                    f"{os.path.basename(path_snapshot)}..."
+                )
+                self.lbl_status.config(text=status_text)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        except Exception as exc:
+            self._startup_restore_task_id = None
+            self._startup_restore_path = None
+            self._mark_startup_restore_state(
+                "failed",
+                path=(path_snapshot or None),
+                error=exc,
+            )
+            try:
+                self.lbl_status.config(text="Ready. Select a file to begin.")
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            return
 
         # Closure captures _restore_last_session_async state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _restore_last_session_async.
         def _worker():
