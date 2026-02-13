@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v3.0.1)
+# GL-260 Data Analysis and Plotter (v3.0.3)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v3.0.1`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v3.0.3`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,8 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v3.0.3 Process Profiles Plot Settings Retention](#v303-process-profiles-plot-settings-retention)
+  - [v3.0.2 Plot Elements Editor Window Sizing Hardening](#v302-plot-elements-editor-window-sizing-hardening)
   - [v3.0.1 Startup Splash + Background Startup Orchestration](#v301-startup-splash--background-startup-orchestration)
   - [v3.0.0 Import CSV Dialog UX Refresh and Major Version Rollforward](#v300-import-csv-dialog-ux-refresh-and-major-version-rollforward)
   - [v2.13.1 Legend Drag Snap Offset Fix](#v2131-legend-drag-snap-offset-fix)
@@ -608,6 +610,8 @@ Key behaviors:
 - Elements are applied both to on-screen figures and to exported PNG/PDF/SVG outputs.
 - Plot Elements controllers are rebound on figure swaps (Refresh, preview/export) so selection/dragging remains active.
 - Closing the Plot Elements window triggers a one-shot plot refresh through the shared Refresh pipeline, including the loading splash and determinate progress bar until refresh completion.
+- Persisted Plot Elements editor geometry is normalized on open so restored size/position stay on-screen after monitor or layout changes.
+- Plot Elements editor pane sizing defaults are hardened to keep controls visible and reduce cramped split-pane states on smaller displays.
 - Element placement uses a dedicated Plot Elements editor with:
   - Add Element controls (type, axis, coordinate space) with explicit Place on Plot arming and status hints.
   - Color, transparency, and label presets.
@@ -811,7 +815,17 @@ Use New Profile to start a clean workspace without inheriting prior dataset or p
 - Starting material mass
 - Stoichiometric ratio
 
-The Include dataset file path option determines whether the Excel path is saved with the profile. If a profile does not include a path (or the file is missing), the app prompts you to relink the dataset before loading. New Profile saves a dataset-optional profile that loads without a relink prompt. The current workspace is auto-backed up to `profiles/_autosave_last_workspace.json` before a profile load.
+New Profile also supports an optional `Keep plot settings for New Profile` flow (enabled by default in Process Profiles). When enabled, New Profile still resets to a clean workspace baseline, then reapplies retained plot settings and layout profiles.
+
+Retained scope for `Keep plot settings for New Profile`:
+- Plot settings
+- Layout profiles
+
+Not retained scope for `Keep plot settings for New Profile`:
+- Plot elements
+- Annotation UI state
+
+The Include dataset file path option determines whether the Excel path is saved with the profile. If a profile does not include a path (or the file is missing), the app prompts you to relink the dataset before loading. This option is independent from `Keep plot settings for New Profile`. New Profile saves a dataset-optional profile that loads without a relink prompt. The current workspace is auto-backed up to `profiles/_autosave_last_workspace.json` before a profile load.
 
 #### Saved Output Profiles and Export Sizes
 Export functions are unified by shared output size profiles and DPI settings.
@@ -902,6 +916,18 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v3.0.3 Process Profiles Plot Settings Retention
+- Added a Process Profiles option: `Keep plot settings for New Profile` (enabled by default).
+- New Profile can preserve current plot settings and layout profiles while still creating a clean, dataset-optional profile.
+- Preserve/restore ordering is reset-first then restore plot/layout so plot elements and annotation UI state do not carry over.
+- Bumped application version metadata to `v3.0.3` in the script header and `APP_VERSION`.
+
+### v3.0.2 Plot Elements Editor Window Sizing Hardening
+- Plot Elements editor now applies screen-safe geometry restoration so persisted window sizes/positions are clamped on open with sane fallback sizing and centered defaults.
+- Reorganized the Plot Elements editor control-row layout to improve action-button usability and reduce crowding.
+- Adjusted split-pane sash bounds/defaults to keep both panes visible on smaller displays.
+- Bumped application version metadata to `v3.0.2` in the script header and `APP_VERSION`.
 
 ### v3.0.1 Startup Splash + Background Startup Orchestration
 - Added a startup splash window with a determinate loading bar so launch progress is visible immediately and remains visible until startup completion gates are satisfied.
