@@ -31689,6 +31689,7 @@ class UnifiedApp(tk.Tk):
 
         self._initial_tab_shown = False
         self._initial_tab_after_id = None
+        self._initial_tab_map_bind_id = None
 
         try:
             self.update_idletasks()
@@ -31703,7 +31704,13 @@ class UnifiedApp(tk.Tk):
         except Exception:
             self._initial_tab_after_id = None
 
-        self.bind("<Map>", self._ensure_initial_data_tab_visible, add="+")
+        try:
+            self._initial_tab_map_bind_id = self.bind(
+                "<Map>", self._ensure_initial_data_tab_visible, add="+"
+            )
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            self._initial_tab_map_bind_id = None
 
         # Allow plotting functions to push summary text here
 
@@ -32355,15 +32362,15 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             Missing widgets or transient Tk errors fail closed by returning False.
         """
-        restore_state = str(
-            getattr(self, "_startup_restore_state", "pending") or "pending"
-        )
-        restore_ready = restore_state in {"success", "failed", "skipped"}
         if not bool(getattr(self, "_startup_ui_built", False)):
             return self._set_startup_tab_readiness_failure("main interface not ready")
-        if not restore_ready:
+        if not bool(getattr(self, "_startup_plot_stage_two_ready", False)):
+            return self._set_startup_tab_readiness_failure("plot controls not ready")
+        if not bool(getattr(self, "_startup_cycle_ready", False)):
+            return self._set_startup_tab_readiness_failure("cycle tab not ready")
+        if not bool(getattr(self, "_cycle_ui_built", False)):
             return self._set_startup_tab_readiness_failure(
-                "startup restore not complete"
+                "cycle tab build pending"
             )
 
         nb = getattr(self, "nb", None)
@@ -32429,18 +32436,17 @@ class UnifiedApp(tk.Tk):
         """Evaluate startup completion gates and close splash when fully ready.
 
         Purpose:
-            Keep startup splash open until all launch stages and async restore
-            operations are complete.
+            Keep startup splash open until the workspace is interaction-ready.
         Why:
-            Launch work spans UI-thread staged builders and background restore tasks;
-            a single gate checker prevents early splash removal.
+            Auto-restore can continue in the background, but tabs/listboxes should
+            not become interactive only after delayed focus or tab-cycling events.
         Inputs:
             None.
         Outputs:
             None.
         Side Effects:
-            Updates splash progress/message, reschedules itself, and clears splash
-            once all completion gates pass.
+            Updates splash progress/message, reschedules itself while readiness is
+            pending, and clears splash once interaction readiness is verified.
         Exceptions:
             Missing splash state short-circuits safely without raising.
         """
@@ -32481,7 +32487,7 @@ class UnifiedApp(tk.Tk):
         if tab_warmup_ready:
             progress_target = 98.0
 
-        if ui_ready and restore_ready and not tab_warmup_ready:
+        if ui_ready and not tab_warmup_ready:
             if disable_tab_cycling:
                 self._update_startup_loading_splash_progress(
                     progress=96.0,
@@ -32499,28 +32505,40 @@ class UnifiedApp(tk.Tk):
                 tab_warmup_ready = bool(
                     getattr(self, "_startup_tab_warmup_done", False)
                 )
+                if tab_warmup_ready:
+                    tab_warmup_ready = (
+                        self._startup_visible_tabs_ready_for_interaction()
+                    )
+                    self._startup_tab_warmup_done = bool(tab_warmup_ready)
         if tab_warmup_ready and not disable_tab_cycling:
             tab_warmup_ready = self._startup_visible_tabs_ready_for_interaction()
+            self._startup_tab_warmup_done = bool(tab_warmup_ready)
 
-        if ui_ready and restore_ready and tab_warmup_ready:
-            self._finalize_startup_to_data_tab()
-            self._update_startup_loading_splash_progress(
-                progress=100.0,
-                message="Startup complete. Opening workspace...",
-            )
-            try:
-                overlay.after(60, self._clear_startup_loading_splash)
-            except Exception:
-                self._clear_startup_loading_splash()
-            return
+        if ui_ready and tab_warmup_ready:
+            interaction_ready = self._startup_visible_tabs_ready_for_interaction()
+            if interaction_ready:
+                # Explicit startup invariant: splash can close only after readiness.
+                self._startup_tab_warmup_done = True
+                self._finalize_startup_to_data_tab()
+                completion_message = "Startup complete. Opening workspace..."
+                if restore_state == "running":
+                    completion_message = (
+                        "Workspace ready. Restoring last session in background..."
+                    )
+                self._update_startup_loading_splash_progress(
+                    progress=100.0,
+                    message=completion_message,
+                )
+                try:
+                    overlay.after(60, self._clear_startup_loading_splash)
+                except Exception:
+                    self._clear_startup_loading_splash()
+                return
+            tab_warmup_ready = False
+            self._startup_tab_warmup_done = False
 
         if not ui_ready:
             message = "Building main interface..."
-        elif not restore_ready:
-            if restore_state == "running":
-                message = "Restoring last session workbook..."
-            else:
-                message = "Finalizing startup restore..."
         elif not tab_warmup_ready:
             if disable_tab_cycling or bool(
                 getattr(self, "_startup_tab_warmup_done", False)
@@ -32528,6 +32546,11 @@ class UnifiedApp(tk.Tk):
                 message = self._startup_tab_readiness_message()
             else:
                 message = "Warming startup tabs..."
+        elif not restore_ready:
+            if restore_state == "running":
+                message = "Workspace ready. Restoring last session in background..."
+            else:
+                message = "Finalizing startup restore..."
         else:
             message = "Finalizing startup checks..."
         self._update_startup_loading_splash_progress(
@@ -32688,6 +32711,15 @@ class UnifiedApp(tk.Tk):
                 pass
 
         self._initial_tab_shown = True
+        map_bind_id = getattr(self, "_initial_tab_map_bind_id", None)
+        if map_bind_id is not None:
+            try:
+                # Startup `<Map>` enforcement is one-shot to avoid focus churn.
+                self.unbind("<Map>", map_bind_id)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            self._initial_tab_map_bind_id = None
 
     def _mark_startup_restore_state(
         self,
@@ -35562,9 +35594,7 @@ class UnifiedApp(tk.Tk):
                 pass
         self._initial_tab_after_id = None
 
-        if getattr(self, "_initial_tab_shown", False) and bool(
-            getattr(self, "_startup_tab_warmup_done", False)
-        ):
+        if getattr(self, "_initial_tab_shown", False):
             return
 
         startup_overlay = getattr(self, "_startup_loading_overlay", None)
@@ -46611,7 +46641,6 @@ class UnifiedApp(tk.Tk):
         window.title("Process Profiles")
         window.transient(self)
         window.resizable(True, True)
-        window.grab_set()
         self._profile_manager_window = window
 
         profile_names = self._list_profile_names()
@@ -46861,6 +46890,27 @@ class UnifiedApp(tk.Tk):
             pass
 
         self._refresh_profile_listbox()
+        try:
+            # Ensure geometry/list population is stable before enabling modal grab.
+            window.update_idletasks()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            window.grab_set()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            window.lift()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            window.focus_force()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
 
     def _profile_new_blank(self) -> None:
         """Create a new blank profile from startup-default workspace state.
