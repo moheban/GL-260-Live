@@ -499,6 +499,14 @@ DEFAULT_TAB_ORDER_KEYS = (
     "solubility_new",
     "final_report",
 )
+STARTUP_REQUIRED_TAB_KEYS = (
+    "data",
+    "columns",
+    "plot",
+    "cycle",
+    "solubility_new",
+    "final_report",
+)
 
 
 def _dependency_audit_targets() -> List[str]:
@@ -32328,21 +32336,22 @@ class UnifiedApp(tk.Tk):
         return False
 
     def _startup_visible_tabs_ready_for_interaction(self) -> bool:
-        """Check whether visible startup tabs are initialized for interaction.
+        """Check whether required startup tabs are initialized for interaction.
 
         Purpose:
-            Provide a splash-completion gate that validates visible tab readiness
-            without cycling notebook selection.
+            Provide a splash-completion gate that validates required startup tabs
+            are attached and interactive without cycling notebook selection.
         Why:
             When startup tab cycling is disabled, splash teardown still needs a
-            deterministic readiness check that covers major startup surfaces.
+            deterministic readiness check that covers the fixed startup tab set.
         Inputs:
             None.
         Outputs:
-            bool: True when visible tabs are present and interaction prerequisites
-                for Plot/Cycle surfaces are satisfied; False otherwise.
+            bool: True when required startup tabs are attached and cycle-specific
+                interaction prerequisites are satisfied; False otherwise.
         Side Effects:
-            Flushes pending idle layout tasks as a best-effort readiness settle step.
+            Flushes pending idle layout tasks as a best-effort readiness settle
+            step and updates `_startup_tab_readiness_reason` when checks fail.
         Exceptions:
             Missing widgets or transient Tk errors fail closed by returning False.
         """
@@ -32352,10 +32361,6 @@ class UnifiedApp(tk.Tk):
         restore_ready = restore_state in {"success", "failed", "skipped"}
         if not bool(getattr(self, "_startup_ui_built", False)):
             return self._set_startup_tab_readiness_failure("main interface not ready")
-        if not bool(getattr(self, "_startup_plot_stage_two_ready", False)):
-            return self._set_startup_tab_readiness_failure("plot controls not ready")
-        if not bool(getattr(self, "_startup_cycle_ready", False)):
-            return self._set_startup_tab_readiness_failure("cycle tab not ready")
         if not restore_ready:
             return self._set_startup_tab_readiness_failure(
                 "startup restore not complete"
@@ -32379,31 +32384,22 @@ class UnifiedApp(tk.Tk):
                 "notebook tabs unavailable"
             )
 
-        visible_tabs = self._startup_visible_tab_widgets()
-        if not visible_tabs:
-            return self._set_startup_tab_readiness_failure("no visible tabs attached")
-        # Verify each visible tab exists and is currently attached to the notebook.
-        for tab_obj in visible_tabs:
+        # Validate the fixed startup tab set so splash gating is deterministic.
+        for key in STARTUP_REQUIRED_TAB_KEYS:
+            tab_obj = self._tab_frame_for_key(key)
+            tab_label = self._tab_label_for_key(key)
+            if tab_obj is None:
+                return self._set_startup_tab_readiness_failure(
+                    f"{tab_label} tab frame missing"
+                )
             if not getattr(tab_obj, "winfo_exists", lambda: False)():
                 return self._set_startup_tab_readiness_failure(
-                    "visible tab widget missing"
+                    f"{tab_label} tab widget unavailable"
                 )
             if str(tab_obj) not in notebook_tabs:
                 return self._set_startup_tab_readiness_failure(
-                    "visible tab not attached"
+                    f"{tab_label} tab not attached"
                 )
-
-        plot_tab = getattr(self, "tab_plot", None)
-        if (
-            plot_tab is not None
-            and str(plot_tab) in notebook_tabs
-            and not bool(
-                getattr(self, "_plot_tab_stage_two_built", False)
-            )
-        ):
-            return self._set_startup_tab_readiness_failure(
-                "plot tab stage-two build pending"
-            )
 
         cycle_tab = getattr(self, "tab_cycle", None)
         if cycle_tab is not None and str(cycle_tab) in notebook_tabs:
@@ -32462,8 +32458,6 @@ class UnifiedApp(tk.Tk):
             getattr(self, "_startup_restore_state", "pending") or "pending"
         )
         ui_ready = bool(getattr(self, "_startup_ui_built", False))
-        plot_ready = bool(getattr(self, "_startup_plot_stage_two_ready", False))
-        cycle_ready = bool(getattr(self, "_startup_cycle_ready", False))
         tab_warmup_ready = bool(getattr(self, "_startup_tab_warmup_done", False))
         restore_ready = restore_state in {"success", "failed", "skipped"}
         toggle_var = getattr(self, "_dev_disable_startup_tab_cycling_var", None)
@@ -32482,22 +32476,12 @@ class UnifiedApp(tk.Tk):
         progress_target = 8.0
         if ui_ready:
             progress_target = 62.0
-        if plot_ready:
-            progress_target = 74.0
-        if cycle_ready:
-            progress_target = 84.0
         if restore_ready:
             progress_target = 94.0
         if tab_warmup_ready:
             progress_target = 98.0
 
-        if (
-            ui_ready
-            and plot_ready
-            and cycle_ready
-            and restore_ready
-            and not tab_warmup_ready
-        ):
+        if ui_ready and restore_ready and not tab_warmup_ready:
             if disable_tab_cycling:
                 self._update_startup_loading_splash_progress(
                     progress=96.0,
@@ -32515,14 +32499,10 @@ class UnifiedApp(tk.Tk):
                 tab_warmup_ready = bool(
                     getattr(self, "_startup_tab_warmup_done", False)
                 )
+        if tab_warmup_ready and not disable_tab_cycling:
+            tab_warmup_ready = self._startup_visible_tabs_ready_for_interaction()
 
-        if (
-            ui_ready
-            and plot_ready
-            and cycle_ready
-            and restore_ready
-            and tab_warmup_ready
-        ):
+        if ui_ready and restore_ready and tab_warmup_ready:
             self._finalize_startup_to_data_tab()
             self._update_startup_loading_splash_progress(
                 progress=100.0,
@@ -32536,17 +32516,15 @@ class UnifiedApp(tk.Tk):
 
         if not ui_ready:
             message = "Building main interface..."
-        elif not plot_ready:
-            message = "Finalizing Plot Settings controls..."
-        elif not cycle_ready:
-            message = "Finalizing Cycle Analysis tab..."
         elif not restore_ready:
             if restore_state == "running":
                 message = "Restoring last session workbook..."
             else:
                 message = "Finalizing startup restore..."
         elif not tab_warmup_ready:
-            if disable_tab_cycling:
+            if disable_tab_cycling or bool(
+                getattr(self, "_startup_tab_warmup_done", False)
+            ):
                 message = self._startup_tab_readiness_message()
             else:
                 message = "Warming startup tabs..."
