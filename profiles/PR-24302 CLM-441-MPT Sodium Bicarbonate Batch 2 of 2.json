@@ -1,16 +1,8 @@
 {
-  "created_at": "2026-02-13 09:22:37",
-  "description": "Autosave before loading a profile.",
+  "created_at": "2026-02-13 09:23:09",
+  "description": "",
   "payload": {
-    "column_assignments": {
-      "dt": "Date & Time",
-      "x": "__GL260_ELAPSED_DAYS_STITCHED__",
-      "y1": "Reactor Pressure (PSI)",
-      "y2": "First Derivative Moving Average",
-      "y3": "Manifold Pressure (PSI)",
-      "z": "Internal Reactor Temperature",
-      "z2": "External Reactor Temperature"
-    },
+    "column_assignments": {},
     "dataset_path": "C:/Users/mmoheban/Local Documents/Python/PR-24302 Sodium Bicarbonate MPT/PR-24302 Sodium Bicarbonate GL-260 Data for Analysis.xlsx",
     "final_report_settings": {
       "combined_plot_title_override": "",
@@ -273,9 +265,7 @@
     },
     "multi_sheet_enabled": true,
     "per_sheet_mapping": {},
-    "plot_elements": {
-      "fig_combined_triple_axis": []
-    },
+    "plot_elements": {},
     "plot_settings": {
       "auto_deriv_ticks": true,
       "auto_temp_ticks": true,
@@ -309,6 +299,8 @@
       "combined_cycle_legend_persist_position": true,
       "combined_cycle_legend_ref_axis": "main",
       "combined_cycle_legend_ref_corner": "center",
+      "combined_cycle_legend_ref_dx_px": null,
+      "combined_cycle_legend_ref_dy_px": null,
       "combined_deriv_axis_label": "First Derivative Moving Average (\u0394PSI/\u0394hour)",
       "combined_deriv_axis_offset": 1.08,
       "combined_deriv_labelpad": 15.0,
@@ -496,11 +488,9 @@
       "y_major_tick": 50.0,
       "y_minor_tick": 5.0
     },
-    "selected_sheet": "Batch 2 Day 0 Pressure Test",
-    "selected_sheets": [
-      "Batch 2 Day 0 Pressure Test"
-    ]
+    "selected_sheet": "Day 0 Pressure Test",
+    "selected_sheets": []
   },
   "profile_version": 1,
-  "updated_at": "2026-02-13 09:22:37"
+  "updated_at": "2026-02-13 09:23:58"
 }
