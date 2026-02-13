@@ -7533,6 +7533,7 @@ class AnnotationsPanel:
         self._zorder_pending_change = False
         self._zorder_initial_value: Optional[float] = None
         self._suppress_add_traces = False
+        self._paned_restore_second_pass_scheduled = False
         self._collapsed = bool(self._store.ui_state_for(plot_id).get("collapsed", False))
         self._build_ui()
         self.set_collapsed(self._collapsed)
@@ -7702,8 +7703,8 @@ class AnnotationsPanel:
         right_pane.grid_rowconfigure(0, weight=1)
         right_pane.grid_rowconfigure(1, weight=0)
 
-        self._paned.add(left_pane, weight=2)
-        self._paned.add(right_pane, weight=3)
+        self._paned.add(left_pane, weight=3)
+        self._paned.add(right_pane, weight=2)
 
         add_frame = ttk.LabelFrame(left_pane, text="Add Element")
         add_frame.grid(row=0, column=0, sticky="ew", padx=4, pady=(4, 2))
@@ -8259,6 +8260,20 @@ class AnnotationsPanel:
         self._props_container.grid_columnconfigure(1, weight=1)
         self._frame.after_idle(self._bind_props_mousewheel)
         self._frame.after_idle(self._restore_paned_sash)
+        if not self._paned_restore_second_pass_scheduled:
+            self._paned_restore_second_pass_scheduled = True
+
+            # Closure captures _build_ui local context to keep helper logic scoped and invoked directly within _build_ui.
+            def _restore_paned_sash_second_pass() -> None:
+                """Run one deferred sash restore after layout settles.
+                Used to reapply left-biased split once widget requested sizes stabilize."""
+                self._restore_paned_sash()
+
+            try:
+                self._frame.after(120, _restore_paned_sash_second_pass)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
 
         apply_frame = ttk.Frame(right_pane)
         apply_frame.grid(row=1, column=0, sticky="ew", padx=4, pady=(0, 4))
@@ -8381,36 +8396,19 @@ class AnnotationsPanel:
         except Exception:
             pane_names = ()
         left_req = 360
-        right_req = 320
-        if len(pane_names) >= 2:
+        if len(pane_names) >= 1:
             try:
                 left_widget = self._paned.nametowidget(pane_names[0])
-                right_widget = self._paned.nametowidget(pane_names[1])
                 left_req = max(left_req, int(left_widget.winfo_reqwidth() or 0) + 28)
-                right_req = max(right_req, int(right_widget.winfo_reqwidth() or 0) + 24)
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
-        min_left_floor = max(240, int(total_width * 0.22))
-        min_right_floor = max(240, int(total_width * 0.22))
-        min_left = max(min_left_floor, left_req)
-        min_right = max(min_right_floor, right_req)
-        # If requested minimums overflow available width, relax toward hard floors.
-        overflow = (min_left + min_right) - total_width
-        if overflow > 0:
-            shrink_left_cap = max(0, min_left - min_left_floor)
-            shrink_left = min(shrink_left_cap, overflow)
-            min_left -= shrink_left
-            overflow -= shrink_left
-        if overflow > 0:
-            shrink_right_cap = max(0, min_right - min_right_floor)
-            shrink_right = min(shrink_right_cap, overflow)
-            min_right -= shrink_right
-            overflow -= shrink_right
-        if overflow > 0:
-            min_left = max(min_left_floor, total_width - min_right)
-        max_left = max(min_left, total_width - max(min_right_floor, min_right))
-        fallback = max(min_left, min(max_left, int(total_width * 0.55)))
+        right_min_floor = max(260, int(total_width * 0.20))
+        right_max_preferred = max(right_min_floor, int(total_width * 0.36))
+        left_min_content = max(360, left_req)
+        min_left = max(left_min_content, total_width - right_max_preferred)
+        max_left = max(min_left, total_width - right_min_floor)
+        fallback = max(min_left, min(max_left, int(total_width * 0.66)))
 
         raw_sash = state.get("editor_sash")
         if isinstance(raw_sash, bool) or not isinstance(raw_sash, (int, float)):
