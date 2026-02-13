@@ -30670,6 +30670,7 @@ class UnifiedApp(tk.Tk):
         self._profile_manager_window: Optional[tk.Toplevel] = None
         self._profile_manager_listbox: Optional[tk.Listbox] = None
         self._profile_include_path_var = tk.BooleanVar(value=True)
+        self._profile_keep_plot_settings_var = tk.BooleanVar(value=True)
         self._profile_restore_pending: Optional[Dict[str, Any]] = None
         self._sol_regression_task_id: Optional[int] = None
         self._regression_dialog: Optional[tk.Toplevel] = None
@@ -46526,6 +46527,11 @@ class UnifiedApp(tk.Tk):
             text="Include dataset file path",
             variable=self._profile_include_path_var,
         ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        _ui_checkbutton(
+            container,
+            text="Keep plot settings for New Profile",
+            variable=self._profile_keep_plot_settings_var,
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
         try:
             self.update_idletasks()
@@ -46593,14 +46599,16 @@ class UnifiedApp(tk.Tk):
         Purpose:
             Start a fresh analysis session and persist it as a profile snapshot.
         Why:
-            Prevents stale state from leaking when switching to a new dataset.
+            Prevents stale state from leaking when switching to a new dataset,
+            while allowing users to optionally keep tuned plot/layout settings.
         Args:
             None.
         Returns:
             None.
         Side Effects:
-            Clears the workspace, prompts the user, applies settings, and writes
-            a profile document to disk.
+            Clears the workspace, optionally preserves/restores plot and layout
+            settings, prompts the user, applies settings, and writes a profile
+            document to disk.
         Exceptions:
             Best-effort guards prevent UI interruptions from blocking the workflow.
         """
@@ -46611,8 +46619,27 @@ class UnifiedApp(tk.Tk):
             parent=parent,
         ):
             return
+        keep_plot_settings = True
+        keep_plot_settings_var = getattr(self, "_profile_keep_plot_settings_var", None)
+        if keep_plot_settings_var is not None:
+            try:
+                keep_plot_settings = bool(keep_plot_settings_var.get())
+            except Exception:
+                keep_plot_settings = True
+        preserved_plot_settings: Optional[Dict[str, Any]] = None
+        preserved_layout_profiles: Optional[Dict[str, Any]] = None
+        if keep_plot_settings:
+            preserved_plot_settings = self._collect_profile_plot_settings()
+            preserved_layout_profiles = copy.deepcopy(settings.get("layout_profiles", {}))
         self._autosave_last_workspace()
         self._reset_workspace_to_startup_defaults()
+        # Restore preserved plot state only after baseline reset completes so
+        # plot elements and annotation state still reset as intended.
+        if keep_plot_settings:
+            if isinstance(preserved_plot_settings, dict):
+                self._apply_profile_plot_settings(preserved_plot_settings)
+            if isinstance(preserved_layout_profiles, dict):
+                self._apply_profile_layout_profiles(preserved_layout_profiles)
         config = self._prompt_new_profile_configuration(parent)
         if not config:
             return
