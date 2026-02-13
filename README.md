@@ -856,6 +856,7 @@ The app keeps the UI responsive with a dedicated task runner:
 Developer tools (Tools -> Developer Tools) provide:
 - Enable Debug Logging (global toggle).
 - Enable Debug File Logging (rotating log file in the working directory).
+- Disable Startup Tab Cycling During Splash (persisted, enabled by default).
 - Debug Categories submenu (per-subsystem toggles).
 - Dump Debug Settings, Clear Debug Once-Guards, and Dump Performance Stats.
 - Performance Diagnostics with stage-level timings (data prep, cycle context, combined render, embed).
@@ -935,6 +936,8 @@ Apache-2.0. See `LICENSE`.
 - Switched initial Cycle Analysis tab construction from synchronous mode to deferred staged mode to reduce launch-time UI blocking.
 - Kept workbook/session restore on the existing background worker path and integrated restore status milestones with startup splash progress messaging.
 - Guarded initial Data-tab warm-up selection while the startup splash is active to avoid competing tab-switch churn during launch.
+- Added a Developer Tools preference (`Disable Startup Tab Cycling During Splash`) so startup can skip tab cycling while splash is visible.
+- When that preference is enabled, splash teardown now waits for visible startup tabs to report interaction readiness before the loading UI is removed.
 - Bumped application version metadata to `v3.0.1` in the script header and `APP_VERSION`.
 
 ### v3.0.0 Import CSV Dialog UX Refresh and Major Version Rollforward

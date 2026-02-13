@@ -21253,6 +21253,9 @@ settings["annotations_ui"] = _normalize_annotations_ui(settings.get("annotations
 settings["combined_disable_second_refresh"] = bool(
     settings.get("combined_disable_second_refresh", False)
 )
+settings["dev_disable_startup_tab_cycling"] = bool(
+    settings.get("dev_disable_startup_tab_cycling", True)
+)
 settings["layout_profiles"] = _normalize_layout_profiles(
     settings.get("layout_profiles")
 )
@@ -30234,9 +30237,16 @@ class UnifiedApp(tk.Tk):
         settings["dev_worker_threads"] = dev_worker_threads
         dev_parallel_enabled = bool(settings.get("dev_enable_parallel_compute", False))
         settings["dev_enable_parallel_compute"] = dev_parallel_enabled
+        dev_disable_startup_tab_cycling = bool(
+            settings.get("dev_disable_startup_tab_cycling", True)
+        )
+        settings["dev_disable_startup_tab_cycling"] = dev_disable_startup_tab_cycling
         self._dev_request_gil_var = tk.BooleanVar(value=dev_request_gil_disabled)
         self._dev_worker_threads_var = tk.IntVar(value=dev_worker_threads)
         self._dev_parallel_compute_var = tk.BooleanVar(value=dev_parallel_enabled)
+        self._dev_disable_startup_tab_cycling_var = tk.BooleanVar(
+            value=dev_disable_startup_tab_cycling
+        )
         task_workers = dev_worker_threads if dev_parallel_enabled else 1
         self._task_runner = TkTaskRunner(self, max_workers=task_workers)
         self._combined_render_runner = TkTaskRunner(self, max_workers=1)
@@ -30815,6 +30825,13 @@ class UnifiedApp(tk.Tk):
             variable=self._debug_file_logging_var,
             command=lambda: self._set_debug_file_logging_enabled(
                 self._debug_file_logging_var.get()
+            ),
+        )
+        developer_menu.add_checkbutton(
+            label="Disable Startup Tab Cycling During Splash",
+            variable=self._dev_disable_startup_tab_cycling_var,
+            command=lambda: self._set_disable_startup_tab_cycling(
+                self._dev_disable_startup_tab_cycling_var.get()
             ),
         )
         debug_categories_menu = self._register_menu(
@@ -32230,6 +32247,113 @@ class UnifiedApp(tk.Tk):
         self._startup_loading_progress_label = None
         self._startup_loading_progress_value = 0.0
 
+    def _startup_visible_tab_widgets(self) -> List[ttk.Frame]:
+        """Return visible startup tab frames in configured display order.
+
+        Purpose:
+            Resolve the notebook tabs that should participate in startup readiness.
+        Why:
+            Startup gating should honor tab visibility preferences so hidden optional
+            tabs do not delay splash teardown or force unnecessary warmup work.
+        Inputs:
+            None.
+        Outputs:
+            List[ttk.Frame]: Visible tab frames ordered by persisted tab order.
+        Side Effects:
+            None.
+        Exceptions:
+            Missing tab-order metadata or frames are handled by best-effort guards.
+        """
+        visible_keys = self._resolved_tab_order(include_hidden=False)
+        resolved_tabs: List[ttk.Frame] = []
+        # Iterate over visible tab keys so readiness order mirrors notebook order.
+        for key in visible_keys:
+            tab_obj = self._tab_frame_for_key(key)
+            if tab_obj is None:
+                continue
+            resolved_tabs.append(tab_obj)
+        return resolved_tabs
+
+    def _startup_visible_tabs_ready_for_interaction(self) -> bool:
+        """Check whether visible startup tabs are initialized for interaction.
+
+        Purpose:
+            Provide a splash-completion gate that validates visible tab readiness
+            without cycling notebook selection.
+        Why:
+            When startup tab cycling is disabled, splash teardown still needs a
+            deterministic readiness check that covers major startup surfaces.
+        Inputs:
+            None.
+        Outputs:
+            bool: True when visible tabs are present and interaction prerequisites
+                for Plot/Cycle surfaces are satisfied; False otherwise.
+        Side Effects:
+            Flushes pending idle layout tasks as a best-effort readiness settle step.
+        Exceptions:
+            Missing widgets or transient Tk errors fail closed by returning False.
+        """
+        restore_state = str(
+            getattr(self, "_startup_restore_state", "pending") or "pending"
+        )
+        restore_ready = restore_state in {"success", "failed", "skipped"}
+        if not (
+            bool(getattr(self, "_startup_ui_built", False))
+            and bool(getattr(self, "_startup_plot_stage_two_ready", False))
+            and bool(getattr(self, "_startup_cycle_ready", False))
+            and restore_ready
+        ):
+            return False
+
+        nb = getattr(self, "nb", None)
+        if nb is None or not getattr(nb, "winfo_exists", lambda: False)():
+            return False
+
+        try:
+            self.update_idletasks()
+            nb.update_idletasks()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+        try:
+            notebook_tabs = set(nb.tabs())
+        except Exception:
+            return False
+
+        visible_tabs = self._startup_visible_tab_widgets()
+        if not visible_tabs:
+            return False
+        # Verify each visible tab exists and is currently attached to the notebook.
+        for tab_obj in visible_tabs:
+            if not getattr(tab_obj, "winfo_exists", lambda: False)():
+                return False
+            if str(tab_obj) not in notebook_tabs:
+                return False
+
+        plot_tab = getattr(self, "tab_plot", None)
+        if plot_tab in visible_tabs and not bool(
+            getattr(self, "_plot_tab_stage_two_built", False)
+        ):
+            return False
+
+        cycle_tab = getattr(self, "tab_cycle", None)
+        if cycle_tab in visible_tabs:
+            if not bool(getattr(self, "_cycle_ui_built", False)):
+                return False
+            cycle_canvas = getattr(self, "_cycle_canvas", None)
+            if cycle_canvas is None:
+                return False
+            try:
+                cycle_widget = cycle_canvas.get_tk_widget()
+            except Exception:
+                cycle_widget = None
+            if cycle_widget is None or not getattr(
+                cycle_widget, "winfo_exists", lambda: False
+            )():
+                return False
+        return True
+
     def _poll_startup_loading_completion(self) -> None:
         """Evaluate startup completion gates and close splash when fully ready.
 
@@ -32267,6 +32391,18 @@ class UnifiedApp(tk.Tk):
         cycle_ready = bool(getattr(self, "_startup_cycle_ready", False))
         tab_warmup_ready = bool(getattr(self, "_startup_tab_warmup_done", False))
         restore_ready = restore_state in {"success", "failed", "skipped"}
+        toggle_var = getattr(self, "_dev_disable_startup_tab_cycling_var", None)
+        if toggle_var is not None:
+            try:
+                disable_tab_cycling = bool(toggle_var.get())
+            except Exception:
+                disable_tab_cycling = bool(
+                    settings.get("dev_disable_startup_tab_cycling", True)
+                )
+        else:
+            disable_tab_cycling = bool(
+                settings.get("dev_disable_startup_tab_cycling", True)
+            )
 
         progress_target = 8.0
         if ui_ready:
@@ -32287,12 +32423,23 @@ class UnifiedApp(tk.Tk):
             and restore_ready
             and not tab_warmup_ready
         ):
-            self._update_startup_loading_splash_progress(
-                progress=96.0,
-                message="Warming startup tabs...",
-            )
-            self._run_startup_tab_warmup_under_splash()
-            tab_warmup_ready = bool(getattr(self, "_startup_tab_warmup_done", False))
+            if disable_tab_cycling:
+                self._update_startup_loading_splash_progress(
+                    progress=96.0,
+                    message="Verifying startup tab readiness...",
+                )
+                tab_warmup_ready = self._startup_visible_tabs_ready_for_interaction()
+                if tab_warmup_ready:
+                    self._startup_tab_warmup_done = True
+            else:
+                self._update_startup_loading_splash_progress(
+                    progress=96.0,
+                    message="Warming startup tabs...",
+                )
+                self._run_startup_tab_warmup_under_splash()
+                tab_warmup_ready = bool(
+                    getattr(self, "_startup_tab_warmup_done", False)
+                )
 
         if (
             ui_ready
@@ -32321,7 +32468,10 @@ class UnifiedApp(tk.Tk):
         elif restore_state == "running":
             message = "Restoring last session workbook..."
         elif not tab_warmup_ready:
-            message = "Warming startup tabs..."
+            if disable_tab_cycling:
+                message = "Verifying startup tab readiness..."
+            else:
+                message = "Warming startup tabs..."
         else:
             message = "Finalizing startup checks..."
         self._update_startup_loading_splash_progress(
@@ -32353,6 +32503,14 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             Missing notebook/widgets short-circuit safely; per-tab failures are ignored.
         """
+        toggle_var = getattr(self, "_dev_disable_startup_tab_cycling_var", None)
+        disable_tab_cycling = bool(
+            toggle_var.get()
+            if toggle_var is not None
+            else settings.get("dev_disable_startup_tab_cycling", True)
+        )
+        if disable_tab_cycling:
+            return
         if bool(getattr(self, "_startup_tab_warmup_done", False)):
             return
 
@@ -32370,22 +32528,8 @@ class UnifiedApp(tk.Tk):
         except Exception:
             current_tab = None
 
-        warm_tabs = []
-        # Iterate startup tabs to prevent first-click cold-build delays after splash.
-        for attr in (
-            "tab_data",
-            "tab_columns",
-            "tab_plot",
-            "tab_cycle",
-            "tab_contamination",
-            "tab_solubility",
-            "tab_solubility_new",
-            "tab_final_report",
-        ):
-            tab_obj = getattr(self, attr, None)
-            if tab_obj is None:
-                continue
-            warm_tabs.append(tab_obj)
+        # Use visible-tab order so warmup matches current notebook visibility settings.
+        warm_tabs = self._startup_visible_tab_widgets()
 
         for tab_obj in warm_tabs:
             try:
@@ -34395,6 +34539,49 @@ class UnifiedApp(tk.Tk):
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+
+    def _set_disable_startup_tab_cycling(self, enabled: bool) -> None:
+        """Apply startup tab-cycling preference and persist it.
+
+        Purpose:
+            Update the Developer Tools toggle that controls startup warmup
+            tab cycling.
+        Why:
+            Developers need a persistent way to keep startup splash visible while
+            readiness is verified without notebook tab-selection churn.
+        Inputs:
+            enabled: True to disable startup tab cycling; False to keep warmup
+                cycling.
+        Outputs:
+            None.
+        Side Effects:
+            Updates the Tk variable, writes
+            `settings["dev_disable_startup_tab_cycling"]`, persists settings to
+            disk, and emits a debug log message.
+        Exceptions:
+            Persistence and widget updates are guarded so toggle changes do not
+            interrupt runtime interactions.
+        """
+        normalized_enabled = bool(enabled)
+        settings["dev_disable_startup_tab_cycling"] = normalized_enabled
+        toggle_var = getattr(self, "_dev_disable_startup_tab_cycling_var", None)
+        if toggle_var is not None:
+            try:
+                toggle_var.set(normalized_enabled)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        try:
+            _save_settings_to_disk()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        self._dbg(
+            "ui.events",
+            "Startup tab cycling preference updated: disabled=%s",
+            normalized_enabled,
+            once_key=None,
+        )
 
     def _set_debug_enabled(self, enabled: bool) -> None:
         """Apply the global debug enable toggle.
