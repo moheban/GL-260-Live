@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: v3.0.6
-# Date: 2026-02-13
+# Version: v3.0.7
+# Date: 2026-02-17
 
 import os
 import sys
@@ -9724,7 +9724,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v3.0.6"
+APP_VERSION = "v3.0.7"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -30770,6 +30770,10 @@ class UnifiedApp(tk.Tk):
         self._last_plot_args: Optional[Tuple[Any, ...]] = None
         self._plot_settings_window: Optional[tk.Toplevel] = None
         self._plot_settings_target_id: Optional[str] = None
+        self._plot_settings_apply_callback: Optional[Callable[..., bool]] = None
+        self._plot_settings_has_pending_changes_callback: Optional[Callable[[], bool]] = (
+            None
+        )
         self._axis_range_pref_window: Optional[tk.Toplevel] = None
         self._font_family_window: Optional[tk.Toplevel] = None
         self._csv_import_dialog: Optional[CsvImportDialog] = None
@@ -38189,6 +38193,8 @@ class UnifiedApp(tk.Tk):
             None.
 
         Side Effects:
+            Auto-applies staged Plot Settings dialog values before refresh so
+            manual Refresh always uses the latest dialog inputs.
             Captures combined legend anchors before rebuild when enabled, applies
             or reattaches the loading overlay for refresh visibility, applies
             display/layout finalization for the active canvas (including the
@@ -38203,6 +38209,13 @@ class UnifiedApp(tk.Tk):
         plot_id = self._plot_key_to_plot_id(plot_key)
         if not plot_id:
             plot_id = getattr(frame, "_plot_id", None)
+        try:
+            # Refresh should honor any in-flight Plot Settings edits before
+            # building a new render snapshot to avoid stale/default margins.
+            self._flush_open_plot_settings_dialog(refresh_after_apply=False)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
         auto_state = getattr(frame, "_plot_auto_refresh_state", None)
         if auto_state == "scheduled":
             # Manual refresh should satisfy the pending auto-refresh and avoid
@@ -48859,6 +48872,8 @@ class UnifiedApp(tk.Tk):
                 pass
             self._plot_settings_window = None
             self._plot_settings_target_id = None
+            self._plot_settings_apply_callback = None
+            self._plot_settings_has_pending_changes_callback = None
 
         window = tk.Toplevel(self)
         plot_label_map = {
@@ -48874,6 +48889,8 @@ class UnifiedApp(tk.Tk):
         window.resizable(True, True)
         self._plot_settings_window = window
         self._plot_settings_target_id = plot_id
+        self._plot_settings_apply_callback = None
+        self._plot_settings_has_pending_changes_callback = None
 
         window.grid_rowconfigure(0, weight=1)
         window.grid_columnconfigure(0, weight=1)
@@ -50176,15 +50193,35 @@ class UnifiedApp(tk.Tk):
         baseline_snapshot = _normalized_plot_settings_snapshot()
 
         # Closure captures _open_plot_settings_dialog state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _open_plot_settings_dialog.
-        def _apply_stage_values(close_after: bool = False) -> None:
-            """Apply stage values.
-            Used to apply stage values changes to live state."""
+        def _apply_stage_values(
+            close_after: bool = False,
+            *,
+            refresh_after_apply: bool = True,
+        ) -> bool:
+            """Apply staged Plot Settings values into canonical app state.
+
+            Purpose:
+                Commit staged dialog inputs for layout, fonts, and legend settings.
+            Why:
+                Apply/Refresh/Generate must share one commit path so renders always
+                use the same normalized values.
+            Inputs:
+                close_after: When True, close the dialog after applying.
+                refresh_after_apply: When True, trigger the dialog-target plot refresh.
+            Outputs:
+                True when staged changes were committed, else False.
+            Side Effects:
+                Updates Tk variables/settings, syncs layout profiles, optionally
+                refreshes the target plot, and updates the staged baseline snapshot.
+            Exceptions:
+                Best-effort guards suppress non-critical UI failures.
+            """
             nonlocal baseline_snapshot
             staged_snapshot = _normalized_plot_settings_snapshot()
             if staged_snapshot == baseline_snapshot:
                 if close_after:
                     self._close_plot_settings_dialog()
-                return
+                return False
             if stage_vars:
                 # Iterate over items from stage_vars to apply the per-item logic.
                 for key, var in stage_vars.items():
@@ -50210,9 +50247,7 @@ class UnifiedApp(tk.Tk):
                 staged_core_profile = staged_snapshot.get("core_render_profile")
                 applied_core_profile = _set_core_plot_render_profile(
                     plot_id,
-                    staged_core_profile
-                    if isinstance(staged_core_profile, Mapping)
-                    else {},
+                    staged_core_profile if isinstance(staged_core_profile, Mapping) else {},
                 )
                 self.core_legend_fontsize.set(
                     float(
@@ -50229,27 +50264,26 @@ class UnifiedApp(tk.Tk):
                         )
                     )
                 )
-            display_margins = {
-                "left": stage_layout_display_left.get(),
-                "right": stage_layout_display_right.get(),
-                "top": stage_layout_display_top.get(),
-                "bottom": stage_layout_display_bottom.get(),
-            }
-            export_margins = {
-                "left": stage_layout_export_left.get(),
-                "right": stage_layout_export_right.get(),
-                "top": stage_layout_export_top.get(),
-                "bottom": stage_layout_export_bottom.get(),
-            }
-            legend_anchor_display = _parse_anchor_value(stage_legend_anchor_y_display)
-            legend_anchor_export = _parse_anchor_value(stage_legend_anchor_y_export)
+            display_margins = staged_snapshot.get("layout_display_margins")
+            if not isinstance(display_margins, Mapping):
+                display_margins = default_display_margins
+            export_margins = staged_snapshot.get("layout_export_margins")
+            if not isinstance(export_margins, Mapping):
+                export_margins = default_export_margins
+            legend_anchor_display = staged_snapshot.get("legend_anchor_y_display")
+            legend_anchor_export = staged_snapshot.get("legend_anchor_y_export")
             if is_combined:
                 self._sync_combined_layout_profile(
                     display_margins=display_margins,
                     export_margins=export_margins,
                     legend_anchor_y_display=legend_anchor_display,
                     legend_anchor_y_export=legend_anchor_export,
-                    mirror_detached_labelpad=stage_mirror_detached_labelpad.get(),
+                    mirror_detached_labelpad=bool(
+                        staged_snapshot.get(
+                            "mirror_detached_labelpad",
+                            stage_mirror_detached_labelpad.get(),
+                        )
+                    ),
                 )
             else:
                 self._sync_plot_layout_profile(
@@ -50290,13 +50324,41 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
-            if is_combined:
-                self._schedule_combined_preview_refresh()
-            self._prepare_plot_refresh_overlay_for_settings(plot_id)
-            self._refresh_plot_for_plot_id(plot_id)
+            if refresh_after_apply:
+                if is_combined:
+                    self._schedule_combined_preview_refresh()
+                self._prepare_plot_refresh_overlay_for_settings(plot_id)
+                self._refresh_plot_for_plot_id(plot_id)
             baseline_snapshot = _normalized_plot_settings_snapshot()
             if close_after:
                 self._close_plot_settings_dialog()
+            return True
+
+        # Closure captures _open_plot_settings_dialog state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _open_plot_settings_dialog.
+        def _has_pending_stage_values() -> bool:
+            """Return whether staged Plot Settings values differ from baseline.
+
+            Purpose:
+                Detect unsaved dialog edits for shared refresh/generate workflows.
+            Why:
+                External triggers should only force-apply when staged values changed.
+            Inputs:
+                None.
+            Outputs:
+                True when staged edits are pending, else False.
+            Side Effects:
+                None.
+            Exceptions:
+                Best-effort guards treat snapshot failures as no pending changes.
+            """
+            try:
+                staged_snapshot = _normalized_plot_settings_snapshot()
+            except Exception:
+                return False
+            return staged_snapshot != baseline_snapshot
+
+        self._plot_settings_apply_callback = _apply_stage_values
+        self._plot_settings_has_pending_changes_callback = _has_pending_stage_values
 
         _ui_button(
             button_frame, text="Apply", command=lambda: _apply_stage_values(False)
@@ -50307,9 +50369,83 @@ class UnifiedApp(tk.Tk):
 
         window.protocol("WM_DELETE_WINDOW", lambda: _apply_stage_values(True))
 
+    def _flush_open_plot_settings_dialog(
+        self,
+        *,
+        refresh_after_apply: bool = False,
+    ) -> bool:
+        """Apply pending Plot Settings dialog edits without closing the dialog.
+
+        Purpose:
+            Reuse the Plot Settings apply path from refresh/generate triggers.
+        Why:
+            Manual Refresh and Generate Plot must honor unsaved dialog edits before
+            creating new render snapshots.
+        Inputs:
+            refresh_after_apply: When True, the dialog apply path also triggers the
+                target-plot refresh; False avoids recursive/double refreshes when the
+                caller is already performing a refresh/generate action.
+        Outputs:
+            True when pending staged edits were committed, else False.
+        Side Effects:
+            May update settings/layout profiles and plot state via the shared dialog
+            apply callback when pending edits exist.
+        Exceptions:
+            Best-effort guards return False on missing callbacks/window errors.
+        """
+        window = getattr(self, "_plot_settings_window", None)
+        if window is None:
+            return False
+        try:
+            if not window.winfo_exists():
+                return False
+        except Exception:
+            return False
+
+        has_pending_callback = getattr(
+            self,
+            "_plot_settings_has_pending_changes_callback",
+            None,
+        )
+        if callable(has_pending_callback):
+            try:
+                if not bool(has_pending_callback()):
+                    return False
+            except Exception:
+                # Best-effort guard; ignore failures and attempt apply.
+                pass
+
+        apply_callback = getattr(self, "_plot_settings_apply_callback", None)
+        if not callable(apply_callback):
+            return False
+        try:
+            applied = apply_callback(
+                close_after=False,
+                refresh_after_apply=refresh_after_apply,
+            )
+        except Exception:
+            return False
+        return bool(applied)
+
     def _close_plot_settings_dialog(self) -> None:
-        """Close plot settings dialog.
-        Used by UI actions to close plot settings dialog safely."""
+        """Close the Plot Settings dialog and clear staged callback hooks.
+
+        Purpose:
+            Tear down the active Plot Settings window safely.
+        Why:
+            Shared apply/pending callbacks must be cleared so other actions do not
+            call stale closures after the dialog is closed.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Destroys the dialog window when present and resets dialog-tracking
+            attributes/callback references.
+        Exceptions:
+            Best-effort guards suppress window-destroy failures.
+        """
+
         window = getattr(self, "_plot_settings_window", None)
         if window is not None:
             try:
@@ -50319,6 +50455,8 @@ class UnifiedApp(tk.Tk):
                 pass
         self._plot_settings_window = None
         self._plot_settings_target_id = None
+        self._plot_settings_apply_callback = None
+        self._plot_settings_has_pending_changes_callback = None
 
     def _open_combined_axis_preferences(self) -> None:
         """Open combined axis preferences.
@@ -87593,10 +87731,16 @@ class UnifiedApp(tk.Tk):
         Outputs:
             None.
         Side Effects:
-            Creates placeholder tabs, starts background workers, and updates tabs.
+            Auto-applies pending Plot Settings dialog edits, creates placeholder
+            tabs, starts background workers, and updates tabs.
         Exceptions:
             Errors are caught to avoid interrupting the UI workflow.
         """
+        try:
+            self._flush_open_plot_settings_dialog(refresh_after_apply=False)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
 
         fig1_var = getattr(self, "_plot_select_fig1_var", None)
         fig2_var = getattr(self, "_plot_select_fig2_var", None)
@@ -87804,10 +87948,16 @@ class UnifiedApp(tk.Tk):
         Outputs:
             None.
         Side Effects:
-            Creates a placeholder tab and starts async rendering.
+            Auto-applies pending Plot Settings dialog edits, then creates a
+            placeholder tab and starts async rendering.
         Exceptions:
             Errors are caught to avoid interrupting the UI workflow.
         """
+        try:
+            self._flush_open_plot_settings_dialog(refresh_after_apply=False)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
 
         # Validate
 
@@ -87868,10 +88018,16 @@ class UnifiedApp(tk.Tk):
         Outputs:
             None.
         Side Effects:
-            Creates a placeholder tab and starts async rendering.
+            Auto-applies pending Plot Settings dialog edits, then creates a
+            placeholder tab and starts async rendering.
         Exceptions:
             Errors are caught to avoid interrupting the UI workflow.
         """
+        try:
+            self._flush_open_plot_settings_dialog(refresh_after_apply=False)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
 
         # Validate
 
@@ -87932,10 +88088,16 @@ class UnifiedApp(tk.Tk):
         Outputs:
             None.
         Side Effects:
-            Creates a placeholder tab, starts async rendering, and may export.
+            Auto-applies pending Plot Settings dialog edits, then creates a
+            placeholder tab, starts async rendering, and may export.
         Exceptions:
             Errors are caught to avoid interrupting the UI workflow.
         """
+        try:
+            self._flush_open_plot_settings_dialog(refresh_after_apply=False)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
 
         if self.df is None:
 
