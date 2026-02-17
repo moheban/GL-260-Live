@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v3.0.10
+# Version: v3.0.11
 # Date: 2026-02-17
 
 import os
@@ -2538,8 +2538,24 @@ def _apply_title_positions(
 
 
 def _apply_layout_profile_to_figure(fig: Figure, plot_id: str, mode: str) -> None:
-    """Apply layout profile to figure.
-    Used to apply layout profile to figure changes to live state."""
+    """Apply one plot layout profile section to an existing figure.
+
+    Purpose:
+        Apply persisted display/export margins, legend anchors, and label spacing.
+    Why:
+        Plot refresh, export, and report workflows must share one authoritative
+        layout profile path so output geometry stays consistent.
+    Inputs:
+        fig: Target Matplotlib figure to mutate.
+        plot_id: Internal plot identifier for profile lookup.
+        mode: Layout mode section selector ("display" or "export").
+    Outputs:
+        None.
+    Side Effects:
+        Mutates axis label pads/spines, legend anchors, and subplot geometry.
+    Exceptions:
+        Uses best-effort guards to avoid interrupting UI/export workflows.
+    """
     if fig is None or not plot_id:
         return
     profile = _get_layout_profile(plot_id)
@@ -2731,6 +2747,11 @@ def _apply_layout_profile_to_figure(fig: Figure, plot_id: str, mode: str) -> Non
     if plot_id == "fig_combined_triple_axis":
         layout_mgr = getattr(fig, "_gl260_layout_manager", None)
         if layout_mgr is not None:
+            try:
+                layout_mgr.margins_authoritative = True
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
             if isinstance(margins, dict):
                 # Iterate to apply the per-item logic.
                 for key, attr in (
@@ -2901,6 +2922,7 @@ def _apply_layout_profile_to_figure(fig: Figure, plot_id: str, mode: str) -> Non
             left_pad_pct=left_pad_pct,
             right_pad_pct=right_pad_pct,
             export_pad_pts=export_pad_pts,
+            margins_authoritative=True,
             legend_anchor=legend_anchor,
             legend_anchor_y=legend_anchor_y,
             title_pad_pts=title_pad_pts,
@@ -10075,7 +10097,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v3.0.10"
+APP_VERSION = "v3.0.11"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -26228,6 +26250,7 @@ class PlotLayoutManager:
         left_pad_pct: float = 0.0,
         right_pad_pct: float = 0.0,
         export_pad_pts: float = 0.0,
+        margins_authoritative: bool = False,
         legend_gap_pts: float = DEFAULT_COMBINED_LEGEND_GAP_PTS,
         xlabel_tick_gap_pts: float = DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS,
         legend_margin_pts: float = DEFAULT_COMBINED_LEGEND_MARGIN_PTS,
@@ -26239,8 +26262,28 @@ class PlotLayoutManager:
         legend_anchor_y: Optional[float] = None,
         xlabel_pad_pts: float = 0.0,
     ) -> None:
-        """Initialize PlotLayoutManager instance.
-        Used at object creation to configure initial state and bindings."""
+        """Initialize deterministic layout solving state for one figure.
+
+        Purpose:
+            Capture baseline bounds and spacing controls used by `solve`.
+        Why:
+            Layout workflows call this manager repeatedly for display/export
+            solves, so inputs are normalized once at initialization.
+        Inputs:
+            fig: Target Matplotlib figure to manage.
+            mode: Layout mode ("display" or "export").
+            baseline_margins: Optional profile margins in figure fractions.
+            left_pad_pct/right_pad_pct/export_pad_pts: Legacy padding controls.
+            margins_authoritative: When True, profile margins are treated as
+                primary bounds and padding/top-margin controls are safety-only.
+            legend/title/xlabel spacing and anchor values: See parameter names.
+        Outputs:
+            None.
+        Side Effects:
+            Stores normalized layout parameters on the instance.
+        Exceptions:
+            Invalid numeric inputs are sanitized with best-effort fallbacks.
+        """
         self.fig = fig
         self.mode = "export" if str(mode).lower() == "export" else "display"
         if baseline_margins is None:
@@ -26265,6 +26308,7 @@ class PlotLayoutManager:
         self.left_pad_pct = float(left_pad_pct or 0.0)
         self.right_pad_pct = float(right_pad_pct or 0.0)
         self.export_pad_pts = float(export_pad_pts or 0.0)
+        self.margins_authoritative = bool(margins_authoritative)
         self.legend_gap_pts = float(legend_gap_pts or 0.0)
         self.xlabel_tick_gap_pts = float(xlabel_tick_gap_pts or 0.0)
         self.legend_margin_pts = float(legend_margin_pts or 0.0)
@@ -26410,8 +26454,22 @@ class PlotLayoutManager:
         return ("lower center", center_x)
 
     def solve(self, *, max_passes: int = 3, allow_draw: bool = True) -> None:
-        """Solve value.
-        Used to run the solver for value workflows."""
+        """Run the deterministic layout solve across one or more passes.
+
+        Purpose:
+            Resolve subplot bounds and dependent artist positions.
+        Why:
+            Combined/core plots need reproducible geometry for display and export.
+        Inputs:
+            max_passes: Maximum adjustment passes before stopping.
+            allow_draw: When True, renderer draws are permitted for measurements.
+        Outputs:
+            None.
+        Side Effects:
+            Updates subplot margins and artist anchor/position metadata.
+        Exceptions:
+            Uses best-effort guards around draw/bbox operations.
+        """
         if not self._axes:
             return
         # Conservative margins: prioritize visibility over tightness.
@@ -26455,21 +26513,35 @@ class PlotLayoutManager:
             if self._baseline_top is not None
             else self.fig.subplotpars.top
         )
-        left = max(
-            base_left,
-            self.left_pad_pct / 100.0 + pad_frac_x,
-            0.08,
-        )
-        right = min(
-            base_right,
-            1.0 - self.right_pad_pct / 100.0 - pad_frac_x,
-            0.98,
-        )
-        bottom = max(base_bottom, pad_frac_y, 0.1)
-        top = min(
-            base_top,
-            max(0.6, 1.0 - (self.top_margin_pct / 100.0) - pad_frac_y),
-        )
+        if self.margins_authoritative:
+            # Authoritative mode honors profile margins as the primary bounds.
+            left = max(base_left, 0.0)
+            right = min(base_right, 1.0)
+            bottom = max(base_bottom, 0.0)
+            top = min(base_top, 1.0)
+        else:
+            left = max(
+                base_left,
+                self.left_pad_pct / 100.0 + pad_frac_x,
+                0.08,
+            )
+            right = min(
+                base_right,
+                1.0 - self.right_pad_pct / 100.0 - pad_frac_x,
+                0.98,
+            )
+            bottom = max(base_bottom, pad_frac_y, 0.1)
+            top = min(
+                base_top,
+                max(0.6, 1.0 - (self.top_margin_pct / 100.0) - pad_frac_y),
+            )
+        # Keep a minimal valid solve area even when profile data is malformed.
+        if right <= left + 0.05:
+            right = min(1.0, left + 0.05)
+            left = max(0.0, right - 0.05)
+        if top <= bottom + 0.2:
+            top = min(1.0, bottom + 0.2)
+            bottom = max(0.0, top - 0.2)
         last_state = None
 
         title = self._artists.get("title")
@@ -28128,6 +28200,7 @@ def build_combined_triple_axis_figure(
         left_pad_pct=left_pad_value,
         right_pad_pct=right_pad_value,
         export_pad_pts=export_pad_pts,
+        margins_authoritative=True,
         legend_gap_pts=legend_label_gap_pts,
         xlabel_tick_gap_pts=xlabel_tick_gap_pts,
         legend_margin_pts=legend_bottom_margin_pts,
@@ -43513,8 +43586,23 @@ class UnifiedApp(tk.Tk):
 
         # Closure captures _add_plot_tab local context to keep helper logic scoped and invoked directly within _add_plot_tab.
         def _save_selected_formats():
-            """Save selected formats.
-            Used when persisting selected formats to storage."""
+            """Export the active plot tab in each selected file format.
+
+            Purpose:
+                Save one or more output files for the current plot tab.
+            Why:
+                Users can batch-save display plots while keeping export geometry
+                and profile margins consistent across formats.
+            Inputs:
+                None.
+            Outputs:
+                None.
+            Side Effects:
+                Opens a save dialog, rebuilds export figures, applies layout
+                profile/legend sizing, writes files, and may display errors.
+            Exceptions:
+                Export failures are captured and reported without crashing UI.
+            """
 
             _persist_plot_export_formats()
 
@@ -43621,14 +43709,14 @@ class UnifiedApp(tk.Tk):
                             print(f"Save Error: {msg}")
                         return
                     close_export_fig = True
-                    if plot_id:
-                        try:
-                            _apply_layout_profile_to_figure(
-                                export_fig, plot_id, "export"
-                            )
-                        except Exception:
-                            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                            pass
+                if plot_id:
+                    try:
+                        _apply_layout_profile_to_figure(
+                            export_fig, plot_id, "export"
+                        )
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
 
                 if plot_id and plot_key != "fig_combined":
                     try:
@@ -50777,6 +50865,15 @@ class UnifiedApp(tk.Tk):
             wraplength=420,
             foreground="#555555",
         ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        ttk.Label(
+            margins_frame,
+            text=(
+                "Display and export margins are authoritative bounds for their mode; "
+                "padding/top-margin controls now act as safety corrections only."
+            ),
+            wraplength=420,
+            foreground="#555555",
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
         row_idx += 1
 
@@ -64312,13 +64409,34 @@ class UnifiedApp(tk.Tk):
                     hold_overlay = getattr(
                         frame, "_post_first_draw_refresh_hold_overlay", False
                     )
+                    invoked_count = getattr(
+                        frame, "_combined_overlay_refresh_invoked_count", 0
+                    )
                     completed_count = getattr(
                         frame, "_combined_overlay_refresh_completed_count", 0
                     )
                     try:
+                        invoked_count = int(invoked_count)
+                    except Exception:
+                        invoked_count = 0
+                    try:
                         completed_count = int(completed_count)
                     except Exception:
                         completed_count = 0
+                    if invoked_count > completed_count:
+                        completed_count = self._mark_combined_overlay_refresh_completed(
+                            frame,
+                            fig=fig,
+                        )
+                        target_refreshes = getattr(
+                            frame,
+                            "_combined_overlay_target_refreshes",
+                            self._combined_overlay_default_target_refreshes(),
+                        )
+                        self._log_plot_tab_debug(
+                            "Combined draw-confirmed refresh completion recorded: invoked=%s completed=%s target=%s."
+                            % (invoked_count, completed_count, target_refreshes)
+                        )
                     target_refreshes = getattr(
                         frame,
                         "_combined_overlay_target_refreshes",
@@ -79853,12 +79971,13 @@ class UnifiedApp(tk.Tk):
         plot_elements_applied = bool(
             getattr(fig, "_gl260_plot_elements_applied", False)
         )
-        if plot_id and not plot_elements_applied:
+        if plot_id:
             try:
                 _apply_layout_profile_to_figure(fig, plot_id, "export")
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+        if plot_id and not plot_elements_applied:
             try:
                 self._apply_plot_elements(fig, plot_id)
             except Exception:
@@ -88880,46 +88999,6 @@ class UnifiedApp(tk.Tk):
                     self._render_figures_in_tabs(
                         {"fig_combined": fig}, clear_existing=False
                     )
-                if (
-                    target_frame is not None
-                    and getattr(
-                        target_frame, "_post_first_draw_refresh_hold_overlay", False
-                    )
-                    and self._is_real_combined_figure(fig)
-                ):
-                    invoked_count = getattr(
-                        target_frame, "_combined_overlay_refresh_invoked_count", 0
-                    )
-                    completed_before = getattr(
-                        target_frame, "_combined_overlay_refresh_completed_count", 0
-                    )
-                    try:
-                        invoked_count = int(invoked_count)
-                    except Exception:
-                        invoked_count = 0
-                    try:
-                        completed_before = int(completed_before)
-                    except Exception:
-                        completed_before = 0
-                    if invoked_count > completed_before:
-                        completed_count = self._mark_combined_overlay_refresh_completed(
-                            target_frame,
-                            fig=fig,
-                        )
-                        target_refreshes = getattr(
-                            target_frame,
-                            "_combined_overlay_target_refreshes",
-                            self._combined_overlay_default_target_refreshes(),
-                        )
-                        self._log_plot_tab_debug(
-                            "Combined auto-refresh completion recorded: invoked=%s completed=%s target=%s."
-                            % (invoked_count, completed_count, target_refreshes)
-                        )
-                    else:
-                        self._log_plot_tab_debug(
-                            "Combined render install skipped completion count: invoked=%s completed=%s."
-                            % (invoked_count, completed_before)
-                        )
                 if on_success is not None:
                     try:
                         on_success(fig)
@@ -91242,6 +91321,7 @@ class UnifiedApp(tk.Tk):
             left_pad_pct=config.get("left_padding_pct", 0.0),
             right_pad_pct=config.get("right_padding_pct", 0.0),
             export_pad_pts=config.get("export_pad_pts", 0.0),
+            margins_authoritative=True,
             legend_gap_pts=config.get("legend_gap_value", DEFAULT_COMBINED_LEGEND_GAP_PTS),
             xlabel_tick_gap_pts=config.get("xlabel_tick_gap_value", DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS),
             legend_margin_pts=config.get("legend_margin_value", DEFAULT_COMBINED_LEGEND_MARGIN_PTS),
