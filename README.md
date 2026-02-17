@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v3.0.8)
+# GL-260 Data Analysis and Plotter (v3.0.9)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v3.0.8`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v3.0.9`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v3.0.9 Import Progress + Preview Element Sync + Shadowbox Color Controls](#v309-import-progress--preview-element-sync--shadowbox-color-controls)
   - [v3.0.8 Developer Tools Dialog Hub](#v308-developer-tools-dialog-hub)
   - [v3.0.7 Developer Tools and Diagnostics Expansion](#v307-developer-tools-and-diagnostics-expansion)
   - [v3.0.3 Process Profiles Plot Settings Retention](#v303-process-profiles-plot-settings-retention)
@@ -239,6 +240,7 @@ Dialog behavior (`v3.0.0`):
 - The settings area is now vertically scrollable to keep all sections reachable on shorter displays.
 - `Import` and `Close` stay fixed in the footer and remain visible while scrolling.
 - The Ignore columns selector uses a tighter listbox/scrollbar layout to reduce empty gray space and improve readability.
+- During import execution, an indeterminate progress bar appears in the footer so long-running CSV imports show active progress feedback.
 
 Output schema (fixed):
 - Date & Time
@@ -663,7 +665,7 @@ Rendering Behavior:
 
 #### 6) Export and Layout Pipeline
 - Preview rendering favors responsiveness, while export rendering rebuilds figures for deterministic output.
-- Plot Preview is view-only and does not change Combined plot legend interactivity.
+- Plot Preview supports drag edits for existing Plot Elements on the Combined plot; committed positions are synced back to the display plot when preview closes, while Combined legend drag behavior remains unchanged.
 - Output DPI and size profiles are applied uniformly across plot exports.
 - Combined plot exports are reused by the Final Report when Preserve Export Layout is selected.
 - Layout profiles ensure consistent margins and legend placement across preview and export.
@@ -915,6 +917,12 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v3.0.9 Import Progress + Preview Element Sync + Shadowbox Color Controls
+- Added an indeterminate progress bar to the `Import GL-260 CSV` dialog footer so imports show active work instead of appearing frozen.
+- Combined `Plot Preview` now supports dragging existing Plot Elements, and committed preview positions are synchronized back to the live Combined display plot when preview closes.
+- Extended Plot Elements text-style controls with color pickers for `BBox Edge` (shadowbox outline) and `Shadow Color` (`bbox_shadow_color`) used by `BBox Shadow`.
+- Bumped application version metadata to `v3.0.9` in the script header and `APP_VERSION`.
 
 ### v3.0.8 Developer Tools Dialog Hub
 - Reworked Developer Tools into a unified dialog hub to avoid one-by-one menu toggling.

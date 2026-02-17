@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v3.0.8
+# Version: v3.0.9
 # Date: 2026-02-17
 
 import os
@@ -3236,8 +3236,24 @@ class AnnotationRenderer:
         return _annotation_text_bbox_style(style)
 
     def _apply_text_shadow(self, text_artist: Any, style: Mapping[str, Any]) -> None:
-        """Apply text shadow.
-        Used to apply text shadow changes to live state."""
+        """Apply optional shadow effects to one text element's bounding box.
+
+        Purpose:
+            Render a configurable drop shadow behind text bounding boxes.
+        Why:
+            Shadow styling improves annotation readability on dense plots and
+            should honor persisted user-selected shadow settings.
+        Inputs:
+            text_artist: Matplotlib text artist with optional bbox patch.
+            style: Element style mapping containing shadow toggles/parameters.
+        Outputs:
+            None.
+        Side Effects:
+            Mutates path effects on the text artist's bbox patch.
+        Exceptions:
+            Best-effort guards ignore path-effect errors to avoid interrupting
+            annotation rendering.
+        """
         if not style.get("bbox_shadow"):
             return
         try:
@@ -3252,13 +3268,19 @@ class AnnotationRenderer:
             shadow_alpha = _coerce_float(style.get("bbox_shadow_alpha"))
             if shadow_alpha is None:
                 shadow_alpha = 0.35
+            shadow_color = str(style.get("bbox_shadow_color", "#000000") or "").strip()
+            if not shadow_color:
+                shadow_color = "#000000"
+            shadow_color = _normalize_mpl_color(shadow_color) or "#000000"
             bbox_patch = text_artist.get_bbox_patch()
             if bbox_patch is None:
                 return
             bbox_patch.set_path_effects(
                 [
                     patheffects.SimplePatchShadow(
-                        offset=(offset_x, offset_y), alpha=shadow_alpha
+                        offset=(offset_x, offset_y),
+                        alpha=shadow_alpha,
+                        shadow_rgbFace=shadow_color,
                     ),
                     patheffects.Normal(),
                 ]
@@ -4947,8 +4969,22 @@ class AnnotationHitTest:
 
 
 def _default_style_for_type(element_type: str) -> Dict[str, Any]:
-    """Return default style for type.
-    Used when callers need a safe fallback."""
+    """Return default style values for one annotation element type.
+
+    Purpose:
+        Provide a complete baseline style dictionary for new annotation elements.
+    Why:
+        Element creation and style-reset flows need deterministic defaults so
+        rendering and persistence remain stable across sessions.
+    Args:
+        element_type: Canonical annotation element type key.
+    Returns:
+        Dict[str, Any]: Default style payload for the requested element type.
+    Side Effects:
+        None.
+    Exceptions:
+        None. Unknown types receive shared baseline keys only.
+    """
     base = {
         "color": "#000000",
         "alpha": 0.9,
@@ -4974,6 +5010,7 @@ def _default_style_for_type(element_type: str) -> Dict[str, Any]:
                 "bbox_shadow_offset_x": 2.0,
                 "bbox_shadow_offset_y": -2.0,
                 "bbox_shadow_alpha": 0.35,
+                "bbox_shadow_color": "#000000",
             }
         )
     if element_type == "point":
@@ -4996,8 +5033,22 @@ def _default_style_for_type(element_type: str) -> Dict[str, Any]:
 
 
 def _annotation_style_keys_for_type(element_type: str) -> Set[str]:
-    """Perform annotation style keys for type.
-    Used to keep the workflow logic localized and testable."""
+    """Return the allowed style keys for one annotation element type.
+
+    Purpose:
+        Define which style properties can be edited/applied per element type.
+    Why:
+        Restricting keys prevents unrelated style fields from polluting element
+        payloads during apply/copy/preset workflows.
+    Args:
+        element_type: Canonical annotation element type key.
+    Returns:
+        Set[str]: Style keys that are valid for the provided element type.
+    Side Effects:
+        None.
+    Exceptions:
+        None. Unknown types receive the shared minimal key set.
+    """
     element_type = str(element_type or "").strip().lower()
     keys: Set[str] = {"alpha"}
     text_like = {"text", "callout", "arrow", "xspan_label", "rect", "ref_line"}
@@ -5021,6 +5072,7 @@ def _annotation_style_keys_for_type(element_type: str) -> Set[str]:
                 "bbox_shadow_offset_x",
                 "bbox_shadow_offset_y",
                 "bbox_shadow_alpha",
+                "bbox_shadow_color",
             }
         )
     if element_type in {"xspan", "xspan_label", "rect"}:
@@ -9341,6 +9393,7 @@ class AnnotationsPanel:
             "text_color",
             "bbox_facecolor",
             "bbox_edgecolor",
+            "bbox_shadow_color",
             "marker_facecolor",
             "marker_edgecolor",
         }
@@ -9628,8 +9681,27 @@ class AnnotationsPanel:
         start_row: int,
         apply_callback: Optional[Callable[[], None]] = None,
     ) -> Tuple[Dict[str, tk.Variable], Dict[str, tk.Variable], int]:
-        """Build text fields.
-        Used to assemble text fields during UI or plot setup."""
+        """Build text/label style editors for text-capable plot elements.
+
+        Purpose:
+            Construct geometry/style controls used to edit text-like annotation
+            content and bbox/shadow presentation.
+        Why:
+            Text-capable elements share a large set of common typography and
+            box styling controls that should be created consistently.
+        Inputs:
+            parent: Container frame for the generated controls.
+            element: Selected element snapshot providing geometry/style values.
+            start_row: Parent-grid row where this section should be placed.
+            apply_callback: Optional live-update callback triggered by field
+                commits when available.
+        Outputs:
+            Tuple containing geometry vars, style vars, and the next parent row.
+        Side Effects:
+            Creates Tk controls/variables and binds color/entry callbacks.
+        Exceptions:
+            Widget-level callback failures are guarded in nested helpers.
+        """
         geometry = element.get("geometry", {})
         style = element.get("style", {})
         element_type = str(element.get("type") or "").strip().lower()
@@ -9667,6 +9739,107 @@ class AnnotationsPanel:
             _ui_entry(frame, textvariable=var, width=width).grid(
                 row=row, column=1, sticky="w", padx=6, pady=2
             )
+            style_vars[key] = var
+            row += 1
+
+        def _add_style_color_field(
+            label: str,
+            key: str,
+            default: str,
+            *,
+            allow_none: bool,
+        ) -> None:
+            """Add a color picker + entry row for text style fields.
+
+            Purpose:
+                Provide swatch-backed color editing for text box/shadow styles.
+            Why:
+                Users should be able to pick colors interactively instead of
+                manually typing matplotlib color strings.
+            Inputs:
+                label: UI label for the style field.
+                key: Style dictionary key updated by this control.
+                default: Fallback color used when the current value is invalid.
+                allow_none: Whether `"none"`/transparent values are accepted.
+            Outputs:
+                None.
+            Side Effects:
+                Adds widgets to the text style section and writes staged values
+                into `style_vars`.
+            Exceptions:
+                Best-effort guards suppress swatch update failures.
+            """
+            nonlocal row
+            value = style.get(key, default)
+            var = tk.StringVar(value=str(value) if value is not None else "")
+            ttk.Label(frame, text=f"{label}:").grid(
+                row=row, column=0, sticky="w", padx=6, pady=2
+            )
+            color_frame = ttk.Frame(frame)
+            color_frame.grid(row=row, column=1, sticky="ew", padx=6, pady=2)
+            swatch = tk.Label(color_frame, width=2, relief="groove")
+            swatch.grid(row=0, column=0, padx=(0, 4))
+
+            def _normalize_color(value_in: Any) -> str:
+                """Return a normalized color value for text style controls."""
+                raw_value = str(value_in).strip() if value_in is not None else ""
+                lowered_raw = raw_value.lower()
+                if allow_none and lowered_raw in {"none", "transparent"}:
+                    return "none"
+                normalized = self._normalize_color_value(value_in, default)
+                lowered = str(normalized or "").strip().lower()
+                if not allow_none and lowered in {"", "none", "transparent"}:
+                    normalized = self._normalize_color_value(default, default)
+                return normalized
+
+            # Closure captures _add_style_color_field state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _add_style_color_field.
+            def _update_swatch() -> None:
+                """Update color swatch to reflect the staged style value."""
+                normalized = _normalize_color(var.get())
+                display_color = (
+                    "#ffffff"
+                    if str(normalized).strip().lower() in {"none", "transparent", ""}
+                    else normalized
+                )
+                try:
+                    swatch.configure(background=display_color)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+
+            # Closure captures _add_style_color_field state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _add_style_color_field.
+            def _commit_color(_event: Any = None) -> None:
+                """Normalize, persist, and optionally live-apply one style color."""
+                var.set(_normalize_color(var.get()))
+                _update_swatch()
+                if apply_callback is not None:
+                    apply_callback()
+
+            # Closure captures _add_style_color_field state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _add_style_color_field.
+            def _choose_color() -> None:
+                """Open color chooser and write the selected color into the field."""
+                initial = _normalize_color(var.get())
+                if str(initial).strip().lower() in {"none", "transparent", ""}:
+                    initial = default
+                result = colorchooser.askcolor(
+                    color=initial, parent=self._frame.winfo_toplevel()
+                )
+                if not result or not result[1]:
+                    return
+                var.set(_normalize_color(result[1]))
+                _update_swatch()
+                if apply_callback is not None:
+                    apply_callback()
+
+            _ui_button(color_frame, text="Color...", command=_choose_color).grid(
+                row=0, column=1, padx=(0, 4)
+            )
+            entry = _ui_entry(color_frame, textvariable=var, width=12)
+            entry.grid(row=0, column=2, sticky="ew")
+            entry.bind("<Return>", _commit_color)
+            entry.bind("<FocusOut>", _commit_color)
+            color_frame.grid_columnconfigure(2, weight=1)
+            _update_swatch()
             style_vars[key] = var
             row += 1
 
@@ -9708,13 +9881,24 @@ class AnnotationsPanel:
         style_vars["bbox_enabled"] = bbox_enabled_var
         row += 1
         _add_style_entry("BBox Face", "bbox_facecolor")
-        _add_style_entry("BBox Edge", "bbox_edgecolor")
+        _add_style_color_field(
+            "BBox Edge",
+            "bbox_edgecolor",
+            "#333333",
+            allow_none=True,
+        )
         _add_style_entry("BBox Alpha", "bbox_alpha", width=10)
         _add_style_entry("BBox Line Width", "bbox_linewidth", width=10)
         _add_style_entry("BBox Line Style", "bbox_linestyle", width=10)
         _add_style_entry("BBox Box Style", "bbox_boxstyle")
         _add_style_entry("BBox Pad", "bbox_pad", width=10)
         _add_style_check("BBox Shadow", "bbox_shadow")
+        _add_style_color_field(
+            "Shadow Color",
+            "bbox_shadow_color",
+            "#000000",
+            allow_none=False,
+        )
         _add_style_entry("Shadow Offset X", "bbox_shadow_offset_x", width=10)
         _add_style_entry("Shadow Offset Y", "bbox_shadow_offset_y", width=10)
         _add_style_entry("Shadow Alpha", "bbox_shadow_alpha", width=10)
@@ -9724,7 +9908,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v3.0.8"
+APP_VERSION = "v3.0.9"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -29164,6 +29348,7 @@ class CsvImportDialog:
         self._preview_text: Optional[scrolledtext.ScrolledText] = None
         self._import_button: Optional[Any] = None
         self._close_button: Optional[Any] = None
+        self._import_progress_bar: Optional[ttk.Progressbar] = None
         self._content_canvas: Optional[tk.Canvas] = None
         self._content_window_id: Optional[int] = None
         self._content_container: Optional[ttk.Frame] = None
@@ -29602,22 +29787,85 @@ class CsvImportDialog:
         import_button.pack(side="right")
         close_button = _ui_button(button_frame, text="Close", command=self._close)
         close_button.pack(side="right", padx=(0, 8))
+        progress_bar = ttk.Progressbar(
+            footer, mode="indeterminate", length=self._scale_length(280)
+        )
+        progress_bar.grid(
+            row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+        )
+        progress_bar.grid_remove()
         self._import_button = import_button
         self._close_button = close_button
+        self._import_progress_bar = progress_bar
 
     def _set_status(self, message: str) -> None:
         """Set status.
         Used to persist status into the current state."""
         self._status_var.set(message)
 
+    def _set_import_progress_active(self, active: bool) -> None:
+        """Toggle the import progress bar visibility and animation state.
+
+        Purpose:
+            Show a clear in-dialog progress indicator while CSV import is running.
+        Why:
+            Async import work can appear frozen without an explicit activity cue.
+        Args:
+            active: True to show/start the indicator, False to stop/hide it.
+        Returns:
+            None.
+        Side Effects:
+            Starts or stops the indeterminate `ttk.Progressbar` and toggles its
+            visibility in the import dialog footer.
+        Exceptions:
+            Best-effort guards suppress widget errors to avoid breaking import flow.
+        """
+        progress_bar = self._import_progress_bar
+        if progress_bar is None:
+            return
+        if active:
+            try:
+                progress_bar.grid()
+                progress_bar.start(12)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            return
+        try:
+            progress_bar.stop()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            progress_bar.grid_remove()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
     def _set_busy(self, busy: bool) -> None:
-        """Set busy.
-        Used to persist busy into the current state."""
+        """Toggle import-dialog busy state and related progress affordances.
+
+        Purpose:
+            Centralize enable/disable state for import actions while work runs.
+        Why:
+            Import actions and progress feedback must stay synchronized to avoid
+            duplicate submissions and frozen-looking UI states.
+        Args:
+            busy: True while import is active, otherwise False.
+        Returns:
+            None.
+        Side Effects:
+            Enables/disables footer action buttons and toggles the import
+            progress bar animation/visibility.
+        Exceptions:
+            None. Widget-level guards are handled by downstream helpers.
+        """
         state = "disabled" if busy else "normal"
         if self._import_button is not None:
             self._import_button.configure(state=state)
         if self._close_button is not None:
             self._close_button.configure(state=("disabled" if busy else "normal"))
+        self._set_import_progress_active(busy)
 
     def _set_combined_render_busy(self, busy: bool) -> None:
         """Set combined render busy.
@@ -30023,6 +30271,12 @@ class CsvImportDialog:
         )
         self._set_status("Importing CSV...")
         self._set_busy(True)
+        try:
+            # Paint busy/progress controls immediately before background work starts.
+            self.window.update_idletasks()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
 
         mapping_snapshot = dict(mapping)
         dampening_snapshot = float(dampening_value)
@@ -30092,9 +30346,15 @@ class CsvImportDialog:
             self._set_status(f"Import failed: {exc}")
             messagebox.showerror("CSV Import Error", f"Import failed:\n{exc}")
 
-        self._import_task_id = self.app._task_runner.submit(
-            "csv_import", _worker, _on_ok, _on_err
-        )
+        try:
+            self._import_task_id = self.app._task_runner.submit(
+                "csv_import", _worker, _on_ok, _on_err
+            )
+        except Exception as exc:
+            self._import_task_id = None
+            self._set_busy(False)
+            self._set_status(f"Import failed: {exc}")
+            messagebox.showerror("CSV Import Error", f"Import failed:\n{exc}")
 
     def _persist_settings(
         self,
@@ -30577,6 +30837,11 @@ class UnifiedApp(tk.Tk):
         self._combined_plot_preview_request_token = 0
         self._combined_plot_preview_progress_value = 0.0
         self._combined_plot_preview_closing = False
+        self._combined_plot_preview_annotation_controller: Optional[
+            PlotAnnotationsController
+        ] = None
+        self._combined_plot_preview_plot_id: Optional[str] = None
+        self._combined_plot_preview_elements_changed = False
         self._combined_plot_state: Optional[Dict[str, Any]] = None
         self._combined_layout_state: Optional[Tuple[Any, ...]] = None
         self._combined_layout_dirty = True
@@ -43765,6 +44030,198 @@ class UnifiedApp(tk.Tk):
         else:
             _do_hide()
 
+    def _teardown_combined_plot_preview_annotation_controller(
+        self, *, clear_dirty_flag: bool
+    ) -> None:
+        """Disconnect and clear preview-only annotation controller state.
+
+        Purpose:
+            Ensure Plot Preview annotation callbacks are removed during preview
+            rebuild/close.
+        Why:
+            Preview figure swaps can otherwise leave stale Matplotlib event
+            bindings attached to destroyed canvases.
+        Inputs:
+            clear_dirty_flag: When True, also clear pending preview-change sync
+                flags tracked for close-time back propagation.
+        Outputs:
+            None.
+        Side Effects:
+            Disconnects preview controller callbacks and clears controller
+            references on `self`.
+        Exceptions:
+            Best-effort guards ignore disconnect errors to keep preview teardown
+            resilient.
+        """
+        controller = getattr(self, "_combined_plot_preview_annotation_controller", None)
+        if controller is not None:
+            try:
+                controller.disconnect()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._combined_plot_preview_annotation_controller = None
+        if clear_dirty_flag:
+            self._combined_plot_preview_plot_id = None
+            self._combined_plot_preview_elements_changed = False
+
+    def _on_combined_plot_preview_elements_changed(self, plot_id: str) -> None:
+        """Track plot-element edits made from Combined Plot Preview.
+
+        Purpose:
+            Mark preview annotation edits so display sync can run when preview
+            closes.
+        Why:
+            Preview should not push element edits live until the window closes,
+            but changes still need to be persisted and queued for propagation.
+        Inputs:
+            plot_id: Plot identifier passed by preview annotation controller.
+        Outputs:
+            None.
+        Side Effects:
+            Marks preview element-change flags and records dirty state for the
+            updated plot.
+        Exceptions:
+            Best-effort guards suppress dirty-flag update failures.
+        """
+        if not plot_id:
+            return
+        self._combined_plot_preview_plot_id = plot_id
+        self._combined_plot_preview_elements_changed = True
+        try:
+            self._mark_plot_elements_dirty(plot_id)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _install_combined_plot_preview_annotation_controller(
+        self,
+        fig: Optional[Figure],
+        canvas: Optional[FigureCanvasTkAgg],
+        *,
+        plot_id: str,
+    ) -> None:
+        """Attach a preview-only Plot Elements controller to the preview canvas.
+
+        Purpose:
+            Enable drag/edit interactions for existing plot elements inside the
+            Combined Plot Preview window.
+        Why:
+            Preview and export geometry can diverge from display; preview-side
+            adjustments must be possible before close-time synchronization.
+        Inputs:
+            fig: Preview Matplotlib figure.
+            canvas: Preview TkAgg canvas for event binding.
+            plot_id: Plot identifier used by persisted element storage.
+        Outputs:
+            None.
+        Side Effects:
+            Disconnects any prior preview controller, then creates and stores a
+            new preview-only `PlotAnnotationsController`.
+        Exceptions:
+            Controller creation failures are swallowed to keep preview usable.
+        """
+        self._teardown_combined_plot_preview_annotation_controller(
+            clear_dirty_flag=False
+        )
+        if fig is None or canvas is None or not plot_id:
+            return
+        try:
+            axes_map = self._resolve_plot_element_axes(fig)
+        except Exception:
+            axes_map = {}
+        try:
+            axis_labels = self._plot_element_axis_labels(fig)
+        except Exception:
+            axis_labels = {}
+        try:
+            controller = PlotAnnotationsController(
+                plot_id,
+                fig,
+                canvas,
+                self._annotation_store,
+                self._annotation_renderer,
+                axes_map,
+                axis_labels,
+                on_elements_changed=self._on_combined_plot_preview_elements_changed,
+            )
+            controller.set_mode("select")
+            controller.cancel_place_element()
+            self._combined_plot_preview_annotation_controller = controller
+            self._combined_plot_preview_plot_id = plot_id
+        except Exception:
+            self._combined_plot_preview_annotation_controller = None
+
+    def _sync_combined_plot_preview_elements_to_display(self, plot_id: str) -> None:
+        """Apply Plot Preview element edits to the live Combined display plot.
+
+        Purpose:
+            Back-propagate persisted preview element positions to display after
+            preview closes.
+        Why:
+            Users need preview drag adjustments to become the new display state
+            without requiring a full manual refresh.
+        Inputs:
+            plot_id: Plot identifier whose elements were edited in preview.
+        Outputs:
+            None.
+        Side Effects:
+            Re-renders plot elements on the live Combined display canvas and
+            refreshes any open Plot Elements panel for that plot.
+        Exceptions:
+            Best-effort guards keep preview close resilient if display refresh
+            cannot be completed.
+        """
+        if not plot_id:
+            return
+        _frame, display_canvas = self._find_plot_tab_canvas("fig_combined")
+        display_fig = getattr(display_canvas, "figure", None)
+        if display_canvas is None or display_fig is None:
+            return
+        controller = self._plot_annotation_controllers.get(plot_id)
+        if controller is not None:
+            try:
+                axes_map = self._resolve_plot_element_axes(display_fig)
+            except Exception:
+                axes_map = {}
+            try:
+                axis_labels = self._plot_element_axis_labels(display_fig)
+            except Exception:
+                axis_labels = {}
+            try:
+                controller.set_target(display_fig, display_canvas)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            try:
+                controller.update_axis_map(display_fig, axes_map, axis_labels)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            try:
+                controller.render()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            panel = self._plot_annotation_panels.get(plot_id)
+            if panel is not None:
+                try:
+                    panel.refresh()
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+        else:
+            try:
+                self._apply_plot_elements(display_fig, plot_id)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        try:
+            display_canvas.draw_idle()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
     def _close_combined_plot_preview_window(self, _event: Any = None) -> None:
         """Close combined Plot Preview window and invalidate in-flight preview tasks.
 
@@ -43804,6 +44261,13 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
         self._combined_plot_preview_resize_after_id = None
+        preview_plot_id = getattr(self, "_combined_plot_preview_plot_id", None)
+        preview_elements_changed = bool(
+            getattr(self, "_combined_plot_preview_elements_changed", False)
+        )
+        self._teardown_combined_plot_preview_annotation_controller(
+            clear_dirty_flag=False
+        )
         preview_fig = getattr(self, "_combined_plot_preview_fig", None)
         if preview_fig is not None:
             try:
@@ -43846,12 +44310,19 @@ class UnifiedApp(tk.Tk):
             )
         except Exception:
             has_combined_tab = False
+        if has_combined_tab and preview_elements_changed and preview_plot_id:
+            try:
+                self._sync_combined_plot_preview_elements_to_display(preview_plot_id)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
         if has_combined_tab:
             try:
                 self._apply_saved_cycle_legend_state_to_display_combined()
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+        self._teardown_combined_plot_preview_annotation_controller(clear_dirty_flag=True)
         self._combined_plot_preview_closing = False
 
     def _open_plot_preview(
@@ -44160,6 +44631,9 @@ class UnifiedApp(tk.Tk):
                         # Best-effort guard; ignore failures to avoid interrupting the workflow.
                         pass
                 self._combined_plot_preview_resize_after_id = None
+                self._teardown_combined_plot_preview_annotation_controller(
+                    clear_dirty_flag=False
+                )
 
                 old_toolbar = getattr(self, "_combined_plot_preview_toolbar", None)
                 if old_toolbar is not None:
@@ -44304,6 +44778,15 @@ class UnifiedApp(tk.Tk):
                         keep_export_size=True,
                         trigger_resize_event=False,
                         force_draw=True,
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+                try:
+                    self._install_combined_plot_preview_annotation_controller(
+                        fig,
+                        canvas,
+                        plot_id=preview_plot_id,
                     )
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
