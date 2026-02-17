@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v3.0.7
+# Version: v3.0.8
 # Date: 2026-02-17
 
 import os
@@ -9724,7 +9724,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v3.0.7"
+APP_VERSION = "v3.0.8"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -30339,6 +30339,12 @@ class UnifiedApp(tk.Tk):
         self._perf_diag_output = None
         self._perf_diag_last_run: Optional[Dict[str, Any]] = None
         self._perf_diag_active_run: Optional[Dict[str, Any]] = None
+        self._developer_tools_dialog: Optional[tk.Toplevel] = None
+        self._developer_tools_notebook: Optional[ttk.Notebook] = None
+        self._developer_tools_tab_ids: Dict[str, str] = {}
+        self._developer_tools_selected_tab = "logging"
+        self._developer_debug_filter_var: Optional[tk.StringVar] = None
+        self._developer_debug_category_rows: Dict[str, Dict[str, Any]] = {}
         self._debug_state_lock = threading.Lock()
         self._debug_enabled = bool(settings.get("debug_enabled", False))
         self._debug_categories = _normalize_debug_categories(
@@ -30898,78 +30904,10 @@ class UnifiedApp(tk.Tk):
         self._menubar.add_cascade(label="Profiles", menu=profiles_menu)
 
         tools_menu = self._register_menu(tk.Menu(self._menubar, tearoff=0))
-        developer_menu = self._register_menu(tk.Menu(tools_menu, tearoff=0))
-        developer_menu.add_checkbutton(
-            label="Enable Debug Logging",
-            variable=self._debug_enabled_var,
-            command=lambda: self._set_debug_enabled(self._debug_enabled_var.get()),
+        tools_menu.add_command(
+            label="Developer Tools...",
+            command=self._open_developer_tools_dialog,
         )
-        developer_menu.add_checkbutton(
-            label="Enable Debug File Logging",
-            variable=self._debug_file_logging_var,
-            command=lambda: self._set_debug_file_logging_enabled(
-                self._debug_file_logging_var.get()
-            ),
-        )
-        developer_menu.add_checkbutton(
-            label="Disable Startup Tab Cycling During Splash",
-            variable=self._dev_disable_startup_tab_cycling_var,
-            command=lambda: self._set_disable_startup_tab_cycling(
-                self._dev_disable_startup_tab_cycling_var.get()
-            ),
-        )
-        debug_categories_menu = self._register_menu(
-            tk.Menu(developer_menu, tearoff=0)
-        )
-        # Iterate over DEBUG_CATEGORIES to apply the per-item logic.
-        for category in DEBUG_CATEGORIES:
-            var = self._debug_category_vars.get(category)
-            if var is None:
-                continue
-            label = DEBUG_CATEGORY_LABELS.get(category, category)
-            debug_categories_menu.add_checkbutton(
-                label=label,
-                variable=var,
-                command=lambda key=category: self._set_debug_category_enabled(
-                    key, self._debug_category_vars[key].get()
-                ),
-            )
-        developer_menu.add_cascade(label="Debug Categories", menu=debug_categories_menu)
-        developer_menu.add_command(
-            label="Dump Debug Settings", command=self._dump_debug_settings
-        )
-        developer_menu.add_command(
-            label="Clear Debug Once-Guards", command=self._clear_debug_once_guards
-        )
-        developer_menu.add_command(
-            label="Dump Performance Stats", command=self._dump_performance_stats
-        )
-        developer_menu.add_separator()
-        developer_menu.add_command(
-            label="Free-Threading & GIL...",
-            command=self._open_free_threading_dialog,
-        )
-        developer_menu.add_command(
-            label="Dependency Free-Threading Audit...",
-            command=self._open_dependency_audit_dialog,
-        )
-        developer_menu.add_command(
-            label="Concurrency Controls...",
-            command=self._open_concurrency_controls_dialog,
-        )
-        developer_menu.add_command(
-            label="Performance Diagnostics...",
-            command=self._open_performance_diagnostics_dialog,
-        )
-        developer_menu.add_separator()
-        developer_menu.add_command(
-            label="Validate Timeline Table Export (PDF/PNG)",
-            command=self._run_timeline_table_export_validation,
-        )
-        developer_menu.add_command(
-            label="Regression checks", command=self._open_regression_checks_dialog
-        )
-        tools_menu.add_cascade(label="Developer Tools", menu=developer_menu)
         self._menubar.add_cascade(label="Tools", menu=tools_menu)
 
         self.config(menu=self._menubar)
@@ -34490,94 +34428,581 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
-    def _open_concurrency_controls_dialog(self) -> None:
-        """Open concurrency controls dialog.
-        Used by UI actions to open concurrency controls dialog."""
-        existing = getattr(self, "_concurrency_control_dialog", None)
+    def _close_developer_tools_dialog(self) -> None:
+        """Close the unified Developer Tools dialog and clear related widget state.
+
+        Purpose:
+            Tear down the Developer Tools hub window created by
+            `_open_developer_tools_dialog`.
+        Why:
+            The dialog owns transient widget references (tab notebook, debug category
+            rows, performance output widget) that must be cleared when the window
+            closes to prevent stale-widget access.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Destroys the dialog window when it exists and resets dialog-related
+            attributes on the application instance.
+        Exceptions:
+            Uses best-effort guards so close failures do not interrupt the UI.
+        """
+        dialog = getattr(self, "_developer_tools_dialog", None)
+        if dialog is not None and dialog.winfo_exists():
+            try:
+                dialog.destroy()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._developer_tools_dialog = None
+        self._developer_tools_notebook = None
+        self._developer_tools_tab_ids = {}
+        self._developer_debug_filter_var = None
+        self._developer_debug_category_rows = {}
+        self._perf_diag_dialog = None
+        self._perf_diag_output = None
+
+    def _open_developer_tools_dialog(self, initial_tab: str = "logging") -> None:
+        """Open or focus the unified Developer Tools dialog.
+
+        Purpose:
+            Provide one dialog hub for debug toggles, diagnostics output, and
+            runtime/developer actions.
+        Why:
+            Consolidates menu-scattered developer controls into one interaction
+            surface so multi-toggle workflows are faster and less error-prone.
+        Inputs:
+            initial_tab: Tab key to focus on open (`logging`, `performance`,
+                or `runtime`).
+        Outputs:
+            None.
+        Side Effects:
+            Creates/focuses a toplevel window, wires tab content, binds filter
+            callbacks, and updates `self._perf_diag_output` to the hub text widget.
+        Exceptions:
+            Uses best-effort guards for tab selection/focus so dialog reopen does
+            not break the main UI loop.
+        """
+        valid_tabs = {"logging", "performance", "runtime"}
+        if isinstance(initial_tab, str) and initial_tab in valid_tabs:
+            target_tab = initial_tab
+        else:
+            target_tab = "logging"
+        self._developer_tools_selected_tab = target_tab
+
+        existing = getattr(self, "_developer_tools_dialog", None)
         if existing is not None and existing.winfo_exists():
             existing.deiconify()
             existing.lift()
+            notebook = getattr(self, "_developer_tools_notebook", None)
+            tab_ids = getattr(self, "_developer_tools_tab_ids", {})
+            tab_id = tab_ids.get(target_tab) if isinstance(tab_ids, dict) else None
+            if notebook is not None and tab_id:
+                try:
+                    notebook.select(tab_id)
+                except Exception:
+                    # Best-effort guard; keep UI stable if selection fails.
+                    pass
+            if target_tab == "performance":
+                self._refresh_performance_diagnostics()
             return
 
         dialog = tk.Toplevel(self)
-        dialog.title("Concurrency Controls")
-        dialog.geometry("420x220")
+        dialog.title("Developer Tools")
+        dialog.geometry("920x640")
         dialog.transient(self)
         dialog.columnconfigure(0, weight=1)
-        self._concurrency_control_dialog = dialog
+        dialog.rowconfigure(0, weight=1)
+        dialog.protocol("WM_DELETE_WINDOW", self._close_developer_tools_dialog)
+        self._developer_tools_dialog = dialog
+        self._perf_diag_dialog = dialog
+
+        content = ttk.Frame(dialog, padding=10)
+        content.grid(row=0, column=0, sticky="nsew")
+        content.columnconfigure(0, weight=1)
+        content.rowconfigure(0, weight=1)
+
+        notebook = ttk.Notebook(content)
+        notebook.grid(row=0, column=0, sticky="nsew")
+        self._developer_tools_notebook = notebook
+
+        logging_tab = ttk.Frame(notebook)
+        perf_tab = ttk.Frame(notebook)
+        runtime_tab = ttk.Frame(notebook)
+        notebook.add(logging_tab, text="Logging & Debug")
+        notebook.add(perf_tab, text="Performance Diagnostics")
+        notebook.add(runtime_tab, text="Runtime / Advanced")
+        self._developer_tools_tab_ids = {
+            "logging": str(logging_tab),
+            "performance": str(perf_tab),
+            "runtime": str(runtime_tab),
+        }
+
+        self._build_developer_tools_logging_tab(logging_tab)
+        self._build_developer_tools_performance_tab(perf_tab)
+        self._build_developer_tools_runtime_tab(runtime_tab)
+
+        def _on_tab_changed(_event: Any = None) -> None:
+            """Track active Developer Tools tab and refresh performance text.
+
+            Purpose:
+                Keep hub tab state synchronized with notebook selection changes.
+            Why:
+                Persisting the last active tab improves reopen behavior, and the
+                performance panel must refresh on tab entry to show current data.
+            Inputs:
+                _event: Tk notebook tab-change event payload (unused).
+            Outputs:
+                None.
+            Side Effects:
+                Updates `self._developer_tools_selected_tab` and may refresh the
+                diagnostics output widget.
+            Exceptions:
+                None; relies on guarded refresh logic.
+            """
+            current_tab = notebook.select()
+            for key, tab_id in self._developer_tools_tab_ids.items():
+                if tab_id == current_tab:
+                    self._developer_tools_selected_tab = key
+                    break
+            if self._developer_tools_selected_tab == "performance":
+                self._refresh_performance_diagnostics()
+
+        notebook.bind("<<NotebookTabChanged>>", _on_tab_changed)
+        selected_id = self._developer_tools_tab_ids.get(target_tab)
+        if selected_id:
+            try:
+                notebook.select(selected_id)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        if target_tab == "performance":
+            self._refresh_performance_diagnostics()
+
+        button_frame = ttk.Frame(content)
+        button_frame.grid(row=1, column=0, sticky="e", pady=(8, 0))
+        ttk.Button(
+            button_frame, text="Close", command=self._close_developer_tools_dialog
+        ).grid(row=0, column=0)
+
+    def _build_developer_tools_logging_tab(self, parent: ttk.Frame) -> None:
+        """Build the logging/debug controls tab inside Developer Tools.
+
+        Purpose:
+            Render global debug toggles, category management controls, and
+            one-click debug utility actions.
+        Why:
+            Developers frequently need to enable multiple categories at once and
+            inspect/debug state without repeated menu traversal.
+        Inputs:
+            parent: Notebook tab frame that will contain logging/debug controls.
+        Outputs:
+            None.
+        Side Effects:
+            Creates Tk widgets, binds category filter callbacks, and reuses
+            existing toggle setters that persist settings immediately.
+        Exceptions:
+            Widget interactions use existing guarded setters so invalid states do
+            not interrupt the UI event loop.
+        """
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(2, weight=1)
+
+        intro = ttk.Label(
+            parent,
+            text=(
+                "Manage debug output and category gates in one place. "
+                "Changes apply immediately."
+            ),
+            justify="left",
+        )
+        intro.grid(row=0, column=0, sticky="w", padx=8, pady=(8, 6))
+
+        toggles = ttk.LabelFrame(parent, text="Global Toggles")
+        toggles.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
+        toggles.columnconfigure(0, weight=1)
+
+        ttk.Checkbutton(
+            toggles,
+            text="Enable Debug Logging",
+            variable=self._debug_enabled_var,
+            command=lambda: self._set_debug_enabled(self._debug_enabled_var.get()),
+        ).grid(row=0, column=0, sticky="w", padx=8, pady=(6, 4))
+        ttk.Checkbutton(
+            toggles,
+            text="Enable Debug File Logging",
+            variable=self._debug_file_logging_var,
+            command=lambda: self._set_debug_file_logging_enabled(
+                self._debug_file_logging_var.get()
+            ),
+        ).grid(row=1, column=0, sticky="w", padx=8, pady=4)
+        ttk.Checkbutton(
+            toggles,
+            text="Disable Startup Tab Cycling During Splash",
+            variable=self._dev_disable_startup_tab_cycling_var,
+            command=lambda: self._set_disable_startup_tab_cycling(
+                self._dev_disable_startup_tab_cycling_var.get()
+            ),
+        ).grid(row=2, column=0, sticky="w", padx=8, pady=(4, 6))
+
+        categories = ttk.LabelFrame(parent, text="Debug Categories")
+        categories.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        categories.columnconfigure(0, weight=1)
+        categories.rowconfigure(2, weight=1)
+
+        filter_row = ttk.Frame(categories)
+        filter_row.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+        filter_row.columnconfigure(1, weight=1)
+        ttk.Label(filter_row, text="Filter:").grid(row=0, column=0, sticky="w")
+        filter_var = tk.StringVar(value="")
+        self._developer_debug_filter_var = filter_var
+        filter_entry = ttk.Entry(filter_row, textvariable=filter_var)
+        filter_entry.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        filter_var.trace_add("write", self._apply_debug_category_filter)
+        filter_entry.focus_set()
+
+        bulk_row = ttk.Frame(categories)
+        bulk_row.grid(row=1, column=0, sticky="w", padx=8, pady=(0, 4))
+        ttk.Button(
+            bulk_row,
+            text="Enable All",
+            command=lambda: self._set_all_debug_categories(True),
+        ).grid(row=0, column=0, padx=(0, 4))
+        ttk.Button(
+            bulk_row,
+            text="Disable All",
+            command=lambda: self._set_all_debug_categories(False),
+        ).grid(row=0, column=1, padx=(0, 4))
+
+        list_container = ttk.Frame(categories)
+        list_container.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        list_container.columnconfigure(0, weight=1)
+        list_container.rowconfigure(0, weight=1)
+
+        canvas = tk.Canvas(list_container, highlightthickness=0, borderwidth=0)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(
+            list_container, orient="vertical", command=canvas.yview
+        )
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        rows_parent = ttk.Frame(canvas)
+        window_id = canvas.create_window((0, 0), window=rows_parent, anchor="nw")
+        rows_parent.columnconfigure(0, weight=1)
+
+        def _sync_scroll_region(_event: Any = None) -> None:
+            """Update the category-list canvas scroll region after layout changes.
+
+            Purpose:
+                Keep the scrollable region aligned with the rendered category rows.
+            Why:
+                Filter operations and window resizes can change row extents; the
+                canvas must track those extents for correct scrolling behavior.
+            Inputs:
+                _event: Tk configure event payload (unused).
+            Outputs:
+                None.
+            Side Effects:
+                Updates the canvas `scrollregion` bounds.
+            Exceptions:
+                None.
+            """
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _sync_inner_width(event: Any) -> None:
+            """Match the inner category frame width to the visible canvas width.
+
+            Purpose:
+                Prevent clipped controls by resizing the inner rows frame.
+            Why:
+                The embedded frame must follow canvas width so row widgets fill
+                available horizontal space and filter layout remains stable.
+            Inputs:
+                event: Tk configure event with the current canvas width.
+            Outputs:
+                None.
+            Side Effects:
+                Updates the created canvas-window item width.
+            Exceptions:
+                None.
+            """
+            canvas.itemconfigure(window_id, width=event.width)
+
+        rows_parent.bind("<Configure>", _sync_scroll_region)
+        canvas.bind("<Configure>", _sync_inner_width)
+
+        self._developer_debug_category_rows = {}
+        # Build rows in canonical category order for predictable filtering/layout.
+        for row_idx, category in enumerate(DEBUG_CATEGORIES):
+            var = self._debug_category_vars.get(category)
+            if var is None:
+                continue
+            label = DEBUG_CATEGORY_LABELS.get(category, category)
+            row = ttk.Frame(rows_parent)
+            row.grid(row=row_idx, column=0, sticky="ew", pady=1)
+            row.columnconfigure(0, weight=1)
+            ttk.Checkbutton(
+                row,
+                text=label,
+                variable=var,
+                command=lambda key=category: self._set_debug_category_enabled(
+                    key, self._debug_category_vars[key].get()
+                ),
+            ).grid(row=0, column=0, sticky="w")
+            ttk.Label(row, text=category).grid(row=0, column=1, sticky="e", padx=(8, 0))
+            self._developer_debug_category_rows[category] = {
+                "frame": row,
+                "filter_text": f"{label} {category}".lower(),
+            }
+
+        actions = ttk.LabelFrame(parent, text="Actions")
+        actions.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
+        ttk.Button(
+            actions, text="Dump Debug Settings", command=self._dump_debug_settings
+        ).grid(row=0, column=0, sticky="w", padx=8, pady=8)
+        ttk.Button(
+            actions,
+            text="Clear Debug Once-Guards",
+            command=self._clear_debug_once_guards,
+        ).grid(row=0, column=1, sticky="w", padx=8, pady=8)
+        ttk.Button(
+            actions,
+            text="Dump Performance Stats",
+            command=self._dump_performance_stats,
+        ).grid(row=0, column=2, sticky="w", padx=8, pady=8)
+        self._apply_debug_category_filter()
+
+    def _build_developer_tools_performance_tab(self, parent: ttk.Frame) -> None:
+        """Build the performance diagnostics tab inside Developer Tools.
+
+        Purpose:
+            Render session performance capture controls and textual stage reports.
+        Why:
+            Keeps performance diagnostics adjacent to debug controls while reusing
+            the existing diagnostics data pipeline.
+        Inputs:
+            parent: Notebook tab frame that will contain performance widgets.
+        Outputs:
+            None.
+        Side Effects:
+            Rebinds `self._perf_diag_output` to the tab output widget and refreshes
+            its content from in-memory diagnostics state.
+        Exceptions:
+            Relies on guarded refresh logic; display updates fail closed if the
+            widget is unavailable.
+        """
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(2, weight=1)
 
         ttk.Label(
-            dialog, text="Developer-only settings for the background task runner."
+            parent,
+            text="Capture timing diagnostics for render and embed stages.",
         ).grid(row=0, column=0, sticky="w", padx=10, pady=(10, 6))
 
-        row_frame = ttk.Frame(dialog)
-        row_frame.grid(row=1, column=0, sticky="w", padx=10, pady=(0, 6))
-        ttk.Label(row_frame, text="Worker threads:").grid(row=0, column=0, sticky="w")
+        ttk.Checkbutton(
+            parent,
+            text="Enable diagnostics (session only)",
+            variable=self._perf_diag_enabled_var,
+            command=self._refresh_performance_diagnostics,
+        ).grid(row=1, column=0, sticky="w", padx=10, pady=(0, 6))
+
+        output = scrolledtext.ScrolledText(parent, wrap="word", state="disabled")
+        output.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        self._enable_text_mousewheel(output)
+        self._perf_diag_output = output
+        self._refresh_performance_diagnostics()
+
+    def _build_developer_tools_runtime_tab(self, parent: ttk.Frame) -> None:
+        """Build the runtime/advanced tools tab inside Developer Tools.
+
+        Purpose:
+            Expose concurrency controls and entrypoints to advanced diagnostics
+            dialogs from a single tab.
+        Why:
+            Keeps unrelated expert tools accessible without overloading the main
+            logging/debug tab.
+        Inputs:
+            parent: Notebook tab frame that will contain runtime controls.
+        Outputs:
+            None.
+        Side Effects:
+            Creates widgets that call existing runtime handlers, including
+            concurrency apply logic and separate dialog launch actions.
+        Exceptions:
+            Delegates to existing guarded handlers so failures remain non-fatal.
+        """
+        parent.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            parent,
+            text=(
+                "Advanced developer utilities. Use caution when changing "
+                "threading/concurrency options."
+            ),
+            justify="left",
+        ).grid(row=0, column=0, sticky="w", padx=10, pady=(10, 8))
+
+        concurrency_frame = ttk.LabelFrame(parent, text="Concurrency Controls")
+        concurrency_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 10))
+        ttk.Label(
+            concurrency_frame,
+            text="Developer-only settings for the background task runner.",
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 6))
+
+        ttk.Label(concurrency_frame, text="Worker threads:").grid(
+            row=1, column=0, sticky="w", padx=8, pady=(0, 6)
+        )
         spin = ttk.Spinbox(
-            row_frame,
+            concurrency_frame,
             from_=1,
             to=32,
             textvariable=self._dev_worker_threads_var,
             width=6,
             command=self._apply_concurrency_controls,
         )
-        spin.grid(row=0, column=1, padx=(6, 0))
+        spin.grid(row=1, column=1, sticky="w", pady=(0, 6))
+        spin.bind("<FocusOut>", lambda _event: self._apply_concurrency_controls())
+        spin.bind("<Return>", lambda _event: self._apply_concurrency_controls())
 
         ttk.Checkbutton(
-            dialog,
+            concurrency_frame,
             text="Enable parallel compute (developer option)",
             variable=self._dev_parallel_compute_var,
             command=self._apply_concurrency_controls,
-        ).grid(row=2, column=0, sticky="w", padx=10, pady=(0, 6))
+        ).grid(row=2, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 8))
 
-        ttk.Label(
-            dialog,
-            text="Defaults remain single-threaded unless you opt in here.",
-            wraplength=self._scale_length(380),
-            justify="left",
-        ).grid(row=3, column=0, sticky="w", padx=10, pady=(0, 10))
+        tools_frame = ttk.LabelFrame(parent, text="Advanced Tools")
+        tools_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 10))
+        ttk.Button(
+            tools_frame,
+            text="Free-Threading & GIL...",
+            command=self._open_free_threading_dialog,
+        ).grid(row=0, column=0, sticky="w", padx=8, pady=6)
+        ttk.Button(
+            tools_frame,
+            text="Dependency Free-Threading Audit...",
+            command=self._open_dependency_audit_dialog,
+        ).grid(row=0, column=1, sticky="w", padx=8, pady=6)
+        ttk.Button(
+            tools_frame,
+            text="Regression checks...",
+            command=self._open_regression_checks_dialog,
+        ).grid(row=1, column=0, sticky="w", padx=8, pady=6)
+        ttk.Button(
+            tools_frame,
+            text="Validate Timeline Table Export (PDF/PNG)",
+            command=self._run_timeline_table_export_validation,
+        ).grid(row=1, column=1, sticky="w", padx=8, pady=6)
+
+    def _set_all_debug_categories(self, enabled: bool) -> None:
+        """Set every debug category toggle to one enabled/disabled state.
+
+        Purpose:
+            Apply a bulk on/off change across all debug categories.
+        Why:
+            Eliminates repetitive per-category clicking when developers need
+            comprehensive or silent debug output quickly.
+        Inputs:
+            enabled: True enables all categories, False disables all categories.
+        Outputs:
+            None.
+        Side Effects:
+            Updates all category variables and persists settings through
+            `_set_debug_category_enabled`.
+        Exceptions:
+            Invalid categories are ignored by `_set_debug_category_enabled`.
+        """
+        desired = bool(enabled)
+        # Preserve deterministic category ordering during bulk updates.
+        for category in DEBUG_CATEGORIES:
+            self._set_debug_category_enabled(category, desired)
+
+    def _apply_debug_category_filter(self, *_args: Any) -> None:
+        """Filter visible debug-category rows using the current search text.
+
+        Purpose:
+            Show only category rows matching the filter text.
+        Why:
+            Improves usability when category lists grow and users need to locate
+            specific subsystems quickly.
+        Inputs:
+            *_args: Tk trace callback payload (unused).
+        Outputs:
+            None.
+        Side Effects:
+            Re-grids visible category rows and hides non-matching rows without
+            mutating underlying category toggle values.
+        Exceptions:
+            Best-effort guards ignore missing widgets during dialog teardown.
+        """
+        filter_var = getattr(self, "_developer_debug_filter_var", None)
+        rows = getattr(self, "_developer_debug_category_rows", None)
+        if filter_var is None or not isinstance(rows, dict):
+            return
+        needle = str(filter_var.get() or "").strip().lower()
+        visible_row = 0
+        # Re-grid only matching rows so filter state does not alter checked values.
+        for category in DEBUG_CATEGORIES:
+            row_info = rows.get(category)
+            if not isinstance(row_info, dict):
+                continue
+            row_widget = row_info.get("frame")
+            filter_text = str(row_info.get("filter_text", ""))
+            if row_widget is None:
+                continue
+            try:
+                if needle and needle not in filter_text:
+                    row_widget.grid_remove()
+                    continue
+                row_widget.grid(row=visible_row, column=0, sticky="ew", pady=1)
+                visible_row += 1
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                continue
+
+    def _open_concurrency_controls_dialog(self) -> None:
+        """Open Developer Tools with the Runtime/Advanced tab selected.
+
+        Purpose:
+            Preserve compatibility for existing call sites that request the
+            historical Concurrency Controls dialog entrypoint.
+        Why:
+            Concurrency controls now live in the unified Developer Tools hub,
+            but callers should not break due to the UI consolidation.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Opens/focuses the Developer Tools hub and selects the runtime tab.
+        Exceptions:
+            Delegates to `_open_developer_tools_dialog`, which handles focus
+            and widget guards internally.
+        """
+        self._open_developer_tools_dialog(initial_tab="runtime")
 
     def _open_performance_diagnostics_dialog(self) -> None:
-        """Open performance diagnostics dialog.
-        Used by UI actions to open performance diagnostics dialog."""
-        existing = getattr(self, "_perf_diag_dialog", None)
-        if existing is not None and existing.winfo_exists():
-            existing.deiconify()
-            existing.lift()
-            self._refresh_performance_diagnostics()
-            return
+        """Open Developer Tools with the Performance Diagnostics tab selected.
 
-        dialog = tk.Toplevel(self)
-        dialog.title("Performance Diagnostics")
-        dialog.geometry("720x420")
-        dialog.transient(self)
-        dialog.columnconfigure(0, weight=1)
-        dialog.rowconfigure(2, weight=1)
-        self._perf_diag_dialog = dialog
-
-        ttk.Label(
-            dialog,
-            text="Capture timing diagnostics for render and embed stages.",
-        ).grid(row=0, column=0, sticky="w", padx=10, pady=(10, 6))
-
-        ttk.Checkbutton(
-            dialog,
-            text="Enable diagnostics (session only)",
-            variable=self._perf_diag_enabled_var,
-            command=self._refresh_performance_diagnostics,
-        ).grid(row=1, column=0, sticky="w", padx=10, pady=(0, 6))
-
-        output = scrolledtext.ScrolledText(dialog, wrap="word", state="disabled")
-        output.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 8))
-        self._perf_diag_output = output
-
-        button_frame = ttk.Frame(dialog)
-        button_frame.grid(row=3, column=0, sticky="e", padx=10, pady=(0, 10))
-        ttk.Button(
-            button_frame, text="Close", command=dialog.destroy
-        ).grid(row=0, column=0, padx=4)
-
-        self._refresh_performance_diagnostics()
+        Purpose:
+            Preserve compatibility for existing call sites that request the
+            historical Performance Diagnostics dialog entrypoint.
+        Why:
+            Performance diagnostics now live in the unified Developer Tools hub,
+            but callers should not break due to UI consolidation.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Opens/focuses the Developer Tools hub and selects the performance tab.
+        Exceptions:
+            Delegates to `_open_developer_tools_dialog`, which handles focus
+            and widget guards internally.
+        """
+        self._open_developer_tools_dialog(initial_tab="performance")
 
     def _refresh_performance_diagnostics(self) -> None:
         """Refresh performance diagnostics.

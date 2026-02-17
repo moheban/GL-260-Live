@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v3.0.7)
+# GL-260 Data Analysis and Plotter (v3.0.8)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v3.0.7`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v3.0.8`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,8 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v3.0.8 Developer Tools Dialog Hub](#v308-developer-tools-dialog-hub)
+  - [v3.0.7 Developer Tools and Diagnostics Expansion](#v307-developer-tools-and-diagnostics-expansion)
   - [v3.0.3 Process Profiles Plot Settings Retention](#v303-process-profiles-plot-settings-retention)
   - [v3.0.2 Plot Elements Editor Window Sizing Hardening](#v302-plot-elements-editor-window-sizing-hardening)
   - [v3.0.1 Startup Splash + Background Startup Orchestration](#v301-startup-splash--background-startup-orchestration)
@@ -530,12 +532,12 @@ View
 - Zoom in/out/reset.
 - Zoom presets.
 
-Tools -> Developer Tools
-- Free-threading & GIL controls.
-- Dependency free-threading audit.
-- Concurrency controls for background tasks.
-- Validate timeline table export.
-- Regression checks.
+Tools -> Developer Tools...
+- Unified dialog hub for debug logging/category controls and performance diagnostics.
+- Free-threading & GIL controls (separate dialog launched from hub).
+- Dependency free-threading audit (separate dialog launched from hub).
+- Concurrency controls for background tasks (inline in hub Runtime/Advanced tab).
+- Validate timeline table export and regression checks (launched from hub).
 
 ### Plotting Architecture Details
 
@@ -853,24 +855,20 @@ The app keeps the UI responsive with a dedicated task runner:
 - Results and errors are marshaled back to the Tk event loop via `after`.
 - Used for column application, cycle analysis, solubility solver runs, and diagnostics.
 
-Developer tools (Tools -> Developer Tools) provide:
-- Enable Debug Logging (global toggle).
-- Enable Debug File Logging (rotating log file in the working directory).
-- Disable Startup Tab Cycling During Splash (persisted, enabled by default).
-- Debug Categories submenu (per-subsystem toggles).
-- Dump Debug Settings, Clear Debug Once-Guards, and Dump Performance Stats.
-- Performance Diagnostics with stage-level timings (data prep, cycle context, combined render, embed).
-- Concurrency Controls for background task worker tuning.
-- Free-threading & GIL controls with environment readiness checks.
-- Dependency free-threading audit and regression checks.
-- Timeline table export validation.
+Developer tools (Tools -> Developer Tools...) provide:
+- Logging & Debug tab with global toggles and immediate-apply behavior.
+- Debug category search/filter plus bulk actions (`Enable All`, `Disable All`).
+- Dump Debug Settings, Clear Debug Once-Guards, and Dump Performance Stats actions.
+- Performance Diagnostics tab with stage-level timings (data prep, cycle context, combined render, embed).
+- Runtime / Advanced tab for concurrency controls and advanced tool launch buttons.
+- Free-threading & GIL controls, dependency free-threading audit, regression checks, and timeline table export validation via dedicated dialogs/actions launched from the hub.
 
 #### Debug Logging and Performance Stats
 The debug/logging framework is centralized and off by default. Use the following workflow:
 
-1) Tools -> Developer Tools -> Enable Debug Logging to turn on debug output.
-2) Tools -> Developer Tools -> Debug Categories to enable specific subsystems.
-3) Optional: Enable Debug File Logging to capture logs in `gl260_debug.log`.
+1) Open Tools -> Developer Tools..., then enable `Enable Debug Logging`.
+2) In Logging & Debug, use category filter and `Enable All`/`Disable All` or per-category toggles.
+3) Optional: Enable `Enable Debug File Logging` to capture logs in `gl260_debug.log`.
 4) Use Dump Debug Settings to verify active categories, and Clear Debug Once-Guards to re-emit one-shot logs.
 5) Use Dump Performance Stats to view aggregated timing/counter metrics.
 
@@ -917,6 +915,19 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v3.0.8 Developer Tools Dialog Hub
+- Reworked Developer Tools into a unified dialog hub to avoid one-by-one menu toggling.
+- Added category bulk actions (`Enable All`, `Disable All`) and category search/filter for faster debug setup.
+- Moved Performance Diagnostics UI into the Developer Tools hub while preserving existing data capture behavior.
+- Kept unrelated/heavier tools in dedicated dialogs, launched from hub controls (Free-Threading, Dependency Audit, Regression Checks).
+- Bumped application version metadata to `v3.0.8` in the script header and `APP_VERSION`.
+
+### v3.0.7 Developer Tools and Diagnostics Expansion
+- Added centralized Developer Tools controls for debug logging/category gating, file logging toggle, and startup tab-cycling preference.
+- Added performance diagnostics capture/reporting pipeline and performance stats dump tooling.
+- Added advanced runtime utilities: Free-Threading & GIL controls, dependency free-threading audit, concurrency controls, and regression check dialog entrypoints.
+- Bumped application version metadata to `v3.0.7` in the script header and `APP_VERSION`.
 
 ### v3.0.3 Process Profiles Plot Settings Retention
 - Added a Process Profiles option: `Keep plot settings for New Profile` (enabled by default).
