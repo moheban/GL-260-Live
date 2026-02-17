@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v3.0.11
+# Version: v3.0.12
 # Date: 2026-02-17
 
 import os
@@ -10097,7 +10097,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v3.0.11"
+APP_VERSION = "v3.0.12"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -37720,6 +37720,22 @@ class UnifiedApp(tk.Tk):
             auto_state = getattr(frame, "_plot_auto_refresh_state", None)
             if auto_state == "refreshing" and not was_initial_render:
                 # Apply the same finalize/draw logic as manual Refresh before revealing.
+                hold_combined_overlay = bool(
+                    plot_key == "fig_combined"
+                    and getattr(frame, "_post_first_draw_refresh_hold_overlay", False)
+                )
+                if hold_combined_overlay:
+                    try:
+                        # Require one draw-confirmed acknowledgement for this refreshed figure.
+                        frame._combined_overlay_completion_draw_pending = True
+                        frame._combined_overlay_completion_fig_id = id(fig)
+                    except Exception:
+                        # Best-effort guard; ignore failures.
+                        pass
+                    self._log_plot_tab_debug(
+                        "Combined refresh finalize armed draw-ack for fig_id=%s."
+                        % id(fig)
+                    )
                 try:
                     self._update_plot_loading_overlay_progress(
                         frame,
@@ -37737,9 +37753,7 @@ class UnifiedApp(tk.Tk):
                 except Exception:
                     # Best-effort guard; ignore failures.
                     pass
-                if plot_key == "fig_combined" and getattr(
-                    frame, "_post_first_draw_refresh_hold_overlay", False
-                ):
+                if hold_combined_overlay:
                     # Defer overlay removal for combined until the post-refresh draw.
                     frame._plot_auto_refresh_state = "pending"
                     frame._plot_auto_refresh_in_progress = False
@@ -37979,6 +37993,8 @@ class UnifiedApp(tk.Tk):
                     frame._combined_overlay_stable_draw_count = 0
                     frame._combined_overlay_finalize_started_at = None
                     frame._combined_overlay_finalize_after_id = None
+                    frame._combined_overlay_completion_draw_pending = False
+                    frame._combined_overlay_completion_fig_id = None
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
@@ -38864,7 +38880,8 @@ class UnifiedApp(tk.Tk):
         Why:
             Combined plots should run a second pass only when data/layout/element
             changes also produce a material geometry shift; ambiguous signal
-            sets fail closed to a second pass.
+            sets fail closed to a second pass. This counter is consumed by
+            draw-confirmed completion gating in the combined overlay flow.
         Inputs:
             frame: Plot tab frame storing combined overlay orchestration state.
             fig: Optional combined figure for current-pass signature capture.
@@ -40211,6 +40228,8 @@ class UnifiedApp(tk.Tk):
                     frame._combined_overlay_stable_draw_count = 0
                     frame._combined_overlay_finalize_started_at = None
                     frame._combined_overlay_finalize_after_id = None
+                    frame._combined_overlay_completion_draw_pending = False
+                    frame._combined_overlay_completion_fig_id = None
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
@@ -43311,6 +43330,8 @@ class UnifiedApp(tk.Tk):
         frame._post_first_draw_refresh_invoked = False
         frame._post_first_draw_refresh_hold_overlay = False
         frame._post_first_draw_refresh_retry_count = 0
+        frame._combined_overlay_completion_draw_pending = False
+        frame._combined_overlay_completion_fig_id = None
         if plot_key in {"fig1", "fig2"}:
             is_real_core = self._is_real_core_figure(fig)
             frame._core_real_figure_installed = bool(is_real_core)
@@ -43343,6 +43364,8 @@ class UnifiedApp(tk.Tk):
             frame._combined_overlay_stable_draw_count = 0
             frame._combined_overlay_finalize_started_at = None
             frame._combined_overlay_finalize_after_id = None
+            frame._combined_overlay_completion_draw_pending = False
+            frame._combined_overlay_completion_fig_id = None
 
         self._log_plot_tab_debug(f"Creating tab frame for '{title}'")
 
@@ -63934,14 +63957,16 @@ class UnifiedApp(tk.Tk):
                 Clear the loading overlay only after the refresh-triggered draw.
             Why:
                 The combined layout stabilizes after multiple refresh passes, so
-                the overlay must remain until the final post-refresh draw finishes.
+                the overlay must remain until the final post-refresh draw
+                acknowledgement is observed for the active refreshed figure.
             Inputs:
                 target_frame: Plot tab frame hosting the combined plot.
                 force_clear: When True, clear even if readiness signals are missing.
             Outputs:
                 None.
             Side Effects:
-                Clears the overlay, resets auto-refresh state, and records logs.
+                Clears the overlay, resets auto-refresh state/ack flags, and
+                records logs.
             Exceptions:
                 Errors are caught to avoid interrupting the UI workflow.
             """
@@ -63957,8 +63982,14 @@ class UnifiedApp(tk.Tk):
                 target_frame, "_post_first_draw_refresh_hold_overlay", False
             )
             if not hold_overlay:
+                try:
+                    target_frame._combined_overlay_completion_draw_pending = False
+                    target_frame._combined_overlay_completion_fig_id = None
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
                 return
-            settle_timeout_seconds = 2.0
+            settle_timeout_seconds = 12.0
             settle_debounce_ms = 40
             completed_count = getattr(
                 target_frame, "_combined_overlay_refresh_completed_count", 0
@@ -63995,6 +64026,17 @@ class UnifiedApp(tk.Tk):
             pending_apply_for_active = pending_apply and (
                 active_fig_id is None or pending_fig_id == active_fig_id
             )
+            pending_completion_draw = bool(
+                getattr(target_frame, "_combined_overlay_completion_draw_pending", False)
+            )
+            pending_completion_fig_id = getattr(
+                target_frame, "_combined_overlay_completion_fig_id", None
+            )
+            pending_completion_for_active = pending_completion_draw and (
+                active_fig_id is None
+                or pending_completion_fig_id is None
+                or pending_completion_fig_id == active_fig_id
+            )
             redraw_queued = bool(
                 getattr(active_fig, "_cycle_legend_redraw_queued", False)
                 if active_fig is not None
@@ -64003,12 +64045,15 @@ class UnifiedApp(tk.Tk):
             base_requirements_met = (
                 completed_count >= target_refreshes and ready_seen
             )
-            settle_requirements_met = (
+            settle_requirements_no_ack = (
                 base_requirements_met
                 and not auto_refresh_pending
                 and not combined_busy
                 and not pending_apply_for_active
                 and not redraw_queued
+            )
+            settle_requirements_met = (
+                settle_requirements_no_ack and not pending_completion_for_active
             )
             current_geometry_sig = self._combined_rendered_geometry_signature(active_fig)
             stable_count = getattr(target_frame, "_combined_overlay_stable_draw_count", 0)
@@ -64045,7 +64090,7 @@ class UnifiedApp(tk.Tk):
                 target_frame, "_combined_overlay_finalize_started_at", None
             )
             now_monotonic = time.monotonic()
-            if settle_requirements_met:
+            if settle_requirements_no_ack:
                 if finalize_started_at is None:
                     finalize_started_at = now_monotonic
                     try:
@@ -64066,21 +64111,31 @@ class UnifiedApp(tk.Tk):
             timed_out = False
             if (
                 not force_clear
-                and settle_requirements_met
+                and settle_requirements_no_ack
                 and finalize_started_at is not None
                 and (now_monotonic - float(finalize_started_at)) >= settle_timeout_seconds
             ):
                 timed_out = True
                 force_clear = True
                 self._log_plot_tab_debug(
-                    "Combined overlay settle timeout reached (%.2fs); forcing clear."
-                    % settle_timeout_seconds
+                    "Combined overlay settle timeout reached (%.2fs); forcing clear. completed=%s target=%s ready_seen=%s after_pending=%s busy=%s pending_apply=%s pending_draw_ack=%s redraw_queued=%s."
+                    % (
+                        settle_timeout_seconds,
+                        completed_count,
+                        target_refreshes,
+                        ready_seen,
+                        auto_refresh_pending,
+                        combined_busy,
+                        pending_apply_for_active,
+                        pending_completion_for_active,
+                        redraw_queued,
+                    )
                 )
 
             if not force_clear:
                 if not settle_requirements_met:
                     self._log_plot_tab_debug(
-                        "Combined overlay hold; completed=%s target=%s ready_seen=%s after_pending=%s busy=%s pending_apply=%s redraw_queued=%s."
+                        "Combined overlay hold; completed=%s target=%s ready_seen=%s after_pending=%s busy=%s pending_apply=%s pending_draw_ack=%s redraw_queued=%s."
                         % (
                             completed_count,
                             target_refreshes,
@@ -64088,6 +64143,7 @@ class UnifiedApp(tk.Tk):
                             auto_refresh_pending,
                             combined_busy,
                             pending_apply_for_active,
+                            pending_completion_for_active,
                             redraw_queued,
                         )
                     )
@@ -64147,6 +64203,8 @@ class UnifiedApp(tk.Tk):
                 target_frame._combined_overlay_last_geometry_sig = None
                 target_frame._combined_overlay_finalize_started_at = None
                 target_frame._combined_overlay_finalize_after_id = None
+                target_frame._combined_overlay_completion_draw_pending = False
+                target_frame._combined_overlay_completion_fig_id = None
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
@@ -64271,12 +64329,21 @@ class UnifiedApp(tk.Tk):
                 Outputs:
                     None.
                 Side Effects:
-                    Flags auto-refresh invocation and calls the refresh callback.
+                    Flags auto-refresh invocation, resets stale completion-ack
+                    state, and calls the refresh callback.
                 Exceptions:
                     Errors are caught to avoid UI interruption and overlay stalls.
                 """
                 try:
                     target_frame._post_first_draw_refresh_invoked = True
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting
+                    # the workflow.
+                    pass
+                try:
+                    # Reset stale completion-ack state before invoking a fresh pass.
+                    target_frame._combined_overlay_completion_draw_pending = False
+                    target_frame._combined_overlay_completion_fig_id = None
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting
                     # the workflow.
@@ -64341,7 +64408,9 @@ class UnifiedApp(tk.Tk):
                 None.
 
             Side Effects:
-                Applies queued cycle legend offsets and triggers a redraw.
+                Applies queued cycle legend offsets, records draw-confirmed
+                completion for the active combined refresh pass, and may trigger
+                a redraw.
 
             Exceptions:
                 None.
@@ -64423,19 +64492,40 @@ class UnifiedApp(tk.Tk):
                         completed_count = int(completed_count)
                     except Exception:
                         completed_count = 0
-                    if invoked_count > completed_count:
+                    completion_draw_pending = bool(
+                        getattr(frame, "_combined_overlay_completion_draw_pending", False)
+                    )
+                    completion_fig_id = getattr(
+                        frame, "_combined_overlay_completion_fig_id", None
+                    )
+                    draw_matches_completion = completion_draw_pending and (
+                        completion_fig_id is None or completion_fig_id == id(fig)
+                    )
+                    if draw_matches_completion:
                         completed_count = self._mark_combined_overlay_refresh_completed(
                             frame,
                             fig=fig,
                         )
+                        try:
+                            frame._combined_overlay_completion_draw_pending = False
+                            frame._combined_overlay_completion_fig_id = None
+                        except Exception:
+                            # Best-effort guard; ignore failures to avoid interrupting
+                            # the workflow.
+                            pass
                         target_refreshes = getattr(
                             frame,
                             "_combined_overlay_target_refreshes",
                             self._combined_overlay_default_target_refreshes(),
                         )
                         self._log_plot_tab_debug(
-                            "Combined draw-confirmed refresh completion recorded: invoked=%s completed=%s target=%s."
-                            % (invoked_count, completed_count, target_refreshes)
+                            "Combined draw-confirmed refresh completion recorded: invoked=%s completed=%s target=%s fig_id=%s."
+                            % (invoked_count, completed_count, target_refreshes, id(fig))
+                        )
+                    elif completion_draw_pending:
+                        self._log_plot_tab_debug(
+                            "Combined draw ignored for completion ack; waiting for fig_id=%s (active=%s)."
+                            % (completion_fig_id, id(fig))
                         )
                     target_refreshes = getattr(
                         frame,

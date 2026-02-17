@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v3.0.11)
+# GL-260 Data Analysis and Plotter (v3.0.12)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v3.0.11`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v3.0.12`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v3.0.12 Combined Triple-Axis Splash Finalization Hardening](#v3012-combined-triple-axis-splash-finalization-hardening)
   - [v3.0.11 Combined Draw-Confirmed Refresh + Authoritative Layout Margins](#v3011-combined-draw-confirmed-refresh--authoritative-layout-margins)
   - [v3.0.10 CTk Numeric Entry Callback Hardening](#v3010-ctk-numeric-entry-callback-hardening)
   - [v3.0.9 Import Progress + Preview Element Sync + Shadowbox Color Controls](#v309-import-progress--preview-element-sync--shadowbox-color-controls)
@@ -919,6 +920,13 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v3.0.12 Combined Triple-Axis Splash Finalization Hardening
+- Hardened combined triple-axis overlay finalization so refresh completion is counted only from draw-confirmed acknowledgements tied to the active refreshed combined figure.
+- Added explicit completion-ack state (`_combined_overlay_completion_draw_pending` and `_combined_overlay_completion_fig_id`) and reset paths so stale callbacks cannot clear the splash early.
+- Kept strict overlay hold behavior until final combined layout/draw stabilization is complete, including post-refresh acknowledgement and geometry settle checks.
+- Increased the combined overlay emergency settle timeout from `2.0s` to `12.0s`, with expanded timeout diagnostics that include completion and pending-state details.
+- Bumped application version metadata to `v3.0.12` in the script header and `APP_VERSION`.
 
 ### v3.0.11 Combined Draw-Confirmed Refresh + Authoritative Layout Margins
 - Moved combined refresh completion accounting to the draw-confirmed callback path so manual refresh, auto-refresh, and Plot Settings apply-triggered refresh keep the splash/overlay active until the final drawn state is actually complete.
