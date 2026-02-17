@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v3.0.9
+# Version: v3.0.10
 # Date: 2026-02-17
 
 import os
@@ -200,6 +200,159 @@ def _normalize_ctk_input_width(width_value: Any) -> Any:
     return width_int
 
 
+def _install_ctk_numeric_entry_bridge(
+    entry_widget: Any,
+    numeric_var: tk.Variable,
+    proxy_var: tk.StringVar,
+) -> None:
+    """Bridge CTk entry text updates to numeric Tk variables safely.
+
+    Purpose:
+        Prevent CustomTkinter entry callbacks from crashing when numeric Tk
+        variables temporarily receive blank/partial text during editing.
+    Why:
+        `ctk.CTkEntry` reads the bound variable via `.get()` during internal
+        callbacks. Binding `tk.DoubleVar` or `tk.IntVar` directly can raise
+        `TclError` while a user clears or partially edits the field.
+    Args:
+        entry_widget: The CTk entry widget receiving text input.
+        numeric_var: Backing numeric Tk variable (`tk.DoubleVar`/`tk.IntVar`).
+        proxy_var: String proxy variable bound to the CTk entry.
+    Returns:
+        None.
+    Side Effects:
+        Registers write traces on both variables, synchronizes numeric values
+        into the proxy, and attaches destroy-time cleanup to remove traces.
+    Exceptions:
+        Best-effort guards suppress trace cleanup/sync failures to keep UI
+        workflows responsive.
+    """
+    if entry_widget is None or numeric_var is None or proxy_var is None:
+        return
+    is_int_var = isinstance(numeric_var, tk.IntVar)
+    bridge_state: Dict[str, Any] = {
+        "syncing": False,
+        "proxy_trace_id": None,
+        "numeric_trace_id": None,
+    }
+
+    def _parse_proxy_value(raw_value: Any) -> Optional[float | int]:
+        """Parse proxy text into a valid numeric value for the target variable."""
+        text = str(raw_value or "").strip()
+        if not text:
+            return None
+        try:
+            parsed_float = float(text)
+        except Exception:
+            return None
+        if not math.isfinite(parsed_float):
+            return None
+        if not is_int_var:
+            return parsed_float
+        parsed_int = int(parsed_float)
+        if abs(parsed_float - float(parsed_int)) > 1e-9:
+            return None
+        return parsed_int
+
+    # Closure captures bridge locals to keep numeric-entry synchronization scoped.
+    def _sync_proxy_from_numeric(*_args: Any) -> None:
+        """Mirror committed numeric values into the CTk-bound proxy variable."""
+        if bridge_state["syncing"]:
+            return
+        try:
+            numeric_value = numeric_var.get()
+        except Exception:
+            return
+        if is_int_var:
+            try:
+                display_value = str(int(float(numeric_value)))
+            except Exception:
+                return
+        else:
+            try:
+                numeric_float = float(numeric_value)
+            except Exception:
+                return
+            if not math.isfinite(numeric_float):
+                return
+            display_value = f"{numeric_float:g}"
+        bridge_state["syncing"] = True
+        try:
+            if proxy_var.get() != display_value:
+                proxy_var.set(display_value)
+        finally:
+            bridge_state["syncing"] = False
+
+    # Closure captures bridge locals to keep numeric-entry synchronization scoped.
+    def _commit_proxy_to_numeric(*_args: Any) -> None:
+        """Commit parseable proxy text into the numeric variable.
+
+        Blank or invalid text is ignored so previously committed numeric values
+        remain intact until the user enters a valid number.
+        """
+        if bridge_state["syncing"]:
+            return
+        parsed_value = _parse_proxy_value(proxy_var.get())
+        if parsed_value is None:
+            return
+        bridge_state["syncing"] = True
+        try:
+            numeric_var.set(parsed_value)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        finally:
+            bridge_state["syncing"] = False
+
+    # Closure captures bridge locals to keep numeric-entry synchronization scoped.
+    def _cleanup_bridge(_event: Any = None) -> None:
+        """Detach bridge traces when the entry widget is destroyed."""
+        proxy_trace_id = bridge_state.get("proxy_trace_id")
+        numeric_trace_id = bridge_state.get("numeric_trace_id")
+        if proxy_trace_id:
+            try:
+                proxy_var.trace_remove("write", proxy_trace_id)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        if numeric_trace_id:
+            try:
+                numeric_var.trace_remove("write", numeric_trace_id)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        bridge_state["proxy_trace_id"] = None
+        bridge_state["numeric_trace_id"] = None
+        try:
+            setattr(entry_widget, "_gl260_ctk_numeric_bridge", None)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    bridge_state["proxy_trace_id"] = proxy_var.trace_add("write", _commit_proxy_to_numeric)
+    bridge_state["numeric_trace_id"] = numeric_var.trace_add("write", _sync_proxy_from_numeric)
+    _sync_proxy_from_numeric()
+    try:
+        entry_widget.bind("<Destroy>", _cleanup_bridge, add="+")
+    except Exception:
+        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+        pass
+    try:
+        setattr(
+            entry_widget,
+            "_gl260_ctk_numeric_bridge",
+            {
+                "numeric_var": numeric_var,
+                "proxy_var": proxy_var,
+                "state": bridge_state,
+                "cleanup": _cleanup_bridge,
+            },
+        )
+    except Exception:
+        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+        pass
+
+
 def _ui_entry(parent, *args, **kwargs):
     """Create an entry widget using CTk when available, else ttk.
 
@@ -221,6 +374,11 @@ def _ui_entry(parent, *args, **kwargs):
     if ctk is None:
         return ttk.Entry(parent, *args, **kwargs)
     ctk_kwargs = dict(kwargs)
+    numeric_source_var = ctk_kwargs.get("textvariable")
+    numeric_proxy_var: Optional[tk.StringVar] = None
+    if isinstance(numeric_source_var, (tk.DoubleVar, tk.IntVar)):
+        numeric_proxy_var = tk.StringVar(master=parent, value="")
+        ctk_kwargs["textvariable"] = numeric_proxy_var
     if str(ctk_kwargs.get("state", "")).strip().lower() == "readonly":
         ctk_kwargs["state"] = "disabled"
     if "width" in ctk_kwargs:
@@ -231,7 +389,16 @@ def _ui_entry(parent, *args, **kwargs):
             ctk_kwargs["width"] = normalized_width
     ctk_kwargs.pop("style", None)
     ctk_kwargs.pop("padding", None)
-    return ctk.CTkEntry(parent, *args, **ctk_kwargs)
+    entry_widget = ctk.CTkEntry(parent, *args, **ctk_kwargs)
+    if numeric_proxy_var is not None and isinstance(
+        numeric_source_var, (tk.DoubleVar, tk.IntVar)
+    ):
+        _install_ctk_numeric_entry_bridge(
+            entry_widget,
+            numeric_source_var,
+            numeric_proxy_var,
+        )
+    return entry_widget
 
 
 def _ui_combobox(parent, *args, **kwargs):
@@ -9908,7 +10075,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v3.0.9"
+APP_VERSION = "v3.0.10"
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -83406,10 +83573,25 @@ class UnifiedApp(tk.Tk):
             return ttk.Button(parent, text=text, command=command)
 
         def _make_entry(parent, *, textvariable=None):
-            """Create one text entry using CTk when available, else ttk."""
-            if ctk_module is not None:
-                return ctk_module.CTkEntry(parent, textvariable=textvariable)
-            return ttk.Entry(parent, textvariable=textvariable)
+            """Create one text entry with centralized CTk/ttk safety handling.
+
+            Purpose:
+                Build Data-tab entry controls through the shared entry helper.
+            Why:
+                `_ui_entry` now applies CTk numeric-variable bridging so transient
+                blank edits cannot crash callback paths on numeric Tk variables.
+            Inputs:
+                parent: Container receiving the entry widget.
+                textvariable: Optional Tk variable bound to the entry.
+            Outputs:
+                One configured text-entry widget.
+            Side Effects:
+                Uses CTk when available, otherwise ttk; numeric bridge wiring is
+                applied automatically in CTk mode via `_ui_entry`.
+            Exceptions:
+                Best-effort behavior is handled inside `_ui_entry`.
+            """
+            return _ui_entry(parent, textvariable=textvariable)
 
         def _make_radio(parent, *, text: str, value: str, variable, command):
             """Create one radio button using CTk when available, else ttk."""
@@ -83919,16 +84101,33 @@ class UnifiedApp(tk.Tk):
             ctk_width: Optional[int] = None,
             ttk_width: Optional[int] = None,
         ):
-            """Create one text entry with CTk/ttk compatibility options."""
+            """Create one text entry while preserving CTk/ttk width semantics.
+
+            Purpose:
+                Build Columns-tab entry controls through the shared entry helper.
+            Why:
+                Routing through `_ui_entry` ensures CTk numeric-variable bridging
+                is applied uniformly and avoids duplicate entry-construction logic.
+            Inputs:
+                parent: Container receiving the entry widget.
+                textvariable: Tk variable bound to the entry text.
+                ctk_width: Width hint used when CTk is active.
+                ttk_width: Width hint used when ttk fallback is active.
+            Outputs:
+                One configured text-entry widget.
+            Side Effects:
+                Applies toolkit-specific width hints and delegates widget creation
+                to `_ui_entry`, including CTk numeric safety handling.
+            Exceptions:
+                Best-effort behavior is handled inside `_ui_entry`.
+            """
+            kwargs: Dict[str, Any] = {"textvariable": textvariable}
             if ctk_module is not None:
-                kwargs: Dict[str, Any] = {"textvariable": textvariable}
                 if ctk_width is not None:
                     kwargs["width"] = ctk_width
-                return ctk_module.CTkEntry(parent, **kwargs)
-            kwargs = {"textvariable": textvariable}
-            if ttk_width is not None:
+            elif ttk_width is not None:
                 kwargs["width"] = ttk_width
-            return ttk.Entry(parent, **kwargs)
+            return _ui_entry(parent, **kwargs)
 
         def _make_button(
             parent,

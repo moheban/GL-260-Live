@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v3.0.9)
+# GL-260 Data Analysis and Plotter (v3.0.10)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v3.0.9`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v3.0.10`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v3.0.10 CTk Numeric Entry Callback Hardening](#v3010-ctk-numeric-entry-callback-hardening)
   - [v3.0.9 Import Progress + Preview Element Sync + Shadowbox Color Controls](#v309-import-progress--preview-element-sync--shadowbox-color-controls)
   - [v3.0.8 Developer Tools Dialog Hub](#v308-developer-tools-dialog-hub)
   - [v3.0.7 Developer Tools and Diagnostics Expansion](#v307-developer-tools-and-diagnostics-expansion)
@@ -917,6 +918,12 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v3.0.10 CTk Numeric Entry Callback Hardening
+- Hardened CTk entry handling for numeric Tk variables (`DoubleVar` / `IntVar`) by introducing a shared string-proxy bridge in `_ui_entry`, preventing callback crashes when fields are temporarily blank during edits.
+- Blank or invalid numeric text now preserves the last committed numeric value instead of attempting to write `""` into numeric Tk variables.
+- Routed key CTk local entry wrappers (Data/Columns builders) through `_ui_entry` so numeric-entry safety behavior is applied consistently across those surfaces.
+- Bumped application version metadata to `v3.0.10` in the script header and `APP_VERSION`.
 
 ### v3.0.9 Import Progress + Preview Element Sync + Shadowbox Color Controls
 - Added an indeterminate progress bar to the `Import GL-260 CSV` dialog footer so imports show active work instead of appearing frozen.
