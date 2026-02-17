@@ -38173,6 +38173,7 @@ class UnifiedApp(tk.Tk):
         canvas,
         *,
         capture_combined_legend: bool = True,
+        refresh_reason: Optional[str] = None,
     ):
         """Force a plot refresh and rebuild as needed.
 
@@ -38188,6 +38189,8 @@ class UnifiedApp(tk.Tk):
             canvas: FigureCanvasTkAgg displaying the figure.
             capture_combined_legend: When True, capture combined legend anchors
                 before refresh if persistence is enabled and not locked.
+            refresh_reason: Optional splash message shown while the refresh
+                pipeline runs.
 
         Returns:
             None.
@@ -38200,7 +38203,8 @@ class UnifiedApp(tk.Tk):
             display/layout finalization for the active canvas (including the
             combined plot on every refresh), defers combined refresh until
             geometry is ready, starts background compute, and schedules UI-thread
-            rendering/overlay updates.
+            rendering/overlay updates. When provided, `refresh_reason` is used
+            as the initial overlay message.
 
         Exceptions:
             Internal errors are caught and ignored to keep UI responsive.
@@ -38231,9 +38235,13 @@ class UnifiedApp(tk.Tk):
             frame._plot_auto_refresh_state = "refreshing"
             frame._plot_auto_refresh_in_progress = True
         overlay_message = (
-            "Refreshing combined plot..."
-            if plot_key == "fig_combined"
-            else "Refreshing plot..."
+            str(refresh_reason).strip()
+            if isinstance(refresh_reason, str) and str(refresh_reason).strip()
+            else (
+                "Refreshing combined plot..."
+                if plot_key == "fig_combined"
+                else "Refreshing plot..."
+            )
         )
         refresh_widget = None
         try:
@@ -38304,6 +38312,7 @@ class UnifiedApp(tk.Tk):
                                 frame,
                                 canvas,
                                 capture_combined_legend=capture_combined_legend,
+                                refresh_reason=refresh_reason,
                             ),
                         )
                     except Exception:
@@ -38312,6 +38321,7 @@ class UnifiedApp(tk.Tk):
                                 frame,
                                 canvas,
                                 capture_combined_legend=capture_combined_legend,
+                                refresh_reason=refresh_reason,
                             )
                         )
                     return
@@ -39082,11 +39092,45 @@ class UnifiedApp(tk.Tk):
             return
         self._set_plot_dirty_flags(plot_id, dirty_elements=True)
 
-    def _refresh_plot_for_plot_id(self, plot_id: Optional[str]) -> None:
-        """Refresh plot for plot ID.
-        Used to sync plot for plot ID with current settings."""
+    def _refresh_plot_for_plot_id(
+        self,
+        plot_id: Optional[str],
+        *,
+        reason: Optional[str] = None,
+        rearm_overlay: bool = False,
+        capture_combined_legend: bool = True,
+    ) -> None:
+        """Run one unified refresh pipeline for a plot tab.
+
+        Purpose:
+            Route plot-tab refresh requests through one overlay-aware path.
+        Why:
+            Plot Settings/Data Trace/Layout apply actions and manual Refresh
+            must share the same stabilization pipeline to avoid post-splash
+            layout snaps.
+        Inputs:
+            plot_id: Plot identifier for the target tab.
+            reason: Optional splash message shown at refresh start.
+            rearm_overlay: When True, reset overlay orchestration state before
+                invoking refresh.
+            capture_combined_legend: When True, capture combined legend anchors
+                before combined refresh rebuild.
+        Outputs:
+            None.
+        Side Effects:
+            Optionally resets overlay orchestration state and invokes
+            `_force_plot_refresh` for the target tab/canvas.
+        Exceptions:
+            Best-effort guards suppress refresh failures to keep UI responsive.
+        """
         if not plot_id:
             return
+        if rearm_overlay:
+            try:
+                self._prepare_plot_refresh_overlay_for_settings(plot_id)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
         # Iterate over indexed elements from getattr(self, "_plot_tabs", []) or [] to apply the per-item logic.
         for idx, tab in enumerate(getattr(self, "_plot_tabs", []) or []):
             if getattr(tab, "_plot_id", None) != plot_id:
@@ -39094,7 +39138,12 @@ class UnifiedApp(tk.Tk):
             if idx < len(getattr(self, "_canvases", []) or []):
                 canvas = self._canvases[idx]
                 try:
-                    self._force_plot_refresh(tab, canvas)
+                    self._force_plot_refresh(
+                        tab,
+                        canvas,
+                        capture_combined_legend=capture_combined_legend,
+                        refresh_reason=reason,
+                    )
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
@@ -39514,7 +39563,12 @@ class UnifiedApp(tk.Tk):
                         Errors are guarded to keep close flow resilient.
                     """
                     try:
-                        self._refresh_plot_for_plot_id(plot_id)
+                        self._refresh_plot_for_plot_id(
+                            plot_id,
+                            reason="Refreshing Plot Elements...",
+                            rearm_overlay=True,
+                            capture_combined_legend=False,
+                        )
                     except Exception:
                         # Best-effort guard; ignore failures to avoid interrupting the workflow.
                         pass
@@ -40910,8 +40964,28 @@ class UnifiedApp(tk.Tk):
         pending: Dict[str, Any],
         target_mode: str,
     ) -> None:
-        """Apply layout editor changes.
-        Used to apply layout editor changes changes to live state."""
+        """Commit staged layout editor values and refresh target display tab.
+
+        Purpose:
+            Persist staged layout edits into the selected layout profile mode(s).
+        Why:
+            Layout editor Apply/Close should use the same splash-backed refresh
+            pipeline as manual Refresh so users do not see late layout snaps.
+        Inputs:
+            plot_id: Plot identifier whose layout profile is being edited.
+            fig: Active figure reference from the editor state.
+            canvas: Active canvas reference from the editor state.
+            pending: Staged layout changes captured by editor handles.
+            target_mode: Profile target mode (`display`, `export`, or `both`).
+        Outputs:
+            None.
+        Side Effects:
+            Updates layout profile sections, persists settings, marks layout
+            dirty, and triggers a unified display refresh when display mode is
+            affected.
+        Exceptions:
+            Best-effort guards suppress non-critical UI and persistence failures.
+        """
         if fig is None or not plot_id:
             return
         mode_value = (target_mode or "display").strip().lower()
@@ -40977,23 +41051,20 @@ class UnifiedApp(tk.Tk):
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
-        if mode_value in {"display", "both"}:
-            try:
-                _apply_layout_profile_to_figure(fig, plot_id, "display")
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-            try:
-                if canvas is not None:
-                    canvas.draw_idle()
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
         try:
             self._mark_plot_layout_dirty(plot_id)
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+        if mode_value in {"display", "both"}:
+            # Route display-impacting layout edits through the unified refresh
+            # path so final layout stabilization remains behind the overlay.
+            self._refresh_plot_for_plot_id(
+                plot_id,
+                reason="Applying Layout Changes...",
+                rearm_overlay=True,
+                capture_combined_legend=False,
+            )
 
     def _teardown_layout_editor(
         self,
@@ -42377,13 +42448,33 @@ class UnifiedApp(tk.Tk):
 
         # Closure captures _add_plot_tab state for callback wiring, kept nested to
         # scope the handler, and invoked by bindings set in _add_plot_tab.
-        def _refresh_panel():
-            """Refresh the plot panel using the manual Refresh pipeline.
+        def _refresh_panel_internal() -> None:
+            """Refresh panel via internal orchestration callback.
+
+            Purpose:
+                Execute one refresh pass for auto-refresh orchestration.
+            Why:
+                Post-draw and adaptive refresh passes rely on the legacy direct
+                refresh callback and must not re-arm overlay counters.
+            Inputs:
+                None.
+            Outputs:
+                None.
+            Side Effects:
+                Invokes `_force_plot_refresh` on the current frame/canvas pair.
+            Exceptions:
+                Errors are handled by the downstream refresh pipeline.
+            """
+            self._force_plot_refresh(frame, canvas)
+
+        def _refresh_panel_user() -> None:
+            """Refresh the plot panel using the user-facing unified pipeline.
 
             Purpose:
                 Rebuild the current plot tab using the same Refresh logic.
             Why:
-                Ensures the manual Refresh callback is reusable for post-draw refreshes.
+                Manual Refresh should re-arm overlay orchestration and avoid
+                pre-refresh combined legend recapture drift.
             Inputs:
                 None.
             Outputs:
@@ -42393,10 +42484,28 @@ class UnifiedApp(tk.Tk):
             Exceptions:
                 Errors are handled by the downstream refresh pipeline.
             """
-            self._force_plot_refresh(frame, canvas)
+            refresh_message = (
+                "Refreshing combined plot..."
+                if plot_key == "fig_combined"
+                else "Refreshing plot..."
+            )
+            if plot_id:
+                self._refresh_plot_for_plot_id(
+                    plot_id,
+                    reason=refresh_message,
+                    rearm_overlay=True,
+                    capture_combined_legend=False,
+                )
+                return
+            self._force_plot_refresh(
+                frame,
+                canvas,
+                capture_combined_legend=False,
+                refresh_reason=refresh_message,
+            )
 
         # Assign the refresh command before any draw/draw_idle can run.
-        frame._refresh_command = _refresh_panel
+        frame._refresh_command = _refresh_panel_internal
 
         toolbar = NavigationToolbar2Tk(canvas, topbar)  # mount toolbar in the topbar
 
@@ -42891,7 +43000,7 @@ class UnifiedApp(tk.Tk):
         btn_refresh = _ui_button(
             topbar,
             text="Refresh",
-            command=_refresh_panel,
+            command=_refresh_panel_user,
         )
 
         btn_refresh.pack(side="right", padx=6, pady=4)
@@ -43339,6 +43448,12 @@ class UnifiedApp(tk.Tk):
         """
         if plot_key != "fig_combined":
             return
+        try:
+            # Ensure preview uses the latest staged Plot Settings values.
+            self._flush_open_plot_settings_dialog(refresh_after_apply=False)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
         preview_plot_id = plot_id or "fig_combined_triple_axis"
         try:
             _display_frame, display_canvas = self._find_plot_tab_canvas("fig_combined")
@@ -43757,7 +43872,7 @@ class UnifiedApp(tk.Tk):
                         fig=fig,
                         tk_widget=widget,
                         keep_export_size=True,
-                        trigger_resize_event=True,
+                        trigger_resize_event=False,
                         force_draw=True,
                     )
                 except Exception:
@@ -45962,7 +46077,12 @@ class UnifiedApp(tk.Tk):
                 "fig_combined_triple_axis",
                 "fig_cycle_analysis",
             ):
-                self._refresh_plot_for_plot_id(plot_id)
+                self._refresh_plot_for_plot_id(
+                    plot_id,
+                    reason="Applying Data Trace Settings...",
+                    rearm_overlay=True,
+                    capture_combined_legend=False,
+                )
 
             if close_after:
                 _cancel()
@@ -50325,10 +50445,14 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
             if refresh_after_apply:
-                if is_combined:
-                    self._schedule_combined_preview_refresh()
-                self._prepare_plot_refresh_overlay_for_settings(plot_id)
-                self._refresh_plot_for_plot_id(plot_id)
+                # Route dialog apply through one refresh path so overlay release
+                # waits for final layout stabilization.
+                self._refresh_plot_for_plot_id(
+                    plot_id,
+                    reason="Applying Plot Settings...",
+                    rearm_overlay=True,
+                    capture_combined_legend=False,
+                )
             baseline_snapshot = _normalized_plot_settings_snapshot()
             if close_after:
                 self._close_plot_settings_dialog()
