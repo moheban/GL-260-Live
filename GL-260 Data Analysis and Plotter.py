@@ -36168,6 +36168,8 @@ class UnifiedApp(tk.Tk):
             None.
         Side Effects:
             Creates and places overlay widgets, stores overlay references on the frame.
+            When an overlay already exists, reuses it without resetting progress
+            so in-flight render stages remain monotonic.
         Exceptions:
             Overlay creation errors are caught to avoid UI interruption.
         """
@@ -36178,8 +36180,9 @@ class UnifiedApp(tk.Tk):
             try:
                 if overlay.winfo_exists():
                     overlay.lift()
+                    # Preserve in-flight progress when reusing an existing overlay.
                     self._update_plot_loading_overlay_progress(
-                        frame, progress=5.0, message=message, reset=True
+                        frame, message=message
                     )
                     return
             except Exception:
@@ -38203,8 +38206,10 @@ class UnifiedApp(tk.Tk):
             display/layout finalization for the active canvas (including the
             combined plot on every refresh), defers combined refresh until
             geometry is ready, starts background compute, and schedules UI-thread
-            rendering/overlay updates. When provided, `refresh_reason` is used
-            as the initial overlay message.
+            rendering/overlay updates. Refresh kickoff updates the stage/message
+            without resetting active overlay progress so nested passes remain
+            monotonic. When provided, `refresh_reason` is used as the initial
+            overlay message.
 
         Exceptions:
             Internal errors are caught and ignored to keep UI responsive.
@@ -38261,11 +38266,11 @@ class UnifiedApp(tk.Tk):
                 refresh_widget,
                 message=overlay_message,
             )
+        # Keep refresh kickoff monotonic when the overlay is already in a later stage.
         self._update_plot_loading_overlay_progress(
             frame,
             progress=12.0,
             message=overlay_message,
-            reset=True,
         )
         combined_widget = None
         combined_size = None
