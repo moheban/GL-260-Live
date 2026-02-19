@@ -1015,7 +1015,9 @@ def _detect_mingw_bin_dir() -> str:
     return ""
 
 
-def _rustup_installed_targets(*, rustup_cmd: Optional[str] = None) -> Set[str]:
+def _rustup_installed_targets(
+    *, rustup_cmd: Optional[str] = None, toolchain: Optional[str] = None
+) -> Set[str]:
     """Return installed rustup targets for the active Rust installation.
 
     Purpose:
@@ -1025,17 +1027,24 @@ def _rustup_installed_targets(*, rustup_cmd: Optional[str] = None) -> Set[str]:
         install missing targets when required.
     Inputs:
         rustup_cmd: Optional rustup executable path/token to invoke.
+        toolchain: Optional rustup toolchain token for a scoped target query.
     Outputs:
         Set of installed target-triple strings.
     Side Effects:
-        Executes `rustup target list --installed`.
+        Executes `rustup target list --installed`, optionally scoped with
+        `--toolchain <token>`.
     Exceptions:
         Command failures return an empty set.
     """
     rustup_exe = str(rustup_cmd or shutil.which("rustup") or "").strip()
     if not rustup_exe:
         return set()
-    ok, details = _run_command_for_status([rustup_exe, "target", "list", "--installed"])
+    command = [rustup_exe, "target", "list"]
+    toolchain_token = str(toolchain or "").strip()
+    if toolchain_token:
+        command.extend(["--toolchain", toolchain_token])
+    command.append("--installed")
+    ok, details = _run_command_for_status(command)
     if not ok:
         return set()
     targets: Set[str] = set()
@@ -1356,18 +1365,20 @@ def _detect_rust_runtime_requirements() -> Dict[str, Any]:
     mingw_bin_dir = _detect_mingw_bin_dir()
     msvc_linker_ok = bool(msvc_linker_path)
     mingw_ok = bool(mingw_bin_dir)
-    installed_targets = (
-        _rustup_installed_targets(rustup_cmd=rustup_cmd)
-        if rustup_ok
-        else set()
-    )
     installed_toolchains = (
         _rustup_installed_toolchains(rustup_cmd=rustup_cmd)
         if rustup_ok
         else set()
     )
-    gnu_target_installed = GNU_TARGET in installed_targets
     gnu_toolchain_installed = GNU_TOOLCHAIN in installed_toolchains
+    # Query GNU targets against the GNU toolchain explicitly to avoid false
+    # negatives when the default host toolchain is still MSVC.
+    gnu_installed_targets = (
+        _rustup_installed_targets(rustup_cmd=rustup_cmd, toolchain=GNU_TOOLCHAIN)
+        if rustup_ok and gnu_toolchain_installed
+        else set()
+    )
+    gnu_target_installed = GNU_TARGET in gnu_installed_targets
     selected_build_strategy = "unavailable"
     if rustup_ok and rustc_ok and cargo_ok:
         if msvc_linker_ok:
