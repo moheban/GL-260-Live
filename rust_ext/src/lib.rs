@@ -1,5 +1,7 @@
+use numpy::PyReadonlyArray1;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList};
+use std::collections::BTreeSet;
 
 const SOL_KA1: f64 = 4.45e-7;
 const SOL_KA2: f64 = 4.69e-11;
@@ -10,6 +12,7 @@ const SOL_A_DEBYE: f64 = 0.509;
 const SOL_B_DEBYE: f64 = 0.328;
 const SOL_DAVIES_LIMIT: f64 = 0.5;
 const SOL_DAVIES_COEFF: f64 = 0.3;
+const CYCLE_GAS_CONSTANT: f64 = 0.082057338;
 const SOL_PKA1_COEFFS: (f64, f64, f64) = (-1.333e-5, -0.008867, 6.58);
 const SOL_PKA2_COEFFS: (f64, f64, f64) = (-3.5238e-5, -0.010719, 10.62);
 const PLANNING_PLATEAU_CARBONATE_THRESHOLD: f64 = 1e-9;
@@ -695,6 +698,513 @@ fn analyze_bicarbonate_core(
     Ok(Some(out.unbind()))
 }
 
+fn dict_index_value(dict: &Bound<'_, PyDict>, key: &str) -> Option<usize> {
+    let raw = dict
+        .get_item(key)
+        .ok()
+        .flatten()
+        .and_then(|value| value.extract::<isize>().ok())?;
+    if raw < 0 {
+        return None;
+    }
+    usize::try_from(raw).ok()
+}
+
+fn finite_value_or_nan(value: f64) -> f64 {
+    if value.is_finite() {
+        value
+    } else {
+        f64::NAN
+    }
+}
+
+fn vdw_moles_from_delta_p(
+    delta_p_atm: f64,
+    volume_l: f64,
+    temp_k: f64,
+    a: f64,
+    b: f64,
+) -> Option<f64> {
+    if !delta_p_atm.is_finite() || !volume_l.is_finite() || !temp_k.is_finite() {
+        return None;
+    }
+    if delta_p_atm < 0.0 || volume_l <= 0.0 || temp_k <= 0.0 {
+        return None;
+    }
+    let mut n = ((delta_p_atm * volume_l) / (CYCLE_GAS_CONSTANT * temp_k)).max(0.0);
+    let upper = if b > 0.0 {
+        (volume_l / b) * 0.999_999
+    } else {
+        f64::INFINITY
+    };
+    for _ in 0..60 {
+        let conc = n / volume_l;
+        let a_term = delta_p_atm + a * conc * conc;
+        let f_val = a_term * (volume_l - n * b) - n * CYCLE_GAS_CONSTANT * temp_k;
+        if !f_val.is_finite() {
+            return None;
+        }
+        if f_val.abs() < 1e-12 {
+            return Some(n.max(0.0));
+        }
+        let d_a_term = 2.0 * a * n / (volume_l * volume_l);
+        let deriv = d_a_term * (volume_l - n * b) - (a_term * b) - (CYCLE_GAS_CONSTANT * temp_k);
+        if !deriv.is_finite() || deriv.abs() <= 1e-14 {
+            break;
+        }
+        let mut next = n - (f_val / deriv);
+        if !next.is_finite() {
+            return None;
+        }
+        if next < 0.0 {
+            next = 0.5 * n;
+        }
+        if upper.is_finite() && next >= upper {
+            next = 0.5 * (n + upper);
+        }
+        if (next - n).abs() <= 1e-12 {
+            return Some(next.max(0.0));
+        }
+        n = next;
+    }
+    if n.is_finite() {
+        Some(n.max(0.0))
+    } else {
+        None
+    }
+}
+
+fn mean_temp_between(
+    temp_values: Option<&PyReadonlyArray1<'_, f64>>,
+    i: usize,
+    j: usize,
+    default_temp_c: f64,
+) -> (f64, bool) {
+    let Some(temp_arr) = temp_values else {
+        return (default_temp_c, true);
+    };
+    let view = temp_arr.as_array();
+    let len = view.len();
+    if len == 0 {
+        return (default_temp_c, true);
+    }
+    let mut lo = i.min(j);
+    let hi = i.max(j).min(len.saturating_sub(1));
+    if lo > hi {
+        return (default_temp_c, true);
+    }
+    lo = lo.min(len.saturating_sub(1));
+    let mut sum = 0.0_f64;
+    let mut count = 0usize;
+    for idx in lo..=hi {
+        let value = view[idx];
+        if value.is_finite() {
+            sum += value;
+            count += 1;
+        }
+    }
+    if count == 0 {
+        (default_temp_c, true)
+    } else {
+        (sum / count as f64, false)
+    }
+}
+
+fn safe_array_value(values: Option<&PyReadonlyArray1<'_, f64>>, idx: usize) -> Option<f64> {
+    let arr = values?;
+    let view = arr.as_array();
+    if idx >= view.len() {
+        return None;
+    }
+    let value = view[idx];
+    if value.is_finite() {
+        Some(value)
+    } else {
+        None
+    }
+}
+
+#[pyfunction]
+#[pyo3(signature = (data_len, step, required_indices=None))]
+fn combined_decimation_indices(
+    data_len: usize,
+    step: usize,
+    required_indices: Option<Vec<isize>>,
+) -> PyResult<Vec<usize>> {
+    if data_len == 0 {
+        return Ok(Vec::new());
+    }
+    let stride = step.max(1);
+    let mut result = BTreeSet::new();
+    let mut idx = 0usize;
+    while idx < data_len {
+        result.insert(idx);
+        idx = idx.saturating_add(stride);
+    }
+    result.insert(data_len - 1);
+    if let Some(required) = required_indices {
+        for raw in required {
+            if raw < 0 {
+                continue;
+            }
+            let Ok(base) = usize::try_from(raw) else {
+                continue;
+            };
+            if base >= data_len {
+                continue;
+            }
+            result.insert(base);
+            if base > 0 {
+                result.insert(base - 1);
+            }
+            if base + 1 < data_len {
+                result.insert(base + 1);
+            }
+        }
+    }
+    Ok(result.into_iter().collect())
+}
+
+#[pyfunction]
+#[pyo3(signature = (y_values, mask, auto_peaks, auto_troughs, add_peaks, add_troughs, rm_peaks, rm_troughs, min_cycle_drop, ignore_min_drop=false, manual_only=false))]
+fn cycle_segmentation_core(
+    py: Python<'_>,
+    y_values: PyReadonlyArray1<'_, f64>,
+    mask: PyReadonlyArray1<'_, bool>,
+    auto_peaks: Vec<isize>,
+    auto_troughs: Vec<isize>,
+    add_peaks: Vec<isize>,
+    add_troughs: Vec<isize>,
+    rm_peaks: Vec<isize>,
+    rm_troughs: Vec<isize>,
+    min_cycle_drop: f64,
+    ignore_min_drop: bool,
+    manual_only: bool,
+) -> PyResult<Py<PyDict>> {
+    let y_view = y_values.as_array();
+    let mask_view = mask.as_array();
+    let mask_len = y_view.len().min(mask_view.len());
+    let response = PyDict::new(py);
+    let empty_cycles = PyList::empty(py);
+    if mask_len == 0 {
+        response.set_item("peaks", Vec::<usize>::new())?;
+        response.set_item("troughs", Vec::<usize>::new())?;
+        response.set_item("plot_peaks", Vec::<usize>::new())?;
+        response.set_item("plot_troughs", Vec::<usize>::new())?;
+        response.set_item("cycles", empty_cycles)?;
+        response.set_item("total_drop", 0.0_f64)?;
+        response.set_item("selection_size", 0usize)?;
+        return Ok(response.unbind());
+    }
+
+    let sanitize = |values: &[isize]| -> BTreeSet<usize> {
+        values
+            .iter()
+            .filter_map(|raw| {
+                if *raw < 0 {
+                    return None;
+                }
+                let idx = usize::try_from(*raw).ok()?;
+                if idx < mask_len {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
+
+    let auto_peaks_set = sanitize(&auto_peaks);
+    let auto_troughs_set = sanitize(&auto_troughs);
+    let add_peaks_set = sanitize(&add_peaks);
+    let add_troughs_set = sanitize(&add_troughs);
+    let rm_peaks_set = sanitize(&rm_peaks);
+    let rm_troughs_set = sanitize(&rm_troughs);
+
+    let effective_peaks: BTreeSet<usize> = if manual_only {
+        add_peaks_set.clone()
+    } else {
+        auto_peaks_set
+            .union(&add_peaks_set)
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .difference(&rm_peaks_set)
+            .copied()
+            .collect()
+    };
+    let effective_troughs: BTreeSet<usize> = if manual_only {
+        add_troughs_set.clone()
+    } else {
+        auto_troughs_set
+            .union(&add_troughs_set)
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .difference(&rm_troughs_set)
+            .copied()
+            .collect()
+    };
+
+    let peaks: Vec<usize> = effective_peaks
+        .iter()
+        .copied()
+        .filter(|idx| *idx < mask_len && mask_view[*idx])
+        .collect();
+    let troughs: Vec<usize> = effective_troughs
+        .iter()
+        .copied()
+        .filter(|idx| *idx < mask_len && mask_view[*idx])
+        .collect();
+
+    let threshold = if ignore_min_drop {
+        f64::NEG_INFINITY
+    } else {
+        min_cycle_drop
+    };
+    let mut cycles = PyList::empty(py);
+    let mut total_drop = 0.0_f64;
+    let mut cycle_peaks = BTreeSet::new();
+    let mut cycle_troughs = BTreeSet::new();
+    let mut t_ptr = 0usize;
+    for peak_idx in &peaks {
+        while t_ptr < troughs.len() && troughs[t_ptr] <= *peak_idx {
+            t_ptr += 1;
+        }
+        if t_ptr >= troughs.len() {
+            break;
+        }
+        let trough_idx = troughs[t_ptr];
+        let peak_value = y_view[*peak_idx];
+        let trough_value = y_view[trough_idx];
+        let delta_p = peak_value - trough_value;
+        if delta_p >= threshold {
+            let row = PyDict::new(py);
+            row.set_item("peak_idx", *peak_idx)?;
+            row.set_item("trough_idx", trough_idx)?;
+            row.set_item("peak", peak_value)?;
+            row.set_item("trough", trough_value)?;
+            row.set_item("delta_P", delta_p)?;
+            cycles.append(row)?;
+            total_drop += delta_p;
+            cycle_peaks.insert(*peak_idx);
+            cycle_troughs.insert(trough_idx);
+        }
+    }
+
+    let display_peaks: BTreeSet<usize> = effective_peaks
+        .iter()
+        .copied()
+        .filter(|idx| *idx < mask_len && mask_view[*idx])
+        .collect();
+    let display_troughs: BTreeSet<usize> = effective_troughs
+        .iter()
+        .copied()
+        .filter(|idx| *idx < mask_len && mask_view[*idx])
+        .collect();
+    let plot_peaks: Vec<usize> = cycle_peaks.union(&display_peaks).copied().collect();
+    let plot_troughs: Vec<usize> = cycle_troughs.union(&display_troughs).copied().collect();
+
+    response.set_item("peaks", peaks)?;
+    response.set_item("troughs", troughs)?;
+    response.set_item("plot_peaks", plot_peaks)?;
+    response.set_item("plot_troughs", plot_troughs)?;
+    response.set_item("cycles", cycles)?;
+    response.set_item("total_drop", total_drop)?;
+    response.set_item(
+        "selection_size",
+        mask_view
+            .iter()
+            .take(mask_len)
+            .filter(|value| **value)
+            .count(),
+    )?;
+    Ok(response.unbind())
+}
+
+#[pyfunction]
+#[pyo3(signature = (cycles, temp_values=None, x_values=None, volume_l=1.0, a_const=1.39, b_const=0.0391, gas_molar_mass=44.0095, x_label="Elapsed Time (days)", compute_vdw=false, default_temp_c=25.0))]
+fn cycle_metrics_core(
+    py: Python<'_>,
+    cycles: &Bound<'_, PyList>,
+    temp_values: Option<PyReadonlyArray1<'_, f64>>,
+    x_values: Option<PyReadonlyArray1<'_, f64>>,
+    volume_l: f64,
+    a_const: f64,
+    b_const: f64,
+    gas_molar_mass: f64,
+    x_label: &str,
+    compute_vdw: bool,
+    default_temp_c: f64,
+) -> PyResult<Py<PyDict>> {
+    let v_l = if volume_l.is_finite() && volume_l > 0.0 {
+        volume_l
+    } else {
+        1.0
+    };
+    let a_vdw = if a_const.is_finite() { a_const } else { 1.39 };
+    let b_vdw = if b_const.is_finite() { b_const } else { 0.0391 };
+    let molar_mass = if gas_molar_mass.is_finite() && gas_molar_mass > 0.0 {
+        gas_molar_mass
+    } else {
+        44.0095
+    };
+    let default_temp = if default_temp_c.is_finite() {
+        default_temp_c
+    } else {
+        25.0
+    };
+    let per_cycle = PyList::empty(py);
+    let transfer_rows = PyList::empty(py);
+    let mut total_ideal = 0.0_f64;
+    let mut total_vdw = 0.0_f64;
+    let mut cumulative_moles = 0.0_f64;
+
+    for (cycle_idx, item) in cycles.iter().enumerate() {
+        let Ok(cycle_dict) = item.downcast::<PyDict>() else {
+            continue;
+        };
+        let Some(peak_idx) = dict_index_value(cycle_dict, "peak_idx") else {
+            continue;
+        };
+        let Some(trough_idx) = dict_index_value(cycle_dict, "trough_idx") else {
+            continue;
+        };
+        let peak_pressure = dict_float_value(cycle_dict, "peak");
+        let trough_pressure = dict_float_value(cycle_dict, "trough");
+        let mut delta_psi = dict_float_value(cycle_dict, "delta_P");
+        if !delta_psi.is_finite() {
+            delta_psi = peak_pressure - trough_pressure;
+        }
+        let delta_atm = if delta_psi.is_finite() {
+            delta_psi / 14.696
+        } else {
+            f64::NAN
+        };
+        let (mean_temp_c, used_default_temp) =
+            mean_temp_between(temp_values.as_ref(), peak_idx, trough_idx, default_temp);
+        let temp_k = mean_temp_c + 273.15;
+        let n_ideal = if delta_atm.is_finite() && temp_k > 0.0 {
+            ((delta_atm * v_l) / (CYCLE_GAS_CONSTANT * temp_k)).max(0.0)
+        } else {
+            f64::NAN
+        };
+        let n_vdw = if compute_vdw {
+            vdw_moles_from_delta_p(delta_atm, v_l, temp_k, a_vdw, b_vdw).unwrap_or(f64::NAN)
+        } else {
+            f64::NAN
+        };
+        if n_ideal.is_finite() {
+            total_ideal += n_ideal;
+        }
+        if compute_vdw && n_vdw.is_finite() {
+            total_vdw += n_vdw;
+        }
+
+        let per_cycle_row = PyDict::new(py);
+        per_cycle_row.set_item("peak", finite_value_or_nan(peak_pressure))?;
+        per_cycle_row.set_item("trough", finite_value_or_nan(trough_pressure))?;
+        per_cycle_row.set_item("deltaP", finite_value_or_nan(delta_psi))?;
+        per_cycle_row.set_item("T_mean_C", finite_value_or_nan(mean_temp_c))?;
+        per_cycle_row.set_item("used_default", used_default_temp)?;
+        per_cycle_row.set_item("n_ideal", finite_value_or_nan(n_ideal))?;
+        per_cycle_row.set_item("n_vdw", finite_value_or_nan(n_vdw))?;
+        per_cycle.append(per_cycle_row)?;
+
+        let start_x = safe_array_value(x_values.as_ref(), peak_idx);
+        let end_x = safe_array_value(x_values.as_ref(), trough_idx);
+        let duration_x = match (start_x, end_x) {
+            (Some(start), Some(end)) => Some(end - start),
+            _ => None,
+        };
+        let use_vdw_basis = n_vdw.is_finite() && n_vdw >= 0.0;
+        let selected_moles = if use_vdw_basis {
+            Some(n_vdw)
+        } else if n_ideal.is_finite() {
+            Some(n_ideal)
+        } else {
+            None
+        };
+        if let Some(selected) = selected_moles {
+            cumulative_moles += selected;
+        }
+        let selected_mass = selected_moles.map(|value| value * molar_mass);
+        let cumulative_mass = cumulative_moles * molar_mass;
+        let transfer_row = PyDict::new(py);
+        transfer_row.set_item("cycle_id", cycle_idx + 1)?;
+        transfer_row.set_item("peak_index", peak_idx)?;
+        transfer_row.set_item("trough_index", trough_idx)?;
+        if let Some(value) = start_x {
+            transfer_row.set_item("start_x", value)?;
+        } else {
+            transfer_row.set_item("start_x", py.None())?;
+        }
+        if let Some(value) = end_x {
+            transfer_row.set_item("end_x", value)?;
+        } else {
+            transfer_row.set_item("end_x", py.None())?;
+        }
+        transfer_row.set_item("x_label", x_label)?;
+        if let Some(value) = duration_x {
+            transfer_row.set_item("duration_x", value)?;
+        } else {
+            transfer_row.set_item("duration_x", py.None())?;
+        }
+        transfer_row.set_item("peak_pressure_psi", finite_value_or_nan(peak_pressure))?;
+        transfer_row.set_item("trough_pressure_psi", finite_value_or_nan(trough_pressure))?;
+        transfer_row.set_item("delta_pressure_psi", finite_value_or_nan(delta_psi))?;
+        if delta_atm.is_finite() {
+            transfer_row.set_item("delta_pressure_atm", delta_atm)?;
+        } else {
+            transfer_row.set_item("delta_pressure_atm", py.None())?;
+        }
+        transfer_row.set_item("mean_temperature_c", finite_value_or_nan(mean_temp_c))?;
+        transfer_row.set_item("used_default_temperature", used_default_temp)?;
+        if n_ideal.is_finite() {
+            transfer_row.set_item("moles_ideal", n_ideal)?;
+        } else {
+            transfer_row.set_item("moles_ideal", py.None())?;
+        }
+        if n_vdw.is_finite() {
+            transfer_row.set_item("moles_vdw", n_vdw)?;
+        } else {
+            transfer_row.set_item("moles_vdw", py.None())?;
+        }
+        transfer_row.set_item("moles_basis", if use_vdw_basis { "vdw" } else { "ideal" })?;
+        if let Some(value) = selected_moles {
+            transfer_row.set_item("selected_moles", value)?;
+        } else {
+            transfer_row.set_item("selected_moles", py.None())?;
+        }
+        if let Some(value) = selected_mass {
+            transfer_row.set_item("selected_mass_g", value)?;
+        } else {
+            transfer_row.set_item("selected_mass_g", py.None())?;
+        }
+        transfer_row.set_item("cumulative_moles", cumulative_moles)?;
+        transfer_row.set_item("cumulative_co2_moles", cumulative_moles)?;
+        transfer_row.set_item("cumulative_co2_mass_g", cumulative_mass)?;
+        transfer_rows.append(transfer_row)?;
+    }
+
+    let response = PyDict::new(py);
+    response.set_item("per_cycle", per_cycle)?;
+    response.set_item("total_moles_ideal", total_ideal)?;
+    response.set_item(
+        "total_moles_vdw",
+        if compute_vdw { total_vdw } else { 0.0_f64 },
+    )?;
+    response.set_item("vdw_used", compute_vdw)?;
+    response.set_item("cycle_transfer", transfer_rows)?;
+    let context = PyDict::new(py);
+    context.set_item("volume_l", v_l)?;
+    context.set_item("vdw_a", a_vdw)?;
+    context.set_item("vdw_b", b_vdw)?;
+    context.set_item("x_label", x_label)?;
+    context.set_item("gas_molar_mass", molar_mass)?;
+    context.set_item("vdw_used", compute_vdw)?;
+    response.set_item("context", context)?;
+    Ok(response.unbind())
+}
+
 #[pymodule]
 fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(
@@ -702,5 +1212,8 @@ fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
         module
     )?)?;
     module.add_function(wrap_pyfunction!(analyze_bicarbonate_core, module)?)?;
+    module.add_function(wrap_pyfunction!(combined_decimation_indices, module)?)?;
+    module.add_function(wrap_pyfunction!(cycle_segmentation_core, module)?)?;
+    module.add_function(wrap_pyfunction!(cycle_metrics_core, module)?)?;
     Ok(())
 }

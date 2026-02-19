@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.0.0)
+# GL-260 Data Analysis and Plotter (v4.1.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.0.0`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.1.0`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.1.0 Rust Combined Precompute Expansion + CSV Import Profiling](#v410-rust-combined-precompute-expansion--csv-import-profiling)
   - [v4.0.0 Rust Acceleration + In-App Toolchain Setup](#v400-rust-acceleration--in-app-toolchain-setup)
   - [v3.0.12 Combined Triple-Axis Splash Finalization Hardening](#v3012-combined-triple-axis-splash-finalization-hardening)
   - [v3.0.11 Combined Draw-Confirmed Refresh + Authoritative Layout Margins](#v3011-combined-draw-confirmed-refresh--authoritative-layout-margins)
@@ -127,8 +128,9 @@ These modules are imported unconditionally at startup:
 - `scipy`: Enables SciPy peak detection and Van der Waals moles calculations. The app falls back to a built-in peak finder and disables VDW if SciPy is missing.
 - `mplcursors`: The app attempts to import it; if missing, it continues without it.
 
-#### Optional Rust acceleration (`v4.0.0`)
+#### Optional Rust acceleration (`v4.0.0` introduced, `v4.1.0` expanded)
 - The app can offload heavy bicarbonate/speciation timeline math to `gl260_rust_ext` when available.
+- `v4.1.0` expands Rust acceleration into combined triple-axis numeric precompute paths (decimation index selection, cycle segmentation merge logic, and cycle metrics/transfer payload assembly).
 - If Rust is unavailable, calculations continue on the existing Python path (authoritative fallback).
 - On first use of Rust-relevant solubility actions, the app prompts to install/build prerequisites:
   - `rustup` / `rustc` / `cargo`
@@ -152,8 +154,8 @@ rustup default stable
 python -m pip install "maturin>=1.12,<2.0"
 # Install VS Build Tools (Desktop development with C++) if `link.exe` is missing.
 python -m maturin develop --manifest-path rust_ext/Cargo.toml
-rustc --version
-cargo --version
+rustup run stable rustc --version
+rustup run stable cargo --version
 python -c "import gl260_rust_ext; print('gl260_rust_ext import OK')"
 ```
 
@@ -945,6 +947,17 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.1.0 Rust Combined Precompute Expansion + CSV Import Profiling
+- Expanded optional Rust acceleration into combined triple-axis precompute paths while keeping Matplotlib/Tk rendering in Python.
+- Added Rust kernels and Python bridge wiring for:
+  - Combined decimation index selection (`combined_decimation_indices`)
+  - Cycle segmentation merge/core formation (`cycle_segmentation_core`)
+  - Cycle metrics + transfer payload assembly (`cycle_metrics_core`)
+- Kept strict per-call fallback behavior: any Rust import/runtime/payload error immediately falls back to existing Python calculations with no workflow interruption.
+- Added CSV import stage timing diagnostics (`parse_ms`, `transform_ms`, `write_ms`) in async import completion status/debug output.
+- Confirmed CSV Rust acceleration is not integrated in this release because XLSX write time remains the dominant bottleneck.
+- Bumped application version metadata to `v4.1.0` in the script header and `APP_VERSION`.
 
 ### v4.0.0 Rust Acceleration + In-App Toolchain Setup
 - Added optional Rust acceleration for core bicarbonate/speciation heavy math paths with strict runtime fallback to existing Python calculations.

@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v4.0.0
+# Version: v4.1.0
 # Date: 2026-02-19
 
 import os
@@ -895,6 +895,8 @@ def _run_command_for_status(
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             env=env,
         )
     except Exception as exc:
@@ -1060,6 +1062,9 @@ def _build_maturin_subprocess_env() -> Dict[str, str]:
         env["CARGO"] = cargo_path
         prepend_dirs.append(os.path.dirname(cargo_path))
     env["PATH"] = _prepend_directories_to_path(env.get("PATH", ""), prepend_dirs)
+    # Corporate/managed Windows environments often block revocation checks in the
+    # crates index TLS chain, causing transient cargo fetch failures by default.
+    env.setdefault("CARGO_HTTP_CHECK_REVOKE", "false")
     return env
 
 
@@ -1097,8 +1102,21 @@ def _run_maturin_develop_build(manifest_path: str, *, cwd: str) -> Tuple[bool, s
             env=env,
         )
     staged_dir: Optional[str] = None
+    shim_dir: Optional[str] = None
     command: List[str] = []
     try:
+        rustup_exe = shutil.which("rustup")
+        if rustup_exe:
+            shim_dir = tempfile.mkdtemp(prefix="gl260-rustup-shim-")
+            cargo_shim = os.path.join(shim_dir, "cargo.cmd")
+            rustc_shim = os.path.join(shim_dir, "rustc.cmd")
+            with open(cargo_shim, "w", encoding="utf-8") as fh:
+                fh.write(f'@echo off\r\n"{rustup_exe}" run stable cargo %*\r\n')
+            with open(rustc_shim, "w", encoding="utf-8") as fh:
+                fh.write(f'@echo off\r\n"{rustup_exe}" run stable rustc %*\r\n')
+            # Force subprocesses to resolve cargo/rustc through rustup wrappers
+            # first; this avoids incompatible shim binaries on PATH.
+            env["PATH"] = _prepend_directories_to_path(env.get("PATH", ""), [shim_dir])
         maturin_dir = os.path.dirname(maturin_exe)
         has_neighbor_shims = any(
             os.path.isfile(os.path.join(maturin_dir, name))
@@ -1115,6 +1133,12 @@ def _run_maturin_develop_build(manifest_path: str, *, cwd: str) -> Tuple[bool, s
         if staged_dir:
             try:
                 shutil.rmtree(staged_dir, ignore_errors=True)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        if shim_dir:
+            try:
+                shutil.rmtree(shim_dir, ignore_errors=True)
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
@@ -10519,7 +10543,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v4.0.0"
+APP_VERSION = "v4.1.0"
 
 
 def _apply_rust_runtime_settings_defaults(settings_dict: Dict[str, Any]) -> None:
@@ -16909,6 +16933,347 @@ def _safe_rust_float(value: Any, fallback: float = 0.0) -> float:
     except Exception:
         return fallback
     return candidate if math.isfinite(candidate) else fallback
+
+
+def _safe_rust_int(value: Any, fallback: int = -1) -> int:
+    """Coerce a Rust payload numeric value to a safe integer.
+
+    Purpose:
+        Normalize integer-like payload values returned by Rust kernels.
+    Why:
+        Plot/cycle index payloads must be validated before they are trusted by
+        UI update paths.
+    Inputs:
+        value: Raw value from the Rust extension payload.
+        fallback: Value returned when conversion fails.
+    Outputs:
+        Integer value suitable for index validation.
+    Side Effects:
+        None.
+    Exceptions:
+        Conversion failures are handled internally.
+    """
+    try:
+        return int(value)
+    except Exception:
+        return int(fallback)
+
+
+def _rust_combined_decimation_indices(
+    *,
+    data_len: int,
+    step: int,
+    required_indices: Optional[Sequence[Any]] = None,
+) -> Optional[np.ndarray]:
+    """Attempt Rust decimation-index selection for combined plot preview refresh.
+
+    Purpose:
+        Offload deterministic decimation index generation for large datasets.
+    Why:
+        Combined plot refresh paths repeatedly build index unions with endpoint
+        and NaN-neighbor preservation; Rust can execute that set logic faster.
+    Inputs:
+        data_len: Total source series length.
+        step: Base decimation stride.
+        required_indices: Optional source indices that must be retained.
+    Outputs:
+        Sorted numpy integer index array, or `None` when fallback is required.
+    Side Effects:
+        May update cached Rust import error state when runtime failures occur.
+    Exceptions:
+        Extension invocation errors are swallowed and reported via cache state.
+    """
+    if data_len <= 0 or step <= 0:
+        return None
+    backend = _load_rust_backend()
+    if backend is None:
+        return None
+    resolver = getattr(backend, "combined_decimation_indices", None)
+    if not callable(resolver):
+        return None
+    payload_required: Optional[List[int]] = None
+    if required_indices is not None:
+        payload_required = []
+        # Iterate over required_indices to preserve only safe integer candidates.
+        for raw in required_indices:
+            idx = _safe_rust_int(raw, -1)
+            if 0 <= idx < int(data_len):
+                payload_required.append(idx)
+    payload: Any = None
+    try:
+        payload = resolver(int(data_len), int(step), payload_required)
+    except Exception as exc:
+        global _RUST_BACKEND_IMPORT_ERROR
+        _RUST_BACKEND_IMPORT_ERROR = exc
+        return None
+    if not isinstance(payload, Sequence):
+        return None
+    clean: List[int] = []
+    # Iterate over payload to validate Rust-provided decimation indices.
+    for raw in payload:
+        idx = _safe_rust_int(raw, -1)
+        if 0 <= idx < int(data_len):
+            clean.append(idx)
+    if not clean:
+        return None
+    unique_sorted = np.array(sorted(set(clean)), dtype=int)
+    if unique_sorted.size == 0:
+        return None
+    if int(unique_sorted[-1]) != int(data_len - 1):
+        return None
+    return unique_sorted
+
+
+def _rust_cycle_segmentation_core(
+    *,
+    y_arr: np.ndarray,
+    mask_arr: np.ndarray,
+    auto_peaks: Set[int],
+    auto_troughs: Set[int],
+    add_peaks: Set[int],
+    add_troughs: Set[int],
+    rm_peaks: Set[int],
+    rm_troughs: Set[int],
+    min_cycle_drop: float,
+    ignore_min_drop: bool,
+    manual_only: bool,
+) -> Optional[Dict[str, Any]]:
+    """Attempt Rust cycle segmentation merge/form logic.
+
+    Purpose:
+        Offload peak/trough merge and cycle construction for cached plot context.
+    Why:
+        Combined refresh and cycle overlays repeatedly execute this merge logic.
+    Inputs:
+        Mirrors Python segmentation merge parameters after auto-detection.
+    Outputs:
+        Validated segmentation payload or `None` when fallback is required.
+    Side Effects:
+        May update cached Rust import error state when runtime failures occur.
+    Exceptions:
+        Extension invocation errors are swallowed and reported via cache state.
+    """
+    backend = _load_rust_backend()
+    if backend is None:
+        return None
+    resolver = getattr(backend, "cycle_segmentation_core", None)
+    if not callable(resolver):
+        return None
+    mask_len = min(int(np.asarray(mask_arr, dtype=bool).size), int(np.asarray(y_arr).size))
+    if mask_len <= 0:
+        return None
+    payload: Any = None
+    try:
+        payload = resolver(
+            np.asarray(y_arr, dtype=float),
+            np.asarray(mask_arr, dtype=bool),
+            sorted(int(v) for v in auto_peaks),
+            sorted(int(v) for v in auto_troughs),
+            sorted(int(v) for v in add_peaks),
+            sorted(int(v) for v in add_troughs),
+            sorted(int(v) for v in rm_peaks),
+            sorted(int(v) for v in rm_troughs),
+            float(min_cycle_drop),
+            bool(ignore_min_drop),
+            bool(manual_only),
+        )
+    except Exception as exc:
+        global _RUST_BACKEND_IMPORT_ERROR
+        _RUST_BACKEND_IMPORT_ERROR = exc
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    mask_safe = np.asarray(mask_arr, dtype=bool)[:mask_len]
+    y_safe = np.asarray(y_arr, dtype=float)[:mask_len]
+
+    def _sanitize_indices(values: Any, *, require_mask: bool) -> List[int]:
+        """Return validated cycle indices from a Rust payload field."""
+        if not isinstance(values, Sequence):
+            return []
+        safe: List[int] = []
+        # Iterate over values to normalize index payload entries.
+        for raw in values:
+            idx = _safe_rust_int(raw, -1)
+            if idx < 0 or idx >= mask_len:
+                continue
+            if require_mask and not bool(mask_safe[idx]):
+                continue
+            safe.append(int(idx))
+        return sorted(set(safe))
+
+    peaks = _sanitize_indices(payload.get("peaks", ()), require_mask=True)
+    troughs = _sanitize_indices(payload.get("troughs", ()), require_mask=True)
+    plot_peaks = np.asarray(
+        _sanitize_indices(payload.get("plot_peaks", ()), require_mask=True), dtype=int
+    )
+    plot_troughs = np.asarray(
+        _sanitize_indices(payload.get("plot_troughs", ()), require_mask=True), dtype=int
+    )
+    raw_cycles = payload.get("cycles")
+    if not isinstance(raw_cycles, Sequence):
+        return None
+    cycles: List[Dict[str, Any]] = []
+    # Iterate over raw_cycles to validate each cycle payload row.
+    for row in raw_cycles:
+        if not isinstance(row, Mapping):
+            continue
+        peak_idx = _safe_rust_int(row.get("peak_idx"), -1)
+        trough_idx = _safe_rust_int(row.get("trough_idx"), -1)
+        if (
+            peak_idx < 0
+            or trough_idx < 0
+            or peak_idx >= mask_len
+            or trough_idx >= mask_len
+            or not bool(mask_safe[peak_idx])
+            or not bool(mask_safe[trough_idx])
+        ):
+            continue
+        peak_val = _safe_rust_float(row.get("peak"), float("nan"))
+        trough_val = _safe_rust_float(row.get("trough"), float("nan"))
+        delta_p = _safe_rust_float(row.get("delta_P"), float("nan"))
+        if not (math.isfinite(peak_val) and math.isfinite(trough_val) and math.isfinite(delta_p)):
+            continue
+        # Align peak/trough with source arrays to preserve Python schema semantics.
+        if not (
+            math.isfinite(_safe_rust_float(y_safe[peak_idx], float("nan")))
+            and math.isfinite(_safe_rust_float(y_safe[trough_idx], float("nan")))
+        ):
+            continue
+        cycles.append(
+            {
+                "peak_idx": int(peak_idx),
+                "trough_idx": int(trough_idx),
+                "peak": float(peak_val),
+                "trough": float(trough_val),
+                "delta_P": float(delta_p),
+            }
+        )
+    if not cycles and (peaks or troughs):
+        return None
+    return {
+        "peaks": peaks,
+        "troughs": troughs,
+        "plot_peaks": plot_peaks,
+        "plot_troughs": plot_troughs,
+        "cycles": cycles,
+        "total_drop": _safe_rust_float(payload.get("total_drop"), 0.0),
+        "selection_size": max(_safe_rust_int(payload.get("selection_size"), 0), 0),
+    }
+
+
+def _rust_cycle_metrics_core(
+    *,
+    cycles: Sequence[Mapping[str, Any]],
+    z_values: Optional[np.ndarray],
+    x_values: Optional[np.ndarray],
+    volume_l: float,
+    a_const: float,
+    b_const: float,
+    gas_molar_mass: float,
+    x_label: str,
+    compute_vdw: bool,
+) -> Optional[Dict[str, Any]]:
+    """Attempt Rust cycle metrics and transfer-row assembly.
+
+    Purpose:
+        Offload per-cycle gas calculations and transfer table generation.
+    Why:
+        Combined overlay refresh paths repeatedly assemble these metrics payloads.
+    Inputs:
+        cycles: Cycle segmentation rows with peak/trough indices and pressure deltas.
+        z_values: Optional cycle temperature series.
+        x_values: Optional x-axis series used for transfer start/end/duration fields.
+        volume_l: Vessel volume in liters.
+        a_const: Van der Waals `a` constant.
+        b_const: Van der Waals `b` constant.
+        gas_molar_mass: Gas molecular weight (g/mol) for mass conversion.
+        x_label: Display label for x-axis transfer columns.
+        compute_vdw: Whether VDW terms should be computed.
+    Outputs:
+        Validated metrics payload dict or `None` when fallback is required.
+    Side Effects:
+        May update cached Rust import error state when runtime failures occur.
+    Exceptions:
+        Extension invocation errors are swallowed and reported via cache state.
+    """
+    backend = _load_rust_backend()
+    if backend is None:
+        return None
+    resolver = getattr(backend, "cycle_metrics_core", None)
+    if not callable(resolver):
+        return None
+    if not isinstance(cycles, Sequence):
+        return None
+    payload_cycles: List[Dict[str, Any]] = []
+    # Iterate over cycles to normalize rows before Rust invocation.
+    for row in cycles:
+        if not isinstance(row, Mapping):
+            continue
+        payload_cycles.append(
+            {
+                "peak_idx": _safe_rust_int(row.get("peak_idx"), -1),
+                "trough_idx": _safe_rust_int(row.get("trough_idx"), -1),
+                "peak": _safe_rust_float(row.get("peak"), float("nan")),
+                "trough": _safe_rust_float(row.get("trough"), float("nan")),
+                "delta_P": _safe_rust_float(row.get("delta_P"), float("nan")),
+            }
+        )
+    if not payload_cycles:
+        return None
+    payload: Any = None
+    try:
+        payload = resolver(
+            payload_cycles,
+            np.asarray(z_values, dtype=float) if z_values is not None else None,
+            np.asarray(x_values, dtype=float) if x_values is not None else None,
+            float(volume_l),
+            float(a_const),
+            float(b_const),
+            float(gas_molar_mass),
+            str(x_label),
+            bool(compute_vdw),
+            25.0,
+        )
+    except Exception as exc:
+        global _RUST_BACKEND_IMPORT_ERROR
+        _RUST_BACKEND_IMPORT_ERROR = exc
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    per_cycle_raw = payload.get("per_cycle")
+    transfer_raw = payload.get("cycle_transfer")
+    if not isinstance(per_cycle_raw, Sequence) or not isinstance(transfer_raw, Sequence):
+        return None
+    per_cycle: List[Dict[str, Any]] = []
+    # Iterate over per_cycle_raw to validate each per-cycle metric row.
+    for row in per_cycle_raw:
+        if not isinstance(row, Mapping):
+            continue
+        per_cycle.append(
+            {
+                "peak": _safe_rust_float(row.get("peak"), float("nan")),
+                "trough": _safe_rust_float(row.get("trough"), float("nan")),
+                "deltaP": _safe_rust_float(row.get("deltaP"), float("nan")),
+                "T_mean_C": _safe_rust_float(row.get("T_mean_C"), float("nan")),
+                "used_default": bool(row.get("used_default", False)),
+                "n_ideal": _safe_rust_float(row.get("n_ideal"), float("nan")),
+                "n_vdw": _safe_rust_float(row.get("n_vdw"), float("nan")),
+            }
+        )
+    cycle_transfer: List[Dict[str, Any]] = []
+    # Iterate over transfer_raw to preserve validated transfer rows.
+    for row in transfer_raw:
+        if isinstance(row, Mapping):
+            cycle_transfer.append(dict(row))
+    if not per_cycle:
+        return None
+    return {
+        "per_cycle": per_cycle,
+        "total_moles_ideal": _safe_rust_float(payload.get("total_moles_ideal"), 0.0),
+        "total_moles_vdw": _safe_rust_float(payload.get("total_moles_vdw"), 0.0),
+        "vdw_used": bool(payload.get("vdw_used", False)),
+        "cycle_transfer": cycle_transfer,
+    }
 
 
 def _rust_simulate_reaction_state_with_accounting(
@@ -31391,8 +31756,23 @@ class CsvImportDialog:
 
         # Closure captures _start_import state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _start_import.
         def _worker() -> Dict[str, Any]:
-            """Perform worker.
-            Used to keep the workflow logic localized and testable."""
+            """Run CSV parse/transform/write stages and return diagnostics.
+
+            Purpose:
+                Execute import work off the UI thread.
+            Why:
+                Importing large CSV files and writing Excel output can take enough
+                time to block interaction unless performed asynchronously.
+            Args:
+                None. Uses `_start_import` captured snapshot values.
+            Returns:
+                Dict containing resolved sheet metadata and stage timing metrics.
+            Side Effects:
+                Writes/updates the destination workbook sheet.
+            Exceptions:
+                Validation and I/O failures are propagated to `_on_err`.
+            """
+            parse_start = time.perf_counter()
             columns, rows = _parse_gl260_csv_table(csv_path)
             mapped_dt = (mapping_snapshot.get("date_time") or "").strip()
             dt_column = mapped_dt or _detect_gl260_datetime_column(columns)
@@ -31402,6 +31782,8 @@ class CsvImportDialog:
                 )
             if not dt_column:
                 raise ValueError("Date & Time column not detected in CSV.")
+            parse_ms = (time.perf_counter() - parse_start) * 1000.0
+            transform_start = time.perf_counter()
             frame = pd.DataFrame(rows, columns=columns)
             output = _build_gl260_output_dataframe(
                 frame,
@@ -31411,24 +31793,89 @@ class CsvImportDialog:
                 dampening_snapshot,
                 window_snapshot,
             )
+            transform_ms = (time.perf_counter() - transform_start) * 1000.0
+            write_start = time.perf_counter()
             resolved_name = _write_gl260_output_sheet(
                 workbook_path, sheet_name_snapshot, output, sheet_mode_snapshot
             )
+            write_ms = (time.perf_counter() - write_start) * 1000.0
             return {
                 "sheet_name": resolved_name,
                 "workbook_path": workbook_path,
                 "row_count": len(output),
+                "timings_ms": {
+                    "parse_ms": float(parse_ms),
+                    "transform_ms": float(transform_ms),
+                    "write_ms": float(write_ms),
+                },
             }
 
         # Closure captures _start_import state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _start_import.
         def _on_ok(result: Dict[str, Any]) -> None:
-            """Handle ok.
-            Used as an event callback for ok."""
+            """Handle successful CSV import completion on the UI thread.
+
+            Purpose:
+                Apply import results to UI state and persist user selections.
+            Why:
+                Import worker callbacks must update widgets/settings on the main
+                thread and surface timing diagnostics for bottleneck assessment.
+            Args:
+                result: Worker payload containing sheet metadata and timings.
+            Returns:
+                None.
+            Side Effects:
+                Updates status text, persists settings, and refreshes workbook state.
+            Exceptions:
+                Best-effort guards suppress optional debug logging failures.
+            """
             self._import_task_id = None
             self._set_busy(False)
             sheet_name = result.get("sheet_name", "")
             row_count = result.get("row_count", 0)
-            self._set_status(f"Import complete: {sheet_name} ({row_count} rows).")
+            timings = result.get("timings_ms") if isinstance(result, Mapping) else None
+            parse_ms = (
+                _safe_rust_float((timings or {}).get("parse_ms"), float("nan"))
+                if isinstance(timings, Mapping)
+                else float("nan")
+            )
+            transform_ms = (
+                _safe_rust_float((timings or {}).get("transform_ms"), float("nan"))
+                if isinstance(timings, Mapping)
+                else float("nan")
+            )
+            write_ms = (
+                _safe_rust_float((timings or {}).get("write_ms"), float("nan"))
+                if isinstance(timings, Mapping)
+                else float("nan")
+            )
+            status = f"Import complete: {sheet_name} ({row_count} rows)."
+            if (
+                math.isfinite(parse_ms)
+                and math.isfinite(transform_ms)
+                and math.isfinite(write_ms)
+            ):
+                status += (
+                    f" parse={parse_ms:.1f}ms, transform={transform_ms:.1f}ms, "
+                    f"write={write_ms:.1f}ms"
+                )
+            self._set_status(status)
+            dbg = getattr(self.app, "_dbg", None)
+            if callable(dbg):
+                try:
+                    dbg(
+                        "csv.import",
+                        (
+                            "CSV import stage timings row_count=%s parse_ms=%.3f "
+                            "transform_ms=%.3f write_ms=%.3f"
+                        ),
+                        row_count,
+                        parse_ms if math.isfinite(parse_ms) else float("nan"),
+                        transform_ms if math.isfinite(transform_ms) else float("nan"),
+                        write_ms if math.isfinite(write_ms) else float("nan"),
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
             self._persist_settings(
                 csv_path,
                 workbook_path,
@@ -61384,8 +61831,34 @@ class UnifiedApp(tk.Tk):
         *,
         manual_only: bool = False,
     ) -> Dict[str, Any]:
-        """Compute cycle segmentation.
-        Used to reuse cycle segmentation without recomputing metrics."""
+        """Compute cycle segmentation and marker display indices.
+
+        Purpose:
+            Build cycle rows and marker index sets for analysis/overlay paths.
+        Why:
+            Segmentation output is reused by both Cycle Analysis UI and combined
+            plot refresh logic, so it must be deterministic and cache-friendly.
+        Args:
+            xv: X-axis values (unused directly here; retained for call parity).
+            yv: Pressure array used to compute peak-to-trough deltas.
+            mask: Boolean inclusion mask for the active selection.
+            prom: Peak prominence value.
+            dist: Peak distance value.
+            wid: Peak width value.
+            min_cycle_drop: Minimum pressure drop threshold in PSI.
+            auto_detect: Enables automatic peak/trough detection.
+            ignore_min_drop: When True, bypasses the drop threshold.
+            peak_finder: Optional callable peak detector (SciPy/fallback).
+            snapshot: Marker snapshot containing auto/manual add/remove sets.
+            manual_only: When True, only manual markers are used.
+        Returns:
+            Dict containing cycle rows, plot marker indices, and mode metadata.
+        Side Effects:
+            None.
+        Exceptions:
+            Raises ModuleNotFoundError when auto-detect is requested without a
+            peak finder; all Rust bridge failures fall back to Python logic.
+        """
         mask_arr = np.asarray(mask, dtype=bool)
         y_arr = np.asarray(yv, dtype=float)
 
@@ -61442,57 +61915,83 @@ class UnifiedApp(tk.Tk):
         add_troughs = _sanitize_indices(snapshot.get("add_troughs", set()))
         rm_peaks = _sanitize_indices(snapshot.get("rm_peaks", set()))
         rm_troughs = _sanitize_indices(snapshot.get("rm_troughs", set()))
-
-        if manual_only:
-            effective_peaks = set(add_peaks)
-            effective_troughs = set(add_troughs)
+        rust_segmentation = _rust_cycle_segmentation_core(
+            y_arr=y_arr,
+            mask_arr=mask_arr,
+            auto_peaks=auto_peaks,
+            auto_troughs=auto_troughs,
+            add_peaks=add_peaks,
+            add_troughs=add_troughs,
+            rm_peaks=rm_peaks,
+            rm_troughs=rm_troughs,
+            min_cycle_drop=float(min_cycle_drop),
+            ignore_min_drop=bool(ignore_min_drop),
+            manual_only=bool(manual_only),
+        )
+        if rust_segmentation is not None:
+            plot_peaks = np.asarray(rust_segmentation.get("plot_peaks"), dtype=int)
+            plot_troughs = np.asarray(rust_segmentation.get("plot_troughs"), dtype=int)
+            cycles = list(rust_segmentation.get("cycles") or [])
+            total_drop = float(rust_segmentation.get("total_drop", 0.0))
+            selection_size = int(
+                rust_segmentation.get("selection_size", int(mask_arr.sum()))
+            )
         else:
-            effective_peaks = (auto_peaks | add_peaks) - rm_peaks
-            effective_troughs = (auto_troughs | add_troughs) - rm_troughs
+            if manual_only:
+                effective_peaks = set(add_peaks)
+                effective_troughs = set(add_troughs)
+            else:
+                effective_peaks = (auto_peaks | add_peaks) - rm_peaks
+                effective_troughs = (auto_troughs | add_troughs) - rm_troughs
 
-        peaks = sorted(
-            [i for i in effective_peaks if 0 <= i < mask_len and mask_arr[i]]
-        )
-        troughs = sorted(
-            [i for i in effective_troughs if 0 <= i < mask_len and mask_arr[i]]
-        )
+            peaks = sorted(
+                [i for i in effective_peaks if 0 <= i < mask_len and mask_arr[i]]
+            )
+            troughs = sorted(
+                [i for i in effective_troughs if 0 <= i < mask_len and mask_arr[i]]
+            )
 
-        threshold = -float("inf") if ignore_min_drop else float(min_cycle_drop)
-        cycles, total_drop = self._form_cycles(y_arr, peaks, troughs, threshold)
+            threshold = -float("inf") if ignore_min_drop else float(min_cycle_drop)
+            cycles, total_drop = self._form_cycles(y_arr, peaks, troughs, threshold)
 
-        cycle_peaks = {int(c.get("peak_idx", -1)) for c in cycles}
-        cycle_troughs = {int(c.get("trough_idx", -1)) for c in cycles}
-        cycle_peaks = {i for i in cycle_peaks if 0 <= i < mask_len and mask_arr[int(i)]}
-        cycle_troughs = {
-            i for i in cycle_troughs if 0 <= i < mask_len and mask_arr[int(i)]
-        }
+            cycle_peaks = {int(c.get("peak_idx", -1)) for c in cycles}
+            cycle_troughs = {int(c.get("trough_idx", -1)) for c in cycles}
+            cycle_peaks = {
+                i for i in cycle_peaks if 0 <= i < mask_len and mask_arr[int(i)]
+            }
+            cycle_troughs = {
+                i for i in cycle_troughs if 0 <= i < mask_len and mask_arr[int(i)]
+            }
 
-        display_peaks = set()
-        # Iterate over effective_peaks to apply the per-item logic.
-        for idx in effective_peaks:
-            try:
-                i = int(idx)
-            except Exception:
-                continue
-            if 0 <= i < mask_len and mask_arr[i]:
-                display_peaks.add(i)
+            display_peaks = set()
+            # Iterate over effective_peaks to apply the per-item logic.
+            for idx in effective_peaks:
+                try:
+                    i = int(idx)
+                except Exception:
+                    continue
+                if 0 <= i < mask_len and mask_arr[i]:
+                    display_peaks.add(i)
 
-        display_troughs = set()
-        # Iterate over effective_troughs to apply the per-item logic.
-        for idx in effective_troughs:
-            try:
-                i = int(idx)
-            except Exception:
-                continue
-            if 0 <= i < mask_len and mask_arr[i]:
-                display_troughs.add(i)
+            display_troughs = set()
+            # Iterate over effective_troughs to apply the per-item logic.
+            for idx in effective_troughs:
+                try:
+                    i = int(idx)
+                except Exception:
+                    continue
+                if 0 <= i < mask_len and mask_arr[i]:
+                    display_troughs.add(i)
 
-        plot_peaks = np.array(sorted(cycle_peaks | display_peaks), dtype=int)
-        plot_troughs = np.array(sorted(cycle_troughs | display_troughs), dtype=int)
-        if plot_peaks.size:
-            plot_peaks = plot_peaks[(plot_peaks >= 0) & (plot_peaks < mask_len)]
-        if plot_troughs.size:
-            plot_troughs = plot_troughs[(plot_troughs >= 0) & (plot_troughs < mask_len)]
+            plot_peaks = np.array(sorted(cycle_peaks | display_peaks), dtype=int)
+            plot_troughs = np.array(sorted(cycle_troughs | display_troughs), dtype=int)
+            if plot_peaks.size:
+                plot_peaks = plot_peaks[(plot_peaks >= 0) & (plot_peaks < mask_len)]
+            if plot_troughs.size:
+                plot_troughs = plot_troughs[
+                    (plot_troughs >= 0) & (plot_troughs < mask_len)
+                ]
+            selection_size = int(mask_arr.sum())
 
         has_manual_edits = bool(add_peaks or add_troughs or rm_peaks or rm_troughs)
         if manual_only:
@@ -61514,7 +62013,7 @@ class UnifiedApp(tk.Tk):
             "auto_detection_used": auto_detection_used,
             "selection_mode": selection_mode,
             "mask_len": mask_len,
-            "selection_size": int(mask_arr.sum()),
+            "selection_size": int(selection_size),
         }
 
     def _compute_cycle_metrics_from_segmentation(
@@ -61531,13 +62030,36 @@ class UnifiedApp(tk.Tk):
         *,
         data_ctx: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Compute cycle metrics from segmentation results."""
+        """Compute cycle metrics and transfer payload from segmentation output.
+
+        Purpose:
+            Convert segmentation rows into moles totals, per-cycle metrics, and
+            transfer-table payloads used by cycle overlays and summaries.
+        Why:
+            Combined rendering and cycle analysis both consume this schema, so
+            the function centralizes one authoritative payload contract.
+        Args:
+            segmentation: Cycle segmentation dict from `_compute_cycle_segmentation`.
+            xv: X-axis source values.
+            yv: Y-axis source values (retained for call parity).
+            z_arr: Optional cycle temperature source values.
+            prom: Peak prominence value.
+            dist: Peak distance value.
+            wid: Peak width value.
+            min_cycle_drop: Minimum pressure drop threshold in PSI.
+            ignore_min_drop: Whether the minimum drop threshold is ignored.
+            data_ctx: Optional prepared data context for constants/labels.
+        Returns:
+            Dict with per-cycle rows, totals, summary text, and transfer payload.
+        Side Effects:
+            None.
+        Exceptions:
+            Rust bridge failures are handled with strict Python fallback.
+        """
         cycles = segmentation.get("cycles") or []
         total_drop = segmentation.get("total_drop", 0.0)
         selection_mode = segmentation.get("selection_mode", "Manual-only")
-
         z_all = np.asarray(z_arr, dtype=float) if z_arr is not None else None
-
         context = data_ctx or {}
         V_L = context.get(
             "volume", settings.get("vessel_volume", globals().get("volume", 1.0))
@@ -61548,23 +62070,12 @@ class UnifiedApp(tk.Tk):
         b_c = context.get(
             "b_const", settings.get("vdw_b", globals().get("b_const", 0.0391))
         )
-
-        (
-            per_cycle,
-            total_moles_ideal,
-            total_moles_vdw,
-            scipy_available,
-            vdw_used,
-        ) = _compute_cycle_statistics(
-            cycles,
-            z_all,
-            V_L,
-            a_c,
-            b_c,
-            allow_threads=True,
-            force_vdw=False,
+        selected_columns_meta = context.get("selected_columns") or globals().get(
+            "selected_columns", {}
         )
-
+        x_label = str(selected_columns_meta.get("x", "Elapsed Time (days)")).replace(
+            "_", " "
+        )
         gas_molar_mass = context.get(
             "gas_molar_mass",
             settings.get(
@@ -61578,100 +62089,127 @@ class UnifiedApp(tk.Tk):
                 raise ValueError
         except Exception:
             gas_molar_mass = DEFAULT_GAS_MOLAR_MASS
-
         try:
             x_all = np.asarray(xv, dtype=float)
         except Exception:
             x_all = None
 
-        def _safe_value(arr, idx):
-            """Perform safe value.
-            Used to keep the workflow logic localized and testable."""
-            if arr is None:
-                return None
-            try:
-                j = int(idx)
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                return None
-            if j < 0:
-                return None
-            try:
-                value = float(arr[j])
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                return None
-            if not math.isfinite(value):
-                return None
-            return value
-
-        cumulative_moles = 0.0
+        scipy_available = fsolve is not None
+        rust_metrics = _rust_cycle_metrics_core(
+            cycles=cycles,
+            z_values=z_all,
+            x_values=x_all,
+            volume_l=float(V_L),
+            a_const=float(a_c),
+            b_const=float(b_c),
+            gas_molar_mass=float(gas_molar_mass),
+            x_label=x_label,
+            compute_vdw=bool(scipy_available),
+        )
         cycle_transfer_rows: List[Dict[str, Any]] = []
-        selected_columns_meta = context.get("selected_columns") or globals().get(
-            "selected_columns", {}
-        )
-        x_label = str(selected_columns_meta.get("x", "Elapsed Time (days)")).replace(
-            "_", " "
-        )
-        # Iterate over indexed elements from zip(cycles, per_cycle), 1 to apply the per-item logic.
-        for idx, (cycle_row, stats_row) in enumerate(zip(cycles, per_cycle), 1):
-            peak_idx = cycle_row.get("peak_idx")
-            trough_idx = cycle_row.get("trough_idx")
-            start_time = _safe_value(x_all, peak_idx)
-            end_time = _safe_value(x_all, trough_idx)
-            duration = (
-                None
-                if start_time is None or end_time is None
-                else float(end_time - start_time)
+        if rust_metrics is not None:
+            per_cycle = list(rust_metrics.get("per_cycle") or [])
+            total_moles_ideal = float(rust_metrics.get("total_moles_ideal", 0.0) or 0.0)
+            total_moles_vdw = float(rust_metrics.get("total_moles_vdw", 0.0) or 0.0)
+            vdw_used = bool(rust_metrics.get("vdw_used", bool(scipy_available)))
+            cycle_transfer_rows = list(rust_metrics.get("cycle_transfer") or [])
+        else:
+            (
+                per_cycle,
+                total_moles_ideal,
+                total_moles_vdw,
+                scipy_available,
+                vdw_used,
+            ) = _compute_cycle_statistics(
+                cycles,
+                z_all,
+                V_L,
+                a_c,
+                b_c,
+                allow_threads=True,
+                force_vdw=False,
             )
-            peak_pressure = float(cycle_row.get("peak", float("nan")))
-            trough_pressure = float(cycle_row.get("trough", float("nan")))
-            delta_psi = float(stats_row.get("deltaP", float("nan")))
-            delta_atm = delta_psi / 14.696 if math.isfinite(delta_psi) else None
-            mean_temp_c = float(stats_row.get("T_mean_C", float("nan")))
-            used_default_temp = bool(stats_row.get("used_default"))
-            moles_vdw = float(stats_row.get("n_vdw", float("nan")))
-            use_vdw = math.isfinite(moles_vdw)
-            if use_vdw and moles_vdw < 0:
-                use_vdw = False
-            moles_ideal = float(stats_row.get("n_ideal", float("nan")))
-            selected_moles = moles_vdw if use_vdw else moles_ideal
-            if not math.isfinite(selected_moles):
-                selected_moles_val = None
-            else:
-                selected_moles_val = selected_moles
-                cumulative_moles += selected_moles_val
-            selected_mass = (
-                None
-                if selected_moles_val is None
-                else selected_moles_val * gas_molar_mass
-            )
-            cumulative_co2_mass = cumulative_moles * gas_molar_mass
-            cycle_transfer_rows.append(
-                {
-                    "cycle_id": idx,
-                    "peak_index": int(peak_idx) if peak_idx is not None else None,
-                    "trough_index": int(trough_idx) if trough_idx is not None else None,
-                    "start_x": start_time,
-                    "end_x": end_time,
-                    "x_label": x_label,
-                    "duration_x": duration,
-                    "peak_pressure_psi": peak_pressure,
-                    "trough_pressure_psi": trough_pressure,
-                    "delta_pressure_psi": delta_psi,
-                    "delta_pressure_atm": delta_atm,
-                    "mean_temperature_c": mean_temp_c,
-                    "used_default_temperature": used_default_temp,
-                    "moles_ideal": moles_ideal if math.isfinite(moles_ideal) else None,
-                    "moles_vdw": moles_vdw if math.isfinite(moles_vdw) else None,
-                    "moles_basis": "vdw" if use_vdw else "ideal",
-                    "selected_moles": selected_moles_val,
-                    "selected_mass_g": selected_mass,
-                    "cumulative_moles": cumulative_moles,
-                    "cumulative_co2_moles": cumulative_moles,
-                    "cumulative_co2_mass_g": cumulative_co2_mass,
-                }
-            )
+
+            def _safe_value(arr, idx):
+                """Return finite scalar from array index when available."""
+                if arr is None:
+                    return None
+                try:
+                    j = int(idx)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    return None
+                if j < 0:
+                    return None
+                try:
+                    value = float(arr[j])
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    return None
+                if not math.isfinite(value):
+                    return None
+                return value
+
+            cumulative_moles = 0.0
+            # Iterate over indexed elements from zip(cycles, per_cycle), 1 to build transfer rows.
+            for idx, (cycle_row, stats_row) in enumerate(zip(cycles, per_cycle), 1):
+                peak_idx = cycle_row.get("peak_idx")
+                trough_idx = cycle_row.get("trough_idx")
+                start_time = _safe_value(x_all, peak_idx)
+                end_time = _safe_value(x_all, trough_idx)
+                duration = (
+                    None
+                    if start_time is None or end_time is None
+                    else float(end_time - start_time)
+                )
+                peak_pressure = float(cycle_row.get("peak", float("nan")))
+                trough_pressure = float(cycle_row.get("trough", float("nan")))
+                delta_psi = float(stats_row.get("deltaP", float("nan")))
+                delta_atm = delta_psi / 14.696 if math.isfinite(delta_psi) else None
+                mean_temp_c = float(stats_row.get("T_mean_C", float("nan")))
+                used_default_temp = bool(stats_row.get("used_default"))
+                moles_vdw = float(stats_row.get("n_vdw", float("nan")))
+                use_vdw = math.isfinite(moles_vdw)
+                if use_vdw and moles_vdw < 0:
+                    use_vdw = False
+                moles_ideal = float(stats_row.get("n_ideal", float("nan")))
+                selected_moles = moles_vdw if use_vdw else moles_ideal
+                if not math.isfinite(selected_moles):
+                    selected_moles_val = None
+                else:
+                    selected_moles_val = selected_moles
+                    cumulative_moles += selected_moles_val
+                selected_mass = (
+                    None
+                    if selected_moles_val is None
+                    else selected_moles_val * gas_molar_mass
+                )
+                cumulative_co2_mass = cumulative_moles * gas_molar_mass
+                cycle_transfer_rows.append(
+                    {
+                        "cycle_id": idx,
+                        "peak_index": int(peak_idx) if peak_idx is not None else None,
+                        "trough_index": int(trough_idx) if trough_idx is not None else None,
+                        "start_x": start_time,
+                        "end_x": end_time,
+                        "x_label": x_label,
+                        "duration_x": duration,
+                        "peak_pressure_psi": peak_pressure,
+                        "trough_pressure_psi": trough_pressure,
+                        "delta_pressure_psi": delta_psi,
+                        "delta_pressure_atm": delta_atm,
+                        "mean_temperature_c": mean_temp_c,
+                        "used_default_temperature": used_default_temp,
+                        "moles_ideal": moles_ideal if math.isfinite(moles_ideal) else None,
+                        "moles_vdw": moles_vdw if math.isfinite(moles_vdw) else None,
+                        "moles_basis": "vdw" if use_vdw else "ideal",
+                        "selected_moles": selected_moles_val,
+                        "selected_mass_g": selected_mass,
+                        "cumulative_moles": cumulative_moles,
+                        "cumulative_co2_moles": cumulative_moles,
+                        "cumulative_co2_mass_g": cumulative_co2_mass,
+                    }
+                )
 
         cycle_context = {
             "volume_l": V_L,
@@ -91691,8 +92229,27 @@ class UnifiedApp(tk.Tk):
         series_arrays: Optional[Dict[str, Any]] = None,
         series_nan_mask: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Any, Dict[str, Any]]:
-        """Perform combined preview decimate.
-        Used to keep the workflow logic localized and testable."""
+        """Decimate combined preview series with endpoint/NaN retention guards.
+
+        Purpose:
+            Reduce plotted points for interactive combined preview refreshes.
+        Why:
+            Large datasets can overwhelm UI redraws; decimation preserves
+            readability while retaining critical NaN boundary neighborhoods.
+        Args:
+            fig: Active Matplotlib figure (used for width fallback).
+            canvas: Tk canvas used to infer display pixel width.
+            x_values: Source x-axis values.
+            series_values: Mapping of series keys to y-like values.
+            series_arrays: Optional precomputed ndarray mapping.
+            series_nan_mask: Optional precomputed NaN mask mapping.
+        Returns:
+            Tuple `(x_decimated, decimated_series_map)`.
+        Side Effects:
+            None.
+        Exceptions:
+            Best-effort guards keep original arrays when decimation fails.
+        """
         series_arrays = series_arrays or {}
         series_nan_mask = series_nan_mask or {}
         if x_values is None and series_arrays.get("x") is None:
@@ -91776,19 +92333,21 @@ class UnifiedApp(tk.Tk):
             if y_nan.size != x_array.size:
                 continue
             required_mask |= y_nan
-        if required_mask.any():
-            required_idx = np.flatnonzero(required_mask)
-            if required_idx.size:
-                neighbor_idx = np.unique(
-                    np.concatenate([required_idx - 1, required_idx + 1])
-                )
-                neighbor_idx = neighbor_idx[
-                    (neighbor_idx >= 0) & (neighbor_idx < x_array.size)
-                ]
-                required_idx = np.unique(
-                    np.concatenate([required_idx, neighbor_idx])
-                )
-                idx = np.unique(np.concatenate([idx, required_idx]))
+        required_idx = np.flatnonzero(required_mask) if required_mask.any() else None
+        rust_idx = _rust_combined_decimation_indices(
+            data_len=int(x_array.size),
+            step=int(step),
+            required_indices=required_idx.tolist() if required_idx is not None else None,
+        )
+        if rust_idx is not None:
+            idx = rust_idx
+        elif required_idx is not None and required_idx.size:
+            # Preserve immediate neighbors around NaN points so plot gaps and edge
+            # transitions remain visually faithful after decimation fallback.
+            neighbor_idx = np.unique(np.concatenate([required_idx - 1, required_idx + 1]))
+            neighbor_idx = neighbor_idx[(neighbor_idx >= 0) & (neighbor_idx < x_array.size)]
+            required_keep = np.unique(np.concatenate([required_idx, neighbor_idx]))
+            idx = np.unique(np.concatenate([idx, required_keep]))
         x_dec = x_array[idx]
         decimated: Dict[str, Any] = {}
         # Iterate over items from series_values to apply the per-item logic.

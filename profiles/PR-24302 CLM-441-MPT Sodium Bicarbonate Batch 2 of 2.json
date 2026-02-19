@@ -703,14 +703,15 @@
       "y_major_tick": 50.0,
       "y_minor_tick": 5.0
     },
-    "selected_sheet": "Batch 2 Rxn Day 5.1-6",
+    "selected_sheet": "Batch 2 Rxn Day 6-7",
     "selected_sheets": [
       "Batch 2 Rxn Day 1",
       "Batch 2 Rxn Day 1.1",
       "Batch 2 Rxn Day 5",
-      "Batch 2 Rxn Day 5.1-6"
+      "Batch 2 Rxn Day 5.1-6",
+      "Batch 2 Rxn Day 6-7"
     ]
   },
   "profile_version": 1,
-  "updated_at": "2026-02-19 09:12:45"
+  "updated_at": "2026-02-19 10:58:52"
 }
