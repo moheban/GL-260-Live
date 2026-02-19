@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v3.0.13)
+# GL-260 Data Analysis and Plotter (v4.0.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v3.0.13`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.0.0`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.0.0 Rust Acceleration + In-App Toolchain Setup](#v400-rust-acceleration--in-app-toolchain-setup)
   - [v3.0.12 Combined Triple-Axis Splash Finalization Hardening](#v3012-combined-triple-axis-splash-finalization-hardening)
   - [v3.0.11 Combined Draw-Confirmed Refresh + Authoritative Layout Margins](#v3011-combined-draw-confirmed-refresh--authoritative-layout-margins)
   - [v3.0.10 CTk Numeric Entry Callback Hardening](#v3010-ctk-numeric-entry-callback-hardening)
@@ -126,6 +127,16 @@ These modules are imported unconditionally at startup:
 - `scipy`: Enables SciPy peak detection and Van der Waals moles calculations. The app falls back to a built-in peak finder and disables VDW if SciPy is missing.
 - `mplcursors`: The app attempts to import it; if missing, it continues without it.
 
+#### Optional Rust acceleration (`v4.0.0`)
+- The app can offload heavy bicarbonate/speciation timeline math to `gl260_rust_ext` when available.
+- If Rust is unavailable, calculations continue on the existing Python path (authoritative fallback).
+- On first use of Rust-relevant solubility actions, the app prompts to install/build prerequisites:
+  - `rustup` / `rustc` / `cargo`
+  - `maturin`
+  - Windows C++ linker toolchain (`link.exe`) via Visual Studio Build Tools (Desktop development with C++)
+  - extension build via `python -m maturin develop --manifest-path rust_ext/Cargo.toml`
+- If installation/build fails or is declined, workflows continue with Python fallback.
+
 #### Setup (typical)
 ```powershell
 python -m venv .venv
@@ -133,6 +144,18 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 If `great_tables` is not installed by your requirements workflow, install it separately so the app can start.
+
+#### Manual Rust setup and verification (optional)
+```powershell
+winget install --id Rustlang.Rustup --exact --scope user --interactive --accept-package-agreements --accept-source-agreements
+rustup default stable
+python -m pip install "maturin>=1.12,<2.0"
+# Install VS Build Tools (Desktop development with C++) if `link.exe` is missing.
+python -m maturin develop --manifest-path rust_ext/Cargo.toml
+rustc --version
+cargo --version
+python -c "import gl260_rust_ext; print('gl260_rust_ext import OK')"
+```
 
 ### Running the Application
 From the repository root:
@@ -922,6 +945,15 @@ Warnings:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.0.0 Rust Acceleration + In-App Toolchain Setup
+- Added optional Rust acceleration for core bicarbonate/speciation heavy math paths with strict runtime fallback to existing Python calculations.
+- Added first-use in-app Rust setup prompts for the advanced solubility workflows, including optional interactive install (`winget` + `rustup`) and `maturin develop` build.
+- Added runtime preference keys for Rust backend mode and install prompting defaults (`rust_backend_mode`, `rust_prompt_install_on_missing`).
+- Added Rust backend setup/repair entrypoint in Developer Tools Runtime tab.
+- Updated Rust extension packaging/wiring to build/import as `gl260_rust_ext`.
+- Bumped application version metadata to `v4.0.0` in the script header and `APP_VERSION`.
+- This release is explicitly declared as the first release under the current `vX.Y.Z` semantics policy used by this phase of the project; `X=4` is chosen for the major Rust acceleration and setup workflow expansion.
 
 ### v3.0.12 Combined Triple-Axis Splash Finalization Hardening
 - Hardened combined triple-axis overlay finalization so refresh completion is counted only from draw-confirmed acknowledgements tied to the active refreshed combined figure.

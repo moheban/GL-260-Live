@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v3.0.13
+# Version: v4.0.0
 # Date: 2026-02-19
 
 import os
@@ -528,6 +528,7 @@ import json
 import csv
 import contextlib
 import importlib
+import subprocess
 import platform
 from datetime import datetime
 
@@ -737,6 +738,427 @@ def _run_dependency_audit() -> Dict[str, Any]:
     for name in _dependency_audit_targets():
         report["dependencies"].append(_audit_dependency_import(name))
     return report
+
+
+_RUST_BACKEND_MODULE_NAME = "gl260_rust_ext"
+_RUST_BACKEND_MODULE = None
+_RUST_BACKEND_IMPORT_ERROR = None
+_RUST_BACKEND_IMPORT_ATTEMPTED = False
+
+
+def _current_rust_backend_mode() -> str:
+    """Resolve the current Rust backend mode from settings.
+
+    Purpose:
+        Normalize persisted backend preference into a supported mode string.
+    Why:
+        Runtime checks and first-use install prompts need one authoritative mode
+        switch that stays stable even when settings are missing or malformed.
+    Inputs:
+        None.
+    Outputs:
+        One of `"auto"` or `"python"`.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid settings values are treated as `"auto"`.
+    """
+    settings_map = globals().get("settings", {})
+    if not isinstance(settings_map, dict):
+        return "auto"
+    mode = str(settings_map.get("rust_backend_mode", "auto") or "auto").strip().lower()
+    return "python" if mode == "python" else "auto"
+
+
+def _is_rust_backend_enabled() -> bool:
+    """Report whether Rust backend execution is currently allowed.
+
+    Purpose:
+        Gate optional Rust acceleration behind user preference.
+    Why:
+        Users can force Python-only behavior for reproducibility or troubleshooting.
+    Inputs:
+        None.
+    Outputs:
+        True when Rust may be used, False when Python-only mode is requested.
+    Side Effects:
+        None.
+    Exceptions:
+        None.
+    """
+    return _current_rust_backend_mode() != "python"
+
+
+def _invalidate_rust_backend_cache() -> None:
+    """Reset cached Rust backend module state.
+
+    Purpose:
+        Force the next backend access to re-attempt module import.
+    Why:
+        Install/build actions can make the module available during runtime; cache
+        invalidation ensures the app sees that update immediately.
+    Inputs:
+        None.
+    Outputs:
+        None.
+    Side Effects:
+        Clears module import cache variables.
+    Exceptions:
+        None.
+    """
+    global _RUST_BACKEND_MODULE
+    global _RUST_BACKEND_IMPORT_ERROR
+    global _RUST_BACKEND_IMPORT_ATTEMPTED
+    _RUST_BACKEND_MODULE = None
+    _RUST_BACKEND_IMPORT_ERROR = None
+    _RUST_BACKEND_IMPORT_ATTEMPTED = False
+
+
+def _load_rust_backend(force_reload: bool = False):
+    """Load and cache the optional Rust backend extension module.
+
+    Purpose:
+        Centralize import and cache behavior for the Rust acceleration module.
+    Why:
+        Repeated import attempts on hot paths add overhead and complicate fallback
+        behavior; this helper provides a single cache-aware access point.
+    Inputs:
+        force_reload: When True, clear cache and re-import the module.
+    Outputs:
+        Imported module object, or None when unavailable/disabled.
+    Side Effects:
+        Updates module import cache and error tracking globals.
+    Exceptions:
+        Import failures are captured and returned as None (no raise).
+    """
+    global _RUST_BACKEND_MODULE
+    global _RUST_BACKEND_IMPORT_ERROR
+    global _RUST_BACKEND_IMPORT_ATTEMPTED
+
+    if not _is_rust_backend_enabled():
+        return None
+    if force_reload:
+        _invalidate_rust_backend_cache()
+    if _RUST_BACKEND_IMPORT_ATTEMPTED:
+        return _RUST_BACKEND_MODULE
+    _RUST_BACKEND_IMPORT_ATTEMPTED = True
+    try:
+        _RUST_BACKEND_MODULE = importlib.import_module(_RUST_BACKEND_MODULE_NAME)
+        _RUST_BACKEND_IMPORT_ERROR = None
+    except Exception as exc:
+        _RUST_BACKEND_MODULE = None
+        _RUST_BACKEND_IMPORT_ERROR = exc
+    return _RUST_BACKEND_MODULE
+
+
+def _run_command_for_status(
+    command: Sequence[str],
+    *,
+    cwd: Optional[str] = None,
+    interactive: bool = False,
+    env: Optional[Dict[str, str]] = None,
+) -> Tuple[bool, str]:
+    """Run a shell command and capture success status for setup workflows.
+
+    Purpose:
+        Provide one command runner for Rust dependency checks/installation steps.
+    Why:
+        Toolchain setup requires many command invocations with consistent error
+        reporting and interactive/non-interactive behavior.
+    Inputs:
+        command: Tokenized command list passed to subprocess.
+        cwd: Optional working directory for command execution.
+        interactive: True runs command without output capture for installer UIs.
+        env: Optional process environment override for command execution.
+    Outputs:
+        `(ok, details)` where `ok` indicates returncode zero and `details` is a
+        short message or captured output snippet.
+    Side Effects:
+        Executes external processes.
+    Exceptions:
+        Command-start failures are caught and reported as `(False, message)`.
+    """
+    try:
+        if interactive:
+            completed = subprocess.run(
+                list(command),
+                cwd=cwd,
+                check=False,
+                env=env,
+            )
+            return completed.returncode == 0, (
+                "ok" if completed.returncode == 0 else f"exit code {completed.returncode}"
+            )
+        completed = subprocess.run(
+            list(command),
+            cwd=cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+    except Exception as exc:
+        return False, str(exc)
+    output = (completed.stdout or "").strip()
+    error = (completed.stderr or "").strip()
+    details = error or output or f"exit code {completed.returncode}"
+    return completed.returncode == 0, details
+
+
+def _resolve_rustup_managed_tool_path(tool_name: str) -> Optional[str]:
+    """Resolve the active Rustup-managed executable path for a tool.
+
+    Purpose:
+        Locate concrete Rust tool binaries (`rustc`/`cargo`) from rustup.
+    Why:
+        Some Python environments expose incompatible shim executables on PATH,
+        which can break toolchain checks and `maturin` builds.
+    Inputs:
+        tool_name: Rust tool name (for example, `"rustc"` or `"cargo"`).
+    Outputs:
+        Absolute executable path when rustup can resolve it, else None.
+    Side Effects:
+        Executes `rustup which`.
+    Exceptions:
+        Command failures are handled and returned as None.
+    """
+    rustup_exe = shutil.which("rustup")
+    if not rustup_exe:
+        return None
+    ok, details = _run_command_for_status([rustup_exe, "which", tool_name])
+    if not ok:
+        return None
+    candidate = str(details or "").splitlines()[-1].strip()
+    if not candidate:
+        return None
+    return candidate if os.path.isfile(candidate) else None
+
+
+def _prepend_directories_to_path(path_value: str, entries: Sequence[str]) -> str:
+    """Prepend directories to a PATH string while preserving uniqueness.
+
+    Purpose:
+        Build deterministic PATH updates for Rust setup/build subprocesses.
+    Why:
+        Rust setup may need rustup-managed binaries to override stale shims
+        already present earlier in PATH.
+    Inputs:
+        path_value: Existing PATH string.
+        entries: Directory list to prepend in priority order.
+    Outputs:
+        Updated PATH string.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid entries are ignored safely.
+    """
+    existing = [chunk for chunk in str(path_value or "").split(os.pathsep) if chunk]
+    seen = {os.path.normcase(item.strip()) for item in existing if item.strip()}
+    prefix: List[str] = []
+    # Iterate over entries to apply deterministic PATH prepending logic.
+    for raw_entry in entries:
+        entry = str(raw_entry or "").strip()
+        if not entry or not os.path.isdir(entry):
+            continue
+        normalized = os.path.normcase(entry)
+        if normalized in seen:
+            continue
+        prefix.append(entry)
+        seen.add(normalized)
+    if not prefix:
+        return os.pathsep.join(existing)
+    return os.pathsep.join(prefix + existing)
+
+
+def _ensure_user_cargo_bin_on_path() -> None:
+    """Append rustup-managed Rust binary directories to PATH when present.
+
+    Purpose:
+        Make rustup/rustc/cargo discoverable in the current process after install.
+    Why:
+        Fresh rustup installations may not be visible until a shell restart unless
+        PATH is refreshed in-process.
+    Inputs:
+        None.
+    Outputs:
+        None.
+    Side Effects:
+        Mutates `os.environ["PATH"]` when rust tool directories exist.
+    Exceptions:
+        Invalid/missing paths are ignored.
+    """
+    home_dir = os.path.expanduser("~")
+    cargo_bin = os.path.join(home_dir, ".cargo", "bin")
+    rustc_path = _resolve_rustup_managed_tool_path("rustc")
+    rustc_bin = os.path.dirname(rustc_path) if rustc_path else ""
+    current_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = _prepend_directories_to_path(
+        current_path,
+        [cargo_bin, rustc_bin],
+    )
+
+
+def _check_rust_cli_tool(tool_name: str) -> Tuple[bool, str, str]:
+    """Check Rust CLI tool readiness and return the resolved command path.
+
+    Purpose:
+        Validate tool availability with a robust fallback to rustup-resolved paths.
+    Why:
+        PATH-visible shims may exist but be unusable; this check verifies runnable
+        executables before setup/build operations rely on them.
+    Inputs:
+        tool_name: CLI name to validate (`"rustup"`, `"rustc"`, or `"cargo"`).
+    Outputs:
+        `(ok, details, command_path)` where:
+        - `ok` indicates successful `--version` execution,
+        - `details` is output/error text,
+        - `command_path` is the executable path or command token used.
+    Side Effects:
+        Executes one or more version commands.
+    Exceptions:
+        Failures are returned in tuple form; no exceptions are raised.
+    """
+    direct_path = shutil.which(tool_name) or tool_name
+    ok, details = _run_command_for_status([direct_path, "--version"])
+    if ok:
+        return True, details, direct_path
+    if tool_name in {"rustc", "cargo"}:
+        resolved = _resolve_rustup_managed_tool_path(tool_name)
+        if resolved:
+            resolved_ok, resolved_details = _run_command_for_status([resolved, "--version"])
+            if resolved_ok:
+                return True, resolved_details, resolved
+            return False, resolved_details, resolved
+    return False, details, direct_path
+
+
+def _build_maturin_subprocess_env() -> Dict[str, str]:
+    """Build environment overrides for robust `maturin` extension builds.
+
+    Purpose:
+        Provide a subprocess environment where valid Rust binaries are preferred.
+    Why:
+        Python scripts directories may contain incompatible shim binaries that can
+        break `maturin` when it resolves `rustc`/`cargo`.
+    Inputs:
+        None.
+    Outputs:
+        Environment dictionary suitable for subprocess execution.
+    Side Effects:
+        None.
+    Exceptions:
+        Missing tool paths are tolerated; returned env falls back to base values.
+    """
+    env = dict(os.environ)
+    rustc_path = _resolve_rustup_managed_tool_path("rustc")
+    cargo_path = _resolve_rustup_managed_tool_path("cargo")
+    prepend_dirs: List[str] = []
+    if rustc_path:
+        env["RUSTC"] = rustc_path
+        prepend_dirs.append(os.path.dirname(rustc_path))
+    if cargo_path:
+        env["CARGO"] = cargo_path
+        prepend_dirs.append(os.path.dirname(cargo_path))
+    env["PATH"] = _prepend_directories_to_path(env.get("PATH", ""), prepend_dirs)
+    return env
+
+
+def _run_maturin_develop_build(manifest_path: str, *, cwd: str) -> Tuple[bool, str]:
+    """Run `maturin develop` using a staged launcher for path-stability.
+
+    Purpose:
+        Build/install the Rust extension module into the active Python environment.
+    Why:
+        On Windows, `maturin.exe` may sit beside stale `rustc`/`cargo` shims; a
+        staged copy avoids executable-directory lookup collisions.
+    Inputs:
+        manifest_path: Absolute path to `rust_ext/Cargo.toml`.
+        cwd: Project working directory for the build invocation.
+    Outputs:
+        `(ok, details)` command status tuple.
+    Side Effects:
+        Executes build tooling and creates/removes temporary files.
+    Exceptions:
+        Command/runtime failures are surfaced through the returned status tuple.
+    """
+    env = _build_maturin_subprocess_env()
+    maturin_exe = shutil.which("maturin")
+    if not maturin_exe:
+        return _run_command_for_status(
+            [
+                sys.executable,
+                "-m",
+                "maturin",
+                "develop",
+                "--manifest-path",
+                manifest_path,
+            ],
+            cwd=cwd,
+            env=env,
+        )
+    staged_dir: Optional[str] = None
+    command: List[str] = []
+    try:
+        maturin_dir = os.path.dirname(maturin_exe)
+        has_neighbor_shims = any(
+            os.path.isfile(os.path.join(maturin_dir, name))
+            for name in ("rustc.exe", "cargo.exe")
+        )
+        runner_path = maturin_exe
+        if has_neighbor_shims:
+            staged_dir = tempfile.mkdtemp(prefix="gl260-maturin-")
+            runner_path = os.path.join(staged_dir, os.path.basename(maturin_exe))
+            shutil.copy2(maturin_exe, runner_path)
+        command = [runner_path, "develop", "--manifest-path", manifest_path]
+        return _run_command_for_status(command, cwd=cwd, env=env)
+    finally:
+        if staged_dir:
+            try:
+                shutil.rmtree(staged_dir, ignore_errors=True)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+
+def _detect_rust_runtime_requirements() -> Dict[str, Any]:
+    """Inspect Rust/Maturin runtime prerequisites for acceleration.
+
+    Purpose:
+        Provide a single status snapshot used by installer prompts and diagnostics.
+    Why:
+        Setup flow must branch on missing commands and current extension readiness.
+    Inputs:
+        None.
+    Outputs:
+        Dictionary including command availability, version checks, and module state.
+    Side Effects:
+        May refresh PATH with the user cargo bin directory.
+    Exceptions:
+        Subprocess errors are captured in result fields.
+    """
+    _ensure_user_cargo_bin_on_path()
+    rustup_ok, rustup_msg, rustup_cmd = _check_rust_cli_tool("rustup")
+    rustc_ok, rustc_msg, rustc_cmd = _check_rust_cli_tool("rustc")
+    cargo_ok, cargo_msg, cargo_cmd = _check_rust_cli_tool("cargo")
+    maturin_ok, maturin_msg = _run_command_for_status(
+        [sys.executable, "-m", "maturin", "--version"]
+    )
+    module_ready = _load_rust_backend() is not None
+    return {
+        "rustup_ok": rustup_ok,
+        "rustup_msg": rustup_msg,
+        "rustup_cmd": rustup_cmd,
+        "rustc_ok": rustc_ok,
+        "rustc_msg": rustc_msg,
+        "rustc_cmd": rustc_cmd,
+        "cargo_ok": cargo_ok,
+        "cargo_msg": cargo_msg,
+        "cargo_cmd": cargo_cmd,
+        "maturin_ok": maturin_ok,
+        "maturin_msg": maturin_msg,
+        "module_ready": module_ready,
+        "module_error": str(_RUST_BACKEND_IMPORT_ERROR) if _RUST_BACKEND_IMPORT_ERROR else "",
+    }
 
 
 class TkTaskRunner:
@@ -10097,7 +10519,36 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v3.0.13"
+APP_VERSION = "v4.0.0"
+
+
+def _apply_rust_runtime_settings_defaults(settings_dict: Dict[str, Any]) -> None:
+    """Apply Rust backend settings defaults.
+
+    Purpose:
+        Ensure Rust acceleration preferences have stable persisted defaults.
+    Why:
+        Optional extension usage and first-use prompts need deterministic flags
+        across clean installs and upgraded settings files.
+    Inputs:
+        settings_dict: Mutable settings dictionary loaded from disk or defaults.
+    Outputs:
+        None.
+    Side Effects:
+        Writes/normalizes Rust backend keys on `settings_dict`.
+    Exceptions:
+        Non-dict inputs are ignored.
+    """
+    if not isinstance(settings_dict, dict):
+        return
+    mode = str(settings_dict.get("rust_backend_mode", "auto") or "auto").strip().lower()
+    if mode not in {"auto", "python"}:
+        mode = "auto"
+    settings_dict["rust_backend_mode"] = mode
+    settings_dict["rust_prompt_install_on_missing"] = bool(
+        settings_dict.get("rust_prompt_install_on_missing", True)
+    )
+
 
 DEBUG_LOGGER_NAME = "gl260"
 DEBUG_LOG_FILE = "gl260_debug.log"
@@ -16435,6 +16886,211 @@ def solubility_speciation_calibrated_to_measurement(
     return best_spec, best_params, best_scale
 
 
+def _safe_rust_float(value: Any, fallback: float = 0.0) -> float:
+    """Coerce a Rust payload numeric value to a finite float.
+
+    Purpose:
+        Normalize optional/loosely typed extension payload values.
+    Why:
+        Rust bridge results are validated at runtime before they are allowed to
+        replace Python calculations.
+    Inputs:
+        value: Raw value from the Rust extension payload.
+        fallback: Value returned when conversion fails or value is non-finite.
+    Outputs:
+        Finite float.
+    Side Effects:
+        None.
+    Exceptions:
+        Conversion failures are handled internally.
+    """
+    try:
+        candidate = float(value)
+    except Exception:
+        return fallback
+    return candidate if math.isfinite(candidate) else fallback
+
+
+def _rust_simulate_reaction_state_with_accounting(
+    ledger: Dict[str, float],
+    delta_mol: float,
+    pka2_value: float,
+    *,
+    solution_volume_l: Optional[float] = None,
+    temperature_c: Optional[float] = None,
+    ionic_strength_cap: Optional[float] = None,
+    use_temp_adjusted_constants: bool = False,
+    initial_ph_guess: Optional[float] = None,
+    constants: Optional[Tuple[float, float, float]] = None,
+    planning_mode: bool = False,
+) -> Optional[Tuple[Dict[str, float], Dict[str, float]]]:
+    """Attempt the Rust simulation kernel and validate returned payloads.
+
+    Purpose:
+        Provide a strict bridge between Python chemistry workflows and Rust math.
+    Why:
+        Runtime guardrails ensure Python fallback remains authoritative whenever
+        the extension is missing, incompatible, or returns malformed data.
+    Inputs:
+        Mirrors `_simulate_reaction_state_with_accounting` solver parameters.
+    Outputs:
+        `(state, accounting)` on success, else `None` to trigger Python fallback.
+    Side Effects:
+        May update cached Rust import error state when runtime failures occur.
+    Exceptions:
+        Extension invocation errors are swallowed and reported via cache state.
+    """
+    backend = _load_rust_backend()
+    if backend is None:
+        return None
+    solver = getattr(backend, "simulate_reaction_state_with_accounting", None)
+    if not callable(solver):
+        return None
+    payload: Any = None
+    try:
+        payload = solver(
+            ledger,
+            float(delta_mol),
+            float(pka2_value),
+            solution_volume_l,
+            temperature_c,
+            ionic_strength_cap,
+            bool(use_temp_adjusted_constants),
+            initial_ph_guess,
+            constants,
+            bool(planning_mode),
+        )
+    except Exception as exc:
+        global _RUST_BACKEND_IMPORT_ERROR
+        _RUST_BACKEND_IMPORT_ERROR = exc
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    state_raw = payload.get("state")
+    accounting_raw = payload.get("accounting")
+    if not isinstance(state_raw, Mapping) or not isinstance(accounting_raw, Mapping):
+        return None
+    state = {
+        "naoh_remaining_mol": max(
+            _safe_rust_float(state_raw.get("naoh_remaining_mol"), 0.0), 0.0
+        ),
+        "na2co3_mol": max(_safe_rust_float(state_raw.get("na2co3_mol"), 0.0), 0.0),
+        "nahco3_mol": max(_safe_rust_float(state_raw.get("nahco3_mol"), 0.0), 0.0),
+        "co2_excess_mol": max(_safe_rust_float(state_raw.get("co2_excess_mol"), 0.0), 0.0),
+        "ph": _safe_rust_float(state_raw.get("ph"), float("nan")),
+    }
+    if not math.isfinite(state["ph"]):
+        return None
+    accounting = {
+        "co2_consumed_to_carbonate_mol": max(
+            _safe_rust_float(accounting_raw.get("co2_consumed_to_carbonate_mol"), 0.0),
+            0.0,
+        ),
+        "co2_consumed_to_bicarbonate_mol": max(
+            _safe_rust_float(
+                accounting_raw.get("co2_consumed_to_bicarbonate_mol"), 0.0
+            ),
+            0.0,
+        ),
+        "co2_consumed_total_mol": max(
+            _safe_rust_float(accounting_raw.get("co2_consumed_total_mol"), 0.0), 0.0
+        ),
+        "co2_unconsumed_mol": max(
+            _safe_rust_float(accounting_raw.get("co2_unconsumed_mol"), 0.0), 0.0
+        ),
+    }
+    return state, accounting
+
+
+def _rust_analyze_bicarbonate_core(
+    *,
+    naoh_mass_g: float,
+    co2_charged_g: float,
+    solution_volume_l: Optional[float],
+    measured_ph: Optional[float],
+    slurry_ph: Optional[float],
+    target_ph: Optional[float],
+    temperature_c: Optional[float],
+    use_temp_adjusted_constants: bool,
+    ionic_strength_cap: Optional[float],
+    constants: Optional[Tuple[float, float, float]],
+) -> Optional[Dict[str, Any]]:
+    """Attempt the Rust bicarbonate core analysis kernel.
+
+    Purpose:
+        Offload high-cost repeated simulation steps used by dosing guidance.
+    Why:
+        Core guidance and timeline paths repeatedly evaluate this math and benefit
+        from a native implementation.
+    Inputs:
+        Mirrors `analyze_bicarbonate_reaction` core scalar inputs.
+    Outputs:
+        Sanitized mapping when Rust payload is valid, else None.
+    Side Effects:
+        May update cached Rust import error state when runtime failures occur.
+    Exceptions:
+        Extension invocation errors are swallowed and reported via cache state.
+    """
+    backend = _load_rust_backend()
+    if backend is None:
+        return None
+    analyzer = getattr(backend, "analyze_bicarbonate_core", None)
+    if not callable(analyzer):
+        return None
+    payload: Any = None
+    try:
+        payload = analyzer(
+            float(naoh_mass_g),
+            float(co2_charged_g),
+            solution_volume_l,
+            measured_ph,
+            slurry_ph,
+            target_ph,
+            temperature_c,
+            bool(use_temp_adjusted_constants),
+            ionic_strength_cap,
+            constants,
+        )
+    except Exception as exc:
+        global _RUST_BACKEND_IMPORT_ERROR
+        _RUST_BACKEND_IMPORT_ERROR = exc
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    simulation_curve = payload.get("simulation_curve")
+    if not isinstance(simulation_curve, Sequence):
+        return None
+    required = (
+        "naoh_mol",
+        "co2_mol",
+        "stage1_co2",
+        "naoh_after_stage1",
+        "na2co3_remaining",
+        "nahco3_produced",
+        "co2_excess",
+        "buffer_carbon",
+        "pka2_value",
+        "co3_current",
+        "hco3_current",
+        "desired_ph",
+        "ratio_target",
+        "co2_for_ratio",
+        "co2_for_naoh",
+        "total_extra_mol",
+        "total_extra_g",
+        "predicted_ph",
+        "slider_max_g",
+        "eq_ka1",
+        "eq_ka2",
+        "eq_kw",
+    )
+    if any(key not in payload for key in required):
+        return None
+    normalized = {key: payload.get(key) for key in payload.keys()}
+    normalized["simulation_curve"] = list(simulation_curve)
+    return normalized
+
+
 def _resolve_pka2_value(
     temp_c: Optional[float], use_temp_adjusted_constants: bool
 ) -> float:
@@ -16615,6 +17271,26 @@ def _simulate_reaction_state_with_accounting(
 ) -> Tuple[Dict[str, float], Dict[str, float]]:
     """Perform simulate reaction state with accounting.
     Used to keep the workflow logic localized and testable."""
+    resolved_constants = (
+        constants
+        if constants is not None
+        else _basic_carbonate_constants(temperature_c, use_temp_adjusted_constants)
+    )
+
+    rust_result = _rust_simulate_reaction_state_with_accounting(
+        ledger,
+        delta_mol,
+        pka2_value,
+        solution_volume_l=solution_volume_l,
+        temperature_c=temperature_c,
+        ionic_strength_cap=ionic_strength_cap,
+        use_temp_adjusted_constants=use_temp_adjusted_constants,
+        initial_ph_guess=initial_ph_guess,
+        constants=resolved_constants,
+        planning_mode=planning_mode,
+    )
+    if rust_result is not None:
+        return rust_result
 
     extra = max(float(delta_mol), 0.0)
     naoh_free = max(ledger.get("naoh_remaining_mol", 0.0), 0.0)
@@ -16657,7 +17333,7 @@ def _simulate_reaction_state_with_accounting(
         temperature_c=temperature_c,
         ionic_strength_cap=ionic_strength_cap,
         use_temp_adjusted_constants=use_temp_adjusted_constants,
-        constants=constants,
+        constants=resolved_constants,
         initial_ph_guess=(
             initial_ph_guess
             if initial_ph_guess is not None
@@ -18403,18 +19079,6 @@ def analyze_bicarbonate_reaction(
     if naoh_mol <= 0:
         return None
 
-    stage1_co2 = min(co2_mol, naoh_mol / 2.0)
-    naoh_after_stage1 = max(0.0, naoh_mol - stage1_co2 * 2.0)
-    na2co3_from_stage1 = stage1_co2
-    co2_after_stage1 = max(0.0, co2_mol - stage1_co2)
-
-    stage2_co2 = min(co2_after_stage1, na2co3_from_stage1)
-    na2co3_remaining = max(0.0, na2co3_from_stage1 - stage2_co2)
-    nahco3_produced = max(0.0, stage2_co2 * 2.0)
-    co2_excess = max(0.0, co2_after_stage1 - stage2_co2)
-    buffer_carbon = na2co3_remaining + nahco3_produced
-
-    pka2_value = _resolve_pka2_value(temperature_c, use_temp_adjusted_constants)
     measurement_label = None
     measurement_value = None
     if measured_ph is not None:
@@ -18424,6 +19088,22 @@ def analyze_bicarbonate_reaction(
         measurement_label = "Slurry pH"
         measurement_value = slurry_ph
 
+    eq_constants = _basic_carbonate_constants(
+        temperature_c, use_temp_adjusted_constants
+    )
+    desired_ph = target_ph if target_ph is not None else 8.0
+    initial_guess = measurement_value if measurement_value is not None else desired_ph
+    pka2_value = _resolve_pka2_value(temperature_c, use_temp_adjusted_constants)
+
+    stage1_co2 = min(co2_mol, naoh_mol / 2.0)
+    naoh_after_stage1 = max(0.0, naoh_mol - stage1_co2 * 2.0)
+    na2co3_from_stage1 = stage1_co2
+    co2_after_stage1 = max(0.0, co2_mol - stage1_co2)
+    stage2_co2 = min(co2_after_stage1, na2co3_from_stage1)
+    na2co3_remaining = max(0.0, na2co3_from_stage1 - stage2_co2)
+    nahco3_produced = max(0.0, stage2_co2 * 2.0)
+    co2_excess = max(0.0, co2_after_stage1 - stage2_co2)
+    buffer_carbon = na2co3_remaining + nahco3_produced
     ratio_estimate = (
         10 ** (measurement_value - pka2_value)
         if measurement_value is not None
@@ -18436,18 +19116,146 @@ def analyze_bicarbonate_reaction(
     else:
         co3_current = na2co3_remaining
         hco3_current = nahco3_produced
-
-    desired_ph = target_ph if target_ph is not None else 8.0
     ratio_target = 10 ** (desired_ph - pka2_value)
     numerator = co3_current - ratio_target * hco3_current
     denom = 1.0 + 2.0 * ratio_target
     co2_for_ratio = 0.0
     if denom > 0 and numerator > 0:
         co2_for_ratio = min(numerator / denom, max(co3_current, 0.0))
-
     co2_for_naoh = naoh_after_stage1 / 2.0
     total_extra_mol = max(0.0, co2_for_ratio) + max(0.0, co2_for_naoh)
     total_extra_g = total_extra_mol * SOL_MW_CO2
+    predicted_ph = float("nan")
+    slider_max_g = max(total_extra_g * 1.6, 2.0)
+    simulation_curve: List[Dict[str, float]] = []
+
+    rust_core = _rust_analyze_bicarbonate_core(
+        naoh_mass_g=naoh_mass_g,
+        co2_charged_g=co2_charged_g,
+        solution_volume_l=solution_volume_l,
+        measured_ph=measured_ph,
+        slurry_ph=slurry_ph,
+        target_ph=target_ph,
+        temperature_c=temperature_c,
+        use_temp_adjusted_constants=use_temp_adjusted_constants,
+        ionic_strength_cap=ionic_strength_cap,
+        constants=eq_constants,
+    )
+    if rust_core is not None:
+        # Rust path supplies the heavy Newton/ledger loop results.
+        naoh_mol = _safe_rust_float(rust_core.get("naoh_mol"), naoh_mol)
+        co2_mol = _safe_rust_float(rust_core.get("co2_mol"), co2_mol)
+        stage1_co2 = _safe_rust_float(rust_core.get("stage1_co2"), stage1_co2)
+        naoh_after_stage1 = _safe_rust_float(
+            rust_core.get("naoh_after_stage1"), naoh_after_stage1
+        )
+        na2co3_from_stage1 = _safe_rust_float(
+            rust_core.get("na2co3_from_stage1"), na2co3_from_stage1
+        )
+        co2_after_stage1 = _safe_rust_float(
+            rust_core.get("co2_after_stage1"), co2_after_stage1
+        )
+        stage2_co2 = _safe_rust_float(rust_core.get("stage2_co2"), stage2_co2)
+        na2co3_remaining = _safe_rust_float(
+            rust_core.get("na2co3_remaining"), na2co3_remaining
+        )
+        nahco3_produced = _safe_rust_float(
+            rust_core.get("nahco3_produced"), nahco3_produced
+        )
+        co2_excess = _safe_rust_float(rust_core.get("co2_excess"), co2_excess)
+        buffer_carbon = _safe_rust_float(rust_core.get("buffer_carbon"), buffer_carbon)
+        pka2_value = _safe_rust_float(rust_core.get("pka2_value"), pka2_value)
+        co3_current = _safe_rust_float(rust_core.get("co3_current"), co3_current)
+        hco3_current = _safe_rust_float(rust_core.get("hco3_current"), hco3_current)
+        desired_ph = _safe_rust_float(rust_core.get("desired_ph"), desired_ph)
+        ratio_target = _safe_rust_float(rust_core.get("ratio_target"), ratio_target)
+        co2_for_ratio = _safe_rust_float(rust_core.get("co2_for_ratio"), co2_for_ratio)
+        co2_for_naoh = _safe_rust_float(rust_core.get("co2_for_naoh"), co2_for_naoh)
+        total_extra_mol = _safe_rust_float(rust_core.get("total_extra_mol"), total_extra_mol)
+        total_extra_g = _safe_rust_float(rust_core.get("total_extra_g"), total_extra_g)
+        predicted_ph = _safe_rust_float(rust_core.get("predicted_ph"), float("nan"))
+        slider_max_g = _safe_rust_float(rust_core.get("slider_max_g"), slider_max_g)
+        eq_constants = (
+            _safe_rust_float(rust_core.get("eq_ka1"), eq_constants[0]),
+            _safe_rust_float(rust_core.get("eq_ka2"), eq_constants[1]),
+            _safe_rust_float(rust_core.get("eq_kw"), eq_constants[2]),
+        )
+        raw_curve = rust_core.get("simulation_curve", [])
+        if isinstance(raw_curve, Sequence):
+            # Validate each row before trusting extension output for downstream UI.
+            for row in raw_curve:
+                if not isinstance(row, Mapping):
+                    continue
+                simulation_curve.append(
+                    {
+                        "delta_g": _safe_rust_float(row.get("delta_g"), 0.0),
+                        "total_co2_g": _safe_rust_float(
+                            row.get("total_co2_g"), co2_charged_g
+                        ),
+                        "ph": _safe_rust_float(row.get("ph"), float("nan")),
+                        "na2co3_mol": _safe_rust_float(row.get("na2co3_mol"), 0.0),
+                        "nahco3_mol": _safe_rust_float(row.get("nahco3_mol"), 0.0),
+                    }
+                )
+        ratio_estimate = (
+            10 ** (measurement_value - pka2_value)
+            if measurement_value is not None
+            else None
+        )
+
+    if not simulation_curve or not math.isfinite(predicted_ph):
+        ledger = {
+            "naoh_initial_mol": naoh_mol,
+            "co2_added_mol": co2_mol,
+            "co2_stage1_mol": stage1_co2,
+            "co2_stage2_mol": stage2_co2,
+            "naoh_remaining_mol": naoh_after_stage1,
+            "na2co3_mol": na2co3_remaining,
+            "nahco3_mol": nahco3_produced,
+            "co2_excess_mol": co2_excess,
+            "buffer_carbon_mol": buffer_carbon,
+        }
+        predicted_after = _simulate_reaction_state(
+            ledger,
+            total_extra_mol,
+            pka2_value,
+            solution_volume_l=solution_volume_l,
+            temperature_c=temperature_c,
+            ionic_strength_cap=ionic_strength_cap,
+            use_temp_adjusted_constants=use_temp_adjusted_constants,
+            initial_ph_guess=initial_guess,
+            constants=eq_constants,
+        )
+        predicted_ph = predicted_after["ph"]
+        slider_max_g = max(total_extra_g * 1.6, 2.0)
+        simulation_curve = []
+        step_guess = initial_guess
+        steps = 12
+        # Iterate over the configured range to apply the per-item logic.
+        for idx in range(steps + 1):
+            delta_g = slider_max_g * (idx / steps)
+            delta_mol = delta_g / SOL_MW_CO2
+            state = _simulate_reaction_state(
+                ledger,
+                delta_mol,
+                pka2_value,
+                solution_volume_l=solution_volume_l,
+                temperature_c=temperature_c,
+                ionic_strength_cap=ionic_strength_cap,
+                use_temp_adjusted_constants=use_temp_adjusted_constants,
+                initial_ph_guess=step_guess,
+                constants=eq_constants,
+            )
+            step_guess = state.get("ph", step_guess)
+            simulation_curve.append(
+                {
+                    "delta_g": delta_g,
+                    "total_co2_g": co2_charged_g + delta_g,
+                    "ph": state["ph"],
+                    "na2co3_mol": state["na2co3_mol"],
+                    "nahco3_mol": state["nahco3_mol"],
+                }
+            )
 
     ledger = {
         "naoh_initial_mol": naoh_mol,
@@ -18460,52 +19268,6 @@ def analyze_bicarbonate_reaction(
         "co2_excess_mol": co2_excess,
         "buffer_carbon_mol": buffer_carbon,
     }
-
-    eq_constants = _basic_carbonate_constants(
-        temperature_c, use_temp_adjusted_constants
-    )
-    initial_guess = measurement_value if measurement_value is not None else desired_ph
-    predicted_after = _simulate_reaction_state(
-        ledger,
-        total_extra_mol,
-        pka2_value,
-        solution_volume_l=solution_volume_l,
-        temperature_c=temperature_c,
-        ionic_strength_cap=ionic_strength_cap,
-        use_temp_adjusted_constants=use_temp_adjusted_constants,
-        initial_ph_guess=initial_guess,
-        constants=eq_constants,
-    )
-    predicted_ph = predicted_after["ph"]
-    slider_max_g = max(total_extra_g * 1.6, 2.0)
-    simulation_curve: List[Dict[str, float]] = []
-    steps = 12
-    step_guess = initial_guess
-    # Iterate over the configured range to apply the per-item logic.
-    for idx in range(steps + 1):
-        delta_g = slider_max_g * (idx / steps)
-        delta_mol = delta_g / SOL_MW_CO2
-        state = _simulate_reaction_state(
-            ledger,
-            delta_mol,
-            pka2_value,
-            solution_volume_l=solution_volume_l,
-            temperature_c=temperature_c,
-            ionic_strength_cap=ionic_strength_cap,
-            use_temp_adjusted_constants=use_temp_adjusted_constants,
-            initial_ph_guess=step_guess,
-            constants=eq_constants,
-        )
-        step_guess = state.get("ph", step_guess)
-        simulation_curve.append(
-            {
-                "delta_g": delta_g,
-                "total_co2_g": co2_charged_g + delta_g,
-                "ph": state["ph"],
-                "na2co3_mol": state["na2co3_mol"],
-                "nahco3_mol": state["nahco3_mol"],
-            }
-        )
 
     warnings: List[str] = []
     notes: List[str] = []
@@ -21009,6 +21771,7 @@ if os.path.exists(SETTINGS_FILE):
     settings["debug_file_logging_enabled"] = bool(
         settings.get("debug_file_logging_enabled", False)
     )
+    _apply_rust_runtime_settings_defaults(settings)
 
     def _coerce_setting_float(value, fallback):
         """Coerce setting float.
@@ -21580,6 +22343,7 @@ else:
     settings["debug_enabled"] = False
     settings["debug_categories"] = _normalize_debug_categories({})
     settings["debug_file_logging_enabled"] = False
+    _apply_rust_runtime_settings_defaults(settings)
 
     # Ranges
 
@@ -30888,6 +31652,8 @@ class UnifiedApp(tk.Tk):
         # Bind the shared module-level settings dict up front so all setters hit the
         # correct container and survive tab changes or app restarts.
         self.settings = settings
+        _apply_rust_runtime_settings_defaults(self.settings)
+        self._rust_install_prompt_suppressed_session = False
         self._data_lock = threading.RLock()
         self._settings_lock = threading.RLock()
         global _SETTINGS_LOCK
@@ -35421,6 +36187,256 @@ class UnifiedApp(tk.Tk):
         self._perf_diag_output = output
         self._refresh_performance_diagnostics()
 
+    def _install_and_build_rust_backend_interactive(
+        self,
+        *,
+        status_var: Optional[tk.StringVar] = None,
+    ) -> bool:
+        """Install missing Rust prerequisites and build the extension module.
+
+        Purpose:
+            Execute the first-use Rust setup pipeline from the UI.
+        Why:
+            Rust acceleration is optional; this flow enables in-app bootstrapping
+            without forcing manual terminal setup.
+        Inputs:
+            status_var: Optional status variable for progress/error messaging.
+        Outputs:
+            True when toolchain + extension are ready, otherwise False.
+        Side Effects:
+            Runs system installers/commands and updates runtime PATH/module cache.
+        Exceptions:
+            Command failures are reported and converted to False.
+        """
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        manifest_path = os.path.join(project_root, "rust_ext", "Cargo.toml")
+        if not os.path.isfile(manifest_path):
+            if status_var is not None:
+                status_var.set("Rust extension manifest missing; using Python backend.")
+            return False
+
+        def _set_status(message: str) -> None:
+            """Update setup status text shown in the active workflow context.
+
+            Purpose:
+                Mirror install/build progress to the caller's status field.
+            Why:
+                Long-running setup steps should remain transparent in the UI.
+            Inputs:
+                message: Human-readable progress or fallback message.
+            Outputs:
+                None.
+            Side Effects:
+                Mutates `status_var` when one is provided.
+            Exceptions:
+                None.
+            """
+            if status_var is not None:
+                status_var.set(message)
+
+        state = _detect_rust_runtime_requirements()
+        rustup_cmd = str(state.get("rustup_cmd") or "rustup")
+        if not state.get("rustup_ok"):
+            _set_status("Installing Rustup via winget...")
+            ok, details = _run_command_for_status(
+                [
+                    "winget",
+                    "install",
+                    "--id",
+                    "Rustlang.Rustup",
+                    "--exact",
+                    "--scope",
+                    "user",
+                    "--interactive",
+                    "--accept-package-agreements",
+                    "--accept-source-agreements",
+                ],
+                interactive=True,
+            )
+            if not ok:
+                _set_status("Rustup install failed; continuing with Python backend.")
+                self._dbg(
+                    "speciation.engine",
+                    "Rustup install failed: %s",
+                    details,
+                )
+                return False
+
+        _ensure_user_cargo_bin_on_path()
+        state = _detect_rust_runtime_requirements()
+        rustup_cmd = str(state.get("rustup_cmd") or rustup_cmd)
+
+        if state.get("rustup_ok") and (
+            not state.get("rustc_ok") or not state.get("cargo_ok")
+        ):
+            _set_status("Configuring Rust stable toolchain...")
+            ok, details = _run_command_for_status([rustup_cmd, "default", "stable"])
+            if not ok:
+                _set_status("Rust toolchain configuration failed; using Python backend.")
+                self._dbg("speciation.engine", "rustup default stable failed: %s", details)
+                return False
+            _ensure_user_cargo_bin_on_path()
+            state = _detect_rust_runtime_requirements()
+            if not state.get("rustc_ok") or not state.get("cargo_ok"):
+                _set_status("Rust compiler tools still unavailable; using Python backend.")
+                self._dbg(
+                    "speciation.engine",
+                    "Rust tools unresolved after rustup setup: rustc=%s cargo=%s",
+                    state.get("rustc_msg"),
+                    state.get("cargo_msg"),
+                )
+                return False
+
+        if not state.get("maturin_ok"):
+            _set_status("Installing maturin for Python extension builds...")
+            ok, details = _run_command_for_status(
+                [sys.executable, "-m", "pip", "install", "maturin>=1.12,<2.0"]
+            )
+            if not ok:
+                _set_status("maturin install failed; using Python backend.")
+                self._dbg("speciation.engine", "maturin install failed: %s", details)
+                return False
+
+        _set_status("Building Rust extension with maturin...")
+        ok, details = _run_maturin_develop_build(manifest_path, cwd=project_root)
+        if not ok:
+            details_lc = str(details or "").lower()
+            if "link.exe not found" in details_lc:
+                _set_status(
+                    "Rust build tools missing (MSVC linker). Install Visual Studio Build Tools C++ workload."
+                )
+            elif "crypt_e_no_revocation_check" in details_lc:
+                _set_status(
+                    "Rust crate download failed due TLS/certificate policy; using Python backend."
+                )
+            else:
+                _set_status("Rust extension build failed; using Python backend.")
+            self._dbg("speciation.engine", "maturin develop failed: %s", details)
+            return False
+
+        _invalidate_rust_backend_cache()
+        ready = _load_rust_backend(force_reload=True) is not None
+        if not ready:
+            _set_status("Rust extension import failed after build; using Python backend.")
+            return False
+        _set_status("Rust backend ready.")
+        return True
+
+    def _ensure_rust_backend_for_workflow(
+        self,
+        *,
+        status_var: Optional[tk.StringVar] = None,
+        manual_retry: bool = False,
+    ) -> bool:
+        """Ensure Rust backend readiness or gracefully continue with Python fallback.
+
+        Purpose:
+            Gate first-use installation prompts and setup retries from workflow
+            entrypoints.
+        Why:
+            Prevents repeated disruptive prompts while preserving an explicit manual
+            retry path in Developer Tools.
+        Inputs:
+            status_var: Optional status variable updated with setup/fallback text.
+            manual_retry: True bypasses session suppression and forces prompt flow.
+        Outputs:
+            True when Rust backend is ready, otherwise False.
+        Side Effects:
+            May show modal dialogs, run installers/builds, and toggle suppression.
+        Exceptions:
+            Non-fatal setup issues are handled with fallback messaging.
+        """
+        _apply_rust_runtime_settings_defaults(self.settings)
+        if not _is_rust_backend_enabled():
+            return False
+        if _load_rust_backend() is not None:
+            return True
+
+        prompt_enabled = bool(self.settings.get("rust_prompt_install_on_missing", True))
+        if not manual_retry and (not prompt_enabled or self._rust_install_prompt_suppressed_session):
+            if status_var is not None:
+                status_var.set("Rust backend unavailable; using Python backend.")
+            return False
+
+        state = _detect_rust_runtime_requirements()
+        status_lines = [
+            f"rustup: {'OK' if state.get('rustup_ok') else 'missing'}",
+            f"rustc: {'OK' if state.get('rustc_ok') else 'missing'}",
+            f"cargo: {'OK' if state.get('cargo_ok') else 'missing'}",
+            f"maturin: {'OK' if state.get('maturin_ok') else 'missing'}",
+        ]
+        question = (
+            "Rust acceleration is not ready.\n\n"
+            + "\n".join(status_lines)
+            + "\n\nInstall/build now? If you choose No, the app will continue with Python fallback."
+        )
+        if manual_retry:
+            install_now = True
+        else:
+            try:
+                install_now = bool(
+                    messagebox.askyesno(
+                        "Rust Backend Setup",
+                        question,
+                        parent=self,
+                    )
+                )
+            except Exception:
+                install_now = False
+
+        if not install_now:
+            if not manual_retry:
+                self._rust_install_prompt_suppressed_session = True
+            if status_var is not None:
+                status_var.set("Rust install declined; using Python backend.")
+            return False
+
+        setup_ok = self._install_and_build_rust_backend_interactive(status_var=status_var)
+        if setup_ok:
+            self._rust_install_prompt_suppressed_session = False
+            try:
+                messagebox.showinfo(
+                    "Rust Backend Setup",
+                    "Rust backend is ready. Continuing with accelerated calculations.",
+                    parent=self,
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            return True
+
+        if not manual_retry:
+            self._rust_install_prompt_suppressed_session = True
+        try:
+            messagebox.showwarning(
+                "Rust Backend Setup",
+                "Rust setup failed. The app will continue with Python calculations.",
+                parent=self,
+            )
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        return False
+
+    def _manual_install_rust_backend(self) -> None:
+        """Run a manual Rust backend setup attempt from Developer Tools.
+
+        Purpose:
+            Provide an explicit retry path after suppressed or failed auto-prompts.
+        Why:
+            Session suppression intentionally avoids repetitive prompts; users still
+            need a direct way to retry setup later.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            May launch installers and build the extension.
+        Exceptions:
+            Setup failures are handled by `_ensure_rust_backend_for_workflow`.
+        """
+        self._ensure_rust_backend_for_workflow(manual_retry=True)
+
     def _build_developer_tools_runtime_tab(self, parent: ttk.Frame) -> None:
         """Build the runtime/advanced tools tab inside Developer Tools.
 
@@ -35502,6 +36518,11 @@ class UnifiedApp(tk.Tk):
             text="Validate Timeline Table Export (PDF/PNG)",
             command=self._run_timeline_table_export_validation,
         ).grid(row=1, column=1, sticky="w", padx=8, pady=6)
+        ttk.Button(
+            tools_frame,
+            text="Install/Repair Rust Backend...",
+            command=self._manual_install_rust_backend,
+        ).grid(row=2, column=0, sticky="w", padx=8, pady=6)
 
     def _set_all_debug_categories(self, enabled: bool) -> None:
         """Set every debug category toggle to one enabled/disabled state.
@@ -72010,6 +73031,7 @@ class UnifiedApp(tk.Tk):
         treat_excess_as_headspace = workflow == "Planning"
         payload = payload or self._get_cycle_payload_for_workflow(workflow)
         status_var = getattr(self, "_sol_cycle_status_var", None)
+        self._ensure_rust_backend_for_workflow(status_var=status_var)
         if payload is None:
             if status_var is not None:
                 status_var.set("No cycle dataset available. Run Cycle Analysis first.")
@@ -73915,6 +74937,7 @@ class UnifiedApp(tk.Tk):
         summary_var = getattr(self, "_sol_inverse_summary_var", None)
         if summary_var is None:
             return
+        self._ensure_rust_backend_for_workflow(status_var=summary_var)
         try:
             form_data = getattr(self, "_sol_last_form_data", None)
             if form_data is None:
@@ -77477,6 +78500,9 @@ class UnifiedApp(tk.Tk):
             - Best-effort; handles input errors without raising.
         """
         form_data: dict[str, Any] = {}
+        self._ensure_rust_backend_for_workflow(
+            status_var=getattr(self, "_sol_context_var", None)
+        )
         try:
             form_data = self._collect_solubility_form_data()
         except Exception as exc:
@@ -92621,6 +93647,7 @@ class UnifiedApp(tk.Tk):
             show_cycle_legend_on_core_plots,
             include_moles_in_core_plot_legend,
         ) = args_tuple
+        _apply_rust_runtime_settings_defaults(settings)
 
         settings["min_time"] = min_time
 
