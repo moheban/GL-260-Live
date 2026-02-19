@@ -10803,6 +10803,7 @@ DEBUG_CATEGORIES = (
     "report.build",
     "report.figures",
     "report.export",
+    "rust.backend",
     "speciation.engine",
     "speciation.solver",
     "speciation.chemistry",
@@ -10823,6 +10824,7 @@ DEBUG_CATEGORY_LABELS = {
     "report.build": "Final Report: Build",
     "report.figures": "Final Report: Figures",
     "report.export": "Final Report: Export",
+    "rust.backend": "Rust Backend",
     "speciation.engine": "Speciation: Engine",
     "speciation.solver": "Speciation: Solver",
     "speciation.chemistry": "Speciation: Chemistry",
@@ -32803,6 +32805,10 @@ class UnifiedApp(tk.Tk):
         self._profile_keep_plot_settings_var = tk.BooleanVar(value=True)
         self._profile_restore_pending: Optional[Dict[str, Any]] = None
         self._sol_regression_task_id: Optional[int] = None
+        self._dev_rust_install_task_id: Optional[int] = None
+        self._dev_rust_status_var: Optional[tk.StringVar] = None
+        self._dev_rust_progress_bar: Optional[ttk.Progressbar] = None
+        self._dev_rust_install_button: Optional[ttk.Button] = None
         self._regression_dialog: Optional[tk.Toplevel] = None
         self._regression_output: Optional[scrolledtext.ScrolledText] = None
         self._regression_listbox: Optional[tk.Listbox] = None
@@ -36494,6 +36500,9 @@ class UnifiedApp(tk.Tk):
         self._developer_tools_tab_ids = {}
         self._developer_debug_filter_var = None
         self._developer_debug_category_rows = {}
+        self._dev_rust_status_var = None
+        self._dev_rust_progress_bar = None
+        self._dev_rust_install_button = None
         self._perf_diag_dialog = None
         self._perf_diag_output = None
 
@@ -36848,6 +36857,109 @@ class UnifiedApp(tk.Tk):
         self._perf_diag_output = output
         self._refresh_performance_diagnostics()
 
+    def _set_dev_rust_install_busy(
+        self, busy: bool, status_text: Optional[str] = None
+    ) -> None:
+        """Set Runtime-tab Rust install busy state and inline progress affordances.
+
+        Purpose:
+            Keep Runtime-tab install controls synchronized with the current manual
+            Rust backend setup task state.
+        Why:
+            Manual repair runs can take significant time; without a visible busy
+            indicator and disabled action button, users can trigger duplicate runs
+            or interpret the UI as unresponsive.
+        Inputs:
+            busy: True while a manual Rust install/repair task is active, False
+                when idle/completed.
+            status_text: Optional status text displayed on the Runtime tab.
+        Outputs:
+            None.
+        Side Effects:
+            Updates Runtime-tab widgets when present:
+            - toggles install button enabled/disabled state,
+            - starts/stops indeterminate progress animation,
+            - shows/hides progress bar,
+            - updates status text.
+        Exceptions:
+            Best-effort guards suppress stale-widget failures so dialog close/reopen
+            events do not interrupt background-task completion paths.
+        """
+        status_var = getattr(self, "_dev_rust_status_var", None)
+        if status_text is not None and status_var is not None:
+            try:
+                status_var.set(str(status_text))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        button = getattr(self, "_dev_rust_install_button", None)
+        if button is not None:
+            try:
+                button.configure(state=("disabled" if busy else "normal"))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        progress_bar = getattr(self, "_dev_rust_progress_bar", None)
+        if progress_bar is None:
+            return
+        if busy:
+            try:
+                progress_bar.grid()
+                progress_bar.start(12)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            return
+        try:
+            progress_bar.stop()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            progress_bar.grid_remove()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _report_rust_backend_install_failure(
+        self,
+        reason: str,
+        details: Optional[str] = None,
+    ) -> str:
+        """Report Rust backend install/repair failure to terminal and debug logs.
+
+        Purpose:
+            Emit one normalized failure report for Runtime-tab Rust setup actions.
+        Why:
+            Manual setup failures need an always-visible terminal reason even when
+            debug logging is off, while still providing richer diagnostics through
+            an opt-in debug category.
+        Inputs:
+            reason: Short user-facing failure reason summary.
+            details: Optional command/detail text captured from the failed step.
+        Outputs:
+            Rendered failure summary string.
+        Side Effects:
+            Writes a concise failure line to stderr and emits a debug entry under
+            the `rust.backend` category.
+        Exceptions:
+            Terminal and logging write failures are handled best-effort.
+        """
+        normalized_reason = str(reason or "Rust backend setup failed.").strip()
+        detail_text = str(details or "").strip()
+        summary = normalized_reason
+        if detail_text:
+            summary = f"{normalized_reason} Details: {detail_text}"
+        try:
+            print(summary, file=sys.stderr)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        self._dbg("rust.backend", "Manual Rust backend setup failure: %s", summary)
+        return summary
+
     def _install_and_build_rust_backend_interactive(
         self,
         *,
@@ -36874,6 +36986,10 @@ class UnifiedApp(tk.Tk):
         if not os.path.isfile(manifest_path):
             if status_var is not None:
                 status_var.set("Rust extension manifest missing; using Python backend.")
+            self._report_rust_backend_install_failure(
+                "Rust extension manifest is missing; manual setup cannot continue.",
+                manifest_path,
+            )
             return False
 
         def _set_status(message: str) -> None:
@@ -36916,9 +37032,8 @@ class UnifiedApp(tk.Tk):
             )
             if not ok:
                 _set_status("Rustup install failed; continuing with Python backend.")
-                self._dbg(
-                    "speciation.engine",
-                    "Rustup install failed: %s",
+                self._report_rust_backend_install_failure(
+                    "Rustup install failed; continuing with Python backend.",
                     details,
                 )
                 return False
@@ -36934,17 +37049,21 @@ class UnifiedApp(tk.Tk):
             ok, details = _run_command_for_status([rustup_cmd, "default", "stable"])
             if not ok:
                 _set_status("Rust toolchain configuration failed; using Python backend.")
-                self._dbg("speciation.engine", "rustup default stable failed: %s", details)
+                self._report_rust_backend_install_failure(
+                    "Rust toolchain configuration failed; using Python backend.",
+                    details,
+                )
                 return False
             _ensure_user_cargo_bin_on_path()
             state = _detect_rust_runtime_requirements()
             if not state.get("rustc_ok") or not state.get("cargo_ok"):
                 _set_status("Rust compiler tools still unavailable; using Python backend.")
-                self._dbg(
-                    "speciation.engine",
-                    "Rust tools unresolved after rustup setup: rustc=%s cargo=%s",
-                    state.get("rustc_msg"),
-                    state.get("cargo_msg"),
+                self._report_rust_backend_install_failure(
+                    "Rust compiler tools are still unavailable after rustup setup.",
+                    "rustc="
+                    + str(state.get("rustc_msg") or "")
+                    + " cargo="
+                    + str(state.get("cargo_msg") or ""),
                 )
                 return False
 
@@ -36955,7 +37074,10 @@ class UnifiedApp(tk.Tk):
             )
             if not ok:
                 _set_status("maturin install failed; using Python backend.")
-                self._dbg("speciation.engine", "maturin install failed: %s", details)
+                self._report_rust_backend_install_failure(
+                    "maturin install failed; using Python backend.",
+                    details,
+                )
                 return False
 
         state = _detect_rust_runtime_requirements()
@@ -36972,9 +37094,9 @@ class UnifiedApp(tk.Tk):
                 _set_status(
                     "MinGW linker fallback unavailable (gcc/ld not found); using Python backend."
                 )
-                self._dbg(
-                    "speciation.engine",
-                    "GNU fallback selected but MinGW bin dir was unresolved.",
+                self._report_rust_backend_install_failure(
+                    "GNU fallback selected but MinGW bin directory is unresolved.",
+                    "mingw_bin_dir missing",
                 )
                 return False
             if not state.get("gnu_toolchain_installed"):
@@ -36984,10 +37106,8 @@ class UnifiedApp(tk.Tk):
                 )
                 if not ok:
                     _set_status("Rust GNU host toolchain install failed; using Python backend.")
-                    self._dbg(
-                        "speciation.engine",
-                        "rustup toolchain install failed for %s: %s",
-                        GNU_TOOLCHAIN,
+                    self._report_rust_backend_install_failure(
+                        f"Rust GNU host toolchain install failed ({GNU_TOOLCHAIN}).",
                         details,
                     )
                     return False
@@ -36998,11 +37118,8 @@ class UnifiedApp(tk.Tk):
                 )
                 if not ok:
                     _set_status("Rust GNU target install failed; using Python backend.")
-                    self._dbg(
-                        "speciation.engine",
-                        "rustup target add failed for %s (%s): %s",
-                        GNU_TARGET,
-                        GNU_TOOLCHAIN,
+                    self._report_rust_backend_install_failure(
+                        f"Rust GNU target install failed ({GNU_TARGET} on {GNU_TOOLCHAIN}).",
                         details,
                     )
                     return False
@@ -37017,12 +37134,14 @@ class UnifiedApp(tk.Tk):
                 _set_status(
                     "Rust GNU fallback prerequisites unresolved after install; using Python backend."
                 )
-                self._dbg(
-                    "speciation.engine",
-                    "GNU fallback prerequisite check failed: mingw=%s toolchain=%s target=%s",
-                    bool(mingw_bin_dir),
-                    bool(state.get("gnu_toolchain_installed")),
-                    bool(state.get("gnu_target_installed")),
+                self._report_rust_backend_install_failure(
+                    "Rust GNU fallback prerequisites remain unresolved after install.",
+                    "mingw="
+                    + str(bool(mingw_bin_dir))
+                    + " toolchain="
+                    + str(bool(state.get("gnu_toolchain_installed")))
+                    + " target="
+                    + str(bool(state.get("gnu_target_installed"))),
                 )
                 return False
             build_toolchain = GNU_TOOLCHAIN
@@ -37032,11 +37151,12 @@ class UnifiedApp(tk.Tk):
             _set_status(
                 "Rust build unavailable: neither MSVC linker nor MinGW linker was detected; using Python backend."
             )
-            self._dbg(
-                "speciation.engine",
-                "Rust build strategy unavailable: msvc_linker=%s mingw=%s",
-                bool(state.get("msvc_linker_ok")),
-                bool(state.get("mingw_ok")),
+            self._report_rust_backend_install_failure(
+                "Rust build strategy unavailable: neither MSVC nor MinGW linker was detected.",
+                "msvc_linker="
+                + str(bool(state.get("msvc_linker_ok")))
+                + " mingw="
+                + str(bool(state.get("mingw_ok"))),
             )
             return False
 
@@ -37049,24 +37169,22 @@ class UnifiedApp(tk.Tk):
         )
         if not ok:
             details_lc = str(details or "").lower()
+            fail_reason = "Rust extension build failed; using Python backend."
             if build_strategy == "msvc" and "link.exe not found" in details_lc:
-                _set_status(
+                fail_reason = (
                     "Rust build tools missing (MSVC linker). Install Visual Studio Build Tools C++ workload."
                 )
             elif build_strategy == "gnu" and "can't find crate for `core`" in details_lc:
-                _set_status(
+                fail_reason = (
                     "Rust GNU target still unavailable after setup; using Python backend."
                 )
             elif "crypt_e_no_revocation_check" in details_lc:
-                _set_status(
+                fail_reason = (
                     "Rust crate download failed due TLS/certificate policy; using Python backend."
                 )
-            else:
-                _set_status("Rust extension build failed; using Python backend.")
-            self._dbg(
-                "speciation.engine",
-                "maturin develop failed (%s strategy): %s",
-                build_strategy,
+            _set_status(fail_reason)
+            self._report_rust_backend_install_failure(
+                f"{fail_reason} (strategy={build_strategy})",
                 details,
             )
             return False
@@ -37075,8 +37193,17 @@ class UnifiedApp(tk.Tk):
         ready = _load_rust_backend(force_reload=True) is not None
         if not ready:
             _set_status("Rust extension import failed after build; using Python backend.")
+            self._report_rust_backend_install_failure(
+                "Rust extension import failed after successful build.",
+                str(_RUST_BACKEND_IMPORT_ERROR) if _RUST_BACKEND_IMPORT_ERROR else "",
+            )
             return False
         _set_status("Rust backend ready.")
+        self._dbg(
+            "rust.backend",
+            "Rust backend install/repair completed successfully (strategy=%s).",
+            build_strategy,
+        )
         return True
 
     def _ensure_rust_backend_for_workflow(
@@ -37181,23 +37308,148 @@ class UnifiedApp(tk.Tk):
         return False
 
     def _manual_install_rust_backend(self) -> None:
-        """Run a manual Rust backend setup attempt from Developer Tools.
+        """Run manual Rust backend setup asynchronously from Developer Tools.
 
         Purpose:
-            Provide an explicit retry path after suppressed or failed auto-prompts.
+            Trigger the Runtime-tab install/repair action without blocking the Tk UI.
         Why:
-            Session suppression intentionally avoids repetitive prompts; users still
-            need a direct way to retry setup later.
+            Rust setup can run installers and build steps that take long enough to
+            freeze the dialog unless work is delegated to the background task runner.
         Inputs:
             None.
         Outputs:
             None.
         Side Effects:
-            May launch installers and build the extension.
+            Submits a background task, updates Runtime-tab busy/progress widgets,
+            and may show completion message dialogs.
         Exceptions:
-            Setup failures are handled by `_ensure_rust_backend_for_workflow`.
+            Worker failures are reported through `_report_rust_backend_install_failure`
+            and handled with non-fatal UI warnings.
         """
-        self._ensure_rust_backend_for_workflow(manual_retry=True)
+        if getattr(self, "_dev_rust_install_task_id", None) is not None:
+            self._set_dev_rust_install_busy(
+                True,
+                status_text="Rust backend install/repair is already running...",
+            )
+            return
+
+        self._set_dev_rust_install_busy(
+            True,
+            status_text="Installing/repairing Rust backend...",
+        )
+
+        def _worker() -> bool:
+            """Execute manual Rust backend install/repair in a worker thread.
+
+            Purpose:
+                Perform install/build operations without blocking the UI thread.
+            Why:
+                Toolchain installation and `maturin develop` are long-running.
+            Inputs:
+                None.
+            Outputs:
+                True when setup succeeds; otherwise False.
+            Side Effects:
+                Executes external setup/build commands.
+            Exceptions:
+                Exceptions bubble to task-runner error callback.
+            """
+            return bool(self._install_and_build_rust_backend_interactive(status_var=None))
+
+        def _on_ok(setup_ok: Any) -> None:
+            """Finalize Runtime-tab state after manual Rust install worker success.
+
+            Purpose:
+                Apply completion UI updates and user messaging on worker completion.
+            Why:
+                Tk updates and message dialogs must run on the main event loop.
+            Inputs:
+                setup_ok: Worker return payload indicating setup success.
+            Outputs:
+                None.
+            Side Effects:
+                Clears active task id, updates Runtime-tab busy widgets, and may
+                show completion/failure dialogs.
+            Exceptions:
+                Messagebox failures are handled best-effort.
+            """
+            self._dev_rust_install_task_id = None
+            if bool(setup_ok):
+                self._rust_install_prompt_suppressed_session = False
+                self._set_dev_rust_install_busy(
+                    False,
+                    status_text="Rust backend ready.",
+                )
+                try:
+                    messagebox.showinfo(
+                        "Rust Backend Setup",
+                        "Rust backend is ready. Continuing with accelerated calculations.",
+                        parent=self,
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+                return
+
+            self._set_dev_rust_install_busy(
+                False,
+                status_text=(
+                    "Rust setup failed. See terminal output or enable `rust.backend` debug category."
+                ),
+            )
+            try:
+                messagebox.showwarning(
+                    "Rust Backend Setup",
+                    "Rust setup failed. The app will continue with Python calculations.",
+                    parent=self,
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        def _on_err(exc: BaseException) -> None:
+            """Handle unexpected manual Rust install worker exceptions.
+
+            Purpose:
+                Ensure UI recovers cleanly when background setup raises unexpectedly.
+            Why:
+                Defensive error handling prevents stuck progress indicators and
+                preserves a retry path after unhandled worker exceptions.
+            Inputs:
+                exc: Exception raised by the worker.
+            Outputs:
+                None.
+            Side Effects:
+                Clears active task id, emits failure diagnostics, updates Runtime-tab
+                status widgets, and shows a warning dialog.
+            Exceptions:
+                Messagebox failures are handled best-effort.
+            """
+            self._dev_rust_install_task_id = None
+            self._report_rust_backend_install_failure(
+                "Unexpected error during manual Rust backend setup.",
+                str(exc),
+            )
+            self._set_dev_rust_install_busy(
+                False,
+                status_text="Rust setup failed unexpectedly. See terminal output.",
+            )
+            try:
+                messagebox.showwarning(
+                    "Rust Backend Setup",
+                    "Rust setup failed unexpectedly. The app will continue with Python calculations.",
+                    parent=self,
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        self._dev_rust_install_task_id = self._task_runner.submit(
+            "rust_backend_manual_install",
+            _worker,
+            _on_ok,
+            _on_err,
+        )
 
     def _build_developer_tools_runtime_tab(self, parent: ttk.Frame) -> None:
         """Build the runtime/advanced tools tab inside Developer Tools.
@@ -37260,6 +37512,8 @@ class UnifiedApp(tk.Tk):
 
         tools_frame = ttk.LabelFrame(parent, text="Advanced Tools")
         tools_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 10))
+        tools_frame.columnconfigure(0, weight=1)
+        tools_frame.columnconfigure(1, weight=1)
         ttk.Button(
             tools_frame,
             text="Free-Threading & GIL...",
@@ -37280,11 +37534,33 @@ class UnifiedApp(tk.Tk):
             text="Validate Timeline Table Export (PDF/PNG)",
             command=self._run_timeline_table_export_validation,
         ).grid(row=1, column=1, sticky="w", padx=8, pady=6)
-        ttk.Button(
+        rust_install_button = ttk.Button(
             tools_frame,
             text="Install/Repair Rust Backend...",
             command=self._manual_install_rust_backend,
-        ).grid(row=2, column=0, sticky="w", padx=8, pady=6)
+        )
+        rust_install_button.grid(row=2, column=0, sticky="w", padx=8, pady=6)
+        self._dev_rust_install_button = rust_install_button
+
+        rust_status_var = tk.StringVar(value="Rust backend install/repair idle.")
+        self._dev_rust_status_var = rust_status_var
+        ttk.Label(
+            tools_frame,
+            textvariable=rust_status_var,
+            justify="left",
+        ).grid(row=3, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 4))
+        rust_progress = ttk.Progressbar(tools_frame, mode="indeterminate", length=300)
+        rust_progress.grid(row=4, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 6))
+        rust_progress.grid_remove()
+        self._dev_rust_progress_bar = rust_progress
+        self._set_dev_rust_install_busy(
+            bool(getattr(self, "_dev_rust_install_task_id", None)),
+            status_text=(
+                "Installing/repairing Rust backend..."
+                if getattr(self, "_dev_rust_install_task_id", None) is not None
+                else "Rust backend install/repair idle."
+            ),
+        )
 
     def _set_all_debug_categories(self, enabled: bool) -> None:
         """Set every debug category toggle to one enabled/disabled state.

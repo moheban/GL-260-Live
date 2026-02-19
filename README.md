@@ -899,6 +899,8 @@ Developer tools (Tools -> Developer Tools...) provide:
 - Dump Debug Settings, Clear Debug Once-Guards, and Dump Performance Stats actions.
 - Performance Diagnostics tab with stage-level timings (data prep, cycle context, combined render, embed).
 - Runtime / Advanced tab for concurrency controls and advanced tool launch buttons.
+- Runtime / Advanced now includes inline Rust backend install/repair progress (indeterminate loading bar + status text).
+- Rust install/repair failures always print a concise reason to terminal (`stderr`) and emit category-gated diagnostics under `rust.backend`.
 - Free-threading & GIL controls, dependency free-threading audit, regression checks, and timeline table export validation via dedicated dialogs/actions launched from the hub.
 
 #### Debug Logging and Performance Stats
@@ -915,6 +917,7 @@ Initial debug categories:
 - Plotting: `plotting.render`, `plotting.layout`, `plotting.legends`
 - Cycle Analysis: `cycle.analysis`, `cycle.interaction`
 - Final Report: `report.build`, `report.figures`, `report.export`
+- Rust Backend: `rust.backend`
 - Speciation Engine: `speciation.engine`, `speciation.solver`, `speciation.chemistry`, `speciation.results`
 - IO: `io.excel`, `io.files`
 
