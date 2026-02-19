@@ -20865,6 +20865,105 @@ def _normalize_debug_categories(value: Any) -> Dict[str, bool]:
             normalized[name] = False
     return normalized
 
+
+def _sanitize_workspace_profile_name(value: Any) -> str:
+    """Normalize a persisted workspace-profile name.
+
+    Purpose:
+        Canonicalize stored profile names before path resolution and validation.
+    Why:
+        Persisted profile identity must match filename-safe naming rules used by
+        the profile manager so startup validation is deterministic.
+    Args:
+        value: Raw settings value for the current workspace profile name.
+    Returns:
+        A sanitized profile name string, or an empty string when invalid.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid or non-string-like values normalize to an empty string.
+    """
+    if value is None:
+        return ""
+    cleaned = str(value).strip()
+    cleaned = re.sub(r"[<>:\"/\\\\|?*]", "_", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip(" .")
+
+
+def _workspace_profile_expected_path(name: str) -> Optional[Path]:
+    """Build the canonical profile JSON path for a profile name.
+
+    Purpose:
+        Derive the one valid on-disk location for a managed workspace profile.
+    Why:
+        Current-profile tracking should be anchored to the same `profiles/`
+        directory contract used by the profile manager.
+    Args:
+        name: Candidate profile name.
+    Returns:
+        Canonical `Path` for `profiles/<name>.json`, or None when name is empty.
+    Side Effects:
+        None.
+    Exceptions:
+        None.
+    """
+    safe_name = _sanitize_workspace_profile_name(name)
+    if not safe_name:
+        return None
+    base_dir = Path(__file__).resolve().parent
+    return base_dir / "profiles" / f"{safe_name}.json"
+
+
+def _normalize_current_workspace_profile_settings(settings_dict: Dict[str, Any]) -> None:
+    """Normalize and validate persisted current-profile settings.
+
+    Purpose:
+        Ensure current-profile name/path settings are internally consistent.
+    Why:
+        Startup should not keep stale profile pointers after profile rename,
+        delete, or manual settings edits.
+    Args:
+        settings_dict: Live settings dictionary loaded from `settings.json`.
+    Returns:
+        None.
+    Side Effects:
+        Mutates `settings_dict` keys:
+        - `current_workspace_profile_name`
+        - `current_workspace_profile_path`
+    Exceptions:
+        Invalid or missing values are cleared to empty strings.
+    """
+    if not isinstance(settings_dict, dict):
+        return
+    raw_name = settings_dict.get("current_workspace_profile_name", "")
+    raw_path = str(settings_dict.get("current_workspace_profile_path", "") or "").strip()
+    safe_name = _sanitize_workspace_profile_name(raw_name)
+    expected_path = _workspace_profile_expected_path(safe_name)
+    if not safe_name or expected_path is None:
+        settings_dict["current_workspace_profile_name"] = ""
+        settings_dict["current_workspace_profile_path"] = ""
+        return
+    expected_str = str(expected_path)
+    if not expected_path.exists():
+        settings_dict["current_workspace_profile_name"] = ""
+        settings_dict["current_workspace_profile_path"] = ""
+        return
+    if raw_path:
+        try:
+            raw_resolved = Path(raw_path).resolve()
+            expected_resolved = expected_path.resolve()
+        except Exception:
+            settings_dict["current_workspace_profile_name"] = ""
+            settings_dict["current_workspace_profile_path"] = ""
+            return
+        if raw_resolved != expected_resolved:
+            settings_dict["current_workspace_profile_name"] = ""
+            settings_dict["current_workspace_profile_path"] = ""
+            return
+    settings_dict["current_workspace_profile_name"] = safe_name
+    settings_dict["current_workspace_profile_path"] = expected_str
+
 if os.path.exists(SETTINGS_FILE):
 
     loaded_settings = None
@@ -22008,6 +22107,7 @@ settings["ui_display_mode"] = _normalize_ui_display_mode(
 settings["plot_settings_card_order"] = _normalize_plot_settings_card_order(
     settings.get("plot_settings_card_order")
 )
+_normalize_current_workspace_profile_settings(settings)
 
 
 def _save_settings_to_disk() -> None:
@@ -31270,6 +31370,8 @@ class UnifiedApp(tk.Tk):
         self._export_dpi_entry_var: Optional[tk.StringVar] = None
         self._profile_manager_window: Optional[tk.Toplevel] = None
         self._profile_manager_listbox: Optional[tk.Listbox] = None
+        self._profile_current_name_var = tk.StringVar(value="Not set")
+        self._profile_current_path_var = tk.StringVar(value="Not set")
         self._profile_include_path_var = tk.BooleanVar(value=True)
         self._profile_keep_plot_settings_var = tk.BooleanVar(value=True)
         self._profile_restore_pending: Optional[Dict[str, Any]] = None
@@ -47914,6 +48016,168 @@ class UnifiedApp(tk.Tk):
             return None
         return profiles_dir
 
+    def _resolve_current_workspace_profile(
+        self, *, normalize: bool = True, persist: bool = False
+    ) -> Tuple[Optional[str], Optional[Path]]:
+        """Resolve the currently tracked workspace profile.
+
+        Purpose:
+            Read, validate, and canonicalize the active profile identity from
+            persisted settings.
+        Why:
+            The profile manager Save workflow depends on a reliable "current
+            profile" target that survives app restarts and stale-file cases.
+        Args:
+            normalize: True to rewrite invalid/misaligned settings to canonical
+                values (or clear them when invalid).
+            persist: True to flush normalization changes to `settings.json`.
+        Returns:
+            Tuple of `(profile_name, profile_path)` when valid, else `(None, None)`.
+        Side Effects:
+            May mutate `settings["current_workspace_profile_name"]` and
+            `settings["current_workspace_profile_path"]`.
+        Exceptions:
+            Filesystem/path resolution failures are treated as invalid state and
+            clear current-profile settings when normalization is enabled.
+        """
+        raw_name = settings.get("current_workspace_profile_name", "")
+        raw_path = str(settings.get("current_workspace_profile_path", "") or "").strip()
+        safe_name = self._sanitize_profile_name(str(raw_name or ""))
+        expected_path = _workspace_profile_expected_path(safe_name)
+        is_valid = False
+        if safe_name and expected_path is not None and expected_path.exists():
+            expected_resolved = None
+            try:
+                expected_resolved = expected_path.resolve()
+            except Exception:
+                expected_resolved = None
+            if expected_resolved is not None:
+                if raw_path:
+                    try:
+                        is_valid = Path(raw_path).resolve() == expected_resolved
+                    except Exception:
+                        is_valid = False
+                else:
+                    # Accept legacy state that only stored a name and backfill path.
+                    is_valid = True
+        if not is_valid:
+            changed = bool(raw_name) or bool(raw_path)
+            if normalize and changed:
+                settings["current_workspace_profile_name"] = ""
+                settings["current_workspace_profile_path"] = ""
+                if persist:
+                    try:
+                        _save_settings_to_disk()
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+            return None, None
+        canonical_path = str(expected_path)
+        changed = (
+            settings.get("current_workspace_profile_name") != safe_name
+            or settings.get("current_workspace_profile_path") != canonical_path
+        )
+        if normalize and changed:
+            settings["current_workspace_profile_name"] = safe_name
+            settings["current_workspace_profile_path"] = canonical_path
+            if persist:
+                try:
+                    _save_settings_to_disk()
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+        return safe_name, expected_path
+
+    def _set_current_workspace_profile(self, name: str, *, persist: bool = True) -> None:
+        """Set and optionally persist the current workspace profile.
+
+        Purpose:
+            Record which profile the active workspace represents.
+        Why:
+            The new Profile Manager Save action needs an explicit overwrite target
+            and clear user feedback for what will be saved.
+        Args:
+            name: Profile name to track as current.
+            persist: True to write updated keys to `settings.json` immediately.
+        Returns:
+            None.
+        Side Effects:
+            Updates current-profile keys in `settings`, may write settings to disk,
+            and refreshes Current Profile UI labels when available.
+        Exceptions:
+            Invalid names or missing profile files clear current-profile state.
+        """
+        safe_name = self._sanitize_profile_name(name)
+        expected_path = _workspace_profile_expected_path(safe_name)
+        if not safe_name or expected_path is None or not expected_path.exists():
+            self._clear_current_workspace_profile(persist=persist)
+            return
+        settings["current_workspace_profile_name"] = safe_name
+        settings["current_workspace_profile_path"] = str(expected_path)
+        if persist:
+            try:
+                _save_settings_to_disk()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._refresh_current_profile_section()
+
+    def _clear_current_workspace_profile(self, *, persist: bool = True) -> None:
+        """Clear the tracked current workspace profile.
+
+        Purpose:
+            Remove stale or deleted current-profile identity.
+        Why:
+            Save workflows must not silently target files that no longer exist.
+        Args:
+            persist: True to write cleared keys to `settings.json` immediately.
+        Returns:
+            None.
+        Side Effects:
+            Clears current-profile keys in `settings`, may write settings to disk,
+            and refreshes Current Profile UI labels when available.
+        Exceptions:
+            None; disk write is best-effort.
+        """
+        settings["current_workspace_profile_name"] = ""
+        settings["current_workspace_profile_path"] = ""
+        if persist:
+            try:
+                _save_settings_to_disk()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._refresh_current_profile_section()
+
+    def _refresh_current_profile_section(self) -> None:
+        """Refresh Current Profile labels in the Profile Manager UI.
+
+        Purpose:
+            Synchronize displayed current-profile name/path with persisted state.
+        Why:
+            Users need an explicit visual confirmation of which profile Save will
+            target.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Updates Tk StringVar values bound to the Profile Manager labels.
+        Exceptions:
+            Falls back to "Not set" labels when current-profile state is invalid.
+        """
+        profile_name, profile_path = self._resolve_current_workspace_profile(
+            normalize=True, persist=False
+        )
+        display_name = profile_name if profile_name else "Not set"
+        display_path = str(profile_path) if profile_path is not None else "Not set"
+        name_var = getattr(self, "_profile_current_name_var", None)
+        if isinstance(name_var, tk.StringVar):
+            name_var.set(display_name)
+        path_var = getattr(self, "_profile_current_path_var", None)
+        if isinstance(path_var, tk.StringVar):
+            path_var.set(display_path)
+
     def _sanitize_profile_name(self, name: str) -> str:
         """Sanitize profile name.
         Used to strip or normalize profile name before use."""
@@ -47989,20 +48253,42 @@ class UnifiedApp(tk.Tk):
         return names
 
     def _refresh_profile_listbox(self, *, select_name: Optional[str] = None) -> None:
-        """Refresh profile listbox.
-        Used to sync profile listbox with current settings."""
+        """Refresh profile list selection and Current Profile labels.
+
+        Purpose:
+            Rebuild the profile listbox from disk and select the requested item.
+        Why:
+            Profile CRUD actions must keep list selection and current-profile
+            status synchronized.
+        Args:
+            select_name: Optional profile name to select after refresh.
+        Returns:
+            None.
+        Side Effects:
+            Rewrites listbox rows, updates selection, and refreshes Current
+            Profile label values.
+        Exceptions:
+            None.
+        """
         listbox = getattr(self, "_profile_manager_listbox", None)
         if listbox is None:
+            self._refresh_current_profile_section()
             return
         names = self._list_profile_names()
+        target_name = select_name
+        if not target_name:
+            target_name, _ = self._resolve_current_workspace_profile(
+                normalize=True, persist=False
+            )
         listbox.delete(0, tk.END)
         # Iterate over names to apply the per-item logic.
         for name in names:
             listbox.insert(tk.END, name)
-        if select_name and select_name in names:
-            idx = names.index(select_name)
+        if target_name and target_name in names:
+            idx = names.index(target_name)
             listbox.selection_set(idx)
             listbox.see(idx)
+        self._refresh_current_profile_section()
 
     def _selected_profile_name(self) -> Optional[str]:
         """Perform selected profile name.
@@ -48094,7 +48380,7 @@ class UnifiedApp(tk.Tk):
             container.grid(row=0, column=0, sticky="nsew")
         window.grid_rowconfigure(0, weight=1)
         window.grid_columnconfigure(0, weight=1)
-        container.grid_rowconfigure(1, weight=1)
+        container.grid_rowconfigure(2, weight=1)
         container.grid_columnconfigure(0, weight=1)
 
         if ctk_module is not None:
@@ -48107,13 +48393,65 @@ class UnifiedApp(tk.Tk):
         else:
             ttk.Label(container, text="Profiles").grid(row=0, column=0, sticky="w")
 
+        current_shell: Any
+        if ctk_module is not None:
+            current_shell = ctk_module.CTkFrame(container, corner_radius=8)
+            current_shell.grid(
+                row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0), padx=(0, 0)
+            )
+            current_shell.grid_columnconfigure(1, weight=1)
+            ctk_module.CTkLabel(
+                current_shell,
+                text="Current Profile",
+                anchor="w",
+                font=(getattr(self, "_ui_font_family", "Verdana"), 12, "bold"),
+            ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=(8, 2))
+            ctk_module.CTkLabel(current_shell, text="Name:", anchor="w").grid(
+                row=1, column=0, sticky="w", padx=(10, 8), pady=2
+            )
+            ctk_module.CTkLabel(
+                current_shell,
+                textvariable=self._profile_current_name_var,
+                anchor="w",
+            ).grid(row=1, column=1, sticky="ew", padx=(0, 10), pady=2)
+            ctk_module.CTkLabel(current_shell, text="Path:", anchor="w").grid(
+                row=2, column=0, sticky="nw", padx=(10, 8), pady=(2, 8)
+            )
+            ctk_module.CTkLabel(
+                current_shell,
+                textvariable=self._profile_current_path_var,
+                anchor="w",
+                justify="left",
+                wraplength=self._scale_length(560),
+            ).grid(row=2, column=1, sticky="ew", padx=(0, 10), pady=(2, 8))
+        else:
+            current_shell = ttk.Labelframe(container, text="Current Profile")
+            current_shell.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+            current_shell.grid_columnconfigure(1, weight=1)
+            ttk.Label(current_shell, text="Name:").grid(
+                row=0, column=0, sticky="w", padx=(8, 8), pady=2
+            )
+            ttk.Label(
+                current_shell,
+                textvariable=self._profile_current_name_var,
+            ).grid(row=0, column=1, sticky="w", padx=(0, 8), pady=2)
+            ttk.Label(current_shell, text="Path:").grid(
+                row=1, column=0, sticky="nw", padx=(8, 8), pady=(2, 8)
+            )
+            ttk.Label(
+                current_shell,
+                textvariable=self._profile_current_path_var,
+                justify="left",
+                wraplength=self._scale_length(560),
+            ).grid(row=1, column=1, sticky="w", padx=(0, 8), pady=(2, 8))
+
         list_shell: Any
         if ctk_module is not None:
             list_shell = ctk_module.CTkFrame(container, corner_radius=8)
-            list_shell.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+            list_shell.grid(row=2, column=0, sticky="nsew", pady=(6, 0))
         else:
             list_shell = ttk.Frame(container)
-            list_shell.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+            list_shell.grid(row=2, column=0, sticky="nsew", pady=(6, 0))
         list_shell.grid_rowconfigure(0, weight=1)
         list_shell.grid_columnconfigure(0, weight=1)
 
@@ -48178,11 +48516,16 @@ class UnifiedApp(tk.Tk):
             if ctk_module is not None
             else ttk.Frame(container)
         )
-        button_frame.grid(row=1, column=2, sticky="n", padx=(12, 0))
+        button_frame.grid(row=2, column=2, sticky="n", padx=(12, 0))
         _ui_button(
             button_frame,
             text="New Profile",
             command=self._profile_new_blank,
+        ).pack(fill="x", pady=2)
+        _ui_button(
+            button_frame,
+            text="Save",
+            command=self._profile_save_current,
         ).pack(fill="x", pady=2)
         _ui_button(
             button_frame,
@@ -48230,12 +48573,12 @@ class UnifiedApp(tk.Tk):
             container,
             text="Include dataset file path",
             variable=self._profile_include_path_var,
-        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 0))
         _ui_checkbutton(
             container,
             text="Keep plot settings for New Profile",
             variable=self._profile_keep_plot_settings_var,
-        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
         try:
             self.update_idletasks()
@@ -48295,7 +48638,11 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
-        self._refresh_profile_listbox()
+        self._refresh_current_profile_section()
+        current_profile_name, _ = self._resolve_current_workspace_profile(
+            normalize=True, persist=False
+        )
+        self._refresh_profile_listbox(select_name=current_profile_name)
         try:
             # Ensure geometry/list population is stable before enabling modal grab.
             window.update_idletasks()
@@ -48384,6 +48731,7 @@ class UnifiedApp(tk.Tk):
             # Flag new profiles as dataset-optional to avoid relink prompts.
             payload["dataset_required"] = False
         if self._write_profile_document(path, doc):
+            self._set_current_workspace_profile(profile_name, persist=True)
             self._refresh_profile_listbox(select_name=profile_name)
 
     def _prompt_new_profile_configuration(
@@ -49042,9 +49390,86 @@ class UnifiedApp(tk.Tk):
             "payload": payload,
         }
 
+    def _profile_save_current(self) -> None:
+        """Save the active workspace to the tracked current profile.
+
+        Purpose:
+            Provide a one-click save path for the profile currently tied to the
+            workspace.
+        Why:
+            Users need an explicit Save action that does not require selecting a
+            list entry each time.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            May overwrite a profile JSON document, update current-profile
+            tracking keys, and refresh profile manager UI state.
+        Exceptions:
+            Missing or invalid current-profile tracking falls back to Save As.
+        """
+        parent = getattr(self, "_profile_manager_window", None) or self
+        current_name, current_path = self._resolve_current_workspace_profile(
+            normalize=True, persist=True
+        )
+        if not current_name or current_path is None:
+            messagebox.showinfo(
+                "Profiles",
+                "No current profile is set. Choose a profile name to save this workspace.",
+                parent=parent,
+            )
+            self._profile_save_current_as()
+            return
+        if not current_path.exists():
+            messagebox.showwarning(
+                "Profiles",
+                (
+                    f"The current profile '{current_name}' could not be found.\n"
+                    "Choose a profile name to save this workspace."
+                ),
+                parent=parent,
+            )
+            self._clear_current_workspace_profile(persist=True)
+            self._refresh_profile_listbox()
+            self._profile_save_current_as()
+            return
+        if not messagebox.askyesno(
+            "Save Current Profile?",
+            f"Overwrite current profile '{current_name}' with the current workspace?",
+            parent=parent,
+        ):
+            return
+        created_at = None
+        existing = self._read_profile_document(current_path)
+        if isinstance(existing, dict):
+            created_at = existing.get("created_at")
+        doc = self._build_profile_document(
+            include_dataset_path=bool(self._profile_include_path_var.get()),
+            created_at=created_at,
+        )
+        if self._write_profile_document(current_path, doc):
+            self._set_current_workspace_profile(current_name, persist=True)
+            self._refresh_profile_listbox(select_name=current_name)
+
     def _profile_save_current_as(self) -> None:
-        """Save current as.
-        Used by profile workflows to save current as."""
+        """Save the active workspace to a named profile.
+
+        Purpose:
+            Create a new profile or overwrite a named profile from current state.
+        Why:
+            Save As is the fallback when no current profile is set and allows
+            explicit profile naming.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Prompts for a profile name, writes profile JSON, updates
+            current-profile tracking, and refreshes profile manager UI.
+        Exceptions:
+            Invalid names and filesystem failures abort without partial writes.
+        """
         parent = getattr(self, "_profile_manager_window", None) or self
         name = simpledialog.askstring("Save Profile", "Profile name:", parent=parent)
         if not name:
@@ -49071,11 +49496,27 @@ class UnifiedApp(tk.Tk):
             created_at=created_at,
         )
         if self._write_profile_document(path, doc):
+            self._set_current_workspace_profile(safe_name, persist=True)
             self._refresh_profile_listbox(select_name=safe_name)
 
     def _profile_overwrite_selected(self) -> None:
-        """Perform profile overwrite selected.
-        Used to keep the workflow logic localized and testable."""
+        """Overwrite the selected profile with current workspace state.
+
+        Purpose:
+            Save current workspace data into the profile selected in the manager.
+        Why:
+            Users need a direct overwrite flow when targeting a specific profile
+            from the list.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Prompts for overwrite confirmation, writes profile JSON, updates
+            current-profile tracking, and refreshes manager UI.
+        Exceptions:
+            Invalid selection or write failures abort safely.
+        """
         name = self._selected_profile_name()
         if not name:
             messagebox.showinfo("Profiles", "Select a profile to overwrite.")
@@ -49098,15 +49539,34 @@ class UnifiedApp(tk.Tk):
             created_at=created_at,
         )
         if self._write_profile_document(path, doc):
+            self._set_current_workspace_profile(name, persist=True)
             self._refresh_profile_listbox(select_name=name)
 
     def _profile_rename_selected(self) -> None:
-        """Perform profile rename selected.
-        Used to keep the workflow logic localized and testable."""
+        """Rename the selected profile and sync current-profile tracking.
+
+        Purpose:
+            Change the stored profile filename for the selected entry.
+        Why:
+            Renaming should preserve current-profile identity when the renamed
+            profile is the active workspace profile.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Renames profile files on disk, may update current-profile settings,
+            and refreshes manager list selection.
+        Exceptions:
+            Existing-target and filesystem errors are reported and abort rename.
+        """
         name = self._selected_profile_name()
         if not name:
             messagebox.showinfo("Profiles", "Select a profile to rename.")
             return
+        current_name, _ = self._resolve_current_workspace_profile(
+            normalize=True, persist=False
+        )
         parent = getattr(self, "_profile_manager_window", None) or self
         new_name = simpledialog.askstring(
             "Rename Profile", "New profile name:", initialvalue=name, parent=parent
@@ -49133,15 +49593,35 @@ class UnifiedApp(tk.Tk):
         except Exception as exc:
             messagebox.showerror("Rename Profile", f"Rename failed:\n{exc}")
             return
+        if current_name == name:
+            self._set_current_workspace_profile(safe_name, persist=True)
         self._refresh_profile_listbox(select_name=safe_name)
 
     def _profile_delete_selected(self) -> None:
-        """Perform profile delete selected.
-        Used to keep the workflow logic localized and testable."""
+        """Delete the selected profile and clear tracking when necessary.
+
+        Purpose:
+            Remove a profile document from the managed profiles directory.
+        Why:
+            Deleting the active profile must also clear current-profile state to
+            prevent future Save actions from targeting a missing file.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Deletes a profile file, may clear current-profile settings, and
+            refreshes the manager list.
+        Exceptions:
+            Filesystem delete failures are reported and leave state unchanged.
+        """
         name = self._selected_profile_name()
         if not name:
             messagebox.showinfo("Profiles", "Select a profile to delete.")
             return
+        current_name, _ = self._resolve_current_workspace_profile(
+            normalize=True, persist=False
+        )
         if not messagebox.askyesno(
             "Delete Profile?", f"Delete '{name}' permanently?"
         ):
@@ -49154,6 +49634,8 @@ class UnifiedApp(tk.Tk):
         except Exception as exc:
             messagebox.showerror("Profiles", f"Could not delete profile:\n{exc}")
             return
+        if current_name == name:
+            self._clear_current_workspace_profile(persist=True)
         self._refresh_profile_listbox()
 
     def _profile_export_selected(self) -> None:
@@ -49240,8 +49722,24 @@ class UnifiedApp(tk.Tk):
             self._refresh_profile_listbox(select_name=safe_name)
 
     def _profile_load_selected(self) -> None:
-        """Load selected.
-        Used by profile workflows to load selected."""
+        """Load the selected profile into the active workspace.
+
+        Purpose:
+            Restore workspace state from the selected profile payload.
+        Why:
+            Loading a profile should establish that profile as the current Save
+            target only after restore succeeds.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Prompts for confirmation, autosaves current workspace backup, restores
+            profile state, and updates current-profile tracking on success.
+        Exceptions:
+            Invalid profile files or restore failures abort without changing
+            current-profile identity.
+        """
         name = self._selected_profile_name()
         if not name:
             messagebox.showinfo("Profiles", "Select a profile to load.")
@@ -49259,7 +49757,9 @@ class UnifiedApp(tk.Tk):
         ):
             return
         self._autosave_last_workspace()
-        self._restore_workspace_from_profile(profile_doc)
+        if self._restore_workspace_from_profile(profile_doc):
+            self._set_current_workspace_profile(name, persist=True)
+            self._refresh_profile_listbox(select_name=name)
 
     def _collect_profile_plot_settings(self) -> Dict[str, Any]:
         """Collect profile plot settings.
@@ -50009,7 +50509,7 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
-    def _restore_workspace_from_profile(self, profile_doc: dict[str, Any]) -> None:
+    def _restore_workspace_from_profile(self, profile_doc: dict[str, Any]) -> bool:
         """Restore the workspace from a stored profile document.
 
         Purpose:
@@ -50019,7 +50519,7 @@ class UnifiedApp(tk.Tk):
         Args:
             profile_doc: Profile document containing metadata and payload state.
         Returns:
-            None.
+            True when restore succeeds, otherwise False.
         Side Effects:
             Clears current workspace, updates settings/UI, and may prompt for data.
         Exceptions:
@@ -50029,12 +50529,12 @@ class UnifiedApp(tk.Tk):
         state = self._deserialize_workspace_state(payload or {})
         if not state:
             messagebox.showerror("Load Profile", "Profile payload is invalid.")
-            return
+            return False
         dataset_required = bool(state.get("dataset_required", True))
         if dataset_required:
             dataset_path = self._resolve_profile_dataset_path(state.get("dataset_path"))
             if not dataset_path:
-                return
+                return False
             state["dataset_path"] = dataset_path
 
         self._clear_workspace_state()
@@ -50051,7 +50551,7 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
-            return
+            return True
 
         self.file_path = dataset_path
         settings["last_file_path"] = self.file_path
@@ -50136,6 +50636,7 @@ class UnifiedApp(tk.Tk):
         }
 
         self._apply_column_selection(auto_refresh_axes=True)
+        return True
 
     def _open_plot_settings_dialog(self, plot_id: Optional[str] = None) -> None:
         """Open the plot settings dialog for the selected plot.

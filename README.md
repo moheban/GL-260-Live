@@ -808,7 +808,9 @@ Key persisted categories:
 #### Process Profiles
 Process Profiles store and restore full workspace snapshots, including dataset selection (optional), sheet selection, column mappings, plot settings/elements, layout tuning, and final report configuration. Access the manager via Profiles -> Manage Profiles....
 
-Profiles are stored in `profiles/` as `profiles/<profile_name>.json`. The manager supports Save Current As..., Load, Overwrite, Rename, Delete, Export, and Import. Export writes the selected profile to a JSON file; Import brings a JSON profile into the `profiles/` folder.
+Profiles are stored in `profiles/` as `profiles/<profile_name>.json`. The manager supports Save, Save Current As..., Load, Overwrite, Rename, Delete, Export, and Import. Export writes the selected profile to a JSON file; Import brings a JSON profile into the `profiles/` folder.
+
+The manager includes a `Current Profile` section that shows the active workspace profile name and path. `Save` writes directly to this current profile (with overwrite confirmation). If no current profile is set, `Save` falls back to the Save Current As... flow. The current profile tracking is persisted in `settings.json` and restored on next launch when the tracked profile still exists.
 
 Use New Profile to start a clean workspace without inheriting prior dataset or plot state. New Profile clears the workspace to startup defaults, then opens a single configuration dialog that captures:
 - Profile name
