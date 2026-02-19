@@ -48586,6 +48586,13 @@ class UnifiedApp(tk.Tk):
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+        measured_content_height = self._scale_length(560)
+        try:
+            # Measure rendered content so first-open height fits the full action column.
+            measured_content_height = int(container.winfo_reqheight()) + self._scale_length(44)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
 
         min_list_px = self._scale_length(420)
         max_list_px = self._scale_length(980)
@@ -48602,11 +48609,14 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
         min_dialog_width = self._scale_length(760)
-        min_dialog_height = self._scale_length(360)
+        min_dialog_height = self._scale_length(520)
         preferred_dialog_width = (
             list_target_px + button_col_reqwidth + self._scale_length(72)
         )
-        preferred_dialog_height = self._scale_length(420)
+        baseline_preferred_dialog_height = self._scale_length(560)
+        preferred_dialog_height = max(
+            baseline_preferred_dialog_height, measured_content_height
+        )
         parent_width = int(getattr(self, "winfo_width", lambda: 0)() or 0)
         parent_height = int(getattr(self, "winfo_height", lambda: 0)() or 0)
         if parent_width <= 0:
