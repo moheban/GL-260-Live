@@ -744,6 +744,11 @@ _RUST_BACKEND_MODULE_NAME = "gl260_rust_ext"
 _RUST_BACKEND_MODULE = None
 _RUST_BACKEND_IMPORT_ERROR = None
 _RUST_BACKEND_IMPORT_ATTEMPTED = False
+MSVC_TARGET = "x86_64-pc-windows-msvc"
+GNU_TARGET = "x86_64-pc-windows-gnu"
+MSVC_TOOLCHAIN = "stable-x86_64-pc-windows-msvc"
+GNU_TOOLCHAIN = "stable-x86_64-pc-windows-gnu"
+MINGW_FALLBACK_BIN_DIR = r"C:\Users\mmoheban\mingw64\bin"
 
 
 def _current_rust_backend_mode() -> str:
@@ -907,16 +912,22 @@ def _run_command_for_status(
     return completed.returncode == 0, details
 
 
-def _resolve_rustup_managed_tool_path(tool_name: str) -> Optional[str]:
-    """Resolve the active Rustup-managed executable path for a tool.
+def _resolve_rustup_managed_tool_path(
+    tool_name: str,
+    *,
+    toolchain: Optional[str] = None,
+) -> Optional[str]:
+    """Resolve a Rustup-managed executable path for a tool.
 
     Purpose:
         Locate concrete Rust tool binaries (`rustc`/`cargo`) from rustup.
     Why:
-        Some Python environments expose incompatible shim executables on PATH,
-        which can break toolchain checks and `maturin` builds.
+        Python/venv script directories may expose incompatible shim executables;
+        rustup resolution keeps setup and build commands pinned to a known
+        toolchain implementation.
     Inputs:
         tool_name: Rust tool name (for example, `"rustc"` or `"cargo"`).
+        toolchain: Optional rustup toolchain token to resolve against.
     Outputs:
         Absolute executable path when rustup can resolve it, else None.
     Side Effects:
@@ -927,13 +938,145 @@ def _resolve_rustup_managed_tool_path(tool_name: str) -> Optional[str]:
     rustup_exe = shutil.which("rustup")
     if not rustup_exe:
         return None
-    ok, details = _run_command_for_status([rustup_exe, "which", tool_name])
+    command: List[str] = [rustup_exe, "which"]
+    if toolchain:
+        command.extend(["--toolchain", str(toolchain)])
+    command.append(tool_name)
+    ok, details = _run_command_for_status(command)
     if not ok:
         return None
     candidate = str(details or "").splitlines()[-1].strip()
     if not candidate:
         return None
     return candidate if os.path.isfile(candidate) else None
+
+
+def _detect_msvc_linker_path() -> str:
+    """Detect the MSVC linker executable path.
+
+    Purpose:
+        Resolve whether `link.exe` is currently available for MSVC builds.
+    Why:
+        Rust `*-pc-windows-msvc` builds require an MSVC-compatible linker; setup
+        strategy selection needs an explicit linker readiness check.
+    Inputs:
+        None.
+    Outputs:
+        Absolute `link.exe` path when found, otherwise an empty string.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid PATH entries are ignored safely.
+    """
+    candidate = shutil.which("link.exe")
+    if not candidate:
+        return ""
+    return candidate if os.path.isfile(candidate) else ""
+
+
+def _detect_mingw_bin_dir() -> str:
+    """Detect a MinGW bin directory containing GCC and LD.
+
+    Purpose:
+        Locate a usable MinGW toolchain directory for GNU Rust fallback builds.
+    Why:
+        GNU fallback requires a linker/driver pair (`gcc.exe`, `ld.exe`) that is
+        not guaranteed to be globally on PATH.
+    Inputs:
+        None.
+    Outputs:
+        Absolute MinGW bin directory path when found, otherwise an empty string.
+    Side Effects:
+        None.
+    Exceptions:
+        Missing directories and malformed PATH entries are ignored.
+    """
+    candidates: List[str] = []
+    # Inspect current PATH first so user-selected toolchains take precedence.
+    for entry in str(os.environ.get("PATH", "") or "").split(os.pathsep):
+        cleaned = str(entry or "").strip().strip('"')
+        if cleaned:
+            candidates.append(cleaned)
+    candidates.append(MINGW_FALLBACK_BIN_DIR)
+    seen: Set[str] = set()
+    # Probe each candidate once and require both compiler and linker binaries.
+    for raw_dir in candidates:
+        candidate_dir = os.path.abspath(str(raw_dir or "").strip())
+        if not candidate_dir or not os.path.isdir(candidate_dir):
+            continue
+        normalized = os.path.normcase(candidate_dir)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        gcc_path = os.path.join(candidate_dir, "gcc.exe")
+        ld_path = os.path.join(candidate_dir, "ld.exe")
+        if os.path.isfile(gcc_path) and os.path.isfile(ld_path):
+            return candidate_dir
+    return ""
+
+
+def _rustup_installed_targets(*, rustup_cmd: Optional[str] = None) -> Set[str]:
+    """Return installed rustup targets for the active Rust installation.
+
+    Purpose:
+        Discover target triples currently installed under rustup.
+    Why:
+        GNU fallback setup should skip redundant target installation work and only
+        install missing targets when required.
+    Inputs:
+        rustup_cmd: Optional rustup executable path/token to invoke.
+    Outputs:
+        Set of installed target-triple strings.
+    Side Effects:
+        Executes `rustup target list --installed`.
+    Exceptions:
+        Command failures return an empty set.
+    """
+    rustup_exe = str(rustup_cmd or shutil.which("rustup") or "").strip()
+    if not rustup_exe:
+        return set()
+    ok, details = _run_command_for_status([rustup_exe, "target", "list", "--installed"])
+    if not ok:
+        return set()
+    targets: Set[str] = set()
+    # Parse each non-empty line into one installed target token.
+    for raw_line in str(details or "").splitlines():
+        token = str(raw_line or "").strip()
+        if token:
+            targets.add(token)
+    return targets
+
+
+def _rustup_installed_toolchains(*, rustup_cmd: Optional[str] = None) -> Set[str]:
+    """Return installed rustup toolchains.
+
+    Purpose:
+        Discover host toolchains available for rustup `run` and `which`.
+    Why:
+        GNU fallback requires installing/validating a GNU host toolchain in
+        addition to target triples.
+    Inputs:
+        rustup_cmd: Optional rustup executable path/token to invoke.
+    Outputs:
+        Set of installed rustup toolchain tokens.
+    Side Effects:
+        Executes `rustup toolchain list`.
+    Exceptions:
+        Command failures return an empty set.
+    """
+    rustup_exe = str(rustup_cmd or shutil.which("rustup") or "").strip()
+    if not rustup_exe:
+        return set()
+    ok, details = _run_command_for_status([rustup_exe, "toolchain", "list"])
+    if not ok:
+        return set()
+    toolchains: Set[str] = set()
+    # `rustup toolchain list` includes status markers; first token is the name.
+    for raw_line in str(details or "").splitlines():
+        token = str(raw_line or "").strip().split()
+        if token:
+            toolchains.add(token[0])
+    return toolchains
 
 
 def _prepend_directories_to_path(path_value: str, entries: Sequence[str]) -> str:
@@ -1034,16 +1177,24 @@ def _check_rust_cli_tool(tool_name: str) -> Tuple[bool, str, str]:
     return False, details, direct_path
 
 
-def _build_maturin_subprocess_env() -> Dict[str, str]:
+def _build_maturin_subprocess_env(
+    *,
+    toolchain: str = MSVC_TOOLCHAIN,
+    target_triple: Optional[str] = None,
+    mingw_bin_dir: Optional[str] = None,
+) -> Dict[str, str]:
     """Build environment overrides for robust `maturin` extension builds.
 
     Purpose:
-        Provide a subprocess environment where valid Rust binaries are preferred.
+        Provide a subprocess environment where rustup-resolved binaries and target
+        toolchain settings are deterministic.
     Why:
-        Python scripts directories may contain incompatible shim binaries that can
-        break `maturin` when it resolves `rustc`/`cargo`.
+        Rust extension builds can fail on Windows when shim executables, missing
+        linkers, or mismatched host/target toolchains are discovered implicitly.
     Inputs:
-        None.
+        toolchain: Rustup toolchain token used for `rustc`/`cargo` resolution.
+        target_triple: Optional cargo target triple passed through environment.
+        mingw_bin_dir: Optional MinGW bin directory for GNU fallback builds.
     Outputs:
         Environment dictionary suitable for subprocess execution.
     Side Effects:
@@ -1052,15 +1203,40 @@ def _build_maturin_subprocess_env() -> Dict[str, str]:
         Missing tool paths are tolerated; returned env falls back to base values.
     """
     env = dict(os.environ)
-    rustc_path = _resolve_rustup_managed_tool_path("rustc")
-    cargo_path = _resolve_rustup_managed_tool_path("cargo")
+    rustc_path = _resolve_rustup_managed_tool_path("rustc", toolchain=toolchain)
+    cargo_path = _resolve_rustup_managed_tool_path("cargo", toolchain=toolchain)
     prepend_dirs: List[str] = []
+    env["RUSTUP_TOOLCHAIN"] = str(toolchain or "")
     if rustc_path:
         env["RUSTC"] = rustc_path
         prepend_dirs.append(os.path.dirname(rustc_path))
     if cargo_path:
         env["CARGO"] = cargo_path
         prepend_dirs.append(os.path.dirname(cargo_path))
+
+    if target_triple == GNU_TARGET:
+        target_upper = GNU_TARGET.upper().replace("-", "_")
+        bin_dir = str(mingw_bin_dir or "").strip()
+        if bin_dir and os.path.isdir(bin_dir):
+            prepend_dirs.append(bin_dir)
+            gcc_path = os.path.join(bin_dir, "gcc.exe")
+            gpp_path = os.path.join(bin_dir, "g++.exe")
+            ar_path = os.path.join(bin_dir, "ar.exe")
+            linker_value = gcc_path if os.path.isfile(gcc_path) else "gcc"
+            env["CARGO_BUILD_TARGET"] = GNU_TARGET
+            env[f"CARGO_TARGET_{target_upper}_LINKER"] = linker_value
+            if os.path.isfile(gcc_path):
+                env["CC_x86_64_pc_windows_gnu"] = gcc_path
+            if os.path.isfile(gpp_path):
+                env["CXX_x86_64_pc_windows_gnu"] = gpp_path
+            if os.path.isfile(ar_path):
+                env["AR_x86_64_pc_windows_gnu"] = ar_path
+        elif target_triple:
+            # Preserve explicit target selection even if MinGW probing failed.
+            env["CARGO_BUILD_TARGET"] = str(target_triple)
+    elif target_triple:
+        env["CARGO_BUILD_TARGET"] = str(target_triple)
+
     env["PATH"] = _prepend_directories_to_path(env.get("PATH", ""), prepend_dirs)
     # Corporate/managed Windows environments often block revocation checks in the
     # crates index TLS chain, causing transient cargo fetch failures by default.
@@ -1068,17 +1244,28 @@ def _build_maturin_subprocess_env() -> Dict[str, str]:
     return env
 
 
-def _run_maturin_develop_build(manifest_path: str, *, cwd: str) -> Tuple[bool, str]:
+def _run_maturin_develop_build(
+    manifest_path: str,
+    *,
+    cwd: str,
+    toolchain: str = MSVC_TOOLCHAIN,
+    target_triple: Optional[str] = None,
+    mingw_bin_dir: Optional[str] = None,
+) -> Tuple[bool, str]:
     """Run `maturin develop` using a staged launcher for path-stability.
 
     Purpose:
         Build/install the Rust extension module into the active Python environment.
     Why:
         On Windows, `maturin.exe` may sit beside stale `rustc`/`cargo` shims; a
-        staged copy avoids executable-directory lookup collisions.
+        staged copy avoids executable-directory lookup collisions while strategy
+        parameters keep host/target/linker selection explicit.
     Inputs:
         manifest_path: Absolute path to `rust_ext/Cargo.toml`.
         cwd: Project working directory for the build invocation.
+        toolchain: Rustup toolchain token used to launch cargo/rustc.
+        target_triple: Optional target triple supplied to maturin/cargo.
+        mingw_bin_dir: Optional MinGW bin directory for GNU fallback builds.
     Outputs:
         `(ok, details)` command status tuple.
     Side Effects:
@@ -1086,21 +1273,17 @@ def _run_maturin_develop_build(manifest_path: str, *, cwd: str) -> Tuple[bool, s
     Exceptions:
         Command/runtime failures are surfaced through the returned status tuple.
     """
-    env = _build_maturin_subprocess_env()
+    env = _build_maturin_subprocess_env(
+        toolchain=toolchain,
+        target_triple=target_triple,
+        mingw_bin_dir=mingw_bin_dir,
+    )
     maturin_exe = shutil.which("maturin")
     if not maturin_exe:
-        return _run_command_for_status(
-            [
-                sys.executable,
-                "-m",
-                "maturin",
-                "develop",
-                "--manifest-path",
-                manifest_path,
-            ],
-            cwd=cwd,
-            env=env,
-        )
+        command = [sys.executable, "-m", "maturin", "develop", "--manifest-path", manifest_path]
+        if target_triple:
+            command.extend(["--target", str(target_triple)])
+        return _run_command_for_status(command, cwd=cwd, env=env)
     staged_dir: Optional[str] = None
     shim_dir: Optional[str] = None
     command: List[str] = []
@@ -1111,9 +1294,9 @@ def _run_maturin_develop_build(manifest_path: str, *, cwd: str) -> Tuple[bool, s
             cargo_shim = os.path.join(shim_dir, "cargo.cmd")
             rustc_shim = os.path.join(shim_dir, "rustc.cmd")
             with open(cargo_shim, "w", encoding="utf-8") as fh:
-                fh.write(f'@echo off\r\n"{rustup_exe}" run stable cargo %*\r\n')
+                fh.write(f'@echo off\r\n"{rustup_exe}" run "{toolchain}" cargo %*\r\n')
             with open(rustc_shim, "w", encoding="utf-8") as fh:
-                fh.write(f'@echo off\r\n"{rustup_exe}" run stable rustc %*\r\n')
+                fh.write(f'@echo off\r\n"{rustup_exe}" run "{toolchain}" rustc %*\r\n')
             # Force subprocesses to resolve cargo/rustc through rustup wrappers
             # first; this avoids incompatible shim binaries on PATH.
             env["PATH"] = _prepend_directories_to_path(env.get("PATH", ""), [shim_dir])
@@ -1128,6 +1311,8 @@ def _run_maturin_develop_build(manifest_path: str, *, cwd: str) -> Tuple[bool, s
             runner_path = os.path.join(staged_dir, os.path.basename(maturin_exe))
             shutil.copy2(maturin_exe, runner_path)
         command = [runner_path, "develop", "--manifest-path", manifest_path]
+        if target_triple:
+            command.extend(["--target", str(target_triple)])
         return _run_command_for_status(command, cwd=cwd, env=env)
     finally:
         if staged_dir:
@@ -1167,6 +1352,28 @@ def _detect_rust_runtime_requirements() -> Dict[str, Any]:
     maturin_ok, maturin_msg = _run_command_for_status(
         [sys.executable, "-m", "maturin", "--version"]
     )
+    msvc_linker_path = _detect_msvc_linker_path()
+    mingw_bin_dir = _detect_mingw_bin_dir()
+    msvc_linker_ok = bool(msvc_linker_path)
+    mingw_ok = bool(mingw_bin_dir)
+    installed_targets = (
+        _rustup_installed_targets(rustup_cmd=rustup_cmd)
+        if rustup_ok
+        else set()
+    )
+    installed_toolchains = (
+        _rustup_installed_toolchains(rustup_cmd=rustup_cmd)
+        if rustup_ok
+        else set()
+    )
+    gnu_target_installed = GNU_TARGET in installed_targets
+    gnu_toolchain_installed = GNU_TOOLCHAIN in installed_toolchains
+    selected_build_strategy = "unavailable"
+    if rustup_ok and rustc_ok and cargo_ok:
+        if msvc_linker_ok:
+            selected_build_strategy = "msvc"
+        elif mingw_ok:
+            selected_build_strategy = "gnu"
     module_ready = _load_rust_backend() is not None
     return {
         "rustup_ok": rustup_ok,
@@ -1180,6 +1387,13 @@ def _detect_rust_runtime_requirements() -> Dict[str, Any]:
         "cargo_cmd": cargo_cmd,
         "maturin_ok": maturin_ok,
         "maturin_msg": maturin_msg,
+        "msvc_linker_ok": msvc_linker_ok,
+        "msvc_linker_path": msvc_linker_path,
+        "mingw_ok": mingw_ok,
+        "mingw_bin_dir": mingw_bin_dir,
+        "gnu_target_installed": gnu_target_installed,
+        "gnu_toolchain_installed": gnu_toolchain_installed,
+        "selected_build_strategy": selected_build_strategy,
         "module_ready": module_ready,
         "module_error": str(_RUST_BACKEND_IMPORT_ERROR) if _RUST_BACKEND_IMPORT_ERROR else "",
     }
@@ -36744,13 +36958,104 @@ class UnifiedApp(tk.Tk):
                 self._dbg("speciation.engine", "maturin install failed: %s", details)
                 return False
 
-        _set_status("Building Rust extension with maturin...")
-        ok, details = _run_maturin_develop_build(manifest_path, cwd=project_root)
+        state = _detect_rust_runtime_requirements()
+        build_strategy = str(state.get("selected_build_strategy") or "unavailable")
+        build_toolchain = MSVC_TOOLCHAIN
+        build_target: Optional[str] = None
+        mingw_bin_dir = ""
+        # Select one explicit strategy before build so diagnostics and retries are deterministic.
+        if build_strategy == "msvc":
+            _set_status("Building Rust extension with maturin (MSVC strategy)...")
+        elif build_strategy == "gnu":
+            mingw_bin_dir = str(state.get("mingw_bin_dir") or "").strip()
+            if not mingw_bin_dir:
+                _set_status(
+                    "MinGW linker fallback unavailable (gcc/ld not found); using Python backend."
+                )
+                self._dbg(
+                    "speciation.engine",
+                    "GNU fallback selected but MinGW bin dir was unresolved.",
+                )
+                return False
+            if not state.get("gnu_toolchain_installed"):
+                _set_status("Installing Rust GNU host toolchain for MinGW fallback...")
+                ok, details = _run_command_for_status(
+                    [rustup_cmd, "toolchain", "install", GNU_TOOLCHAIN]
+                )
+                if not ok:
+                    _set_status("Rust GNU host toolchain install failed; using Python backend.")
+                    self._dbg(
+                        "speciation.engine",
+                        "rustup toolchain install failed for %s: %s",
+                        GNU_TOOLCHAIN,
+                        details,
+                    )
+                    return False
+            if not state.get("gnu_target_installed"):
+                _set_status("Installing Rust GNU target for MinGW fallback...")
+                ok, details = _run_command_for_status(
+                    [rustup_cmd, "target", "add", GNU_TARGET, "--toolchain", GNU_TOOLCHAIN]
+                )
+                if not ok:
+                    _set_status("Rust GNU target install failed; using Python backend.")
+                    self._dbg(
+                        "speciation.engine",
+                        "rustup target add failed for %s (%s): %s",
+                        GNU_TARGET,
+                        GNU_TOOLCHAIN,
+                        details,
+                    )
+                    return False
+            _ensure_user_cargo_bin_on_path()
+            state = _detect_rust_runtime_requirements()
+            mingw_bin_dir = str(state.get("mingw_bin_dir") or mingw_bin_dir).strip()
+            if (
+                not mingw_bin_dir
+                or not state.get("gnu_toolchain_installed")
+                or not state.get("gnu_target_installed")
+            ):
+                _set_status(
+                    "Rust GNU fallback prerequisites unresolved after install; using Python backend."
+                )
+                self._dbg(
+                    "speciation.engine",
+                    "GNU fallback prerequisite check failed: mingw=%s toolchain=%s target=%s",
+                    bool(mingw_bin_dir),
+                    bool(state.get("gnu_toolchain_installed")),
+                    bool(state.get("gnu_target_installed")),
+                )
+                return False
+            build_toolchain = GNU_TOOLCHAIN
+            build_target = GNU_TARGET
+            _set_status("Building Rust extension with maturin (GNU/MinGW fallback)...")
+        else:
+            _set_status(
+                "Rust build unavailable: neither MSVC linker nor MinGW linker was detected; using Python backend."
+            )
+            self._dbg(
+                "speciation.engine",
+                "Rust build strategy unavailable: msvc_linker=%s mingw=%s",
+                bool(state.get("msvc_linker_ok")),
+                bool(state.get("mingw_ok")),
+            )
+            return False
+
+        ok, details = _run_maturin_develop_build(
+            manifest_path,
+            cwd=project_root,
+            toolchain=build_toolchain,
+            target_triple=build_target,
+            mingw_bin_dir=(mingw_bin_dir or None),
+        )
         if not ok:
             details_lc = str(details or "").lower()
-            if "link.exe not found" in details_lc:
+            if build_strategy == "msvc" and "link.exe not found" in details_lc:
                 _set_status(
                     "Rust build tools missing (MSVC linker). Install Visual Studio Build Tools C++ workload."
+                )
+            elif build_strategy == "gnu" and "can't find crate for `core`" in details_lc:
+                _set_status(
+                    "Rust GNU target still unavailable after setup; using Python backend."
                 )
             elif "crypt_e_no_revocation_check" in details_lc:
                 _set_status(
@@ -36758,7 +37063,12 @@ class UnifiedApp(tk.Tk):
                 )
             else:
                 _set_status("Rust extension build failed; using Python backend.")
-            self._dbg("speciation.engine", "maturin develop failed: %s", details)
+            self._dbg(
+                "speciation.engine",
+                "maturin develop failed (%s strategy): %s",
+                build_strategy,
+                details,
+            )
             return False
 
         _invalidate_rust_backend_cache()
@@ -36811,6 +37121,11 @@ class UnifiedApp(tk.Tk):
             f"rustc: {'OK' if state.get('rustc_ok') else 'missing'}",
             f"cargo: {'OK' if state.get('cargo_ok') else 'missing'}",
             f"maturin: {'OK' if state.get('maturin_ok') else 'missing'}",
+            f"msvc linker: {'OK' if state.get('msvc_linker_ok') else 'missing'}",
+            f"mingw linker: {'OK' if state.get('mingw_ok') else 'missing'}",
+            f"gnu toolchain: {'OK' if state.get('gnu_toolchain_installed') else 'missing'}",
+            f"gnu target: {'OK' if state.get('gnu_target_installed') else 'missing'}",
+            f"build strategy: {state.get('selected_build_strategy') or 'unavailable'}",
         ]
         question = (
             "Rust acceleration is not ready.\n\n"

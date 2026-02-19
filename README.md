@@ -135,8 +135,9 @@ These modules are imported unconditionally at startup:
 - On first use of Rust-relevant solubility actions, the app prompts to install/build prerequisites:
   - `rustup` / `rustc` / `cargo`
   - `maturin`
-  - Windows C++ linker toolchain (`link.exe`) via Visual Studio Build Tools (Desktop development with C++)
-  - extension build via `python -m maturin develop --manifest-path rust_ext/Cargo.toml`
+  - preferred linker path: Windows C++ linker (`link.exe`) via Visual Studio Build Tools (Desktop development with C++)
+  - automatic fallback when `link.exe` is missing: MinGW linker path (`gcc.exe` + `ld.exe`) with GNU Rust host/target installation
+  - extension build via `python -m maturin develop --manifest-path rust_ext/Cargo.toml` (MSVC) or `python -m maturin develop --manifest-path rust_ext/Cargo.toml --target x86_64-pc-windows-gnu` (GNU fallback)
 - If installation/build fails or is declined, workflows continue with Python fallback.
 
 #### Setup (typical)
@@ -152,8 +153,13 @@ If `great_tables` is not installed by your requirements workflow, install it sep
 winget install --id Rustlang.Rustup --exact --scope user --interactive --accept-package-agreements --accept-source-agreements
 rustup default stable
 python -m pip install "maturin>=1.12,<2.0"
-# Install VS Build Tools (Desktop development with C++) if `link.exe` is missing.
+# Preferred build path (MSVC): install VS Build Tools (Desktop development with C++) when `link.exe` is missing.
 python -m maturin develop --manifest-path rust_ext/Cargo.toml
+# GNU fallback path (when using MinGW):
+# 1) Ensure `gcc.exe` and `ld.exe` are available on PATH (or at C:\Users\mmoheban\mingw64\bin)
+rustup toolchain install stable-x86_64-pc-windows-gnu
+rustup target add x86_64-pc-windows-gnu --toolchain stable-x86_64-pc-windows-gnu
+python -m maturin develop --manifest-path rust_ext/Cargo.toml --target x86_64-pc-windows-gnu
 rustup run stable rustc --version
 rustup run stable cargo --version
 python -c "import gl260_rust_ext; print('gl260_rust_ext import OK')"

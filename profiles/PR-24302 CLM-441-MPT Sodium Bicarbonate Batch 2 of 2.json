@@ -366,9 +366,9 @@
           "coord_space": "data",
           "geometry": {
             "text": "Reactor Blend",
-            "wrap_width_x": 0.47901988921486416,
-            "x": 0.8166919118656466,
-            "y": 531.369201407944
+            "wrap_width_x": 0.5613195294568746,
+            "x": 0.7931777289393578,
+            "y": 529.3522366937214
           },
           "id": "b236a49c-e6dd-4d5b-bc1e-7ad60fe9ec24",
           "locked": false,
@@ -405,8 +405,8 @@
           "coord_space": "data",
           "geometry": {
             "text": "Logging stopped over the long weekend",
-            "wrap_width_x": 1.0239999999999998,
-            "x": 3.157196103346039,
+            "wrap_width_x": 1.5060407499889183,
+            "x": 3.1454390118828943,
             "y": 487.8110911303759
           },
           "id": "db4f796e-5a01-4260-b4db-743a3e209a05",
@@ -480,6 +480,48 @@
           "type": "trace_mask",
           "visible": true,
           "zorder": 18.0
+        },
+        {
+          "axes_target": "primary",
+          "coord_space": "data",
+          "geometry": {
+            "trace_key": "y2",
+            "x0": 6.011972566249751,
+            "x1": 6.07856677025765
+          },
+          "id": "f6f67b1a-c048-4b61-8627-4a9d7ce34e9e",
+          "locked": false,
+          "name": "Trace Mask 9",
+          "style": {
+            "alpha": 0.9,
+            "color": "#000000",
+            "linestyle": "solid",
+            "linewidth": 1.5
+          },
+          "type": "trace_mask",
+          "visible": true,
+          "zorder": 19.0
+        },
+        {
+          "axes_target": "primary",
+          "coord_space": "data",
+          "geometry": {
+            "trace_key": "y2",
+            "x0": 6.984172624423996,
+            "x1": 7.034876073544494
+          },
+          "id": "df217f94-ad3c-460b-8551-f5b178a12a8f",
+          "locked": false,
+          "name": "Trace Mask 10",
+          "style": {
+            "alpha": 0.9,
+            "color": "#000000",
+            "linestyle": "solid",
+            "linewidth": 1.5
+          },
+          "type": "trace_mask",
+          "visible": true,
+          "zorder": 20.0
         }
       ]
     },
@@ -497,8 +539,8 @@
       "axis_pad_pct": 2.0,
       "combined_center_plot_legend": false,
       "combined_cycle_legend_anchor": [
-        0.4939080202303172,
-        0.2391205146567884
+        0.37552627170486363,
+        0.20790558455572072
       ],
       "combined_cycle_legend_anchor_mode": "loc_tuple",
       "combined_cycle_legend_anchor_space": "axes",
@@ -507,8 +549,8 @@
       "combined_cycle_legend_enable_drag": true,
       "combined_cycle_legend_fontsize": 10.0,
       "combined_cycle_legend_loc": [
-        0.4939080202303172,
-        0.2391205146567884
+        0.37552627170486363,
+        0.20790558455572072
       ],
       "combined_cycle_legend_loc_choice": "upper right",
       "combined_cycle_legend_lock_position": false,
@@ -642,10 +684,10 @@
       "enable_deriv_axis": true,
       "enable_temp_axis": true,
       "include_moles_in_core_plot_legend": false,
-      "max_time": 6.0,
+      "max_time": 7.22,
       "max_y": 825.0,
       "min_cycle_drop": -10.0,
-      "min_time": -0.12,
+      "min_time": -0.14,
       "min_y": -15.0,
       "peak_distance": 1,
       "peak_prominence": 1.0,
@@ -703,15 +745,16 @@
       "y_major_tick": 50.0,
       "y_minor_tick": 5.0
     },
-    "selected_sheet": "Batch 2 Rxn Day 6-7",
+    "selected_sheet": "Batch 2 Rxn Day 7.1",
     "selected_sheets": [
       "Batch 2 Rxn Day 1",
       "Batch 2 Rxn Day 1.1",
       "Batch 2 Rxn Day 5",
       "Batch 2 Rxn Day 5.1-6",
-      "Batch 2 Rxn Day 6-7"
+      "Batch 2 Rxn Day 6-7",
+      "Batch 2 Rxn Day 7.1"
     ]
   },
   "profile_version": 1,
-  "updated_at": "2026-02-19 10:58:52"
+  "updated_at": "2026-02-19 14:32:43"
 }
