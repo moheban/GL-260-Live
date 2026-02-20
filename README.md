@@ -140,13 +140,19 @@ These modules are imported unconditionally at startup:
   - extension build via `python -m maturin develop --manifest-path rust_ext/Cargo.toml` (MSVC) or `python -m maturin develop --manifest-path rust_ext/Cargo.toml --target x86_64-pc-windows-gnu` (GNU fallback)
 - If installation/build fails or is declined, workflows continue with Python fallback.
 
-#### Setup (typical)
+#### Setup (dual interpreter, recommended)
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+py -3.14 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+py -3.14t -m venv .venv-314t
+.\.venv-314t\Scripts\python.exe -m pip install --upgrade pip
+.\.venv-314t\Scripts\python.exe -m pip install -r requirements.txt
 ```
 If `great_tables` is not installed by your requirements workflow, install it separately so the app can start.
+Do not rely on shared global `site-packages` when both standard and free-threaded Python runtimes are required; keep dependencies isolated per virtual environment.
+No-Activation PowerShell note: if `ExecutionPolicy` is `Restricted`, skip `Activate.ps1` and always invoke the virtual-environment `python.exe` directly as shown above.
 
 #### Manual Rust setup and verification (optional)
 ```powershell
@@ -168,9 +174,11 @@ python -c "import gl260_rust_ext; print('gl260_rust_ext import OK')"
 ### Running the Application
 From the repository root:
 ```powershell
-python "GL-260 Data Analysis and Plotter.py"
+.\.venv\Scripts\python.exe "GL-260 Data Analysis and Plotter.py"
+.\.venv-314t\Scripts\python.exe "GL-260 Data Analysis and Plotter.py"
 ```
 The app reads and writes `settings.json` in the current working directory. Run from the repo root so the bundled `pitzer.dat` is discoverable by the NaOH-CO2 Pitzer model.
+Team run instruction: use direct venv executable paths in PowerShell sessions instead of activation scripts.
 
 ### Architecture and Data Flow
 The application is a single Tkinter process with background workers for long-running steps. Core data flow is:
@@ -927,6 +935,16 @@ Warnings:
 - Free-threading and concurrency tuning are expert tools. Changing defaults can impact stability or responsiveness and should be tested on representative datasets.
 
 ### Troubleshooting and FAQ
+- Symptom: `No module named numpy._core._multiarray_umath` or `ImportError: you should not try to import numpy from its source directory`. Cause: NumPy/Matplotlib wheel ABI mismatch (`cp314` vs `cp314t`) for the interpreter currently launching the app. Fix: Rebuild both project environments and reinstall dependencies:
+```powershell
+py -3.14 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+py -3.14t -m venv .venv-314t
+.\.venv-314t\Scripts\python.exe -m pip install --upgrade pip
+.\.venv-314t\Scripts\python.exe -m pip install -r requirements.txt
+```
 - Symptom: Plots look clipped or axes do not update. Cause: Axis auto-range is disabled for that axis or padding is too small. Fix: Review Axis Auto-Range Settings and Span Padding (%) in Plot Settings.
 - Symptom: Combined plot is missing cycle overlays. Cause: Cycle analysis has not been finalized or automatic detection is disabled without manual markers. Fix: Run cycle detection or manually assign peaks/troughs, then regenerate the combined plot.
 - Symptom: Combined X-span highlight appears to cover reference guides. Cause: The derivative `y=0` dashed line now renders on the combined overlay layer by design. Fix: Adjust span opacity/color if visual contrast is needed; the `y=0` line should remain above spans.

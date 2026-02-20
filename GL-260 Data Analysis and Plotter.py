@@ -5,6 +5,7 @@
 import os
 import sys
 import sysconfig
+import importlib.metadata as importlib_metadata
 import logging
 from logging.handlers import RotatingFileHandler
 
@@ -119,6 +120,223 @@ def _runtime_free_threading_fingerprint():
     }
 
 
+def _runtime_extension_abi_tag():
+    """Resolve the runtime C-extension ABI tag for the active interpreter.
+
+    Purpose:
+        Identify which compiled-extension ABI suffix this interpreter expects.
+    Why:
+        NumPy/Matplotlib binary wheels must match this ABI tag, especially when
+        switching between standard (`cp314`) and free-threaded (`cp314t`) builds.
+    Args:
+        None.
+    Returns:
+        Optional[str]: ABI token like `cp314` or `cp314t`, else None when the
+        runtime suffix cannot be derived.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid or unavailable config values are handled internally and treated
+        as unknown ABI.
+    """
+    try:
+        ext_suffix = sysconfig.get_config_var("EXT_SUFFIX")
+    except Exception:
+        return None
+    if not isinstance(ext_suffix, str) or not ext_suffix:
+        return None
+    suffix_text = ext_suffix.lstrip(".")
+    if suffix_text.endswith(".pyd"):
+        suffix_text = suffix_text[:-4]
+    abi_tag = suffix_text.split("-", 1)[0].strip()
+    if not abi_tag.startswith("cp"):
+        return None
+    return abi_tag
+
+
+def _distribution_wheel_tags(distribution_name):
+    """Read wheel tags from installed distribution metadata.
+
+    Purpose:
+        Retrieve the wheel `Tag:` entries recorded for an installed package.
+    Why:
+        ABI mismatch detection requires comparing installed wheel metadata
+        against the currently running interpreter ABI.
+    Args:
+        distribution_name (str): Distribution identifier, e.g. `numpy`.
+    Returns:
+        List[str]: Parsed wheel tags from `WHEEL`; empty when unavailable.
+    Side Effects:
+        None.
+    Exceptions:
+        Missing distributions or metadata parsing failures are treated as
+        no-data conditions and return an empty list.
+    """
+    try:
+        distribution = importlib_metadata.distribution(distribution_name)
+    except Exception:
+        return []
+    try:
+        wheel_text = distribution.read_text("WHEEL")
+    except Exception:
+        return []
+    if not wheel_text:
+        return []
+
+    tags = []
+    # Extract only `Tag:` metadata lines to compare runtime ABI expectations.
+    for raw_line in wheel_text.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("Tag:"):
+            continue
+        tag_text = line.split(":", 1)[1].strip()
+        if tag_text:
+            tags.append(tag_text)
+    return tags
+
+
+def _wheel_abi_tags(tags):
+    """Extract ABI components from wheel tags.
+
+    Purpose:
+        Normalize wheel tag strings into ABI tokens for compatibility checks.
+    Why:
+        The app only needs ABI-level comparison (e.g., `cp314` vs `cp314t`) to
+        flag binary extension mismatch at startup.
+    Args:
+        tags (Iterable[str]): Wheel tag strings from distribution metadata.
+    Returns:
+        List[str]: Distinct ABI tokens sorted alphabetically.
+    Side Effects:
+        None.
+    Exceptions:
+        Malformed tags are ignored to keep checks robust.
+    """
+    abi_tokens = set()
+    # Parse wheel tag triplets: python tag, ABI tag, and platform tag.
+    for tag_text in tags:
+        try:
+            _python_tag, abi_tag, _platform_tag = str(tag_text).split("-", 2)
+        except ValueError:
+            continue
+        abi_tag = abi_tag.strip()
+        if abi_tag.startswith("cp"):
+            abi_tokens.add(abi_tag)
+    return sorted(abi_tokens)
+
+
+def _binary_abi_mismatch_report():
+    """Build a deterministic mismatch report for critical binary dependencies.
+
+    Purpose:
+        Detect whether installed NumPy/Matplotlib wheel ABIs match the active
+        interpreter ABI expectations.
+    Why:
+        Mismatched cp314/cp314t wheels cause opaque C-extension import errors;
+        early deterministic reporting gives users immediate recovery steps.
+    Args:
+        None.
+    Returns:
+        Optional[Dict[str, Any]]: Report payload when mismatch is confirmed;
+        otherwise None.
+    Side Effects:
+        None.
+    Exceptions:
+        Missing metadata is treated as inconclusive and does not trigger a
+        mismatch report.
+    """
+    expected_abi = _runtime_extension_abi_tag()
+    if not expected_abi:
+        return None
+
+    mismatches = []
+    for distribution_name in ("numpy", "matplotlib"):
+        wheel_tags = _distribution_wheel_tags(distribution_name)
+        if not wheel_tags:
+            continue
+        abi_tags = _wheel_abi_tags(wheel_tags)
+        if not abi_tags:
+            continue
+        if expected_abi in abi_tags:
+            continue
+        mismatches.append(
+            {
+                "name": distribution_name,
+                "abi_tags": abi_tags,
+                "wheel_tags": wheel_tags,
+            }
+        )
+
+    if not mismatches:
+        return None
+    return {
+        "expected_abi": expected_abi,
+        "expected_ext_suffix": sysconfig.get_config_var("EXT_SUFFIX"),
+        "executable": str(sys.executable or ""),
+        "mismatches": mismatches,
+    }
+
+
+def _raise_on_binary_abi_mismatch():
+    """Fail fast when binary wheel ABI mismatches are confirmed.
+
+    Purpose:
+        Stop startup before heavy imports when critical binary wheels are not
+        ABI-compatible with the active interpreter.
+    Why:
+        Failing early avoids long C-extension tracebacks and gives exact repair
+        commands for standard and free-threaded virtual environments.
+    Args:
+        None.
+    Returns:
+        None.
+    Side Effects:
+        Raises `SystemExit` with user-facing remediation steps when mismatch is
+        confirmed.
+    Exceptions:
+        No exception is raised when mismatch cannot be confirmed from metadata.
+    """
+    report = _binary_abi_mismatch_report()
+    if report is None:
+        return
+
+    mismatch_lines = []
+    for entry in report.get("mismatches", []):
+        mismatch_lines.append(
+            f"- {entry.get('name')}: installed ABI tags {entry.get('abi_tags')}"
+        )
+
+    message_lines = [
+        "Startup blocked: binary wheel ABI mismatch detected for critical dependencies.",
+        "",
+        "Reason: This is an interpreter/wheel ABI mismatch (cp314 vs cp314t),",
+        "not a NumPy source-tree issue.",
+        "",
+        f"Interpreter executable: {report.get('executable')}",
+        f"Expected extension suffix: {report.get('expected_ext_suffix')}",
+        f"Expected ABI tag: {report.get('expected_abi')}",
+        "Detected mismatches:",
+        *mismatch_lines,
+        "",
+        "Recovery (use separate environments; do not share global site-packages):",
+        "",
+        "Standard Python 3.14 (.venv):",
+        "  py -3.14 -m venv .venv",
+        r"  .\.venv\Scripts\Activate.ps1",
+        "  python -m pip install --upgrade pip",
+        "  python -m pip install -r requirements.txt",
+        r"  .\.venv\Scripts\python.exe \"GL-260 Data Analysis and Plotter.py\"",
+        "",
+        "Free-threaded Python 3.14t (.venv-314t):",
+        "  py -3.14t -m venv .venv-314t",
+        r"  .\.venv-314t\Scripts\Activate.ps1",
+        "  python -m pip install --upgrade pip",
+        "  python -m pip install -r requirements.txt",
+        r"  .\.venv-314t\Scripts\python.exe \"GL-260 Data Analysis and Plotter.py\"",
+    ]
+    raise SystemExit("\n".join(message_lines))
+
+
 def _is_running_under_vscode():
     """Check whether it is running under vscode.
     Used to gate conditional behavior in the workflow."""
@@ -137,6 +355,9 @@ def _note_gil_reenable(module_name, before_status):
     if before_status is False and after_status is True:
         _GIL_IMPORT_REENABLES.append(module_name)
     return after_status
+
+
+_raise_on_binary_abi_mismatch()
 
 
 import matplotlib.pyplot as plt
