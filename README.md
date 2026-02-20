@@ -956,10 +956,12 @@ Warnings:
 py -3.14 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe "GL-260 Data Analysis and Plotter.py"
 
 py -3.14t -m venv .venv-314t
 .\.venv-314t\Scripts\python.exe -m pip install --upgrade pip
 .\.venv-314t\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv-314t\Scripts\python.exe "GL-260 Data Analysis and Plotter.py"
 ```
 - Symptom: Plots look clipped or axes do not update. Cause: Axis auto-range is disabled for that axis or padding is too small. Fix: Review Axis Auto-Range Settings and Span Padding (%) in Plot Settings.
 - Symptom: Combined plot is missing cycle overlays. Cause: Cycle analysis has not been finalized or automatic detection is disabled without manual markers. Fix: Run cycle detection or manually assign peaks/troughs, then regenerate the combined plot.
