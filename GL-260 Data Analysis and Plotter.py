@@ -992,12 +992,29 @@ STARTUP_REQUIRED_TAB_KEYS = (
 
 
 def _dependency_audit_targets() -> List[str]:
-    """Perform dependency audit targets.
-    Used to keep the workflow logic localized and testable."""
+    """Return dependency import targets for free-threading audit checks.
+
+    Purpose:
+        Define the module import set that is validated by the dependency audit
+        workflow in Developer Tools.
+    Why:
+        Centralizing the target list keeps report behavior deterministic and
+        allows adding focused probes (such as fontTools submodules) without
+        scattering target names across the codebase.
+    Args:
+        None.
+    Returns:
+        List[str]: Ordered module names imported during the audit pass.
+    Side Effects:
+        None.
+    Exceptions:
+        None.
+    """
     return [
         "numpy",
         "pandas",
         "matplotlib",
+        "fontTools",
         "openpyxl",
         "great_tables",
         "scipy",
@@ -1005,9 +1022,81 @@ def _dependency_audit_targets() -> List[str]:
     ]
 
 
+def _audit_fonttools_bezier_tools_import() -> Dict[str, Any]:
+    """Audit fontTools bezierTools import behavior for GIL transitions.
+
+    Purpose:
+        Record whether importing `fontTools.misc.bezierTools` changes GIL state
+        and whether the loaded artifact is compiled (`.pyd`) or pure Python.
+    Why:
+        Top-level package imports can miss submodule-level extension behavior,
+        so this focused probe provides the precision needed for free-threading
+        diagnostics.
+    Args:
+        None.
+    Returns:
+        Dict[str, Any]: Probe payload containing import status, file path,
+        artifact type, and GIL transition details.
+    Side Effects:
+        Imports `fontTools.misc.bezierTools` when available.
+    Exceptions:
+        Import/runtime errors are captured in the returned payload and do not
+        propagate.
+    """
+    before = _current_gil_status()
+    probe: Dict[str, Any] = {
+        "bezier_module": "fontTools.misc.bezierTools",
+        "bezier_imported": False,
+        "bezier_path": None,
+        "bezier_artifact": "unknown",
+        "bezier_gil_before": before,
+        "bezier_gil_after": None,
+        "bezier_gil_changed": False,
+        "bezier_error": None,
+        "bezier_status": "PASS",
+    }
+    try:
+        module = importlib.import_module("fontTools.misc.bezierTools")
+        probe["bezier_imported"] = True
+        module_path = str(getattr(module, "__file__", "") or "")
+        probe["bezier_path"] = module_path
+        lowered_path = module_path.lower()
+        if lowered_path.endswith(".pyd"):
+            probe["bezier_artifact"] = "compiled"
+        elif lowered_path.endswith(".py"):
+            probe["bezier_artifact"] = "python"
+        elif module_path:
+            probe["bezier_artifact"] = "other"
+    except Exception as exc:
+        probe["bezier_error"] = str(exc)
+        probe["bezier_status"] = "FAIL"
+    after = _current_gil_status()
+    probe["bezier_gil_after"] = after
+    probe["bezier_gil_changed"] = bool(before is False and after is True)
+    if probe["bezier_status"] != "FAIL" and probe["bezier_gil_changed"]:
+        probe["bezier_status"] = "WARN"
+    return probe
+
+
 def _audit_dependency_import(name: str) -> Dict[str, Any]:
-    """Import value.
-    Used by audit dependency workflows to import value."""
+    """Import one dependency and record free-threading-relevant diagnostics.
+
+    Purpose:
+        Capture import success, version metadata, and GIL transition details for
+        a single dependency target in the audit pipeline.
+    Why:
+        The dependency audit report needs consistent per-package diagnostics to
+        identify free-threading compatibility risks.
+    Args:
+        name (str): Module name to import.
+    Returns:
+        Dict[str, Any]: Import diagnostics including status (`PASS`/`WARN`/`FAIL`).
+    Side Effects:
+        Imports the target module, and for `fontTools` also probes
+        `fontTools.misc.bezierTools`.
+    Exceptions:
+        Import errors are captured in the payload and do not propagate.
+    """
     before = _current_gil_status()
     record: Dict[str, Any] = {
         "name": name,
@@ -1017,6 +1106,7 @@ def _audit_dependency_import(name: str) -> Dict[str, Any]:
         "gil_after": None,
         "gil_changed": False,
         "error": None,
+        "status": "PASS",
     }
     try:
         module = importlib.import_module(name)
@@ -1030,16 +1120,43 @@ def _audit_dependency_import(name: str) -> Dict[str, Any]:
         record["error"] = str(exc)
         record["gil_after"] = _current_gil_status()
         record["gil_changed"] = bool(before is False and record["gil_after"] is True)
+        record["status"] = "FAIL"
         return record
     after = _current_gil_status()
     record["gil_after"] = after
     record["gil_changed"] = bool(before is False and after is True)
+    if record["gil_changed"]:
+        record["status"] = "WARN"
+
+    if name == "fontTools":
+        bezier_probe = _audit_fonttools_bezier_tools_import()
+        record.update(bezier_probe)
+        if bool(bezier_probe.get("bezier_gil_changed")):
+            record["gil_changed"] = True
+            record["gil_after"] = bezier_probe.get("bezier_gil_after")
+            if record.get("status") != "FAIL":
+                record["status"] = "WARN"
     return record
 
 
 def _run_dependency_audit() -> Dict[str, Any]:
-    """Run dependency audit.
-    Used to execute dependency audit and coordinate results."""
+    """Execute dependency free-threading audit and assemble report payload.
+
+    Purpose:
+        Generate the full dependency audit report consumed by Developer Tools.
+    Why:
+        Free-threading diagnostics require one stable report schema that captures
+        runtime metadata and per-dependency compatibility indicators.
+    Args:
+        None.
+    Returns:
+        Dict[str, Any]: Audit report with timestamp/runtime info and dependency
+        import diagnostics.
+    Side Effects:
+        Imports all dependency targets defined by `_dependency_audit_targets`.
+    Exceptions:
+        Per-dependency failures are captured in result records.
+    """
     report: Dict[str, Any] = {
         "timestamp": datetime.now().isoformat(),
         "python_version": sys.version,
@@ -36324,6 +36441,7 @@ class UnifiedApp(tk.Tk):
             Dialog failures are handled with best-effort guards to keep startup
             stable.
         """
+        self._maybe_warn_compiled_fonttools_bezier_on_free_threading()
         self._maybe_warn_wrong_build_for_gil_request()
         if self._gil_import_warning_shown:
             return
@@ -36345,6 +36463,54 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
         self._gil_import_warning_shown = True
+
+    def _maybe_warn_compiled_fonttools_bezier_on_free_threading(self) -> None:
+        """Warn when compiled fontTools bezierTools is active on free-threaded runs.
+
+        Purpose:
+            Surface a one-time startup warning when `fontTools.misc.bezierTools`
+            resolves to a compiled extension while running on a free-threaded
+            interpreter build.
+        Why:
+            Compiled extensions that are not explicitly no-GIL-safe can re-enable
+            the GIL during import paths, reducing free-threading effectiveness.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            May show a warning dialog and marks a session guard attribute to
+            avoid repeated startup prompts.
+        Exceptions:
+            Import and dialog failures are handled with best-effort guards.
+        """
+        if bool(getattr(self, "_fonttools_bezier_warning_shown", False)):
+            return
+        if not _supports_free_threading_build():
+            return
+        try:
+            module = importlib.import_module("fontTools.misc.bezierTools")
+        except Exception:
+            return
+        module_path = str(getattr(module, "__file__", "") or "").strip()
+        if not module_path.lower().endswith(".pyd"):
+            return
+        try:
+            messagebox.showwarning(
+                "Free-Threading Warning",
+                "Compiled fontTools bezierTools is active on a free-threaded "
+                "runtime and may re-enable the GIL during import paths.\n\n"
+                f"Detected module path:\n{module_path}\n\n"
+                "To force pure-Python fontTools in .venv-314t run:\n"
+                ".\\.venv-314t\\Scripts\\python.exe -m pip install --upgrade pip\n"
+                "$env:FONTTOOLS_WITH_CYTHON=\"0\"\n"
+                ".\\.venv-314t\\Scripts\\python.exe -m pip install --force-reinstall --no-binary=fonttools fonttools",
+                parent=self,
+            )
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        self._fonttools_bezier_warning_shown = True
 
     def _maybe_warn_wrong_build_for_gil_request(self) -> None:
         """Warn once when GIL-disabled intent is enabled on an unsupported build.
@@ -36833,8 +36999,23 @@ class UnifiedApp(tk.Tk):
         self._dependency_audit_copy_btn = copy_btn
 
     def _run_dependency_audit_async(self) -> None:
-        """Run dependency audit async.
-        Used to execute dependency audit async and coordinate results."""
+        """Run dependency audit in a background worker and render results.
+
+        Purpose:
+            Execute dependency free-threading checks without blocking the Tk UI.
+        Why:
+            The audit imports multiple modules and can take noticeable time, so
+            asynchronous execution keeps Developer Tools responsive.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Updates dependency-audit output widgets, caches report JSON, and may
+            show free-threading warning dialogs when GIL transitions are detected.
+        Exceptions:
+            Worker errors are routed to `_on_err` and displayed in the audit pane.
+        """
         output = getattr(self, "_dependency_audit_output", None)
         if output is not None and output.winfo_exists():
             output.configure(state="normal")
@@ -36844,14 +37025,41 @@ class UnifiedApp(tk.Tk):
 
         # Closure captures _run_dependency_audit_async state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _run_dependency_audit_async.
         def _worker():
-            """Perform worker.
-            Used to keep the workflow logic localized and testable."""
+            """Execute dependency-audit work on the worker thread.
+
+            Purpose:
+                Invoke `_run_dependency_audit` in the background task runner.
+            Why:
+                Keeps dependency import probes off the UI thread.
+            Args:
+                None.
+            Returns:
+                Dict[str, Any]: Dependency-audit report payload.
+            Side Effects:
+                Imports audit target dependencies.
+            Exceptions:
+                Exceptions propagate to task-runner error handling.
+            """
             return _run_dependency_audit()
 
         # Closure captures _run_dependency_audit_async state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _run_dependency_audit_async.
         def _on_ok(report):
-            """Handle ok.
-            Used as an event callback for ok."""
+            """Handle successful dependency-audit completion.
+
+            Purpose:
+                Persist and render the audit report in Developer Tools.
+            Why:
+                The UI requires a structured callback to update output text,
+                enable JSON copy, and surface GIL-transition warnings.
+            Args:
+                report (Dict[str, Any]): Dependency-audit result payload.
+            Returns:
+                None.
+            Side Effects:
+                Mutates UI widgets, stores report state, and may show warnings.
+            Exceptions:
+                Warning dialogs are wrapped in best-effort guards.
+            """
             self._dependency_audit_report = report
             self._render_dependency_audit_report(report)
             copy_btn = getattr(self, "_dependency_audit_copy_btn", None)
@@ -36862,12 +37070,17 @@ class UnifiedApp(tk.Tk):
                 if _STARTUP_GIL_STATUS is False:
                     # Iterate over report.get("dependencies", []) to apply the per-item logic.
                     for entry in report.get("dependencies", []):
-                        if entry.get("gil_changed"):
+                        warning_source = None
+                        if entry.get("bezier_gil_changed"):
+                            warning_source = "fontTools.misc.bezierTools"
+                        elif entry.get("gil_changed"):
+                            warning_source = str(entry.get("name") or "dependency")
+                        if warning_source:
                             try:
                                 messagebox.showwarning(
                                     "Free-Threading Warning",
                                     "Free-threading was disabled after importing "
-                                    f"{entry.get('name')}. See Developer Tools -> Dependency Free-Threading Audit.",
+                                    f"{warning_source}. See Developer Tools -> Dependency Free-Threading Audit.",
                                     parent=self,
                                 )
                             except Exception:
@@ -36878,8 +37091,22 @@ class UnifiedApp(tk.Tk):
 
         # Closure captures _run_dependency_audit_async state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _run_dependency_audit_async.
         def _on_err(exc):
-            """Handle err.
-            Used as an event callback for err."""
+            """Handle dependency-audit worker failure.
+
+            Purpose:
+                Display worker exceptions in the dependency-audit output view.
+            Why:
+                Users need deterministic feedback when background audit execution
+                fails.
+            Args:
+                exc (Exception): Error raised by the worker task.
+            Returns:
+                None.
+            Side Effects:
+                Replaces dependency-audit output text with an error message.
+            Exceptions:
+                None; callback handles errors via UI output.
+            """
             output = getattr(self, "_dependency_audit_output", None)
             if output is None or not output.winfo_exists():
                 return
@@ -36891,8 +37118,23 @@ class UnifiedApp(tk.Tk):
         self._task_runner.submit("dependency_audit", _worker, _on_ok, _on_err)
 
     def _render_dependency_audit_report(self, report: Dict[str, Any]) -> None:
-        """Render dependency audit report.
-        Used to draw dependency audit report for preview or export workflows."""
+        """Render dependency audit report into the Developer Tools text view.
+
+        Purpose:
+            Present dependency free-threading diagnostics in a readable summary
+            for troubleshooting runtime compatibility.
+        Why:
+            The report includes submodule-level probes (fontTools bezierTools)
+            that are easier to interpret in structured text than raw JSON.
+        Args:
+            report (Dict[str, Any]): Audit payload from `_run_dependency_audit`.
+        Returns:
+            None.
+        Side Effects:
+            Replaces the contents of the dependency-audit output widget.
+        Exceptions:
+            Missing widgets are handled gracefully.
+        """
         output = getattr(self, "_dependency_audit_output", None)
         if output is None or not output.winfo_exists():
             return
@@ -36914,17 +37156,42 @@ class UnifiedApp(tk.Tk):
             imported = bool(entry.get("imported"))
             version = entry.get("version")
             error = entry.get("error")
-            status = "PASS"
-            if not imported:
-                status = "FAIL"
-            elif entry.get("gil_changed"):
-                status = "WARN"
+            status = str(entry.get("status") or "").strip().upper()
+            if status not in {"PASS", "WARN", "FAIL"}:
+                status = "PASS"
+                if not imported:
+                    status = "FAIL"
+                elif entry.get("gil_changed"):
+                    status = "WARN"
             line = f"{status} - {name}"
             if version:
                 line += f" ({version})"
             output.insert("end", line + "\n")
             if error:
                 output.insert("end", f"    Error: {error}\n")
+            if name == "fontTools":
+                bezier_status = str(entry.get("bezier_status") or "").strip().upper()
+                if bezier_status not in {"PASS", "WARN", "FAIL"}:
+                    bezier_status = "PASS"
+                bezier_artifact = str(entry.get("bezier_artifact") or "unknown")
+                output.insert(
+                    "end",
+                    "    bezierTools: "
+                    f"{bezier_status} (artifact={bezier_artifact})\n",
+                )
+                bezier_path = str(entry.get("bezier_path") or "").strip()
+                if bezier_path:
+                    output.insert("end", f"    bezierTools path: {bezier_path}\n")
+                if entry.get("bezier_error"):
+                    output.insert(
+                        "end",
+                        f"    bezierTools error: {entry.get('bezier_error')}\n",
+                    )
+                if entry.get("bezier_gil_changed"):
+                    output.insert(
+                        "end",
+                        "    Warning: bezierTools import re-enabled the GIL.\n",
+                    )
         output.configure(state="disabled")
 
     def _copy_dependency_audit_report(self) -> None:

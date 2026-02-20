@@ -154,6 +154,22 @@ If `great_tables` is not installed by your requirements workflow, install it sep
 Do not rely on shared global `site-packages` when both standard and free-threaded Python runtimes are required; keep dependencies isolated per virtual environment.
 No-Activation PowerShell note: if `ExecutionPolicy` is `Restricted`, skip `Activate.ps1` and always invoke the virtual-environment `python.exe` directly as shown above.
 
+#### Free-threaded fontTools mode
+When running with `.\.venv-314t\Scripts\python.exe`, prefer pure-Python `fontTools` so compiled bezier extension imports are less likely to force GIL re-enable paths.
+
+```powershell
+.\.venv-314t\Scripts\python.exe -m pip install --upgrade pip
+.\.venv-314t\Scripts\python.exe -m pip install -r requirements.txt
+$env:FONTTOOLS_WITH_CYTHON="0"
+.\.venv-314t\Scripts\python.exe -m pip install --force-reinstall --no-binary=fonttools fonttools
+```
+
+Verification:
+```powershell
+.\.venv-314t\Scripts\python.exe -X gil=0 -c "import sys, fontTools.misc.bezierTools as b; print(sys._is_gil_enabled(), b.__file__)"
+```
+Expected output shape: `False ...bezierTools.py`.
+
 #### Manual Rust setup and verification (optional)
 ```powershell
 winget install --id Rustlang.Rustup --exact --scope user --interactive --accept-package-agreements --accept-source-agreements
