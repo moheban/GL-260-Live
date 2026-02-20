@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: v4.1.0
-# Date: 2026-02-19
+# Version: v4.1.1
+# Date: 2026-02-20
 
 import os
 import sys
@@ -10768,7 +10768,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v4.1.0"
+APP_VERSION = "v4.1.1"
 
 
 def _apply_rust_runtime_settings_defaults(settings_dict: Dict[str, Any]) -> None:
