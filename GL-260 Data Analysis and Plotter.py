@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v4.2.1
+# Version: v4.2.2
 # Date: 2026-02-20
 
 import os
@@ -909,6 +909,7 @@ from tkinter import font as tkfont
 from typing import (
     Any,
     Callable,
+    Collection,
     Dict,
     Iterable,
     List,
@@ -11226,7 +11227,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v4.2.1"
+APP_VERSION = "v4.2.2"
 
 
 def _apply_rust_runtime_settings_defaults(settings_dict: Dict[str, Any]) -> None:
@@ -12746,58 +12747,252 @@ class RenderCacheManager:
     cycle_metrics: Dict[CycleMetricsFingerprint, Dict[str, Any]] = field(
         default_factory=dict
     )
+    _lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
 
     def get_prepared(self, fingerprint: DataFingerprint) -> Optional[Dict[str, Any]]:
-        """Return prepared.
-        Used to retrieve prepared for downstream logic."""
-        return self.prepared.get(fingerprint)
+        """Return cached prepared-series payload for one data fingerprint.
+
+        Purpose:
+            Fetch previously prepared data context from the render cache.
+        Why:
+            Async render workers reuse prepared payloads to avoid duplicate
+            preprocessing work.
+        Inputs:
+            fingerprint: Immutable key describing the prepared-data inputs.
+        Outputs:
+            Optional[Dict[str, Any]]: Cached payload when present, else `None`.
+        Side Effects:
+            Acquires the cache re-entrant lock for thread-safe lookup.
+        Exceptions:
+            Missing keys return `None`; lock-protected lookup errors are ignored.
+        """
+        with self._lock:
+            return self.prepared.get(fingerprint)
 
     def set_prepared(
         self, fingerprint: DataFingerprint, payload: Dict[str, Any]
     ) -> None:
-        """Set prepared.
-        Used to persist prepared into the current state."""
-        self.prepared[fingerprint] = payload
+        """Store prepared-series payload for one data fingerprint.
+
+        Purpose:
+            Persist prepared data context in the render cache.
+        Why:
+            Worker/UI phases need a shared thread-safe cache for reused payloads.
+        Inputs:
+            fingerprint: Immutable key for the prepared payload.
+            payload: Prepared data context to cache.
+        Outputs:
+            None.
+        Side Effects:
+            Mutates `prepared` cache under the re-entrant lock.
+        Exceptions:
+            Write failures are not raised to callers.
+        """
+        with self._lock:
+            self.prepared[fingerprint] = payload
 
     def get_cycles(self, fingerprint: CycleFingerprint) -> Optional[Dict[str, Any]]:
-        """Return cycles.
-        Used to retrieve cycles for downstream logic."""
-        return self.cycles.get(fingerprint)
+        """Return cached cycle-analysis payload for one cycle fingerprint.
+
+        Purpose:
+            Read cached cycle overlay/summary context.
+        Why:
+            Cycle precompute is expensive and should be reused across renders.
+        Inputs:
+            fingerprint: Immutable cycle cache key.
+        Outputs:
+            Optional[Dict[str, Any]]: Cached cycle payload, or `None`.
+        Side Effects:
+            Acquires the cache re-entrant lock for thread-safe lookup.
+        Exceptions:
+            Missing keys return `None`; lookup failures are suppressed.
+        """
+        with self._lock:
+            return self.cycles.get(fingerprint)
 
     def set_cycles(
         self, fingerprint: CycleFingerprint, payload: Dict[str, Any]
     ) -> None:
-        """Set cycles.
-        Used to persist cycles into the current state."""
-        self.cycles[fingerprint] = payload
+        """Store cycle-analysis payload for one cycle fingerprint.
+
+        Purpose:
+            Persist cycle context for reuse by later render tasks.
+        Why:
+            Caching avoids repeated cycle segmentation/summary computation.
+        Inputs:
+            fingerprint: Immutable key for cycle cache entry.
+            payload: Cycle-analysis payload to store.
+        Outputs:
+            None.
+        Side Effects:
+            Mutates `cycles` cache under the re-entrant lock.
+        Exceptions:
+            Write failures are not raised to callers.
+        """
+        with self._lock:
+            self.cycles[fingerprint] = payload
 
     def get_cycle_segments(
         self, fingerprint: CycleSegFingerprint
     ) -> Optional[Dict[str, Any]]:
-        """Return cycle segments.
-        Used to retrieve cycle segmentation for downstream logic."""
-        return self.cycle_segments.get(fingerprint)
+        """Return cached cycle-segmentation payload for one segment fingerprint.
+
+        Purpose:
+            Read cached cycle segment boundaries/metadata.
+        Why:
+            Segment extraction is reused by both overlay and metrics paths.
+        Inputs:
+            fingerprint: Immutable cycle-segmentation cache key.
+        Outputs:
+            Optional[Dict[str, Any]]: Cached segment payload, or `None`.
+        Side Effects:
+            Acquires the cache re-entrant lock for thread-safe lookup.
+        Exceptions:
+            Missing keys return `None`; lookup failures are suppressed.
+        """
+        with self._lock:
+            return self.cycle_segments.get(fingerprint)
 
     def set_cycle_segments(
         self, fingerprint: CycleSegFingerprint, payload: Dict[str, Any]
     ) -> None:
-        """Set cycle segments.
-        Used to persist cycle segmentation into the current state."""
-        self.cycle_segments[fingerprint] = payload
+        """Store cycle-segmentation payload for one segment fingerprint.
+
+        Purpose:
+            Persist cycle segment results for downstream metrics/overlay reuse.
+        Why:
+            Shared cache entries reduce repeated segmentation work.
+        Inputs:
+            fingerprint: Immutable key for cycle-segmentation cache entry.
+            payload: Cycle-segmentation payload to store.
+        Outputs:
+            None.
+        Side Effects:
+            Mutates `cycle_segments` cache under the re-entrant lock.
+        Exceptions:
+            Write failures are not raised to callers.
+        """
+        with self._lock:
+            self.cycle_segments[fingerprint] = payload
 
     def get_cycle_metrics(
         self, fingerprint: CycleMetricsFingerprint
     ) -> Optional[Dict[str, Any]]:
-        """Return cycle metrics.
-        Used to retrieve cycle metrics for downstream logic."""
-        return self.cycle_metrics.get(fingerprint)
+        """Return cached cycle-metrics payload for one metrics fingerprint.
+
+        Purpose:
+            Read cached cycle metrics derived from segmentation + moles inputs.
+        Why:
+            Metrics calculation can be reused across render/update workflows.
+        Inputs:
+            fingerprint: Immutable cycle-metrics cache key.
+        Outputs:
+            Optional[Dict[str, Any]]: Cached metrics payload, or `None`.
+        Side Effects:
+            Acquires the cache re-entrant lock for thread-safe lookup.
+        Exceptions:
+            Missing keys return `None`; lookup failures are suppressed.
+        """
+        with self._lock:
+            return self.cycle_metrics.get(fingerprint)
 
     def set_cycle_metrics(
         self, fingerprint: CycleMetricsFingerprint, payload: Dict[str, Any]
     ) -> None:
-        """Set cycle metrics.
-        Used to persist cycle metrics into the current state."""
-        self.cycle_metrics[fingerprint] = payload
+        """Store cycle-metrics payload for one metrics fingerprint.
+
+        Purpose:
+            Persist computed cycle metrics for reuse by render consumers.
+        Why:
+            Cached metrics avoid repeated calculations for unchanged inputs.
+        Inputs:
+            fingerprint: Immutable key for cycle-metrics cache entry.
+            payload: Cycle-metrics payload to store.
+        Outputs:
+            None.
+        Side Effects:
+            Mutates `cycle_metrics` cache under the re-entrant lock.
+        Exceptions:
+            Write failures are not raised to callers.
+        """
+        with self._lock:
+            self.cycle_metrics[fingerprint] = payload
+
+    def clear_prepared(self) -> None:
+        """Clear all prepared-series cache entries.
+
+        Purpose:
+            Remove all cached prepared payloads.
+        Why:
+            Cache invalidation is required when source data/signatures change.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Mutates `prepared` cache under the re-entrant lock.
+        Exceptions:
+            Clear failures are not raised to callers.
+        """
+        with self._lock:
+            self.prepared.clear()
+
+    def clear_cycles(self) -> None:
+        """Clear all cycle-analysis cache entries.
+
+        Purpose:
+            Remove cached cycle overlay/summary payloads.
+        Why:
+            Cycle cache must be reset when cycle inputs or policies change.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Mutates `cycles` cache under the re-entrant lock.
+        Exceptions:
+            Clear failures are not raised to callers.
+        """
+        with self._lock:
+            self.cycles.clear()
+
+    def clear_cycle_segments(self) -> None:
+        """Clear all cached cycle-segmentation entries.
+
+        Purpose:
+            Remove cached cycle segment payloads.
+        Why:
+            Segment caches must be invalidated when segmentation inputs change.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Mutates `cycle_segments` cache under the re-entrant lock.
+        Exceptions:
+            Clear failures are not raised to callers.
+        """
+        with self._lock:
+            self.cycle_segments.clear()
+
+    def clear_cycle_metrics(self) -> None:
+        """Clear all cached cycle-metrics entries.
+
+        Purpose:
+            Remove cached cycle metrics payloads.
+        Why:
+            Metrics caches must be invalidated when moles/segmentation inputs change.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Mutates `cycle_metrics` cache under the re-entrant lock.
+        Exceptions:
+            Clear failures are not raised to callers.
+        """
+        with self._lock:
+            self.cycle_metrics.clear()
 
 
 @dataclass
@@ -12824,6 +13019,8 @@ class RenderPacket:
     plot_id: Optional[str]
     target: str = "display"
     perf: Optional[Dict[str, Any]] = None
+    requested_plot_keys: Tuple[str, ...] = ()
+    cycle_side_effects_mode: str = "auto"
 
 
 @dataclass(frozen=True)
@@ -22650,6 +22847,69 @@ def _normalize_plot_settings_card_order(value: Any) -> List[str]:
     return normalized
 
 
+def _normalize_core_render_cycle_side_effects_mode(value: Any) -> str:
+    """Normalize the core-render cycle side-effects mode.
+
+    Purpose:
+        Coerce stored or UI-provided side-effects mode values into one
+        supported setting.
+    Why:
+        Core render scheduling now conditionally runs cycle-analysis side
+        effects; unsupported values must fail safely to a deterministic mode.
+    Args:
+        value: Incoming mode candidate from settings or UI.
+    Returns:
+        str: One of `"auto"`, `"always"`, or `"never"`.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid or missing values are normalized to `"auto"`.
+    """
+    normalized = str(value or "").strip().lower()
+    if normalized not in {"auto", "always", "never"}:
+        return "auto"
+    return normalized
+
+
+def _normalize_requested_core_plot_keys(value: Any) -> Tuple[str, ...]:
+    """Normalize the requested core plot-key collection.
+
+    Purpose:
+        Coerce caller-provided core-plot key collections into one canonical
+        ordered tuple.
+    Why:
+        Core render snapshots and UI rendering need deterministic requested-key
+        semantics for selective figure generation.
+    Args:
+        value: Optional iterable containing requested core plot keys.
+    Returns:
+        Tuple[str, ...]: Ordered unique keys from `fig1`, `fig2`, `fig_peaks`.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid inputs return an empty tuple.
+    """
+    if value is None:
+        return ()
+    allowed = ("fig1", "fig2", "fig_peaks")
+    try:
+        raw_values = list(value)
+    except Exception:
+        return ()
+    normalized: List[str] = []
+    seen: Set[str] = set()
+    # Preserve caller order while dropping unsupported/duplicate entries.
+    for raw_item in raw_values:
+        key = str(raw_item or "").strip().lower()
+        if key not in allowed:
+            continue
+        if key in seen:
+            continue
+        normalized.append(key)
+        seen.add(key)
+    return tuple(normalized)
+
+
 def _normalize_debug_categories(value: Any) -> Dict[str, bool]:
     """Normalize debug categories for persistence.
 
@@ -23316,6 +23576,11 @@ if os.path.exists(SETTINGS_FILE):
     initial_include_moles_core_legend = settings.get(
         "include_moles_in_core_plot_legend", False
     )
+    initial_core_render_cycle_side_effects_mode = (
+        _normalize_core_render_cycle_side_effects_mode(
+            settings.get("core_render_cycle_side_effects_mode", "auto")
+        )
+    )
     initial_core_legend_fontsize = _sanitize_spacing_value(
         settings.get("core_legend_fontsize", label_fontsize),
         label_fontsize,
@@ -23562,6 +23827,7 @@ else:
     initial_show_cycle_markers_on_core = False
     initial_show_cycle_legend_on_core = False
     initial_include_moles_core_legend = False
+    initial_core_render_cycle_side_effects_mode = "auto"
     initial_core_legend_fontsize = label_fontsize
     initial_core_cycle_legend_fontsize = initial_core_legend_fontsize
     settings["core_legend_fontsize"] = initial_core_legend_fontsize
@@ -23623,6 +23889,11 @@ settings["plot_elements"] = _normalize_plot_elements(settings.get("plot_elements
 settings["annotations_ui"] = _normalize_annotations_ui(settings.get("annotations_ui"))
 settings["combined_disable_second_refresh"] = bool(
     settings.get("combined_disable_second_refresh", False)
+)
+settings["core_render_cycle_side_effects_mode"] = (
+    _normalize_core_render_cycle_side_effects_mode(
+        settings.get("core_render_cycle_side_effects_mode", "auto")
+    )
 )
 settings["dev_disable_startup_tab_cycling"] = bool(
     settings.get("dev_disable_startup_tab_cycling", True)
@@ -24971,6 +25242,52 @@ def _suggest_max_workers(task_count: int, *, hard_cap: int = 32) -> int:
     return max(1, min(count, cpu_total, int(hard_cap)))
 
 
+def _resolve_render_worker_count(
+    *,
+    requested_workers: Optional[int],
+    parallel_enabled: bool,
+    hard_cap: int = 16,
+) -> int:
+    """Resolve render-precompute worker count with runtime no-GIL awareness.
+
+    Purpose:
+        Derive one deterministic worker count for plot render-precompute tasks.
+    Why:
+        No-GIL runtime can safely benefit from higher default parallelism, while
+        GIL-enabled runtime should keep historical conservative behavior unless
+        explicit parallel mode is enabled.
+    Args:
+        requested_workers: User-requested worker count from developer controls.
+        parallel_enabled: Whether manual parallel mode is enabled by settings.
+        hard_cap: Absolute upper bound for worker count.
+    Returns:
+        int: Worker count clamped to CPU capacity and hard cap.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid numeric inputs fall back to safe minimum defaults.
+    """
+    try:
+        requested = max(1, int(requested_workers)) if requested_workers is not None else 1
+    except Exception:
+        requested = 1
+    try:
+        cap = max(1, int(hard_cap))
+    except Exception:
+        cap = 16
+    cpu_total = max(1, int(os.cpu_count() or 1))
+    if _is_runtime_gil_disabled():
+        # Auto-scale render precompute on no-GIL runtimes even when manual
+        # parallel mode is disabled.
+        auto_workers = max(1, min(cpu_total, cap))
+        if parallel_enabled:
+            return max(1, min(requested, auto_workers))
+        return auto_workers
+    if parallel_enabled:
+        return max(1, min(requested, cpu_total, cap))
+    return 1
+
+
 def _cycle_metrics_parallel_policy(
     task_count: int, *, requested_workers: int, hard_cap: int = 32
 ) -> Tuple[int, int]:
@@ -26310,6 +26627,8 @@ def main_plotting_function(
     include_moles_in_core_plot_legend=False,
     fig_size=None,
     render_ctx: Optional[RenderContext] = None,
+    requested_plot_keys: Optional[Collection[str]] = None,
+    cycle_side_effects_mode: str = "auto",
 ):
     """Generate the core GL-260 figures using live settings and render context.
 
@@ -26321,7 +26640,8 @@ def main_plotting_function(
         behavior consistent across display and file outputs.
     Inputs:
         Axis ranges, tick controls, title text, plot toggles, cycle controls,
-        and an optional render context payload.
+        optional render context payload, requested core plot keys, and a
+        cycle side-effects mode policy.
     Outputs:
         Mapping containing generated figures (`fig1`, `fig2`, and optional
         cycle figure keys).
@@ -26338,6 +26658,14 @@ def main_plotting_function(
     _apply_default_plot_fonts(settings.get("font_family"))
 
     target_figsize = tuple(fig_size) if fig_size else (11, 8.5)
+    normalized_requested_keys = _normalize_requested_core_plot_keys(requested_plot_keys)
+    resolved_cycle_side_effects_mode = _normalize_core_render_cycle_side_effects_mode(
+        cycle_side_effects_mode
+    )
+    full_core_build = len(normalized_requested_keys) == 0
+    build_fig1 = full_core_build or "fig1" in normalized_requested_keys
+    build_fig2 = full_core_build or "fig2" in normalized_requested_keys
+    wants_cycle_figure = full_core_build or "fig_peaks" in normalized_requested_keys
 
     data_ctx = render_ctx.data_ctx if render_ctx else {}
     style_ctx = render_ctx.style_ctx if render_ctx else {}
@@ -26582,9 +26910,25 @@ def main_plotting_function(
 
     x_label_for_cycles = fmt(xcol)
 
-    # Normal (full) plotting with cycle analysis
+    cycle_dependency_requested = bool(
+        show_cycle_markers_on_core_plots
+        or show_cycle_legend_on_core_plots
+        or include_moles_in_core_plot_legend
+    )
+    if resolved_cycle_side_effects_mode == "always":
+        should_run_cycle_analysis = True
+    elif resolved_cycle_side_effects_mode == "never":
+        should_run_cycle_analysis = bool(wants_cycle_figure)
+    else:
+        # Auto mode computes cycle side effects only when requested output or
+        # enabled core overlays require cycle context.
+        should_run_cycle_analysis = bool(wants_cycle_figure or cycle_dependency_requested)
 
-    if y1 is not None and _is_selected(selected_columns.get("y1", "y1")):
+    if (
+        should_run_cycle_analysis
+        and y1 is not None
+        and _is_selected(selected_columns.get("y1", "y1"))
+    ):
 
         # mask to keep x & y1 aligned (avoid NaNs mismatch)
 
@@ -26637,7 +26981,7 @@ def main_plotting_function(
                 a_const=data_ctx.get("a_const", globals().get("a_const", 1.39)),
                 b_const=data_ctx.get("b_const", globals().get("b_const", 0.0391)),
                 min_cycle_drop=min_cycle_drop,
-                make_figure=True,
+                make_figure=bool(wants_cycle_figure),
                 x_series=x[mask].reset_index(drop=True),
                 x_label=x_label_for_cycles,
                 time_range=(min_time, max_time),
@@ -26861,64 +27205,6 @@ def main_plotting_function(
     selected_columns = data_ctx.get("selected_columns") or globals().get(
         "selected_columns", {}
     )
-
-    # Figure 1: pressure + optional temps
-
-    fig1, ax = plt.subplots(figsize=target_figsize)
-    try:
-        ax._gl260_axis_role = "primary"
-    except Exception:
-        # Best-effort guard; ignore failures to avoid interrupting the workflow.
-        pass
-
-    fig1.subplots_adjust(bottom=0.175, top=0.91, left=0.071, right=0.924)
-
-    handles = []
-
-    if y1 is not None and _is_selected(selected_columns.get("y1", "y1")):
-
-        artist = _plot_series(
-            ax,
-            x,
-            y1,
-            label=fmt(selected_columns.get("y1", "y1")),
-            color="blue",
-            zorder=2,
-            series_key="y1",
-            scatter_config=scatter_config,
-            scatter_series_configs=scatter_series_configs,
-        )
-
-        handles.append(artist)
-
-    if y3 is not None and _is_selected(selected_columns.get("y3", "y3")):
-
-        artist = _plot_series(
-            ax,
-            x,
-            y3,
-            label=fmt(selected_columns.get("y3", "y3")),
-            color="green",
-            zorder=1,
-            series_key="y3",
-            scatter_config=scatter_config,
-            scatter_series_configs=scatter_series_configs,
-        )
-
-        handles.append(artist)
-
-    ax.set_xlim(*time_range)
-
-    ax.set_ylim(*y_lim)
-
-    ax.set_xlabel("")
-
-    ax.set_ylabel(
-        fig1_primary_label_text,
-        fontsize=fig1_label_fontsize,
-        labelpad=fig1_primary_labelpad,
-    )
-
     temp_axis_selected = (
         (z is not None and _is_selected(selected_columns.get("z", "Temp")))
         or (z2 is not None and _is_selected(selected_columns.get("z2", "Temp 2")))
@@ -26926,484 +27212,552 @@ def main_plotting_function(
     deriv_axis_selected = y2 is not None and _is_selected(
         selected_columns.get("y2", "Derivative")
     )
-    if enable_temp_axis and temp_axis_selected:
 
-        ax2 = ax.twinx()
+    fig1 = None
+    if build_fig1:
+        # Figure 1: pressure + optional temps
+    
+        fig1, ax = plt.subplots(figsize=target_figsize)
         try:
-            ax2._gl260_axis_role = "right"
+            ax._gl260_axis_role = "primary"
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
-
-        if z is not None and _is_selected(selected_columns.get("z", "Temp")):
-
+    
+        fig1.subplots_adjust(bottom=0.175, top=0.91, left=0.071, right=0.924)
+    
+        handles = []
+    
+        if y1 is not None and _is_selected(selected_columns.get("y1", "y1")):
+    
             artist = _plot_series(
-                ax2,
+                ax,
                 x,
-                z,
-                label=fmt(selected_columns.get("z", "Temp")),
-                color="red",
-                zorder=3,
-                series_key="z",
+                y1,
+                label=fmt(selected_columns.get("y1", "y1")),
+                color="blue",
+                zorder=2,
+                series_key="y1",
                 scatter_config=scatter_config,
                 scatter_series_configs=scatter_series_configs,
             )
-
+    
             handles.append(artist)
-
-        if z2 is not None and _is_selected(selected_columns.get("z2", "Temp 2")):
-
+    
+        if y3 is not None and _is_selected(selected_columns.get("y3", "y3")):
+    
             artist = _plot_series(
-                ax2,
+                ax,
                 x,
-                z2,
-                label=fmt(selected_columns.get("z2", "Temp 2")),
-                color="orange",
-                zorder=3,
-                line_style="--",
-                series_key="z2",
+                y3,
+                label=fmt(selected_columns.get("y3", "y3")),
+                color="green",
+                zorder=1,
+                series_key="y3",
                 scatter_config=scatter_config,
                 scatter_series_configs=scatter_series_configs,
             )
-
+    
             handles.append(artist)
-
-        ax2.set_ylim(*twin_y_lim)
-
-        ax2.set_ylabel(
-            fig1_temp_label_text,
-            color="black",
-            rotation=-90,
-            labelpad=fig1_temp_labelpad,
+    
+        ax.set_xlim(*time_range)
+    
+        ax.set_ylim(*y_lim)
+    
+        ax.set_xlabel("")
+    
+        ax.set_ylabel(
+            fig1_primary_label_text,
             fontsize=fig1_label_fontsize,
+            labelpad=fig1_primary_labelpad,
         )
-
-        ax2.tick_params(axis="y", labelcolor="black", labelsize=fig1_tick_fontsize)
-
-        ax2.spines["right"].set_color("black")
-
-        ax2.set_zorder(ax.get_zorder() - 1)
-
-        ax.patch.set_visible(False)
-
-        if auto_temp_ticks:
-
-            ax2.yaxis.set_major_locator(AutoLocator())
-
-            ax2.yaxis.set_minor_locator(AutoMinorLocator())
-
+    
+        if enable_temp_axis and temp_axis_selected:
+    
+            ax2 = ax.twinx()
+            try:
+                ax2._gl260_axis_role = "right"
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+    
+            if z is not None and _is_selected(selected_columns.get("z", "Temp")):
+    
+                artist = _plot_series(
+                    ax2,
+                    x,
+                    z,
+                    label=fmt(selected_columns.get("z", "Temp")),
+                    color="red",
+                    zorder=3,
+                    series_key="z",
+                    scatter_config=scatter_config,
+                    scatter_series_configs=scatter_series_configs,
+                )
+    
+                handles.append(artist)
+    
+            if z2 is not None and _is_selected(selected_columns.get("z2", "Temp 2")):
+    
+                artist = _plot_series(
+                    ax2,
+                    x,
+                    z2,
+                    label=fmt(selected_columns.get("z2", "Temp 2")),
+                    color="orange",
+                    zorder=3,
+                    line_style="--",
+                    series_key="z2",
+                    scatter_config=scatter_config,
+                    scatter_series_configs=scatter_series_configs,
+                )
+    
+                handles.append(artist)
+    
+            ax2.set_ylim(*twin_y_lim)
+    
+            ax2.set_ylabel(
+                fig1_temp_label_text,
+                color="black",
+                rotation=-90,
+                labelpad=fig1_temp_labelpad,
+                fontsize=fig1_label_fontsize,
+            )
+    
+            ax2.tick_params(axis="y", labelcolor="black", labelsize=fig1_tick_fontsize)
+    
+            ax2.spines["right"].set_color("black")
+    
+            ax2.set_zorder(ax.get_zorder() - 1)
+    
+            ax.patch.set_visible(False)
+    
+            if auto_temp_ticks:
+    
+                ax2.yaxis.set_major_locator(AutoLocator())
+    
+                ax2.yaxis.set_minor_locator(AutoMinorLocator())
+    
+            else:
+    
+                ax2.yaxis.set_major_locator(MultipleLocator(twin_maj_tick))
+    
+                ax2.yaxis.set_minor_locator(MultipleLocator(twin_min_tick))
+    
+            fig1.subplots_adjust(
+                bottom=0.164 if (z is not None and z2 is not None) else 0.143
+            )
+    
+        # ticks for fig1
+    
+        if auto_time_ticks:
+    
+            ax.xaxis.set_major_locator(AutoLocator())
+    
+            ax.xaxis.set_minor_locator(AutoMinorLocator())
+    
         else:
-
-            ax2.yaxis.set_major_locator(MultipleLocator(twin_maj_tick))
-
-            ax2.yaxis.set_minor_locator(MultipleLocator(twin_min_tick))
-
-        fig1.subplots_adjust(
-            bottom=0.164 if (z is not None and z2 is not None) else 0.143
+    
+            ax.xaxis.set_major_locator(MultipleLocator(xmaj_tick))
+    
+            ax.xaxis.set_minor_locator(MultipleLocator(xmin_tick))
+    
+        if auto_y_ticks:
+    
+            ax.yaxis.set_major_locator(AutoLocator())
+    
+            ax.yaxis.set_minor_locator(AutoMinorLocator())
+    
+        else:
+    
+            ax.yaxis.set_major_locator(MultipleLocator(ymaj_tick))
+    
+            ax.yaxis.set_minor_locator(MultipleLocator(ymin_tick))
+    
+        ax.minorticks_on()
+    
+        ax.tick_params(
+            axis="both", which="major", labelcolor="black", labelsize=fig1_tick_fontsize
         )
-
-    # ticks for fig1
-
-    if auto_time_ticks:
-
-        ax.xaxis.set_major_locator(AutoLocator())
-
-        ax.xaxis.set_minor_locator(AutoMinorLocator())
-
-    else:
-
-        ax.xaxis.set_major_locator(MultipleLocator(xmaj_tick))
-
-        ax.xaxis.set_minor_locator(MultipleLocator(xmin_tick))
-
-    if auto_y_ticks:
-
-        ax.yaxis.set_major_locator(AutoLocator())
-
-        ax.yaxis.set_minor_locator(AutoMinorLocator())
-
-    else:
-
-        ax.yaxis.set_major_locator(MultipleLocator(ymaj_tick))
-
-        ax.yaxis.set_minor_locator(MultipleLocator(ymin_tick))
-
-    ax.minorticks_on()
-
-    ax.tick_params(
-        axis="both", which="major", labelcolor="black", labelsize=fig1_tick_fontsize
-    )
-    _enforce_axis_text_style(
-        ax,
-        font_family=fig1_font_family,
-        tick_fontsize=fig1_tick_fontsize,
-        label_fontsize=fig1_label_fontsize,
-    )
-    if enable_temp_axis and temp_axis_selected:
         _enforce_axis_text_style(
-            ax2,
+            ax,
             font_family=fig1_font_family,
             tick_fontsize=fig1_tick_fontsize,
             label_fontsize=fig1_label_fontsize,
         )
-
-    fig1_peak_artist, fig1_trough_artist = _draw_cycle_markers(ax)
-
-    axes_for_title = (
-        [ax, ax2] if enable_temp_axis and temp_axis_selected else [ax]
-    )
-    _center_titles_to_axes_union(
-        fig1,
-        axes_for_title,
-        title_text,
-        suptitle_text,
-        fig1_title_fontsize,
-        fig1_suptitle_fontsize,
-        fig1_font_family,
-        fig1_title_pad_pts,
-        fig1_suptitle_pad_pts,
-        suptitle_y=fig1_suptitle_y,
-    )
-    fig1_center_x = 0.5
-    try:
-        axes_union = Bbox.union([axis.get_position() for axis in axes_for_title if axis is not None])
-        fig1_center_x = (axes_union.x0 + axes_union.x1) / 2.0
-    except Exception:
+        if enable_temp_axis and temp_axis_selected:
+            _enforce_axis_text_style(
+                ax2,
+                font_family=fig1_font_family,
+                tick_fontsize=fig1_tick_fontsize,
+                label_fontsize=fig1_label_fontsize,
+            )
+    
+        fig1_peak_artist, fig1_trough_artist = _draw_cycle_markers(ax)
+    
+        axes_for_title = (
+            [ax, ax2] if enable_temp_axis and temp_axis_selected else [ax]
+        )
+        _center_titles_to_axes_union(
+            fig1,
+            axes_for_title,
+            title_text,
+            suptitle_text,
+            fig1_title_fontsize,
+            fig1_suptitle_fontsize,
+            fig1_font_family,
+            fig1_title_pad_pts,
+            fig1_suptitle_pad_pts,
+            suptitle_y=fig1_suptitle_y,
+        )
         fig1_center_x = 0.5
-    fig1_xlabel_artist = fig1.supxlabel(
-        fig1_x_label_text,
-        fontsize=fig1_label_fontsize,
-        fontfamily=fig1_font_family if fig1_font_family else None,
-        x=fig1_center_x,
-    )
-    try:
-        fig1._gl260_xlabel_text = fig1_xlabel_artist  # type: ignore[attr-defined]
-    except Exception:
-        # Best-effort guard; ignore failures to avoid interrupting the workflow.
-        pass
-
-    handles_filtered, labels_filtered = _filter_none_legend_entries(
-        handles, [handle.get_label() for handle in handles]
-    )
-    if (
-        handles_filtered
-        and include_moles_in_core_plot_legend
-        and not show_cycle_legend_on_core_plots
-        and moles_lines
-    ):
-        # Iterate over moles_lines to apply the per-item logic.
-        for line in moles_lines:
-            handles_filtered.append(mpatches.Patch(color="none"))
-            labels_filtered.append(line)
-    if handles_filtered:
-        if fig1_legend_wrap:
-            ncol_fig1 = max(1, math.ceil(len(handles_filtered) / max(1, fig1_legend_rows)))
-        else:
-            ncol_fig1 = min(3, len(handles_filtered))
-        labels_filtered = [_wrap_legend_label(label) for label in labels_filtered]
-        if fig1_legend_alignment == "left":
-            fig1_legend_loc = "lower left"
-            fig1_legend_anchor = (0.02, 0.02)
-        elif fig1_legend_alignment == "right":
-            fig1_legend_loc = "lower right"
-            fig1_legend_anchor = (0.98, 0.02)
-        else:
-            fig1_legend_loc = "lower center"
-            fig1_legend_anchor = (0.5, 0.02)
-        leg_fig1 = fig1.legend(
-            handles=handles_filtered,
-            labels=labels_filtered,
-            loc=fig1_legend_loc,
-            bbox_to_anchor=fig1_legend_anchor,
-            ncol=ncol_fig1,
-            fontsize=fig1_legend_fontsize,
-            markerscale=fig1_legend_markerscale,
-            **_legend_shadowbox_kwargs(),
-        )
-
         try:
-            leg_fig1._gl260_legend_role = "main"  # type: ignore[attr-defined]
-            leg_fig1._gl260_markerscale = fig1_legend_markerscale  # type: ignore[attr-defined]
-            leg_fig1._gl260_markerscale_base_font = fig1_base_legend_font  # type: ignore[attr-defined]
+            axes_union = Bbox.union([axis.get_position() for axis in axes_for_title if axis is not None])
+            fig1_center_x = (axes_union.x0 + axes_union.x1) / 2.0
+        except Exception:
+            fig1_center_x = 0.5
+        fig1_xlabel_artist = fig1.supxlabel(
+            fig1_x_label_text,
+            fontsize=fig1_label_fontsize,
+            fontfamily=fig1_font_family if fig1_font_family else None,
+            x=fig1_center_x,
+        )
+        try:
+            fig1._gl260_xlabel_text = fig1_xlabel_artist  # type: ignore[attr-defined]
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
-        _make_legend_draggable(leg_fig1)
-    _add_cycle_legend(
-        ax,
-        fig1_peak_artist,
-        fig1_trough_artist,
-        core_profile=fig1_core_profile,
-        base_legend_font=fig1_base_legend_font,
-    )
-
-    # Figure 2: pressure + derivative
-
-    fig2, ax_two = plt.subplots(figsize=target_figsize)
-    try:
-        ax_two._gl260_axis_role = "primary"
-    except Exception:
-        # Best-effort guard; ignore failures to avoid interrupting the workflow.
-        pass
-
-    fig2.subplots_adjust(bottom=0.143, top=0.91, left=0.071, right=0.924)
-
-    handles2 = []
-
-    if y1 is not None and _is_selected(selected_columns.get("y1", "y1")):
-
-        artist = _plot_series(
-            ax_two,
-            x,
-            y1,
-            label=fmt(selected_columns.get("y1", "y1")),
-            color="blue",
-            zorder=2,
-            series_key="y1",
-            scatter_config=scatter_config,
-            scatter_series_configs=scatter_series_configs,
+    
+        handles_filtered, labels_filtered = _filter_none_legend_entries(
+            handles, [handle.get_label() for handle in handles]
         )
-
-        handles2.append(artist)
-
-    if y3 is not None and _is_selected(selected_columns.get("y3", "y3")):
-
-        artist = _plot_series(
-            ax_two,
-            x,
-            y3,
-            label=fmt(selected_columns.get("y3", "y3")),
-            color="green",
-            zorder=1,
-            series_key="y3",
-            scatter_config=scatter_config,
-            scatter_series_configs=scatter_series_configs,
+        if (
+            handles_filtered
+            and include_moles_in_core_plot_legend
+            and not show_cycle_legend_on_core_plots
+            and moles_lines
+        ):
+            # Iterate over moles_lines to apply the per-item logic.
+            for line in moles_lines:
+                handles_filtered.append(mpatches.Patch(color="none"))
+                labels_filtered.append(line)
+        if handles_filtered:
+            if fig1_legend_wrap:
+                ncol_fig1 = max(1, math.ceil(len(handles_filtered) / max(1, fig1_legend_rows)))
+            else:
+                ncol_fig1 = min(3, len(handles_filtered))
+            labels_filtered = [_wrap_legend_label(label) for label in labels_filtered]
+            if fig1_legend_alignment == "left":
+                fig1_legend_loc = "lower left"
+                fig1_legend_anchor = (0.02, 0.02)
+            elif fig1_legend_alignment == "right":
+                fig1_legend_loc = "lower right"
+                fig1_legend_anchor = (0.98, 0.02)
+            else:
+                fig1_legend_loc = "lower center"
+                fig1_legend_anchor = (0.5, 0.02)
+            leg_fig1 = fig1.legend(
+                handles=handles_filtered,
+                labels=labels_filtered,
+                loc=fig1_legend_loc,
+                bbox_to_anchor=fig1_legend_anchor,
+                ncol=ncol_fig1,
+                fontsize=fig1_legend_fontsize,
+                markerscale=fig1_legend_markerscale,
+                **_legend_shadowbox_kwargs(),
+            )
+    
+            try:
+                leg_fig1._gl260_legend_role = "main"  # type: ignore[attr-defined]
+                leg_fig1._gl260_markerscale = fig1_legend_markerscale  # type: ignore[attr-defined]
+                leg_fig1._gl260_markerscale_base_font = fig1_base_legend_font  # type: ignore[attr-defined]
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            _make_legend_draggable(leg_fig1)
+        _add_cycle_legend(
+            ax,
+            fig1_peak_artist,
+            fig1_trough_artist,
+            core_profile=fig1_core_profile,
+            base_legend_font=fig1_base_legend_font,
         )
-
-        handles2.append(artist)
-
-    ax_two.set_xlim(*time_range)
-
-    ax_two.set_ylim(*y_lim)
-
-    ax_two.set_xlabel("")
-
-    ax_two.set_ylabel(
-        fig2_primary_label_text,
-        fontsize=fig2_label_fontsize,
-        labelpad=fig2_primary_labelpad,
-    )
-
-    if enable_deriv_axis and deriv_axis_selected:
-
-        ax3 = ax_two.twinx()
+    
+    fig2 = None
+    if build_fig2:
+        # Figure 2: pressure + derivative
+    
+        fig2, ax_two = plt.subplots(figsize=target_figsize)
         try:
-            ax3._gl260_axis_role = "right"
+            ax_two._gl260_axis_role = "primary"
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
-
-        artist = _plot_series(
-            ax3,
-            x,
-            y2,
-            label=fmt(selected_columns.get("y2", "Derivative")),
-            color="red",
-            zorder=3,
-            series_key="y2",
-            scatter_config=scatter_config,
-            scatter_series_configs=scatter_series_configs,
-        )
-
-        ax3.set_ylim(deriv_y_min, deriv_y_max)
-
-        ax3.set_ylabel(
-            fig2_deriv_label_text,
-            color="black",
-            rotation=-90,
-            labelpad=fig2_deriv_labelpad,
+    
+        fig2.subplots_adjust(bottom=0.143, top=0.91, left=0.071, right=0.924)
+    
+        handles2 = []
+    
+        if y1 is not None and _is_selected(selected_columns.get("y1", "y1")):
+    
+            artist = _plot_series(
+                ax_two,
+                x,
+                y1,
+                label=fmt(selected_columns.get("y1", "y1")),
+                color="blue",
+                zorder=2,
+                series_key="y1",
+                scatter_config=scatter_config,
+                scatter_series_configs=scatter_series_configs,
+            )
+    
+            handles2.append(artist)
+    
+        if y3 is not None and _is_selected(selected_columns.get("y3", "y3")):
+    
+            artist = _plot_series(
+                ax_two,
+                x,
+                y3,
+                label=fmt(selected_columns.get("y3", "y3")),
+                color="green",
+                zorder=1,
+                series_key="y3",
+                scatter_config=scatter_config,
+                scatter_series_configs=scatter_series_configs,
+            )
+    
+            handles2.append(artist)
+    
+        ax_two.set_xlim(*time_range)
+    
+        ax_two.set_ylim(*y_lim)
+    
+        ax_two.set_xlabel("")
+    
+        ax_two.set_ylabel(
+            fig2_primary_label_text,
             fontsize=fig2_label_fontsize,
+            labelpad=fig2_primary_labelpad,
         )
-
-        ax3.tick_params(axis="y", labelcolor="black", labelsize=fig2_tick_fontsize)
-
-        ax3.spines["right"].set_color("black")
-
-        ax3.set_zorder(ax_two.get_zorder() - 1)
-
-        ax_two.patch.set_visible(False)
-
-        handles2.append(artist)
-
-        ax3.axhline(y=0, color="black", linestyle="--", linewidth=1, zorder=4)
-
-        if auto_deriv_ticks:
-
-            ax3.yaxis.set_major_locator(AutoLocator())
-
-            ax3.yaxis.set_minor_locator(AutoMinorLocator())
-
+    
+        if enable_deriv_axis and deriv_axis_selected:
+    
+            ax3 = ax_two.twinx()
+            try:
+                ax3._gl260_axis_role = "right"
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+    
+            artist = _plot_series(
+                ax3,
+                x,
+                y2,
+                label=fmt(selected_columns.get("y2", "Derivative")),
+                color="red",
+                zorder=3,
+                series_key="y2",
+                scatter_config=scatter_config,
+                scatter_series_configs=scatter_series_configs,
+            )
+    
+            ax3.set_ylim(deriv_y_min, deriv_y_max)
+    
+            ax3.set_ylabel(
+                fig2_deriv_label_text,
+                color="black",
+                rotation=-90,
+                labelpad=fig2_deriv_labelpad,
+                fontsize=fig2_label_fontsize,
+            )
+    
+            ax3.tick_params(axis="y", labelcolor="black", labelsize=fig2_tick_fontsize)
+    
+            ax3.spines["right"].set_color("black")
+    
+            ax3.set_zorder(ax_two.get_zorder() - 1)
+    
+            ax_two.patch.set_visible(False)
+    
+            handles2.append(artist)
+    
+            ax3.axhline(y=0, color="black", linestyle="--", linewidth=1, zorder=4)
+    
+            if auto_deriv_ticks:
+    
+                ax3.yaxis.set_major_locator(AutoLocator())
+    
+                ax3.yaxis.set_minor_locator(AutoMinorLocator())
+    
+            else:
+    
+                ax3.yaxis.set_major_locator(MultipleLocator(deriv_maj_tick))
+    
+                ax3.yaxis.set_minor_locator(MultipleLocator(deriv_min_tick))
+    
+        # ticks for fig2
+    
+        if auto_time_ticks:
+    
+            ax_two.xaxis.set_major_locator(AutoLocator())
+    
+            ax_two.xaxis.set_minor_locator(AutoMinorLocator())
+    
         else:
-
-            ax3.yaxis.set_major_locator(MultipleLocator(deriv_maj_tick))
-
-            ax3.yaxis.set_minor_locator(MultipleLocator(deriv_min_tick))
-
-    # ticks for fig2
-
-    if auto_time_ticks:
-
-        ax_two.xaxis.set_major_locator(AutoLocator())
-
-        ax_two.xaxis.set_minor_locator(AutoMinorLocator())
-
-    else:
-
-        ax_two.xaxis.set_major_locator(MultipleLocator(xmaj_tick))
-
-        ax_two.xaxis.set_minor_locator(MultipleLocator(xmin_tick))
-
-    if auto_y_ticks:
-
-        ax_two.yaxis.set_major_locator(AutoLocator())
-
-        ax_two.yaxis.set_minor_locator(AutoMinorLocator())
-
-    else:
-
-        ax_two.yaxis.set_major_locator(MultipleLocator(ymaj_tick))
-
-        ax_two.yaxis.set_minor_locator(MultipleLocator(ymin_tick))
-
-    ax_two.minorticks_on()
-
-    ax_two.tick_params(
-        axis="both", which="major", labelcolor="black", labelsize=fig2_tick_fontsize
-    )
-    _enforce_axis_text_style(
-        ax_two,
-        font_family=fig2_font_family,
-        tick_fontsize=fig2_tick_fontsize,
-        label_fontsize=fig2_label_fontsize,
-    )
-    if enable_deriv_axis and deriv_axis_selected:
+    
+            ax_two.xaxis.set_major_locator(MultipleLocator(xmaj_tick))
+    
+            ax_two.xaxis.set_minor_locator(MultipleLocator(xmin_tick))
+    
+        if auto_y_ticks:
+    
+            ax_two.yaxis.set_major_locator(AutoLocator())
+    
+            ax_two.yaxis.set_minor_locator(AutoMinorLocator())
+    
+        else:
+    
+            ax_two.yaxis.set_major_locator(MultipleLocator(ymaj_tick))
+    
+            ax_two.yaxis.set_minor_locator(MultipleLocator(ymin_tick))
+    
+        ax_two.minorticks_on()
+    
+        ax_two.tick_params(
+            axis="both", which="major", labelcolor="black", labelsize=fig2_tick_fontsize
+        )
         _enforce_axis_text_style(
-            ax3,
+            ax_two,
             font_family=fig2_font_family,
             tick_fontsize=fig2_tick_fontsize,
             label_fontsize=fig2_label_fontsize,
         )
-
-    fig2_peak_artist, fig2_trough_artist = _draw_cycle_markers(ax_two)
-
-    axes_two_for_title = (
-        [ax_two, ax3] if enable_deriv_axis and deriv_axis_selected else [ax_two]
-    )
-    _center_titles_to_axes_union(
-        fig2,
-        axes_two_for_title,
-        title_text,
-        suptitle_text,
-        fig2_title_fontsize,
-        fig2_suptitle_fontsize,
-        fig2_font_family,
-        fig2_title_pad_pts,
-        fig2_suptitle_pad_pts,
-        suptitle_y=fig2_suptitle_y,
-    )
-    fig2_center_x = 0.5
-    try:
-        axes_two_union = Bbox.union(
-            [axis.get_position() for axis in axes_two_for_title if axis is not None]
+        if enable_deriv_axis and deriv_axis_selected:
+            _enforce_axis_text_style(
+                ax3,
+                font_family=fig2_font_family,
+                tick_fontsize=fig2_tick_fontsize,
+                label_fontsize=fig2_label_fontsize,
+            )
+    
+        fig2_peak_artist, fig2_trough_artist = _draw_cycle_markers(ax_two)
+    
+        axes_two_for_title = (
+            [ax_two, ax3] if enable_deriv_axis and deriv_axis_selected else [ax_two]
         )
-        fig2_center_x = (axes_two_union.x0 + axes_two_union.x1) / 2.0
-    except Exception:
+        _center_titles_to_axes_union(
+            fig2,
+            axes_two_for_title,
+            title_text,
+            suptitle_text,
+            fig2_title_fontsize,
+            fig2_suptitle_fontsize,
+            fig2_font_family,
+            fig2_title_pad_pts,
+            fig2_suptitle_pad_pts,
+            suptitle_y=fig2_suptitle_y,
+        )
         fig2_center_x = 0.5
-    fig2_xlabel_artist = fig2.supxlabel(
-        fig2_x_label_text,
-        fontsize=fig2_label_fontsize,
-        fontfamily=fig2_font_family if fig2_font_family else None,
-        x=fig2_center_x,
-    )
-    try:
-        fig2._gl260_xlabel_text = fig2_xlabel_artist  # type: ignore[attr-defined]
-    except Exception:
-        # Best-effort guard; ignore failures to avoid interrupting the workflow.
-        pass
-
-    handles2_filtered, labels2_filtered = _filter_none_legend_entries(
-        handles2, [handle.get_label() for handle in handles2]
-    )
-    if (
-        handles2_filtered
-        and include_moles_in_core_plot_legend
-        and not show_cycle_legend_on_core_plots
-        and moles_lines
-    ):
-        # Iterate over moles_lines to apply the per-item logic.
-        for line in moles_lines:
-            handles2_filtered.append(mpatches.Patch(color="none"))
-            labels2_filtered.append(line)
-    if handles2_filtered:
-        if fig2_legend_wrap:
-            ncol_fig2 = max(1, math.ceil(len(handles2_filtered) / max(1, fig2_legend_rows)))
-        else:
-            ncol_fig2 = min(3, len(handles2_filtered))
-        labels2_filtered = [_wrap_legend_label(label) for label in labels2_filtered]
-        if fig2_legend_alignment == "left":
-            fig2_legend_loc = "lower left"
-            fig2_legend_anchor = (0.02, 0.02)
-        elif fig2_legend_alignment == "right":
-            fig2_legend_loc = "lower right"
-            fig2_legend_anchor = (0.98, 0.02)
-        else:
-            fig2_legend_loc = "lower center"
-            fig2_legend_anchor = (0.5, 0.02)
-        leg_fig2 = fig2.legend(
-            handles=handles2_filtered,
-            labels=labels2_filtered,
-            loc=fig2_legend_loc,
-            bbox_to_anchor=fig2_legend_anchor,
-            ncol=ncol_fig2,
-            fontsize=fig2_legend_fontsize,
-            markerscale=fig2_legend_markerscale,
-            **_legend_shadowbox_kwargs(),
-        )
-
         try:
-            leg_fig2._gl260_legend_role = "main"  # type: ignore[attr-defined]
-            leg_fig2._gl260_markerscale = fig2_legend_markerscale  # type: ignore[attr-defined]
-            leg_fig2._gl260_markerscale_base_font = fig2_base_legend_font  # type: ignore[attr-defined]
+            axes_two_union = Bbox.union(
+                [axis.get_position() for axis in axes_two_for_title if axis is not None]
+            )
+            fig2_center_x = (axes_two_union.x0 + axes_two_union.x1) / 2.0
+        except Exception:
+            fig2_center_x = 0.5
+        fig2_xlabel_artist = fig2.supxlabel(
+            fig2_x_label_text,
+            fontsize=fig2_label_fontsize,
+            fontfamily=fig2_font_family if fig2_font_family else None,
+            x=fig2_center_x,
+        )
+        try:
+            fig2._gl260_xlabel_text = fig2_xlabel_artist  # type: ignore[attr-defined]
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
-        _make_legend_draggable(leg_fig2)
-    _add_cycle_legend(
-        ax_two,
-        fig2_peak_artist,
-        fig2_trough_artist,
-        core_profile=fig2_core_profile,
-        base_legend_font=fig2_base_legend_font,
-    )
-
+    
+        handles2_filtered, labels2_filtered = _filter_none_legend_entries(
+            handles2, [handle.get_label() for handle in handles2]
+        )
+        if (
+            handles2_filtered
+            and include_moles_in_core_plot_legend
+            and not show_cycle_legend_on_core_plots
+            and moles_lines
+        ):
+            # Iterate over moles_lines to apply the per-item logic.
+            for line in moles_lines:
+                handles2_filtered.append(mpatches.Patch(color="none"))
+                labels2_filtered.append(line)
+        if handles2_filtered:
+            if fig2_legend_wrap:
+                ncol_fig2 = max(1, math.ceil(len(handles2_filtered) / max(1, fig2_legend_rows)))
+            else:
+                ncol_fig2 = min(3, len(handles2_filtered))
+            labels2_filtered = [_wrap_legend_label(label) for label in labels2_filtered]
+            if fig2_legend_alignment == "left":
+                fig2_legend_loc = "lower left"
+                fig2_legend_anchor = (0.02, 0.02)
+            elif fig2_legend_alignment == "right":
+                fig2_legend_loc = "lower right"
+                fig2_legend_anchor = (0.98, 0.02)
+            else:
+                fig2_legend_loc = "lower center"
+                fig2_legend_anchor = (0.5, 0.02)
+            leg_fig2 = fig2.legend(
+                handles=handles2_filtered,
+                labels=labels2_filtered,
+                loc=fig2_legend_loc,
+                bbox_to_anchor=fig2_legend_anchor,
+                ncol=ncol_fig2,
+                fontsize=fig2_legend_fontsize,
+                markerscale=fig2_legend_markerscale,
+                **_legend_shadowbox_kwargs(),
+            )
+    
+            try:
+                leg_fig2._gl260_legend_role = "main"  # type: ignore[attr-defined]
+                leg_fig2._gl260_markerscale = fig2_legend_markerscale  # type: ignore[attr-defined]
+                leg_fig2._gl260_markerscale_base_font = fig2_base_legend_font  # type: ignore[attr-defined]
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            _make_legend_draggable(leg_fig2)
+        _add_cycle_legend(
+            ax_two,
+            fig2_peak_artist,
+            fig2_trough_artist,
+            core_profile=fig2_core_profile,
+            base_legend_font=fig2_base_legend_font,
+        )
+    
     try:
-        _enforce_gl260_legend_sizing(
-            fig1,
-            fig1_legend_fontsize,
-            fig1_cycle_legend_fontsize,
-            font_family=fig1_font_family,
-        )
-        _enforce_gl260_legend_sizing(
-            fig2,
-            fig2_legend_fontsize,
-            fig2_cycle_legend_fontsize,
-            font_family=fig2_font_family,
-        )
+        if fig1 is not None:
+            _enforce_gl260_legend_sizing(
+                fig1,
+                fig1_legend_fontsize,
+                fig1_cycle_legend_fontsize,
+                font_family=fig1_font_family,
+            )
+        if fig2 is not None:
+            _enforce_gl260_legend_sizing(
+                fig2,
+                fig2_legend_fontsize,
+                fig2_cycle_legend_fontsize,
+                font_family=fig2_font_family,
+            )
     except Exception:
         # Best-effort guard; ignore failures to avoid interrupting the workflow.
         pass
 
-    return {"fig1": fig1, "fig2": fig2, "fig_peaks": fig_peaks}
+    return {
+        "fig1": fig1,
+        "fig2": fig2,
+        "fig_peaks": fig_peaks if wants_cycle_figure else None,
+    }
 
 
 def _collect_gl260_legends(fig: Optional[Figure]) -> List[Any]:
@@ -33122,7 +33476,10 @@ class UnifiedApp(tk.Tk):
         self._dev_disable_startup_tab_cycling_var = tk.BooleanVar(
             value=dev_disable_startup_tab_cycling
         )
-        task_workers = dev_worker_threads if dev_parallel_enabled else 1
+        task_workers = _resolve_render_worker_count(
+            requested_workers=dev_worker_threads,
+            parallel_enabled=dev_parallel_enabled,
+        )
         self._task_runner = TkTaskRunner(self, max_workers=task_workers)
         self._combined_render_runner = TkTaskRunner(self, max_workers=1)
         self._core_render_task_id: Optional[int] = None
@@ -34007,6 +34364,20 @@ class UnifiedApp(tk.Tk):
         )
         self._register_var_default(
             self.include_moles_core_legend, include_moles_default
+        )
+        core_side_effects_mode_default = _normalize_core_render_cycle_side_effects_mode(
+            settings.get(
+                "core_render_cycle_side_effects_mode",
+                initial_core_render_cycle_side_effects_mode,
+            )
+        )
+        settings["core_render_cycle_side_effects_mode"] = core_side_effects_mode_default
+        self.core_render_cycle_side_effects_mode = tk.StringVar(
+            value=core_side_effects_mode_default
+        )
+        self._register_var_default(
+            self.core_render_cycle_side_effects_mode,
+            core_side_effects_mode_default,
         )
         self.core_legend_fontsize = tk.DoubleVar(
             value=initial_core_legend_fontsize
@@ -39756,8 +40127,23 @@ class UnifiedApp(tk.Tk):
         self._dbg("ui.events", "Debug once-guards cleared.")
 
     def _apply_concurrency_controls(self) -> None:
-        """Apply concurrency controls.
-        Used to apply concurrency controls changes to live state."""
+        """Apply developer concurrency control values to live worker state.
+
+        Purpose:
+            Normalize and apply worker-thread controls from the Developer Tools UI.
+        Why:
+            Render precompute worker policy should react immediately to runtime
+            tuning while preserving safe no-GIL/GIL behavior.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Updates persisted concurrency settings and calls
+            `self._task_runner.set_max_workers(...)` with policy-resolved workers.
+        Exceptions:
+            Invalid UI values are normalized to safe defaults without raising.
+        """
         try:
             threads = int(self._dev_worker_threads_var.get())
         except Exception:
@@ -39767,7 +40153,11 @@ class UnifiedApp(tk.Tk):
         settings["dev_worker_threads"] = threads
         settings["dev_enable_parallel_compute"] = enabled
         self._dev_worker_threads_var.set(threads)
-        self._task_runner.set_max_workers(threads if enabled else 1)
+        worker_count = _resolve_render_worker_count(
+            requested_workers=threads,
+            parallel_enabled=enabled,
+        )
+        self._task_runner.set_max_workers(worker_count)
         self._schedule_save_settings()
 
     def _run_timeline_table_export_validation(self) -> None:
@@ -41146,24 +41536,166 @@ class UnifiedApp(tk.Tk):
                 width_px = 0
                 height_px = 0
             if width_px <= 2 or height_px <= 2:
-                # Defer combined render until Tk geometry is stable.
+                # Defer finalization until geometry readiness is signaled by Tk.
+                wait_state = (
+                    getattr(frame, "_combined_finalize_geometry_wait", None)
+                    if frame is not None
+                    else None
+                )
+                if isinstance(wait_state, dict) and bool(wait_state.get("active")):
+                    return
+
+                next_wait_state: Dict[str, Any] = {
+                    "active": True,
+                    "frame_bind_id": None,
+                    "widget_bind_id": None,
+                    "timeout_after_id": None,
+                }
                 try:
-                    self.after(
-                        50,
-                        lambda: self._finalize_combined_plot_display(
-                            frame,
-                            canvas,
-                            placement_state=placement_state,
-                        ),
-                    )
+                    if frame is not None:
+                        frame._combined_finalize_geometry_wait = next_wait_state
                 except Exception:
-                    self.after_idle(
-                        lambda: self._finalize_combined_plot_display(
+                    # Best-effort guard; ignore failures.
+                    pass
+
+                def _cleanup_waiters() -> None:
+                    """Clean up temporary combined-finalize geometry wait handlers.
+
+                    Purpose:
+                        Remove one-shot callbacks used while waiting for geometry.
+                    Why:
+                        Cleanup avoids duplicate resume attempts and stale binds.
+                    Inputs:
+                        None.
+                    Outputs:
+                        None.
+                    Side Effects:
+                        Unbinds configure callbacks, cancels timeout callback, and
+                        clears frame wait-state markers.
+                    Exceptions:
+                        Cleanup errors are ignored to keep UI flow resilient.
+                    """
+                    frame_bind_id = next_wait_state.get("frame_bind_id")
+                    widget_bind_id = next_wait_state.get("widget_bind_id")
+                    timeout_after_id = next_wait_state.get("timeout_after_id")
+                    if frame_bind_id and frame is not None:
+                        try:
+                            frame.unbind("<Configure>", frame_bind_id)
+                        except Exception:
+                            # Best-effort guard; ignore failures.
+                            pass
+                    if widget_bind_id:
+                        try:
+                            widget.unbind("<Configure>", widget_bind_id)
+                        except Exception:
+                            # Best-effort guard; ignore failures.
+                            pass
+                    if timeout_after_id is not None:
+                        try:
+                            self.after_cancel(timeout_after_id)
+                        except Exception:
+                            # Best-effort guard; ignore failures.
+                            pass
+                    next_wait_state["active"] = False
+                    if frame is not None:
+                        try:
+                            frame._combined_finalize_geometry_wait = None
+                        except Exception:
+                            # Best-effort guard; ignore failures.
+                            pass
+
+                def _resume_finalize(reason: str) -> None:
+                    """Resume combined finalize flow after readiness or timeout.
+
+                    Purpose:
+                        Continue combined finalization once wait conditions resolve.
+                    Why:
+                        Finalization should continue immediately on readiness but
+                        still fail-safe when readiness never arrives.
+                    Inputs:
+                        reason: Resume trigger source (`ready` or `timeout`).
+                    Outputs:
+                        None.
+                    Side Effects:
+                        Clears wait state and re-enters `_finalize_combined_plot_display`.
+                    Exceptions:
+                        Errors fall back to direct finalize invocation.
+                    """
+                    if not bool(next_wait_state.get("active")):
+                        return
+                    _cleanup_waiters()
+                    if reason == "timeout":
+                        self._log_plot_tab_debug(
+                            "Combined finalize geometry wait timed out; proceeding with fallback sizing."
+                        )
+                    try:
+                        self.after_idle(
+                            lambda: self._finalize_combined_plot_display(
+                                frame,
+                                canvas,
+                                placement_state=placement_state,
+                            )
+                        )
+                    except Exception:
+                        self._finalize_combined_plot_display(
                             frame,
                             canvas,
                             placement_state=placement_state,
                         )
+
+                def _on_geometry_signal(_event: Any = None) -> None:
+                    """Handle geometry events while waiting to finalize combined plot.
+
+                    Purpose:
+                        Probe live widget size on configure/idle notifications.
+                    Why:
+                        Combined finalization should react to real geometry readiness.
+                    Inputs:
+                        _event: Optional Tk event payload.
+                    Outputs:
+                        None.
+                    Side Effects:
+                        Triggers deferred finalize resume when geometry is usable.
+                    Exceptions:
+                        Probe failures are ignored and readiness remains pending.
+                    """
+                    try:
+                        widget.update_idletasks()
+                    except Exception:
+                        # Best-effort guard; ignore failures.
+                        pass
+                    try:
+                        ready_width = int(widget.winfo_width())
+                        ready_height = int(widget.winfo_height())
+                    except Exception:
+                        ready_width = 0
+                        ready_height = 0
+                    if ready_width > 2 and ready_height > 2:
+                        _resume_finalize("ready")
+
+                try:
+                    if frame is not None:
+                        next_wait_state["frame_bind_id"] = frame.bind(
+                            "<Configure>", _on_geometry_signal, add="+"
+                        )
+                except Exception:
+                    next_wait_state["frame_bind_id"] = None
+                try:
+                    next_wait_state["widget_bind_id"] = widget.bind(
+                        "<Configure>", _on_geometry_signal, add="+"
                     )
+                except Exception:
+                    next_wait_state["widget_bind_id"] = None
+                try:
+                    self.after_idle(_on_geometry_signal)
+                except Exception:
+                    _on_geometry_signal()
+                try:
+                    next_wait_state["timeout_after_id"] = self.after(
+                        350, lambda: _resume_finalize("timeout")
+                    )
+                except Exception:
+                    _resume_finalize("timeout")
                 return
 
         def _render():
@@ -41545,6 +42077,11 @@ class UnifiedApp(tk.Tk):
                     frame._post_first_draw_refresh_invoked = False
                     frame._post_first_draw_refresh_hold_overlay = True
                     frame._post_first_draw_refresh_retry_count = 0
+                    frame._post_first_draw_refresh_waiting_for_command = False
+                    frame._post_first_draw_refresh_command_bind_id = None
+                    frame._post_first_draw_refresh_command_timeout_after_id = None
+                    frame._combined_refresh_geometry_wait = None
+                    frame._combined_finalize_geometry_wait = None
                     frame._combined_overlay_refresh_invoked_count = 0
                     frame._combined_overlay_refresh_completed_count = 0
                     frame._combined_overlay_layout_sig_baseline = None
@@ -42602,7 +43139,28 @@ class UnifiedApp(tk.Tk):
         poll_ms: int = 25,
         tag: str = "plot",
     ) -> Tuple[float, float]:
-        """Resolve initial figsize from a real canvas with a short bounded wait."""
+        """Resolve initial canvas size using readiness signals with bounded fallback.
+
+        Purpose:
+            Determine the initial figure size from the live Tk canvas geometry.
+        Why:
+            Initial plot generation should use real widget dimensions without
+            blocking on fixed sleep-based polling loops.
+        Inputs:
+            frame: Plot tab frame associated with the canvas.
+            canvas: FigureCanvasTkAgg carrying the Tk widget.
+            timeout_ms: Maximum wait for geometry readiness before fallback.
+            poll_ms: Legacy compatibility parameter; retained for callers.
+            tag: Debug label for readiness/fallback logging.
+        Outputs:
+            Tuple[float, float]: Figure size in inches.
+        Side Effects:
+            Registers temporary `<Configure>` and idle callbacks, runs bounded UI
+            event processing, and emits debug log entries.
+        Exceptions:
+            Falls back to computed target figure size when readiness cannot be
+            established within the bounded wait window.
+        """
         fallback = self._compute_target_figsize_inches()
         if frame is None or canvas is None:
             self._log_plot_tab_debug(
@@ -42620,12 +43178,26 @@ class UnifiedApp(tk.Tk):
                 % str(tag).capitalize()
             )
             return fallback
-        timeout_s = max(float(timeout_ms), 0.0) / 1000.0
-        poll_s = max(float(poll_ms), 1.0) / 1000.0
-        deadline = time.monotonic() + timeout_s
-        width_px = 0
-        height_px = 0
-        while True:
+
+        ready_state: Dict[str, int] = {"width_px": 0, "height_px": 0}
+
+        def _probe_geometry() -> bool:
+            """Probe current canvas widget geometry and update readiness state.
+
+            Purpose:
+                Sample Tk geometry from the notebook/frame/widget chain.
+            Why:
+                Initial canvas sizing should react to real geometry readiness
+                instead of sleeping on fixed retry intervals.
+            Inputs:
+                None.
+            Outputs:
+                bool: True when usable dimensions were captured.
+            Side Effects:
+                Updates `ready_state` width/height values on successful probe.
+            Exceptions:
+                Failures are swallowed and treated as not-ready.
+            """
             for widget_obj in (self.nb, frame, widget):
                 try:
                     widget_obj.update_idletasks()
@@ -42639,12 +43211,123 @@ class UnifiedApp(tk.Tk):
                 width_px = 0
                 height_px = 0
             if width_px > 2 and height_px > 2:
-                break
-            if time.monotonic() >= deadline:
-                width_px = 0
-                height_px = 0
-                break
-            time.sleep(poll_s)
+                ready_state["width_px"] = width_px
+                ready_state["height_px"] = height_px
+                return True
+            return False
+
+        if _probe_geometry():
+            width_px = int(ready_state.get("width_px", 0))
+            height_px = int(ready_state.get("height_px", 0))
+        else:
+            readiness_event = threading.Event()
+            wait_state: Dict[str, Any] = {
+                "frame_bind_id": None,
+                "widget_bind_id": None,
+                "timeout_after_id": None,
+            }
+
+            def _cleanup_waiters() -> None:
+                """Tear down temporary geometry listeners after readiness wait.
+
+                Purpose:
+                    Remove transient configure/timeout callbacks used for sizing.
+                Why:
+                    Listener cleanup prevents callback leaks and duplicate probes.
+                Inputs:
+                    None.
+                Outputs:
+                    None.
+                Side Effects:
+                    Unbinds frame/widget handlers and cancels timeout callbacks.
+                Exceptions:
+                    Cleanup errors are ignored to keep rendering resilient.
+                """
+                frame_bind_id = wait_state.get("frame_bind_id")
+                widget_bind_id = wait_state.get("widget_bind_id")
+                timeout_after_id = wait_state.get("timeout_after_id")
+                if frame_bind_id:
+                    try:
+                        frame.unbind("<Configure>", frame_bind_id)
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+                if widget_bind_id:
+                    try:
+                        widget.unbind("<Configure>", widget_bind_id)
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+                if timeout_after_id is not None:
+                    try:
+                        self.after_cancel(timeout_after_id)
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+                wait_state["frame_bind_id"] = None
+                wait_state["widget_bind_id"] = None
+                wait_state["timeout_after_id"] = None
+
+            def _on_geometry_signal(_event: Any = None) -> None:
+                """Handle configure/idle geometry events for readiness detection.
+
+                Purpose:
+                    Re-probe geometry when Tk signals a potential size change.
+                Why:
+                    Readiness should be event-driven so initial sizing responds as
+                    soon as geometry is available.
+                Inputs:
+                    _event: Optional Tk event payload.
+                Outputs:
+                    None.
+                Side Effects:
+                    Sets the readiness event after a successful geometry probe.
+                Exceptions:
+                    Probe failures are ignored and leave readiness unchanged.
+                """
+                if _probe_geometry():
+                    readiness_event.set()
+
+            try:
+                wait_state["frame_bind_id"] = frame.bind(
+                    "<Configure>", _on_geometry_signal, add="+"
+                )
+            except Exception:
+                wait_state["frame_bind_id"] = None
+            try:
+                wait_state["widget_bind_id"] = widget.bind(
+                    "<Configure>", _on_geometry_signal, add="+"
+                )
+            except Exception:
+                wait_state["widget_bind_id"] = None
+            try:
+                self.after_idle(_on_geometry_signal)
+            except Exception:
+                _on_geometry_signal()
+            timeout_after_id = None
+            try:
+                timeout_after_id = self.after(max(1, int(timeout_ms)), readiness_event.set)
+            except Exception:
+                timeout_after_id = None
+            wait_state["timeout_after_id"] = timeout_after_id
+
+            # Process queued UI events until geometry becomes ready or timeout fires.
+            # The event is driven by configure/idle callbacks; the wait loop is
+            # only a bounded emergency path to keep this synchronous helper safe.
+            deadline = time.monotonic() + max(float(timeout_ms), 1.0) / 1000.0 + 0.05
+            while not readiness_event.is_set() and time.monotonic() < deadline:
+                try:
+                    self.update()
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    break
+                if readiness_event.is_set():
+                    break
+                readiness_event.wait(max(float(poll_ms), 1.0) / 1000.0)
+            _cleanup_waiters()
+            width_px = int(ready_state.get("width_px", 0))
+            height_px = int(ready_state.get("height_px", 0))
+
         if width_px <= 2 or height_px <= 2:
             self._log_plot_tab_debug(
                 "%s initial figsize fallback: timed out waiting for canvas size."
@@ -42825,26 +43508,160 @@ class UnifiedApp(tk.Tk):
                     width_px = 0
                     height_px = 0
                 if width_px <= 2 or height_px <= 2:
-                    # Defer combined refresh until widget geometry is ready.
+                    wait_state = getattr(frame, "_combined_refresh_geometry_wait", None)
+                    if isinstance(wait_state, dict) and bool(wait_state.get("active")):
+                        return
+
+                    next_wait_state: Dict[str, Any] = {
+                        "active": True,
+                        "frame_bind_id": None,
+                        "widget_bind_id": None,
+                        "timeout_after_id": None,
+                    }
                     try:
-                        self.after(
-                            50,
-                            lambda: self._force_plot_refresh(
-                                frame,
-                                canvas,
-                                capture_combined_legend=capture_combined_legend,
-                                refresh_reason=refresh_reason,
-                            ),
-                        )
+                        frame._combined_refresh_geometry_wait = next_wait_state
                     except Exception:
-                        self.after_idle(
-                            lambda: self._force_plot_refresh(
+                        # Best-effort guard; ignore failures.
+                        pass
+
+                    def _cleanup_waiters() -> None:
+                        """Clean up temporary geometry wait listeners for refresh.
+
+                        Purpose:
+                            Remove transient callbacks used for deferred refresh.
+                        Why:
+                            Prevents duplicated refresh resumes and stale event binds.
+                        Inputs:
+                            None.
+                        Outputs:
+                            None.
+                        Side Effects:
+                            Unbinds configure handlers, cancels timeout callback,
+                            and clears frame wait-state markers.
+                        Exceptions:
+                            Cleanup failures are ignored to keep refresh resilient.
+                        """
+                        frame_bind_id = next_wait_state.get("frame_bind_id")
+                        widget_bind_id = next_wait_state.get("widget_bind_id")
+                        timeout_after_id = next_wait_state.get("timeout_after_id")
+                        if frame_bind_id:
+                            try:
+                                frame.unbind("<Configure>", frame_bind_id)
+                            except Exception:
+                                # Best-effort guard; ignore failures.
+                                pass
+                        if widget_bind_id:
+                            try:
+                                combined_widget.unbind("<Configure>", widget_bind_id)
+                            except Exception:
+                                # Best-effort guard; ignore failures.
+                                pass
+                        if timeout_after_id is not None:
+                            try:
+                                self.after_cancel(timeout_after_id)
+                            except Exception:
+                                # Best-effort guard; ignore failures.
+                                pass
+                        next_wait_state["active"] = False
+                        try:
+                            frame._combined_refresh_geometry_wait = None
+                        except Exception:
+                            # Best-effort guard; ignore failures.
+                            pass
+
+                    def _resume_refresh(reason: str) -> None:
+                        """Resume combined refresh after readiness or timeout.
+
+                        Purpose:
+                            Continue refresh once geometry wait conditions resolve.
+                        Why:
+                            Refresh should run immediately when geometry is ready
+                            while still progressing after bounded timeout.
+                        Inputs:
+                            reason: Resume trigger source (`ready` or `timeout`).
+                        Outputs:
+                            None.
+                        Side Effects:
+                            Clears wait state and re-enters `_force_plot_refresh`.
+                        Exceptions:
+                            Errors fall back to a direct refresh invocation.
+                        """
+                        if not bool(next_wait_state.get("active")):
+                            return
+                        _cleanup_waiters()
+                        if reason == "timeout":
+                            self._log_plot_tab_debug(
+                                "Combined refresh geometry wait timed out; continuing with fallback figure size."
+                            )
+                        try:
+                            self.after_idle(
+                                lambda: self._force_plot_refresh(
+                                    frame,
+                                    canvas,
+                                    capture_combined_legend=capture_combined_legend,
+                                    refresh_reason=refresh_reason,
+                                )
+                            )
+                        except Exception:
+                            self._force_plot_refresh(
                                 frame,
                                 canvas,
                                 capture_combined_legend=capture_combined_legend,
                                 refresh_reason=refresh_reason,
                             )
+
+                    def _on_geometry_signal(_event: Any = None) -> None:
+                        """Handle configure/idle signals while refresh waits for geometry.
+
+                        Purpose:
+                            Re-probe widget size after geometry-related events.
+                        Why:
+                            Combined refresh should be readiness-driven, not fixed-delay.
+                        Inputs:
+                            _event: Optional Tk event payload.
+                        Outputs:
+                            None.
+                        Side Effects:
+                            Triggers deferred refresh resume when geometry is usable.
+                        Exceptions:
+                            Probe errors are ignored and readiness remains pending.
+                        """
+                        try:
+                            combined_widget.update_idletasks()
+                        except Exception:
+                            # Best-effort guard; ignore failures.
+                            pass
+                        try:
+                            ready_width = int(combined_widget.winfo_width())
+                            ready_height = int(combined_widget.winfo_height())
+                        except Exception:
+                            ready_width = 0
+                            ready_height = 0
+                        if ready_width > 2 and ready_height > 2:
+                            _resume_refresh("ready")
+
+                    try:
+                        next_wait_state["frame_bind_id"] = frame.bind(
+                            "<Configure>", _on_geometry_signal, add="+"
                         )
+                    except Exception:
+                        next_wait_state["frame_bind_id"] = None
+                    try:
+                        next_wait_state["widget_bind_id"] = combined_widget.bind(
+                            "<Configure>", _on_geometry_signal, add="+"
+                        )
+                    except Exception:
+                        next_wait_state["widget_bind_id"] = None
+                    try:
+                        self.after_idle(_on_geometry_signal)
+                    except Exception:
+                        _on_geometry_signal()
+                    try:
+                        next_wait_state["timeout_after_id"] = self.after(
+                            350, lambda: _resume_refresh("timeout")
+                        )
+                    except Exception:
+                        _resume_refresh("timeout")
                     return
                 combined_size = (max(width_px, 1), max(height_px, 1))
         if (
@@ -42900,6 +43717,8 @@ class UnifiedApp(tk.Tk):
                     fig_size=fig_size if plot_key in {"fig1", "fig2"} else None,
                     plot_id=plot_id or "",
                     target="display",
+                    requested_plot_keys=(plot_key,),
+                    cycle_side_effects_mode=self._resolved_core_cycle_side_effects_mode(),
                 )
                 self._start_core_render_async(
                     snapshot,
@@ -43780,6 +44599,11 @@ class UnifiedApp(tk.Tk):
                     frame._post_first_draw_refresh_invoked = False
                     frame._post_first_draw_refresh_hold_overlay = True
                     frame._post_first_draw_refresh_retry_count = 0
+                    frame._post_first_draw_refresh_waiting_for_command = False
+                    frame._post_first_draw_refresh_command_bind_id = None
+                    frame._post_first_draw_refresh_command_timeout_after_id = None
+                    frame._combined_refresh_geometry_wait = None
+                    frame._combined_finalize_geometry_wait = None
                     frame._combined_overlay_refresh_invoked_count = 0
                     frame._combined_overlay_refresh_completed_count = 0
                     frame._combined_overlay_layout_sig_baseline = None
@@ -46899,6 +47723,11 @@ class UnifiedApp(tk.Tk):
         frame._post_first_draw_refresh_invoked = False
         frame._post_first_draw_refresh_hold_overlay = False
         frame._post_first_draw_refresh_retry_count = 0
+        frame._post_first_draw_refresh_waiting_for_command = False
+        frame._post_first_draw_refresh_command_bind_id = None
+        frame._post_first_draw_refresh_command_timeout_after_id = None
+        frame._combined_refresh_geometry_wait = None
+        frame._combined_finalize_geometry_wait = None
         frame._combined_overlay_completion_draw_pending = False
         frame._combined_overlay_completion_fig_id = None
         if plot_key in {"fig1", "fig2"}:
@@ -47033,6 +47862,11 @@ class UnifiedApp(tk.Tk):
 
         # Assign the refresh command before any draw/draw_idle can run.
         frame._refresh_command = _refresh_panel_internal
+        try:
+            frame.event_generate("<<GL260RefreshCommandReady>>", when="tail")
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
 
         toolbar = NavigationToolbar2Tk(canvas, topbar)  # mount toolbar in the topbar
 
@@ -51187,7 +52021,7 @@ class UnifiedApp(tk.Tk):
         )
         if marker_size_changed:
             try:
-                self._render_cache.cycles.clear()
+                self._render_cache.clear_cycles()
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
@@ -53276,6 +54110,7 @@ class UnifiedApp(tk.Tk):
             "show_cycle_markers_on_core_plots",
             "show_cycle_legend_on_core_plots",
             "include_moles_in_core_plot_legend",
+            "core_render_cycle_side_effects_mode",
             "scatter_enabled",
             "scatter_marker",
             "scatter_size",
@@ -53386,6 +54221,10 @@ class UnifiedApp(tk.Tk):
             ("show_cycle_markers_on_core_plots", "show_cycle_markers_on_core"),
             ("show_cycle_legend_on_core_plots", "show_cycle_legend_on_core"),
             ("include_moles_in_core_plot_legend", "include_moles_core_legend"),
+            (
+                "core_render_cycle_side_effects_mode",
+                "core_render_cycle_side_effects_mode",
+            ),
             ("scatter_enabled", "scatter_enabled"),
             ("scatter_marker", "scatter_marker"),
             ("scatter_size", "scatter_size"),
@@ -53584,11 +54423,20 @@ class UnifiedApp(tk.Tk):
             ("peak_prominence", "pk_prominence"),
             ("peak_distance", "pk_distance"),
             ("peak_width", "pk_width"),
+            (
+                "core_render_cycle_side_effects_mode",
+                "core_render_cycle_side_effects_mode",
+            ),
             ("core_legend_fontsize", "core_legend_fontsize"),
             ("core_cycle_legend_fontsize", "core_cycle_legend_fontsize"),
         ):
             if key in plot_settings:
                 _set_var(getattr(self, attr, None), plot_settings.get(key))
+        settings["core_render_cycle_side_effects_mode"] = (
+            _normalize_core_render_cycle_side_effects_mode(
+                settings.get("core_render_cycle_side_effects_mode", "auto")
+            )
+        )
         _set_var(
             getattr(self, "core_legend_fontsize", None),
             settings.get("core_legend_fontsize", label_fontsize),
@@ -53847,8 +54695,10 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
         try:
-            self._render_cache.prepared.clear()
-            self._render_cache.cycles.clear()
+            self._render_cache.clear_prepared()
+            self._render_cache.clear_cycles()
+            self._render_cache.clear_cycle_segments()
+            self._render_cache.clear_cycle_metrics()
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
@@ -60268,7 +61118,8 @@ class UnifiedApp(tk.Tk):
         Returns:
             None.
         Side Effects:
-            Creates checkbuttons bound to persisted cycle integration variables.
+            Creates checkbuttons and mode controls bound to persisted cycle
+            integration variables.
         Exceptions:
             No custom exceptions; uses standard Tk widget construction.
         """
@@ -60292,6 +61143,47 @@ class UnifiedApp(tk.Tk):
             text="Include Moles Summary in Core Plot Legend",
             variable=self.include_moles_core_legend,
         ).grid(row=1, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(
+            lf_cycle_integration,
+            text="Core Cycle Side-Effects Mode",
+        ).grid(row=1, column=1, sticky="w", padx=6, pady=(4, 0))
+        side_effects_combo = ttk.Combobox(
+            lf_cycle_integration,
+            state="readonly",
+            textvariable=self.core_render_cycle_side_effects_mode,
+            values=("auto", "always", "never"),
+            width=12,
+        )
+        side_effects_combo.grid(row=2, column=1, sticky="w", padx=6, pady=(0, 4))
+
+        def _apply_core_cycle_side_effects_mode(_event: Any = None) -> None:
+            """Normalize and persist the core cycle side-effects mode selection.
+
+            Purpose:
+                Keep the mode value normalized whenever the user changes it.
+            Why:
+                The mode drives snapshot/render decisions and must remain one of
+                the supported tokens.
+            Inputs:
+                _event: Optional combobox event payload.
+            Outputs:
+                None.
+            Side Effects:
+                Updates the bound Tk variable and shared settings dictionary.
+            Exceptions:
+                None.
+            """
+            normalized_mode = _normalize_core_render_cycle_side_effects_mode(
+                self.core_render_cycle_side_effects_mode.get()
+            )
+            self.core_render_cycle_side_effects_mode.set(normalized_mode)
+            settings["core_render_cycle_side_effects_mode"] = normalized_mode
+
+        side_effects_combo.bind(
+            "<<ComboboxSelected>>",
+            _apply_core_cycle_side_effects_mode,
+            add="+",
+        )
 
     def _build_plot_cycle_legend_section(self, parent, pad: dict[str, int]) -> None:
         """Build the combined-cycle legend controls card.
@@ -68358,14 +69250,15 @@ class UnifiedApp(tk.Tk):
                 Invoke the manual Refresh callback once after the first draw.
             Why:
                 The first draw guarantees renderer and geometry availability, but
-                the refresh command may not be assigned yet, so we retry briefly.
+                refresh wiring can still race; readiness signaling keeps this path
+                event-driven while preserving a bounded fail-safe timeout.
             Inputs:
                 target_frame: Plot tab frame hosting the combined plot.
             Outputs:
                 None.
             Side Effects:
-                Schedules an idle callback to invoke the refresh command, or a
-                short retry while the refresh callback is still wiring.
+                Schedules an idle callback to invoke the refresh command, or waits
+                for command-readiness signaling before invoking.
             Exceptions:
                 Errors are caught to avoid interrupting the UI loop.
             """
@@ -68380,61 +69273,150 @@ class UnifiedApp(tk.Tk):
                 pass
             refresh_command = getattr(target_frame, "_refresh_command", None)
             if not callable(refresh_command):
-                retry_count = getattr(
-                    target_frame, "_post_first_draw_refresh_retry_count", 0
-                )
-                if not isinstance(retry_count, int) or retry_count < 0:
-                    retry_count = 0
-                retry_delay_ms = 5
-                retry_limit = 60
-                if retry_count >= retry_limit:
-                    self._log_plot_tab_debug(
-                        "Combined auto-refresh retry limit reached; clearing overlay."
+                wait_active = bool(
+                    getattr(
+                        target_frame,
+                        "_post_first_draw_refresh_waiting_for_command",
+                        False,
                     )
-                    _finalize_post_first_draw_overlay(target_frame, force_clear=True)
+                )
+                if wait_active:
                     return
 
                 try:
-                    target_frame._post_first_draw_refresh_retry_count = (
-                        retry_count + 1
-                    )
+                    target_frame._post_first_draw_refresh_waiting_for_command = True
                 except Exception:
-                    # Best-effort guard; ignore failures to avoid interrupting
-                    # the workflow.
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
 
-                # Retry briefly so the splash overlay stays up until the
-                # refresh command is available.
-                def _retry_post_first_draw_refresh():
-                    """Retry waiting for the combined refresh command.
+                def _cleanup_command_wait() -> None:
+                    """Clean up temporary refresh-command readiness listeners.
 
                     Purpose:
-                        Poll for the refresh command wiring without blocking UI.
+                        Remove transient listeners used while waiting for command wiring.
                     Why:
-                        The initial draw can fire before the command assignment.
+                        Prevents stale event handlers and duplicate resume attempts.
                     Inputs:
                         None.
                     Outputs:
                         None.
                     Side Effects:
-                        Re-enters the post-first-draw refresh scheduler.
+                        Unbinds virtual-event handler, cancels timeout callback,
+                        and clears frame wait-state markers.
                     Exceptions:
-                        Errors are caught to avoid interrupting the UI loop.
+                        Cleanup failures are ignored to preserve UI flow.
                     """
-                    _schedule_post_first_draw_refresh(target_frame)
+                    bind_id = getattr(
+                        target_frame, "_post_first_draw_refresh_command_bind_id", None
+                    )
+                    timeout_after_id = getattr(
+                        target_frame,
+                        "_post_first_draw_refresh_command_timeout_after_id",
+                        None,
+                    )
+                    if bind_id:
+                        try:
+                            target_frame.unbind(
+                                "<<GL260RefreshCommandReady>>",
+                                bind_id,
+                            )
+                        except Exception:
+                            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                            pass
+                    if timeout_after_id is not None:
+                        try:
+                            self.after_cancel(timeout_after_id)
+                        except Exception:
+                            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                            pass
+                    try:
+                        target_frame._post_first_draw_refresh_waiting_for_command = False
+                        target_frame._post_first_draw_refresh_command_bind_id = None
+                        target_frame._post_first_draw_refresh_command_timeout_after_id = (
+                            None
+                        )
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
 
-                tk_widget = None
+                def _resume_when_command_ready(reason: str) -> None:
+                    """Resume post-draw scheduling when refresh command becomes available.
+
+                    Purpose:
+                        Re-enter post-draw refresh scheduling after command readiness.
+                    Why:
+                        Combined draw callbacks can fire before refresh wiring exists.
+                    Inputs:
+                        reason: Resume source (`event`, `idle_probe`, or `timeout`).
+                    Outputs:
+                        None.
+                    Side Effects:
+                        Clears wait state, retries scheduling, or force-clears
+                        overlay on timeout when command wiring is still unavailable.
+                    Exceptions:
+                        Failures are handled by fallback finalize/clear behavior.
+                    """
+                    _cleanup_command_wait()
+                    refreshed_command = getattr(target_frame, "_refresh_command", None)
+                    if callable(refreshed_command):
+                        _schedule_post_first_draw_refresh(target_frame)
+                        return
+                    if reason == "timeout":
+                        self._log_plot_tab_debug(
+                            "Combined auto-refresh command readiness timed out; clearing overlay."
+                        )
+                        _finalize_post_first_draw_overlay(target_frame, force_clear=True)
+
+                def _on_command_ready(_event: Any = None) -> None:
+                    """Handle virtual refresh-command readiness notifications.
+
+                    Purpose:
+                        Bridge virtual Tk event callbacks into resume handling.
+                    Why:
+                        Event-driven signaling avoids fixed retry loops.
+                    Inputs:
+                        _event: Optional Tk virtual-event payload.
+                    Outputs:
+                        None.
+                    Side Effects:
+                        Invokes command-readiness resume logic.
+                    Exceptions:
+                        Resume path handles fallback behavior on failures.
+                    """
+                    _resume_when_command_ready("event")
+
+                bind_id = None
                 try:
-                    tk_widget = canvas.get_tk_widget()
+                    bind_id = target_frame.bind(
+                        "<<GL260RefreshCommandReady>>",
+                        _on_command_ready,
+                        add="+",
+                    )
                 except Exception:
-                    tk_widget = None
+                    bind_id = None
                 try:
-                    if tk_widget is not None:
-                        tk_widget.after(retry_delay_ms, _retry_post_first_draw_refresh)
-                    else:
-                        self.after(retry_delay_ms, _retry_post_first_draw_refresh)
+                    target_frame._post_first_draw_refresh_command_bind_id = bind_id
                 except Exception:
-                    _retry_post_first_draw_refresh()
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+                timeout_after_id = None
+                try:
+                    timeout_after_id = self.after(
+                        350, lambda: _resume_when_command_ready("timeout")
+                    )
+                except Exception:
+                    timeout_after_id = None
+                try:
+                    target_frame._post_first_draw_refresh_command_timeout_after_id = (
+                        timeout_after_id
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+                try:
+                    self.after_idle(lambda: _resume_when_command_ready("idle_probe"))
+                except Exception:
+                    _resume_when_command_ready("idle_probe")
                 return
             try:
                 target_frame._post_first_draw_refresh_retry_count = 0
@@ -92359,6 +93341,45 @@ class UnifiedApp(tk.Tk):
         args_list[12] = self._resolve_effective_title(manual_title)
         return tuple(args_list)
 
+    def _resolved_core_cycle_side_effects_mode(
+        self, explicit_mode: Optional[str] = None
+    ) -> str:
+        """Resolve the active core-render cycle side-effects mode.
+
+        Purpose:
+            Provide one canonical mode value for snapshot capture and render
+            orchestration.
+        Why:
+            Core render flows can source this mode from explicit caller input,
+            live UI state, or persisted settings.
+        Inputs:
+            explicit_mode: Optional caller override for the mode value.
+        Outputs:
+            str: Normalized mode token (`auto`, `always`, or `never`).
+        Side Effects:
+            Updates `settings["core_render_cycle_side_effects_mode"]` with the
+            normalized value.
+        Exceptions:
+            Invalid values are normalized to `auto`.
+        """
+        if explicit_mode is not None:
+            resolved_mode = _normalize_core_render_cycle_side_effects_mode(explicit_mode)
+        elif hasattr(self, "core_render_cycle_side_effects_mode"):
+            try:
+                resolved_mode = _normalize_core_render_cycle_side_effects_mode(
+                    self.core_render_cycle_side_effects_mode.get()
+                )
+            except Exception:
+                resolved_mode = _normalize_core_render_cycle_side_effects_mode(
+                    settings.get("core_render_cycle_side_effects_mode", "auto")
+                )
+        else:
+            resolved_mode = _normalize_core_render_cycle_side_effects_mode(
+                settings.get("core_render_cycle_side_effects_mode", "auto")
+            )
+        settings["core_render_cycle_side_effects_mode"] = resolved_mode
+        return resolved_mode
+
     def render_plot(
         self,
         plot_kind: str,
@@ -92481,8 +93502,17 @@ class UnifiedApp(tk.Tk):
         args = self._override_plot_args_title(args)
 
         if plot_kind_value in {"fig1", "fig2", "fig_peaks", "core"}:
+            requested_keys: Optional[Tuple[str, ...]]
+            if plot_kind_value in {"fig1", "fig2", "fig_peaks"}:
+                requested_keys = (plot_kind_value,)
+            else:
+                requested_keys = ()
             figs = main_plotting_function(
-                *args, fig_size=fig_size, render_ctx=render_ctx
+                *args,
+                fig_size=fig_size,
+                render_ctx=render_ctx,
+                requested_plot_keys=requested_keys,
+                cycle_side_effects_mode=self._resolved_core_cycle_side_effects_mode(),
             )
             if not isinstance(figs, dict):
                 return None
@@ -92516,6 +93546,8 @@ class UnifiedApp(tk.Tk):
         fig_size: Optional[Tuple[float, float]],
         plot_id: str,
         target: str,
+        requested_plot_keys: Optional[Collection[str]] = None,
+        cycle_side_effects_mode: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Capture a plot render snapshot for worker-safe computation.
 
@@ -92527,6 +93559,8 @@ class UnifiedApp(tk.Tk):
             fig_size: Optional figure size in inches for the render target.
             plot_id: Plot identifier used for layout/profile context.
             target: Render target (e.g., "display", "export").
+            requested_plot_keys: Optional requested core plot keys.
+            cycle_side_effects_mode: Optional core cycle side-effects mode override.
         Outputs:
             Snapshot dict with data, layout, and style context.
         Side Effects:
@@ -92587,6 +93621,12 @@ class UnifiedApp(tk.Tk):
         args = self._collect_plot_args()
         args = self._override_plot_args_gates(args, gates_ctx)
         args = self._override_plot_args_title(args)
+        normalized_requested_keys = _normalize_requested_core_plot_keys(
+            requested_plot_keys
+        )
+        resolved_cycle_mode = self._resolved_core_cycle_side_effects_mode(
+            cycle_side_effects_mode
+        )
 
         snapshot = {
             "plot_id": plot_id,
@@ -92658,6 +93698,8 @@ class UnifiedApp(tk.Tk):
                 or gates_ctx.get("show_cycle_legend")
                 or gates_ctx.get("include_moles")
             ),
+            "core_requested_plot_keys": normalized_requested_keys,
+            "core_cycle_side_effects_mode": resolved_cycle_mode,
             "args": args,
             "perf_enabled": bool(self._perf_diag_enabled_var.get()),
         }
@@ -92805,9 +93847,43 @@ class UnifiedApp(tk.Tk):
         )
 
         gates_ctx = snapshot.get("gates_ctx") or {}
-        cycle_ctx, overlay_ctx = self._resolve_cycle_context(
-            data_ctx, data_fingerprint, perf=None, snapshot=snapshot
+        requested_plot_keys = _normalize_requested_core_plot_keys(
+            snapshot.get("core_requested_plot_keys")
         )
+        cycle_side_effects_mode = _normalize_core_render_cycle_side_effects_mode(
+            snapshot.get("core_cycle_side_effects_mode", "auto")
+        )
+        wants_cycle_figure = (not requested_plot_keys) or (
+            "fig_peaks" in requested_plot_keys
+        )
+        cycle_overlays_enabled = bool(
+            gates_ctx.get("show_cycle_markers")
+            or gates_ctx.get("show_cycle_legend")
+            or gates_ctx.get("include_moles")
+        )
+        if cycle_side_effects_mode == "always":
+            should_prepare_cycle_ctx = True
+        elif cycle_side_effects_mode == "never":
+            # "Never" skips cycle side-effects unless the requested output
+            # explicitly requires the cycle figure.
+            should_prepare_cycle_ctx = bool(wants_cycle_figure)
+        else:
+            should_prepare_cycle_ctx = bool(cycle_overlays_enabled or wants_cycle_figure)
+        if should_prepare_cycle_ctx:
+            cycle_ctx, overlay_ctx = self._resolve_cycle_context(
+                data_ctx, data_fingerprint, perf=None, snapshot=snapshot
+            )
+        else:
+            # Skip cycle precompute when overlays and cycle-figure side effects
+            # are not needed for this render packet.
+            cycle_ctx = {
+                "peaks_idx": [],
+                "troughs_idx": [],
+                "cycles": [],
+                "total_drop": 0.0,
+                "source_mode": "none",
+            }
+            overlay_ctx = {"cycle_overlay": None, "moles_summary": None}
         overlay_ctx = dict(overlay_ctx or {})
         cycle_overlay = overlay_ctx.get("cycle_overlay")
         overlay_ctx["markers"] = (
@@ -92840,6 +93916,8 @@ class UnifiedApp(tk.Tk):
             plot_id=snapshot.get("plot_id"),
             target=snapshot.get("target", "display"),
             perf=None,
+            requested_plot_keys=requested_plot_keys,
+            cycle_side_effects_mode=cycle_side_effects_mode,
         )
 
     def _render_core_plot_ui(
@@ -92894,7 +93972,11 @@ class UnifiedApp(tk.Tk):
             pass
         try:
             figs = main_plotting_function(
-                *packet.args, fig_size=packet.fig_size, render_ctx=packet.render_ctx
+                *packet.args,
+                fig_size=packet.fig_size,
+                render_ctx=packet.render_ctx,
+                requested_plot_keys=packet.requested_plot_keys,
+                cycle_side_effects_mode=packet.cycle_side_effects_mode,
             )
         except Exception as exc:
             figs = None
@@ -93461,6 +94543,8 @@ class UnifiedApp(tk.Tk):
                 fig_size=core_fig_size,
                 plot_id="",
                 target="display",
+                requested_plot_keys=tuple(core_keys),
+                cycle_side_effects_mode=self._resolved_core_cycle_side_effects_mode(),
             )
             self._start_core_render_async(
                 core_snapshot,
@@ -93553,6 +94637,8 @@ class UnifiedApp(tk.Tk):
             fig_size=core_fig_size,
             plot_id="",
             target="display",
+            requested_plot_keys=tuple(plot_keys),
+            cycle_side_effects_mode=self._resolved_core_cycle_side_effects_mode(),
         )
         self._start_core_render_async(
             core_snapshot,
@@ -93628,6 +94714,8 @@ class UnifiedApp(tk.Tk):
             fig_size=core_sizes.get("fig1"),
             plot_id="",
             target="display",
+            requested_plot_keys=("fig1",),
+            cycle_side_effects_mode=self._resolved_core_cycle_side_effects_mode(),
         )
         self._start_core_render_async(
             core_snapshot,
@@ -93698,6 +94786,8 @@ class UnifiedApp(tk.Tk):
             fig_size=core_sizes.get("fig2"),
             plot_id="",
             target="display",
+            requested_plot_keys=("fig2",),
+            cycle_side_effects_mode=self._resolved_core_cycle_side_effects_mode(),
         )
         self._start_core_render_async(
             core_snapshot,
@@ -96597,6 +97687,13 @@ class UnifiedApp(tk.Tk):
         )
         settings["include_moles_in_core_plot_legend"] = bool(
             include_moles_in_core_plot_legend
+        )
+        settings["core_render_cycle_side_effects_mode"] = (
+            _normalize_core_render_cycle_side_effects_mode(
+                self.core_render_cycle_side_effects_mode.get()
+                if hasattr(self, "core_render_cycle_side_effects_mode")
+                else settings.get("core_render_cycle_side_effects_mode", "auto")
+            )
         )
         settings["show_contamination_tab"] = bool(self._contamination_tab_visible)
         settings["show_solubility_tab"] = bool(self._solubility_tab_visible)

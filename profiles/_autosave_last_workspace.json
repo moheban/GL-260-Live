@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-02-20 12:54:59",
+  "created_at": "2026-02-20 13:57:42",
   "description": "Autosave before loading a profile.",
   "payload": {
     "column_assignments": {
@@ -522,6 +522,27 @@
           "type": "trace_mask",
           "visible": true,
           "zorder": 20.0
+        },
+        {
+          "axes_target": "primary",
+          "coord_space": "data",
+          "geometry": {
+            "trace_key": "y2",
+            "x0": 7.145933467032042,
+            "x1": 7.208776962998117
+          },
+          "id": "c22a34be-1d8a-4001-b277-18ad261662c4",
+          "locked": false,
+          "name": "Trace Mask 11",
+          "style": {
+            "alpha": 0.9,
+            "color": "#000000",
+            "linestyle": "solid",
+            "linewidth": 1.5
+          },
+          "type": "trace_mask",
+          "visible": true,
+          "zorder": 21.0
         }
       ]
     },
@@ -758,5 +779,5 @@
     ]
   },
   "profile_version": 1,
-  "updated_at": "2026-02-20 12:54:59"
+  "updated_at": "2026-02-20 13:57:42"
 }

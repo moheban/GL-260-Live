@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.2.1)
+# GL-260 Data Analysis and Plotter (v4.2.2)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.2.1`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.2.2`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.2.2 Dynamic Render Readiness + Selective Core Generation](#v422-dynamic-render-readiness--selective-core-generation)
   - [v4.2.1 Free-Threaded Cycle Metrics Optimization + Version Sync](#v421-free-threaded-cycle-metrics-optimization--version-sync)
   - [v4.1.0 Rust Combined Precompute Expansion + CSV Import Profiling](#v410-rust-combined-precompute-expansion--csv-import-profiling)
   - [v4.0.0 Rust Acceleration + In-App Toolchain Setup](#v400-rust-acceleration--in-app-toolchain-setup)
@@ -1004,6 +1005,14 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.2.2 Dynamic Render Readiness + Selective Core Generation
+- Replaced key fixed-delay render waits with readiness-driven geometry/draw scheduling (`<Configure>`/idle callbacks) and bounded emergency timeout fallbacks.
+- Added selective core generation so `main_plotting_function(...)` can build only requested outputs (`fig1`, `fig2`, `fig_peaks`) instead of always rendering all core figures.
+- Added core cycle side-effects mode (`auto|always|never`, default `auto`) with Plot Settings UI control and full settings/profile persistence wiring.
+- Updated core async snapshot/packet orchestration to carry requested core plot keys and resolved side-effects mode end-to-end.
+- Added no-GIL-aware render worker policy scaling and synchronized render-cache access with `threading.RLock` for safer concurrent async compute paths.
+- Bumped application version metadata to `v4.2.2` in the script header and `APP_VERSION`, and synchronized README top-level version references.
 
 ### v4.2.1 Free-Threaded Cycle Metrics Optimization + Version Sync
 - Added a canonical runtime no-GIL detector used to gate free-threaded execution paths safely.
