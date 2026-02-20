@@ -4,14 +4,64 @@
 
 import os
 import sys
+import sysconfig
 import logging
 from logging.handlers import RotatingFileHandler
 
 
+def _py_gil_disabled_build_flag():
+    """Return normalized build flag for optional GIL disabling support.
+
+    Purpose:
+        Read and normalize the interpreter build metadata that indicates whether
+        `-X gil=0` is supported for this executable.
+    Why:
+        Runtime APIs such as `sys._is_gil_enabled` can exist on both standard
+        and free-threaded builds, so build metadata must be authoritative for
+        capability gating.
+    Args:
+        None.
+    Returns:
+        Optional[int]: `1` for free-threaded-capable builds, `0` for standard
+        builds, or `None` when unavailable/unparseable.
+    Side Effects:
+        None.
+    Exceptions:
+        Any sysconfig read/parse failure is handled internally and returns
+        `None` so callers can fail safely.
+    """
+    try:
+        raw_value = sysconfig.get_config_var("Py_GIL_DISABLED")
+    except Exception:
+        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+        return None
+    # Normalize to integers so capability checks remain stable across str/int config values.
+    try:
+        return int(raw_value)
+    except Exception:
+        return None
+
+
 def _supports_free_threading_build():
-    """Check whether free threading build is supported.
-    Used to gate optional capabilities in the workflow."""
-    return hasattr(sys, "_is_gil_enabled")
+    """Return whether the current interpreter build supports GIL-disabled mode.
+
+    Purpose:
+        Gate UI controls and restart behavior that rely on free-threaded build
+        support.
+    Why:
+        Standard and free-threaded builds may both expose runtime GIL APIs, so
+        capability must be based on build-time metadata.
+    Args:
+        None.
+    Returns:
+        bool: True only when the interpreter is compiled with
+        `Py_GIL_DISABLED=1`.
+    Side Effects:
+        None.
+    Exceptions:
+        Unknown or invalid config state is treated as unsupported.
+    """
+    return _py_gil_disabled_build_flag() == 1
 
 
 def _current_gil_status():
@@ -24,6 +74,49 @@ def _current_gil_status():
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             return None
     return None
+
+
+def _runtime_free_threading_fingerprint():
+    """Collect runtime/build details for free-threading diagnostics.
+
+    Purpose:
+        Provide one canonical snapshot of interpreter/runtime state for
+        Developer Tools status text, restart preflight messaging, and warnings.
+    Why:
+        Consolidating the values avoids mismatched UI messaging when multiple
+        code paths report free-threading capability and GIL state.
+    Args:
+        None.
+    Returns:
+        dict: Diagnostic payload with version/executable/build fields and
+        runtime GIL status.
+    Side Effects:
+        None.
+    Exceptions:
+        Best-effort guards convert read failures to `None`/fallback text.
+    """
+    try:
+        python_version = platform.python_version()
+    except Exception:
+        python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    try:
+        soabi = sysconfig.get_config_var("SOABI")
+    except Exception:
+        soabi = None
+    py_gil_disabled = _py_gil_disabled_build_flag()
+    supports_free_threading = bool(py_gil_disabled == 1)
+    return {
+        "python_version": python_version,
+        "python_version_full": str(sys.version),
+        "executable": str(sys.executable or ""),
+        "py_gil_disabled": py_gil_disabled,
+        "soabi": str(soabi) if soabi is not None else None,
+        "supports_free_threading": supports_free_threading,
+        "gil_enabled": _current_gil_status(),
+        "build_label": (
+            "Free-threaded build" if supports_free_threading else "Standard build"
+        ),
+    }
 
 
 def _is_running_under_vscode():
@@ -35991,8 +36084,26 @@ class UnifiedApp(tk.Tk):
         )
 
     def _maybe_warn_gil_reenabled_import(self) -> None:
-        """Import value.
-        Used by maybe warn GIL reenabled workflows to import value."""
+        """Warn when imported dependencies re-enable the GIL at startup.
+
+        Purpose:
+            Surface a startup warning when the process began in GIL-disabled mode
+            but a dependency import appears to have re-enabled the GIL.
+        Why:
+            Users need immediate visibility into compatibility regressions when
+            validating free-threaded runtime behavior.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            May show startup warning dialogs for wrong-build intent mismatch and
+            dependency-driven GIL re-enable detection.
+        Exceptions:
+            Dialog failures are handled with best-effort guards to keep startup
+            stable.
+        """
+        self._maybe_warn_wrong_build_for_gil_request()
         if self._gil_import_warning_shown:
             return
         if not _supports_free_threading_build():
@@ -36014,9 +36125,74 @@ class UnifiedApp(tk.Tk):
             pass
         self._gil_import_warning_shown = True
 
+    def _maybe_warn_wrong_build_for_gil_request(self) -> None:
+        """Warn once when GIL-disabled intent is enabled on an unsupported build.
+
+        Purpose:
+            Alert users early in the session when saved developer intent requests
+            GIL-disabled execution but the current interpreter build cannot do it.
+        Why:
+            Prevents repeated fatal restart attempts by providing clear,
+            actionable guidance before users open the free-threading controls.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            May show a warning dialog and updates an in-memory one-time warning
+            guard for the current session.
+        Exceptions:
+            Dialog failures are suppressed to avoid disrupting startup.
+        """
+        if bool(getattr(self, "_wrong_build_for_gil_warning_shown", False)):
+            return
+        if not bool(settings.get("dev_request_gil_disabled", False)):
+            return
+        if _supports_free_threading_build():
+            return
+
+        runtime_info = _runtime_free_threading_fingerprint()
+        py_gil_disabled = runtime_info.get("py_gil_disabled")
+        py_gil_disabled_text = (
+            "Unknown" if py_gil_disabled is None else str(py_gil_disabled)
+        )
+        try:
+            messagebox.showwarning(
+                "Free-Threading Build Required",
+                "GIL-disabled mode is requested in Developer Tools, but this "
+                "interpreter build does not support disabling the GIL.\n\n"
+                f"Current executable:\n{runtime_info.get('executable')}\n"
+                f"Build type: {runtime_info.get('build_label')}\n"
+                f"Py_GIL_DISABLED={py_gil_disabled_text}\n\n"
+                "Relaunch GL-260 using Python 3.14 free-threaded "
+                "python3.14t.exe, or select the 3.14t interpreter in VS Code.",
+                parent=self,
+            )
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        # One-time guard avoids repetitive startup warnings during the same session.
+        self._wrong_build_for_gil_warning_shown = True
+
     def _open_free_threading_dialog(self) -> None:
-        """Open free threading dialog.
-        Used by UI actions to open free threading dialog."""
+        """Open the free-threading diagnostics and control dialog.
+
+        Purpose:
+            Present current runtime/build free-threading diagnostics and expose
+            user controls related to GIL-disabled execution intent.
+        Why:
+            Runtime capability and current GIL state need a single, visible place
+            so users can verify whether restart actions are valid.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Creates/focuses a modal dialog and initializes Tk status variables
+            consumed by the refresh/status logic.
+        Exceptions:
+            Delegates failures to existing guarded handlers to keep UI stable.
+        """
         existing = getattr(self, "_free_threading_dialog", None)
         if existing is not None and existing.winfo_exists():
             existing.deiconify()
@@ -36055,7 +36231,10 @@ class UnifiedApp(tk.Tk):
 
         status_vars = {
             "python_version": tk.StringVar(value=""),
+            "build_label": tk.StringVar(value=""),
             "executable": tk.StringVar(value=""),
+            "py_gil_disabled": tk.StringVar(value=""),
+            "soabi": tk.StringVar(value=""),
             "supports_free_threading": tk.StringVar(value=""),
             "gil_enabled": tk.StringVar(value=""),
         }
@@ -36063,7 +36242,10 @@ class UnifiedApp(tk.Tk):
 
         runtime_rows = [
             ("Python version", "python_version"),
+            ("Build type", "build_label"),
             ("sys.executable", "executable"),
+            ("Py_GIL_DISABLED", "py_gil_disabled"),
+            ("SOABI", "soabi"),
             ("Free-threading capable?", "supports_free_threading"),
             ("Current GIL enabled?", "gil_enabled"),
         ]
@@ -36111,20 +36293,53 @@ class UnifiedApp(tk.Tk):
         self._refresh_free_threading_status()
 
     def _refresh_free_threading_status(self) -> None:
-        """Refresh free threading status.
-        Used to sync free threading status with current settings."""
+        """Refresh free-threading runtime status and control availability.
+
+        Purpose:
+            Synchronize dialog labels and restart button state with the current
+            interpreter build metadata and live GIL state.
+        Why:
+            Accurate capability/status reporting prevents unsupported restarts
+            and clarifies when users must relaunch with a different interpreter.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Updates Tk variables and may enable/disable the restart button.
+        Exceptions:
+            Missing widget state is handled gracefully via best-effort guards.
+        """
         status_vars = getattr(self, "_free_threading_status_vars", None)
         if not isinstance(status_vars, dict):
             return
-        status_vars["python_version"].set(platform.python_version())
-        status_vars["executable"].set(sys.executable or "")
-        supports = _supports_free_threading_build()
-        status_vars["supports_free_threading"].set("Yes" if supports else "No")
-        gil_status = _current_gil_status()
+        runtime_info = _runtime_free_threading_fingerprint()
+        if "python_version" in status_vars:
+            status_vars["python_version"].set(
+                str(runtime_info.get("python_version") or "")
+            )
+        if "build_label" in status_vars:
+            status_vars["build_label"].set(str(runtime_info.get("build_label") or ""))
+        if "executable" in status_vars:
+            status_vars["executable"].set(str(runtime_info.get("executable") or ""))
+        if "py_gil_disabled" in status_vars:
+            py_gil_disabled = runtime_info.get("py_gil_disabled")
+            status_vars["py_gil_disabled"].set(
+                "Unknown" if py_gil_disabled is None else str(py_gil_disabled)
+            )
+        if "soabi" in status_vars:
+            status_vars["soabi"].set(str(runtime_info.get("soabi") or "Unknown"))
+
+        supports = bool(runtime_info.get("supports_free_threading"))
+        if "supports_free_threading" in status_vars:
+            status_vars["supports_free_threading"].set("Yes" if supports else "No")
+        gil_status = runtime_info.get("gil_enabled")
         if gil_status is None:
-            status_vars["gil_enabled"].set("Unknown")
+            if "gil_enabled" in status_vars:
+                status_vars["gil_enabled"].set("Unknown")
         else:
-            status_vars["gil_enabled"].set("Yes" if gil_status else "No")
+            if "gil_enabled" in status_vars:
+                status_vars["gil_enabled"].set("Yes" if bool(gil_status) else "No")
 
         status_var = getattr(self, "_free_threading_status_var", None)
         restart_btn = getattr(self, "_free_threading_restart_btn", None)
@@ -36175,13 +36390,39 @@ class UnifiedApp(tk.Tk):
             return
 
     def _restart_with_gil_disabled(self) -> None:
-        """Perform restart with GIL disabled.
-        Used to keep the workflow logic localized and testable."""
-        if not _supports_free_threading_build():
+        """Restart the process requesting GIL-disabled runtime mode.
+
+        Purpose:
+            Relaunch the current executable with `-X gil=0` when the interpreter
+            build supports free-threaded operation.
+        Why:
+            GIL state is process-initialization state, so a restart is required
+            to transition from GIL-enabled to GIL-disabled runtime mode.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Persists settings, sets `PYTHON_GIL=0`, and replaces the current
+            process image via `os.execv` when preflight checks pass.
+        Exceptions:
+            Unsupported-build and exec failures are shown via guarded dialogs.
+        """
+        runtime_info = _runtime_free_threading_fingerprint()
+        if not bool(runtime_info.get("supports_free_threading")):
+            py_gil_disabled = runtime_info.get("py_gil_disabled")
+            py_gil_disabled_text = (
+                "Unknown" if py_gil_disabled is None else str(py_gil_disabled)
+            )
             try:
                 messagebox.showerror(
                     "Restart",
-                    "This interpreter does not support free-threading.",
+                    "This interpreter does not support disabling the GIL.\n\n"
+                    f"Current executable:\n{runtime_info.get('executable')}\n"
+                    f"Build type: {runtime_info.get('build_label')}\n"
+                    f"Py_GIL_DISABLED={py_gil_disabled_text}\n\n"
+                    "Relaunch GL-260 using Python 3.14 free-threaded "
+                    "python3.14t.exe, or select the 3.14t interpreter in VS Code.",
                     parent=self,
                 )
             except Exception:
