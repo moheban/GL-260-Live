@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v4.2.2
+# Version: v4.2.3
 # Date: 2026-02-20
 
 import os
@@ -11227,7 +11227,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v4.2.2"
+APP_VERSION = "v4.2.3"
 
 
 def _apply_rust_runtime_settings_defaults(settings_dict: Dict[str, Any]) -> None:
@@ -33408,6 +33408,15 @@ class UnifiedApp(tk.Tk):
 
         super().__init__()
 
+        self._startup_main_window_hidden_for_splash = False
+        self._startup_main_window_revealed = False
+        try:
+            self.withdraw()
+            self._startup_main_window_hidden_for_splash = True
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            self._startup_main_window_hidden_for_splash = False
+
         self._startup_loading_overlay = None
         self._startup_loading_label = None
         self._startup_loading_detail_label = None
@@ -33427,6 +33436,8 @@ class UnifiedApp(tk.Tk):
         self._install_startup_loading_splash(
             message="Initializing startup...", progress=2.0
         )
+        if not self._is_startup_loading_active():
+            self._reveal_main_window_after_startup()
 
         # Persisted settings wiring:
         # Prior callbacks wrote to getattr(self, "settings", {}) which returned a fresh
@@ -33729,6 +33740,15 @@ class UnifiedApp(tk.Tk):
         self._combined_plot_preview_request_token = 0
         self._combined_plot_preview_progress_value = 0.0
         self._combined_plot_preview_closing = False
+        self._sol_loading_overlay: Optional[tk.Frame] = None
+        self._sol_loading_label: Optional[tk.Label] = None
+        self._sol_loading_detail_label: Optional[ttk.Label] = None
+        self._sol_loading_bar: Optional[ttk.Progressbar] = None
+        self._sol_loading_session_id: Optional[int] = None
+        self._sol_loading_next_session_id = 0
+        self._sol_loading_active_phase_count = 0
+        self._sol_loading_session_started_at: Optional[float] = None
+        self._sol_solver_progress_session_id: Optional[int] = None
         self._combined_plot_preview_annotation_controller: Optional[
             PlotAnnotationsController
         ] = None
@@ -35453,7 +35473,8 @@ class UnifiedApp(tk.Tk):
             None.
         Side Effects:
             Cancels splash polling timer, destroys splash window, and clears all
-            cached startup-splash widget references.
+            cached startup-splash widget references. Reveals the main window and
+            replays any plot loading overlays deferred during startup.
         Exceptions:
             Best-effort guards swallow teardown errors so startup can proceed.
         """
@@ -35482,6 +35503,125 @@ class UnifiedApp(tk.Tk):
         self._startup_loading_progress_label = None
         self._startup_loading_progress_value = 0.0
         self._startup_loading_heartbeat_tick = 0
+        self._reveal_main_window_after_startup()
+        self._replay_deferred_plot_loading_overlays()
+
+    def _is_startup_loading_active(self) -> bool:
+        """Return whether the startup splash is currently active.
+
+        Purpose:
+            Provide one readiness check for startup-only loading behavior.
+        Why:
+            Plot overlay installation should be deferred while startup splash is
+            visible so only one loading surface is shown during launch.
+        Inputs:
+            None.
+        Outputs:
+            bool: True when the startup splash exists and is visible.
+        Side Effects:
+            None.
+        Exceptions:
+            Widget introspection failures return False defensively.
+        """
+        overlay = getattr(self, "_startup_loading_overlay", None)
+        if overlay is None:
+            return False
+        try:
+            return bool(overlay.winfo_exists())
+        except Exception:
+            return False
+
+    def _reveal_main_window_after_startup(self) -> None:
+        """Reveal the main window after startup splash teardown.
+
+        Purpose:
+            Restore the primary Tk window after startup gating completes.
+        Why:
+            Startup hides the main window so the splash is the only visible
+            loader; reveal must happen once and only once.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Calls `deiconify`, `lift`, and `focus_force` best-effort and updates
+            one-shot visibility flags.
+        Exceptions:
+            UI calls are guarded to avoid startup interruption.
+        """
+        if bool(getattr(self, "_startup_main_window_revealed", False)):
+            return
+        try:
+            self.deiconify()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            self.lift()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            self.focus_force()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        self._startup_main_window_hidden_for_splash = False
+        self._startup_main_window_revealed = True
+
+    def _replay_deferred_plot_loading_overlays(self) -> None:
+        """Install any plot loading overlays deferred during startup.
+
+        Purpose:
+            Rehydrate per-plot overlays once startup splash no longer blocks them.
+        Why:
+            During startup, plot overlays are deferred to avoid showing duplicate
+            loading bars. After splash teardown, pending overlays must be applied.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Reads pending overlay metadata from plot frames and installs overlays
+            for frames/canvases that still exist.
+        Exceptions:
+            Missing tabs/canvases are skipped with best-effort guards.
+        """
+        if self._is_startup_loading_active():
+            return
+        tabs = list(getattr(self, "_plot_tabs", []) or [])
+        canvases = list(getattr(self, "_canvases", []) or [])
+        for idx, frame in enumerate(tabs):
+            if frame is None:
+                continue
+            message = getattr(frame, "_plot_loading_pending_message", None)
+            detail = getattr(frame, "_plot_loading_pending_detail", None)
+            if not message:
+                continue
+            canvas = canvases[idx] if idx < len(canvases) else None
+            if canvas is None:
+                continue
+            try:
+                widget = canvas.get_tk_widget()
+            except Exception:
+                widget = None
+            if widget is None:
+                continue
+            try:
+                if not widget.winfo_exists():
+                    continue
+            except Exception:
+                continue
+            try:
+                self._install_plot_loading_overlay(
+                    frame,
+                    widget,
+                    message=str(message),
+                    detail=detail,
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
 
     def _startup_visible_tab_widgets(self) -> List[ttk.Frame]:
         """Return notebook-visible startup tab frames in display order.
@@ -41040,30 +41180,44 @@ class UnifiedApp(tk.Tk):
         )
 
     def _install_plot_loading_overlay(
-        self, frame, widget, *, message: str = "Loading plot..."
+        self,
+        frame,
+        widget,
+        *,
+        message: str = "Loading plot...",
+        detail: Optional[str] = None,
     ) -> None:
         """Install a loading overlay over a plot canvas.
 
         Purpose:
             Display a blocking overlay so the initial render is hidden.
         Why:
-            The first draw can occur before geometry settles; hiding it prevents
-            users from seeing an unstable layout.
+            Initial draws and async refreshes can take noticeable time; users
+            need explicit stage feedback instead of a frozen-looking tab.
         Inputs:
             frame: Plot tab frame hosting the plot.
             widget: Tk widget returned by the FigureCanvasTkAgg.
             message: Overlay text to display for the loading state.
+            detail: Optional detail text shown below the primary status message.
         Outputs:
             None.
         Side Effects:
-            Creates and places overlay widgets, stores overlay references on the frame.
-            When an overlay already exists, reuses it without resetting progress
-            so in-flight render stages remain monotonic.
+            Creates and places overlay widgets, stores overlay references on the
+            frame, and starts a heartbeat update loop while loading is active.
+            When startup splash is active, records deferred overlay metadata and
+            returns without creating an in-tab overlay.
         Exceptions:
             Overlay creation errors are caught to avoid UI interruption.
         """
         if frame is None or widget is None:
             return
+        if self._is_startup_loading_active():
+            # During startup, keep one visible loading surface and defer tab overlays.
+            frame._plot_loading_pending_message = str(message or "Loading plot...")
+            frame._plot_loading_pending_detail = str(detail or "").strip()
+            return
+        frame._plot_loading_pending_message = None
+        frame._plot_loading_pending_detail = None
         overlay = getattr(frame, "_plot_loading_overlay", None)
         if overlay is not None:
             try:
@@ -41071,7 +41225,10 @@ class UnifiedApp(tk.Tk):
                     overlay.lift()
                     # Preserve in-flight progress when reusing an existing overlay.
                     self._update_plot_loading_overlay_progress(
-                        frame, message=message
+                        frame,
+                        message=message,
+                        detail=detail,
+                        stage_key="queued",
                     )
                     return
             except Exception:
@@ -41099,6 +41256,7 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 return
         label = None
+        detail_label = None
         progress_var = None
         progress_bar = None
         percent_label = None
@@ -41107,6 +41265,14 @@ class UnifiedApp(tk.Tk):
             content.place(relx=0.5, rely=0.5, anchor="center")
             label = ttk.Label(content, text=str(message or "Loading plot..."))
             label.pack(side="top", pady=(0, 8))
+            detail_label = ttk.Label(
+                content,
+                text=str(detail or ""),
+                justify="center",
+                anchor="center",
+                wraplength=360,
+            )
+            detail_label.pack(side="top", pady=(0, 8))
             progress_var = tk.DoubleVar(master=overlay, value=0.0)
             progress_bar = ttk.Progressbar(
                 content,
@@ -41120,6 +41286,7 @@ class UnifiedApp(tk.Tk):
             percent_label.pack(side="top", pady=(6, 0))
         except Exception:
             label = None
+            detail_label = None
             progress_var = None
             progress_bar = None
             percent_label = None
@@ -41130,13 +41297,163 @@ class UnifiedApp(tk.Tk):
             pass
         frame._plot_loading_overlay = overlay
         frame._plot_loading_label = label
+        frame._plot_loading_detail_label = detail_label
         frame._plot_loading_progress_var = progress_var
         frame._plot_loading_bar = progress_bar
         frame._plot_loading_progress_label = percent_label
         frame._plot_loading_progress_value = 0.0
+        frame._plot_loading_stage_key = "queued"
+        frame._plot_loading_started_at = time.monotonic()
+        frame._plot_loading_detail_base = str(detail or "").strip()
         self._update_plot_loading_overlay_progress(
-            frame, progress=5.0, message=message, reset=True
+            frame,
+            progress=5.0,
+            message=message,
+            detail=detail,
+            stage_key="queued",
+            reset=True,
         )
+
+    def _resolve_plot_loading_stage_key(
+        self,
+        *,
+        message: Optional[str],
+        stage_key: Optional[str],
+    ) -> str:
+        """Resolve the normalized plot loading stage key.
+
+        Purpose:
+            Map existing progress messages into stable stage identifiers.
+        Why:
+            Heartbeat/detail updates should remain deterministic even when older
+            call sites only provide plain status text.
+        Inputs:
+            message: Optional human-readable stage text.
+            stage_key: Optional explicit stage key from call sites.
+        Outputs:
+            str: Normalized stage key.
+        Side Effects:
+            None.
+        Exceptions:
+            Invalid inputs fall back to `queued`.
+        """
+        if isinstance(stage_key, str) and stage_key.strip():
+            return stage_key.strip().lower().replace(" ", "_")
+        text = str(message or "").strip().lower()
+        if not text:
+            return "queued"
+        if "failed" in text:
+            return "failed"
+        if "ready" in text:
+            return "ready"
+        if "preparing" in text:
+            return "preparing_data"
+        if "data prepared" in text:
+            return "worker_compute"
+        if "building" in text:
+            return "building_figure"
+        if "installing" in text:
+            return "installing"
+        if "pass 2" in text:
+            return "auto_refresh_pass_2"
+        if "pass 1" in text:
+            return "auto_refresh_pass_1"
+        if "finalizing" in text or "final layout" in text:
+            return "finalizing"
+        if "refresh" in text:
+            return "refreshing"
+        return "queued"
+
+    def _stop_plot_loading_overlay_heartbeat(self, frame) -> None:
+        """Stop one plot loading overlay heartbeat timer.
+
+        Purpose:
+            Cancel the periodic heartbeat status updates for an overlay.
+        Why:
+            Overlay teardown and terminal states must not leave orphan timers.
+        Inputs:
+            frame: Plot tab frame owning heartbeat timer metadata.
+        Outputs:
+            None.
+        Side Effects:
+            Cancels the frame's scheduled `after` callback when present.
+        Exceptions:
+            Callback cancellation failures are ignored by design.
+        """
+        if frame is None:
+            return
+        after_id = getattr(frame, "_plot_loading_heartbeat_after_id", None)
+        if after_id is None:
+            return
+        try:
+            self.after_cancel(after_id)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        frame._plot_loading_heartbeat_after_id = None
+
+    def _start_plot_loading_overlay_heartbeat(self, frame) -> None:
+        """Start one plot loading overlay heartbeat timer.
+
+        Purpose:
+            Keep overlay detail text active during long compute phases.
+        Why:
+            Background rendering can look frozen unless elapsed activity is shown.
+        Inputs:
+            frame: Plot tab frame owning overlay state.
+        Outputs:
+            None.
+        Side Effects:
+            Schedules recurring `after` callbacks while loading remains active and
+            updates the overlay detail label with elapsed-time pulse text.
+        Exceptions:
+            Missing/destroyed widgets short-circuit safely.
+        """
+        if frame is None:
+            return
+        if getattr(frame, "_plot_loading_heartbeat_after_id", None) is not None:
+            return
+
+        def _tick() -> None:
+            """Update one heartbeat detail cycle for the active overlay."""
+            frame._plot_loading_heartbeat_after_id = None
+            overlay = getattr(frame, "_plot_loading_overlay", None)
+            if overlay is None:
+                return
+            try:
+                if not overlay.winfo_exists():
+                    return
+            except Exception:
+                return
+            stage_key = str(getattr(frame, "_plot_loading_stage_key", "queued") or "queued")
+            if stage_key in {"ready", "failed"}:
+                return
+            started_at = getattr(frame, "_plot_loading_started_at", None)
+            if not isinstance(started_at, (int, float)):
+                started_at = time.monotonic()
+                frame._plot_loading_started_at = started_at
+            elapsed = max(0.0, time.monotonic() - float(started_at))
+            pulse = "." * ((int(elapsed * 4.0) % 3) + 1)
+            base_detail = str(getattr(frame, "_plot_loading_detail_base", "") or "").strip()
+            heartbeat_text = f"Working{pulse} {elapsed:0.1f}s elapsed"
+            composed = (
+                f"{base_detail} | {heartbeat_text}"
+                if base_detail
+                else heartbeat_text
+            )
+            detail_label = getattr(frame, "_plot_loading_detail_label", None)
+            if detail_label is not None:
+                try:
+                    detail_label.configure(text=composed)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            try:
+                frame._plot_loading_heartbeat_after_id = self.after(250, _tick)
+            except Exception:
+                frame._plot_loading_heartbeat_after_id = None
+
+        _tick()
 
     def _clear_plot_loading_overlay(self, frame) -> None:
         """Clear a plot loading overlay if present.
@@ -41150,31 +41467,38 @@ class UnifiedApp(tk.Tk):
         Outputs:
             None.
         Side Effects:
-            Destroys overlay widgets and clears stored references.
+            Stops heartbeat timers, destroys overlay widgets, and clears stored
+            references and pending overlay metadata.
         Exceptions:
             Overlay removal errors are guarded to keep the UI responsive.
         """
         if frame is None:
             return
+        self._stop_plot_loading_overlay_heartbeat(frame)
         overlay = getattr(frame, "_plot_loading_overlay", None)
-        if overlay is None:
-            return
-        try:
-            overlay.place_forget()
-        except Exception:
-            # Best-effort guard; ignore failures.
-            pass
-        try:
-            overlay.destroy()
-        except Exception:
-            # Best-effort guard; ignore failures.
-            pass
+        if overlay is not None:
+            try:
+                overlay.place_forget()
+            except Exception:
+                # Best-effort guard; ignore failures.
+                pass
+            try:
+                overlay.destroy()
+            except Exception:
+                # Best-effort guard; ignore failures.
+                pass
         frame._plot_loading_overlay = None
         frame._plot_loading_label = None
+        frame._plot_loading_detail_label = None
         frame._plot_loading_progress_var = None
         frame._plot_loading_bar = None
         frame._plot_loading_progress_label = None
         frame._plot_loading_progress_value = 0.0
+        frame._plot_loading_stage_key = "ready"
+        frame._plot_loading_started_at = None
+        frame._plot_loading_detail_base = ""
+        frame._plot_loading_pending_message = None
+        frame._plot_loading_pending_detail = None
 
     def _update_plot_loading_overlay_progress(
         self,
@@ -41182,26 +41506,30 @@ class UnifiedApp(tk.Tk):
         *,
         progress: Optional[float] = None,
         message: Optional[str] = None,
+        detail: Optional[str] = None,
+        stage_key: Optional[str] = None,
         reset: bool = False,
     ) -> None:
         """Update one plot splash overlay with deterministic progress milestones.
 
         Purpose:
-            Keep loading-overlay message and progress state synchronized with
-            async plot-render milestones.
+            Keep loading-overlay message, detail text, and progress synchronized
+            with async plot-render milestones.
         Why:
             Core/combined render orchestration can fire callbacks out of order;
-            monotonic progress avoids visible regressions while still providing
-            meaningful stage feedback.
+            monotonic progress and heartbeat updates prevent frozen-looking UI.
         Inputs:
             frame: Plot tab frame owning the active loading overlay widgets.
             progress: Optional new progress value in the 0..100 range.
             message: Optional overlay status text.
+            detail: Optional detail text displayed under status message.
+            stage_key: Optional normalized stage key for heartbeat behavior.
             reset: When True, resets tracked progress before applying updates.
         Outputs:
             None.
         Side Effects:
-            Mutates overlay text/progress widgets and frame progress cache.
+            Mutates overlay text/progress widgets, updates frame progress cache,
+            and starts/stops heartbeat timers based on terminal stage states.
         Exceptions:
             Best-effort behavior; missing widgets are ignored.
         """
@@ -41209,6 +41537,11 @@ class UnifiedApp(tk.Tk):
             return
         overlay = getattr(frame, "_plot_loading_overlay", None)
         if overlay is None:
+            if self._is_startup_loading_active():
+                if message is not None:
+                    frame._plot_loading_pending_message = str(message)
+                if detail is not None:
+                    frame._plot_loading_pending_detail = str(detail)
             return
         try:
             if not overlay.winfo_exists():
@@ -41221,6 +41554,8 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+            frame._plot_loading_started_at = time.monotonic()
+            frame._plot_loading_detail_base = ""
         current_value = getattr(frame, "_plot_loading_progress_value", 0.0)
         try:
             current_value = float(current_value)
@@ -41239,10 +41574,26 @@ class UnifiedApp(tk.Tk):
             candidate = max(0.0, min(100.0, candidate))
             # Keep progress monotonic unless the caller explicitly requests reset.
             target_value = candidate if reset else max(current_value, candidate)
+        normalized_stage = self._resolve_plot_loading_stage_key(
+            message=message,
+            stage_key=stage_key,
+        )
+        frame._plot_loading_stage_key = normalized_stage
         label = getattr(frame, "_plot_loading_label", None)
         if label is not None and message is not None:
             try:
                 label.configure(text=str(message))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        detail_text = None
+        if detail is not None:
+            detail_text = str(detail).strip()
+            frame._plot_loading_detail_base = detail_text
+        detail_label = getattr(frame, "_plot_loading_detail_label", None)
+        if detail_label is not None and detail_text is not None:
+            try:
+                detail_label.configure(text=detail_text)
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
@@ -41272,6 +41623,10 @@ class UnifiedApp(tk.Tk):
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+        if normalized_stage in {"ready", "failed"}:
+            self._stop_plot_loading_overlay_heartbeat(frame)
+        else:
+            self._start_plot_loading_overlay_heartbeat(frame)
         try:
             overlay.lift()
         except Exception:
@@ -41473,6 +41828,7 @@ class UnifiedApp(tk.Tk):
             frame,
             progress=100.0,
             message="Plot ready.",
+            stage_key="ready",
         )
         self._clear_plot_loading_overlay(frame)
 
@@ -41758,6 +42114,7 @@ class UnifiedApp(tk.Tk):
                         frame,
                         progress=82.0,
                         message="Adding Plot Elements...",
+                        stage_key="finalizing",
                     )
                     self._apply_display_settings_for_plot(fig, plot_id, canvas)
                 except Exception:
@@ -41842,6 +42199,7 @@ class UnifiedApp(tk.Tk):
                         frame,
                         progress=92.0,
                         message="Final Layout Adjustments...",
+                        stage_key="finalizing",
                     )
                     self._finalize_matplotlib_canvas_layout(
                         canvas=canvas,
@@ -41938,6 +42296,7 @@ class UnifiedApp(tk.Tk):
                     frame,
                     progress=82.0,
                     message="Adding Plot Elements...",
+                    stage_key="finalizing",
                 )
                 self._apply_display_settings_for_plot(new_fig, plot_id, canvas)
             except Exception:
@@ -41948,6 +42307,7 @@ class UnifiedApp(tk.Tk):
                 frame,
                 progress=92.0,
                 message="Final Layout Adjustments...",
+                stage_key="finalizing",
             )
             self._finalize_matplotlib_canvas_layout(
                 canvas=canvas,
@@ -42575,7 +42935,26 @@ class UnifiedApp(tk.Tk):
     def _finalize_core_overlay(
         self, frame: Optional[ttk.Frame], *, force_clear: bool = False
     ) -> None:
-        """Finalize core loading overlay after completion-based refresh passes."""
+        """Finalize one core-plot loading overlay after refresh completion checks.
+
+        Purpose:
+            Clear a core plot loading overlay only after required refresh and
+            readiness gates complete.
+        Why:
+            Core plots run staged auto-refresh passes; clearing early can expose
+            intermediate geometry before the stable render is ready.
+        Inputs:
+            frame: Plot tab frame that owns the core overlay state.
+            force_clear: When True, bypasses readiness counters and clears
+                immediately.
+        Outputs:
+            None.
+        Side Effects:
+            Updates refresh state flags, writes terminal overlay status, and
+            destroys overlay widgets when clearing.
+        Exceptions:
+            Best-effort guards ignore UI state errors to keep plotting responsive.
+        """
         if frame is None:
             return
         hold_overlay = bool(getattr(frame, "_core_overlay_hold", False))
@@ -42633,6 +43012,7 @@ class UnifiedApp(tk.Tk):
             frame,
             progress=100.0,
             message="Plot ready.",
+            stage_key="ready",
         )
         self._clear_plot_loading_overlay(frame)
 
@@ -42643,7 +43023,26 @@ class UnifiedApp(tk.Tk):
         *,
         pass_index: int,
     ) -> None:
-        """Schedule one core refresh pass for completion-based overlay orchestration."""
+        """Schedule one core auto-refresh pass under overlay hold coordination.
+
+        Purpose:
+            Queue one refresh invocation for a core plot while an overlay hold is
+            active.
+        Why:
+            Completion-based overlay behavior requires explicit pass scheduling so
+            pass-1/pass-2 milestones are tracked deterministically.
+        Inputs:
+            frame: Plot tab frame that stores overlay/refresh state.
+            canvas: Core plot canvas used for idle scheduling and widget checks.
+            pass_index: One-based refresh pass number used for status messaging.
+        Outputs:
+            None.
+        Side Effects:
+            Registers idle callbacks, increments refresh counters, updates overlay
+            progress text, and may force overlay finalization on failure paths.
+        Exceptions:
+            Widget or callback failures fail closed and clear overlays when needed.
+        """
         if frame is None or canvas is None:
             return
         if not bool(getattr(frame, "_core_overlay_hold", False)):
@@ -42728,6 +43127,9 @@ class UnifiedApp(tk.Tk):
                     "Running auto-refresh pass 1..."
                     if pass_index <= 1
                     else "Running auto-refresh pass 2..."
+                ),
+                stage_key=(
+                    "auto_refresh_pass_1" if pass_index <= 1 else "auto_refresh_pass_2"
                 ),
             )
             try:
@@ -43470,6 +43872,7 @@ class UnifiedApp(tk.Tk):
             frame,
             progress=12.0,
             message=overlay_message,
+            stage_key="refreshing",
         )
         combined_widget = None
         combined_size = None
@@ -47714,10 +48117,17 @@ class UnifiedApp(tk.Tk):
         frame._plot_render_task_id = None
         frame._plot_loading_overlay = None
         frame._plot_loading_label = None
+        frame._plot_loading_detail_label = None
         frame._plot_loading_progress_var = None
         frame._plot_loading_bar = None
         frame._plot_loading_progress_label = None
         frame._plot_loading_progress_value = 0.0
+        frame._plot_loading_stage_key = "queued"
+        frame._plot_loading_started_at = None
+        frame._plot_loading_heartbeat_after_id = None
+        frame._plot_loading_detail_base = ""
+        frame._plot_loading_pending_message = None
+        frame._plot_loading_pending_detail = None
         frame._refresh_command = None
         frame._post_first_draw_refresh_done = False
         frame._post_first_draw_refresh_invoked = False
@@ -68959,6 +69369,9 @@ class UnifiedApp(tk.Tk):
                     if count <= 1
                     else "Running combined auto-refresh pass 2..."
                 ),
+                stage_key=(
+                    "auto_refresh_pass_1" if count <= 1 else "auto_refresh_pass_2"
+                ),
             )
             return count
 
@@ -69240,6 +69653,7 @@ class UnifiedApp(tk.Tk):
                 target_frame,
                 progress=100.0,
                 message="Combined plot ready.",
+                stage_key="ready",
             )
             self._clear_plot_loading_overlay(target_frame)
 
@@ -76682,9 +77096,28 @@ class UnifiedApp(tk.Tk):
         *,
         notify: bool = False,
         workflow_key: Optional[str] = None,
+        loading_session_id: Optional[int] = None,
     ) -> None:
         """Run cycle solubility simulation.
-        Used to execute cycle solubility simulation and coordinate results."""
+        Purpose:
+            Execute cycle-by-cycle speciation simulation for the active workflow.
+        Why:
+            Timeline table/plot rendering depends on cycle-resolved compute output.
+        Inputs:
+            payload: Optional prebuilt cycle payload to simulate.
+            notify: When True, shows success/failure dialogs for this run.
+            workflow_key: Optional explicit workflow override.
+            loading_session_id: Optional active solubility loading session id to
+                join so overlay teardown waits for timeline readiness.
+        Outputs:
+            None.
+        Side Effects:
+            Submits background cycle simulation work, updates per-workflow cycle
+            state, updates timeline widgets, and updates loading-overlay stages.
+        Exceptions:
+            Validation and compute errors are surfaced in status text/dialogs and
+            guarded so UI execution continues.
+        """
         workflow = workflow_key or self._current_solubility_workflow()
         treat_excess_as_headspace = workflow == "Planning"
         payload = payload or self._get_cycle_payload_for_workflow(workflow)
@@ -76896,6 +77329,12 @@ class UnifiedApp(tk.Tk):
             )
         if status_var is not None:
             status_var.set("Simulating cycles...")
+        cycle_session_id = self._begin_solubility_loading_phase(
+            phase="cycle_timeline",
+            session_id=loading_session_id,
+            message="Computing cycle timeline...",
+            detail="Simulating per-cycle speciation and phase transitions.",
+        )
 
         # Snapshot inputs for thread safety/no-GIL readiness.
         model_key_value = spec_key
@@ -76936,7 +77375,19 @@ class UnifiedApp(tk.Tk):
             target_workflow = workflow_key or workflow
             self._set_cycle_result_for_workflow(target_workflow, result)
             self._set_cycle_payload_for_workflow(target_workflow, payload)
+            self._update_solubility_loading_phase(
+                cycle_session_id,
+                message="Rendering timeline table/plot...",
+                detail="Applying cycle timeline rows and plotting workflow overlays.",
+            )
             self._update_cycle_solubility_widgets(result, workflow_key=target_workflow)
+            self._wait_for_cycle_timeline_render_ready(
+                on_ready=lambda: self._complete_solubility_loading_phase(
+                    cycle_session_id,
+                    message="Finalizing workflow layout...",
+                    detail="Cycle timeline table and plot are ready.",
+                )
+            )
             if notify and result.get("timeline"):
                 try:
                     messagebox.showinfo(
@@ -76952,6 +77403,11 @@ class UnifiedApp(tk.Tk):
             Used as an event callback for err."""
             if status_var is not None:
                 status_var.set(f"Cycle simulation failed: {exc}")
+            self._complete_solubility_loading_phase(
+                cycle_session_id,
+                message="Cycle timeline simulation failed.",
+                detail="See error details in the status area.",
+            )
             if notify:
                 try:
                     messagebox.showerror(
@@ -76962,9 +77418,12 @@ class UnifiedApp(tk.Tk):
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
 
-        self._task_runner.submit(
-            "cycle_solubility", _compute_cycle_result, _on_ok, _on_err
-        )
+        try:
+            self._task_runner.submit(
+                "cycle_solubility", _compute_cycle_result, _on_ok, _on_err
+            )
+        except Exception as exc:
+            _on_err(exc)
 
     def _update_cycle_solubility_widgets(
         self, result: Optional[Dict[str, Any]], *, workflow_key: Optional[str] = None
@@ -81889,12 +82348,39 @@ class UnifiedApp(tk.Tk):
         self,
         form_data: Dict[str, Any],
         solver_inputs: SolubilitySolverInputs,
+        *,
+        loading_session_id: Optional[int] = None,
     ) -> None:
-        """Schedule planning projection.
-        Used to queue planning projection without blocking the UI."""
+        """Schedule Planning projection payload generation on a background thread.
+
+        Purpose:
+            Build the Planning cycle projection payload asynchronously.
+        Why:
+            Projection preparation can be expensive and should not block Tk.
+        Inputs:
+            form_data: Planning form snapshot used to build projection inputs.
+            solver_inputs: Prepared solver inputs associated with this run.
+            loading_session_id: Optional active loading session id to join so
+                the overlay remains visible across projection + timeline phases.
+        Outputs:
+            None.
+        Side Effects:
+            Starts a daemon worker thread, updates status text, optionally joins
+            the active loading session, and marshals completion callbacks to Tk.
+        Exceptions:
+            Worker exceptions are captured and reported via the UI callback.
+        """
         status_var = getattr(self, "_sol_cycle_status_var", None)
         if status_var is not None:
             status_var.set("Running planning projection...")
+        projection_session_id = None
+        if loading_session_id is not None:
+            projection_session_id = self._begin_solubility_loading_phase(
+                phase="planning_projection",
+                session_id=loading_session_id,
+                message="Computing cycle timeline...",
+                detail="Preparing projected cycle payload for timeline rendering.",
+            )
 
         def _worker() -> None:
             """Perform worker.
@@ -81907,14 +82393,20 @@ class UnifiedApp(tk.Tk):
                 self.after(
                     0,
                     lambda exc=exc: self._handle_planning_projection_result(
-                        None, exc, form_data
+                        None,
+                        exc,
+                        form_data,
+                        loading_session_id=projection_session_id,
                     ),
                 )
                 return
             self.after(
                 0,
                 lambda: self._handle_planning_projection_result(
-                    payload, None, form_data
+                    payload,
+                    None,
+                    form_data,
+                    loading_session_id=projection_session_id,
                 ),
             )
 
@@ -81925,6 +82417,8 @@ class UnifiedApp(tk.Tk):
         payload: Optional[Dict[str, Any]],
         error: Optional[BaseException],
         form_data: Dict[str, Any],
+        *,
+        loading_session_id: Optional[int] = None,
     ) -> None:
         """Handle planning projection result.
         Purpose: Apply Planning projection results to the UI and cycle timeline.
@@ -81933,6 +82427,8 @@ class UnifiedApp(tk.Tk):
             payload (Optional[Dict[str, Any]]): Projection payload, if available.
             error (Optional[BaseException]): Exception raised by the projection, if any.
             form_data (Dict[str, Any]): Planning form data used for the run.
+            loading_session_id (Optional[int]): Active loading session id used to
+                synchronize overlay teardown with timeline readiness.
         Outputs:
             None.
         Side Effects:
@@ -81945,6 +82441,12 @@ class UnifiedApp(tk.Tk):
         if error is not None:
             if status_var is not None:
                 status_var.set(f"Planning projection failed: {error}")
+            if loading_session_id is not None:
+                self._complete_solubility_loading_phase(
+                    loading_session_id,
+                    message="Planning projection failed.",
+                    detail="Cycle payload could not be prepared.",
+                )
             try:
                 messagebox.showerror(
                     "Planning Projection", f"Planning projection failed:\n{error}"
@@ -81957,6 +82459,12 @@ class UnifiedApp(tk.Tk):
         if payload is None:
             if status_var is not None:
                 status_var.set("Planning projection unavailable.")
+            if loading_session_id is not None:
+                self._complete_solubility_loading_phase(
+                    loading_session_id,
+                    message="Planning projection unavailable.",
+                    detail="Cycle payload was not returned.",
+                )
             self._restore_planning_inputs()
             return
         projection_warning = payload.get("projection_warning")
@@ -81976,8 +82484,17 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
         self._run_cycle_solubility_simulation(
-            payload=payload, notify=False, workflow_key=form_data.get("workflow_key")
+            payload=payload,
+            notify=False,
+            workflow_key=form_data.get("workflow_key"),
+            loading_session_id=loading_session_id,
         )
+        if loading_session_id is not None:
+            self._complete_solubility_loading_phase(
+                loading_session_id,
+                message="Rendering timeline table/plot...",
+                detail="Waiting for cycle timeline plot draw confirmation.",
+            )
         self._restore_planning_inputs()
 
     def _ensure_solubility_loading_overlay(self) -> None:
@@ -82016,20 +82533,32 @@ class UnifiedApp(tk.Tk):
             background=base_bg,
         )
         label.pack(pady=(18, 6))
+        detail_label = ttk.Label(
+            overlay,
+            text="Preparing workflow...",
+            justify="center",
+            anchor="center",
+            wraplength=460,
+        )
+        detail_label.pack(pady=(0, 6))
         bar = ttk.Progressbar(overlay, mode="indeterminate", length=180)
         bar.pack(pady=(0, 16))
         overlay.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
         overlay.place_forget()
         self._sol_loading_overlay = overlay
         self._sol_loading_label = label
+        self._sol_loading_detail_label = detail_label
         self._sol_loading_bar = bar
 
-    def _show_solubility_loading_overlay(self, message: str) -> None:
+    def _show_solubility_loading_overlay(
+        self, message: str, *, detail: Optional[str] = None
+    ) -> None:
         """Show the solubility loading overlay.
         Purpose: Display a blocking splash while solubility jobs run.
         Why: Make background solver work visible and prevent accidental edits.
         Inputs:
             message (str): Status text to display on the overlay.
+            detail (Optional[str]): Secondary detail text shown below status.
         Outputs:
             None.
         Side Effects:
@@ -82040,12 +82569,15 @@ class UnifiedApp(tk.Tk):
         self._ensure_solubility_loading_overlay()
         overlay = getattr(self, "_sol_loading_overlay", None)
         label = getattr(self, "_sol_loading_label", None)
+        detail_label = getattr(self, "_sol_loading_detail_label", None)
         bar = getattr(self, "_sol_loading_bar", None)
         if overlay is None:
             return
         try:
             if label is not None:
                 label.configure(text=str(message))
+            if detail_label is not None:
+                detail_label.configure(text=str(detail or ""))
             overlay.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
             overlay.lift()
             if bar is not None:
@@ -82099,6 +82631,283 @@ class UnifiedApp(tk.Tk):
             self.after_idle(_do_hide)
         else:
             _do_hide()
+
+    def _begin_solubility_loading_phase(
+        self,
+        *,
+        phase: str,
+        message: str,
+        detail: Optional[str] = None,
+        session_id: Optional[int] = None,
+    ) -> int:
+        """Begin one Advanced Speciation loading phase.
+
+        Purpose:
+            Enter or join an active loading session and increment phase count.
+        Why:
+            Solver and cycle timeline work can run concurrently, so the loading
+            overlay must remain visible until all active phases complete.
+        Inputs:
+            phase: Logical phase label used for diagnostics and status text.
+            message: Primary overlay status message.
+            detail: Optional secondary detail text for the overlay.
+            session_id: Optional existing session identifier to join.
+        Outputs:
+            int: Active loading session identifier.
+        Side Effects:
+            Updates loading-session counters, updates context label text, and
+            shows/updates the Advanced Speciation loading overlay.
+        Exceptions:
+            UI update failures are guarded to keep workflows responsive.
+        """
+        _ = phase
+        active_session = getattr(self, "_sol_loading_session_id", None)
+        if active_session is None:
+            next_session = int(getattr(self, "_sol_loading_next_session_id", 0) or 0) + 1
+            self._sol_loading_next_session_id = next_session
+            active_session = (
+                int(session_id)
+                if isinstance(session_id, int) and session_id > 0
+                else next_session
+            )
+            self._sol_loading_session_id = active_session
+            self._sol_loading_session_started_at = time.monotonic()
+            self._sol_loading_active_phase_count = 0
+        elif isinstance(session_id, int) and session_id > 0:
+            active_session = int(session_id)
+            self._sol_loading_session_id = active_session
+        self._sol_loading_active_phase_count = max(
+            0, int(getattr(self, "_sol_loading_active_phase_count", 0) or 0)
+        ) + 1
+        label_var = getattr(self, "_sol_context_label_var", None)
+        if label_var is not None:
+            try:
+                label_var.set(str(message or "Running speciation..."))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        started_at = getattr(self, "_sol_loading_session_started_at", None)
+        elapsed_text = ""
+        if isinstance(started_at, (float, int)):
+            elapsed_text = f" ({max(0.0, time.monotonic() - float(started_at)):0.1f}s)"
+        detail_text = str(detail or "").strip()
+        if elapsed_text and detail_text:
+            detail_text = f"{detail_text}{elapsed_text}"
+        elif elapsed_text:
+            detail_text = f"Working{elapsed_text}"
+        self._show_solubility_loading_overlay(
+            str(message or "Running speciation..."),
+            detail=detail_text,
+        )
+        return int(active_session)
+
+    def _update_solubility_loading_phase(
+        self,
+        session_id: Optional[int],
+        *,
+        message: str,
+        detail: Optional[str] = None,
+    ) -> None:
+        """Update Advanced Speciation loading overlay text for an active session.
+
+        Purpose:
+            Refresh stage messaging without changing active phase counts.
+        Why:
+            Long-running async phases need explicit status transitions to avoid
+            a frozen-looking overlay.
+        Inputs:
+            session_id: Active loading session identifier expected by caller.
+            message: Primary status message.
+            detail: Optional secondary detail text.
+        Outputs:
+            None.
+        Side Effects:
+            Updates context label and overlay message/detail when session matches.
+        Exceptions:
+            Stale or mismatched sessions are ignored safely.
+        """
+        active_session = getattr(self, "_sol_loading_session_id", None)
+        if active_session is None or session_id is None or int(active_session) != int(session_id):
+            return
+        label_var = getattr(self, "_sol_context_label_var", None)
+        if label_var is not None:
+            try:
+                label_var.set(str(message or "Running speciation..."))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        started_at = getattr(self, "_sol_loading_session_started_at", None)
+        elapsed_text = ""
+        if isinstance(started_at, (float, int)):
+            elapsed_text = f" ({max(0.0, time.monotonic() - float(started_at)):0.1f}s)"
+        detail_text = str(detail or "").strip()
+        if elapsed_text and detail_text:
+            detail_text = f"{detail_text}{elapsed_text}"
+        elif elapsed_text:
+            detail_text = f"Working{elapsed_text}"
+        self._show_solubility_loading_overlay(
+            str(message or "Running speciation..."),
+            detail=detail_text,
+        )
+
+    def _complete_solubility_loading_phase(
+        self,
+        session_id: Optional[int],
+        *,
+        message: Optional[str] = None,
+        detail: Optional[str] = None,
+        force_hide: bool = False,
+    ) -> None:
+        """Complete one Advanced Speciation loading phase.
+
+        Purpose:
+            Decrement active phase count and close overlay when all phases finish.
+        Why:
+            Solver and timeline phases can overlap; overlay teardown must wait for
+            every active phase and timeline readiness callbacks.
+        Inputs:
+            session_id: Loading session identifier returned by phase start.
+            message: Optional terminal-stage message before completion.
+            detail: Optional terminal-stage detail before completion.
+            force_hide: When True, closes the overlay regardless of phase count.
+        Outputs:
+            None.
+        Side Effects:
+            Updates phase counters, may hide overlay, and restores context label.
+        Exceptions:
+            Stale session completions are ignored safely.
+        """
+        active_session = getattr(self, "_sol_loading_session_id", None)
+        if active_session is None or session_id is None:
+            return
+        if int(active_session) != int(session_id):
+            return
+        if message is not None:
+            self._update_solubility_loading_phase(
+                session_id,
+                message=message,
+                detail=detail,
+            )
+        count = max(0, int(getattr(self, "_sol_loading_active_phase_count", 0) or 0))
+        if count > 0:
+            count -= 1
+        self._sol_loading_active_phase_count = count
+        if count > 0 and not force_hide:
+            return
+        self._sol_loading_session_id = None
+        self._sol_loading_active_phase_count = 0
+        self._sol_loading_session_started_at = None
+        self._sol_solver_progress_session_id = None
+        label_var = getattr(self, "_sol_context_label_var", None)
+        if label_var is not None:
+            workflow_meta = SOL_WORKFLOW_TEMPLATES.get(
+                self._current_solubility_workflow(), {}
+            )
+            try:
+                label_var.set(workflow_meta.get("label", "Advanced Solubility"))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._hide_solubility_loading_overlay(defer=True)
+
+    def _wait_for_cycle_timeline_render_ready(
+        self,
+        *,
+        on_ready: Callable[[], None],
+        timeout_ms: int = 900,
+    ) -> None:
+        """Wait until the cycle timeline plot has drawn once, then invoke callback.
+
+        Purpose:
+            Delay terminal loading teardown until timeline/table rendering is ready.
+        Why:
+            `draw_idle` is asynchronous; hiding the overlay immediately can expose
+            a blank timeline region before the first draw event arrives.
+        Inputs:
+            on_ready: Callback invoked after draw confirmation or timeout.
+            timeout_ms: Maximum wait for draw confirmation before fallback.
+        Outputs:
+            None.
+        Side Effects:
+            Registers a temporary Matplotlib draw callback and timeout callback,
+            schedules draw/layout updates, then tears both down on completion.
+        Exceptions:
+            Missing canvas/widget state falls back to immediate callback.
+        """
+        canvas = getattr(self, "_sol_cycle_spec_canvas", None)
+        if canvas is None or on_ready is None:
+            if callable(on_ready):
+                on_ready()
+            return
+        try:
+            widget = canvas.get_tk_widget()
+        except Exception:
+            widget = None
+        if widget is None:
+            on_ready()
+            return
+        try:
+            if not widget.winfo_exists():
+                on_ready()
+                return
+        except Exception:
+            on_ready()
+            return
+        wait_state: Dict[str, Any] = {
+            "done": False,
+            "draw_cid": None,
+            "timeout_after_id": None,
+        }
+
+        def _finish() -> None:
+            """Finalize wait-state hooks and run the readiness callback once."""
+            if bool(wait_state.get("done")):
+                return
+            wait_state["done"] = True
+            draw_cid = wait_state.get("draw_cid")
+            if draw_cid is not None:
+                try:
+                    canvas.mpl_disconnect(draw_cid)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            timeout_after_id = wait_state.get("timeout_after_id")
+            if timeout_after_id is not None:
+                try:
+                    self.after_cancel(timeout_after_id)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            try:
+                self._refresh_sol_workflow_layout()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            try:
+                on_ready()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        def _on_draw(_event: Any = None) -> None:
+            """Handle draw-event confirmation for timeline readiness."""
+            _finish()
+
+        try:
+            wait_state["draw_cid"] = canvas.mpl_connect("draw_event", _on_draw)
+        except Exception:
+            wait_state["draw_cid"] = None
+        try:
+            wait_state["timeout_after_id"] = self.after(timeout_ms, _finish)
+        except Exception:
+            wait_state["timeout_after_id"] = None
+        try:
+            self.after_idle(lambda: canvas.draw_idle())
+        except Exception:
+            try:
+                canvas.draw_idle()
+            except Exception:
+                _finish()
 
     def _submit_solubility_job(
         self,
@@ -82187,13 +82996,23 @@ class UnifiedApp(tk.Tk):
             return
         self._sol_last_form_data = form_data
         solver_inputs = self._prepare_solver_inputs(form_data)
+        solver_session_id = self._begin_solubility_loading_phase(
+            phase="solver",
+            message="Solving speciation...",
+            detail="Computing equilibrium state and summary outputs.",
+        )
+        self._sol_solver_progress_session_id = solver_session_id
         mode_context = self._build_sol_mode_context(
             solver_inputs.params,
             form_data,
             workflow_key=form_data.get("workflow_key"),
         )
         if form_data.get("workflow_key") == "Planning":
-            self._schedule_planning_projection(form_data, solver_inputs)
+            self._schedule_planning_projection(
+                form_data,
+                solver_inputs,
+                loading_session_id=solver_session_id,
+            )
         enabled_axes = self._read_sensitivity_axes()
         tracking_entries = list(getattr(self, "_sol_tracking_entries", []))
         cycle_summary = (
@@ -82212,7 +83031,23 @@ class UnifiedApp(tk.Tk):
         self._sol_model_key = model_key
         if isinstance(settings, dict):
             settings["solubility_model_key"] = model_key
-        model = get_speciation_model(model_key)
+        try:
+            model = get_speciation_model(model_key)
+        except Exception as exc:
+            self._complete_solubility_loading_phase(
+                solver_session_id,
+                message="Speciation setup failed.",
+                detail="Unable to resolve the selected speciation model.",
+            )
+            try:
+                messagebox.showerror(
+                    "Advanced Solubility Module",
+                    f"Unable to prepare speciation model:\n{exc}",
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            return
         solver_inputs_snapshot = solver_inputs
         enabled_axes_snapshot = dict(enabled_axes)
         tracking_entries_snapshot = copy.deepcopy(tracking_entries)
@@ -82248,13 +83083,18 @@ class UnifiedApp(tk.Tk):
             """Handle ok.
             Used as an event callback for ok."""
             summary, payload, co2_guidance, last_result = result
-            self._set_solver_progress(False)
             self._sol_last_result = last_result
             guidance_var = getattr(self, "_sol_new_reaction_summary_var", None)
             if guidance_var is not None:
                 guidance_var.set(co2_guidance)
             self._sol_math_sections = payload.math_sections
             self._update_solubility_summary(summary, structured=payload.to_dict())
+            self._complete_solubility_loading_phase(
+                solver_session_id,
+                message="Finalizing workflow layout...",
+                detail="Applying solver outputs to summary, plots, and timeline.",
+            )
+            self._sol_solver_progress_session_id = None
 
         # Closure captures _run_solubility_analysis state for callback wiring,
         # kept nested to scope the handler, and invoked by bindings set in
@@ -82262,10 +83102,15 @@ class UnifiedApp(tk.Tk):
         def _on_err(exc):
             """Handle err.
             Used as an event callback for err."""
-            self._set_solver_progress(False)
             self._update_solubility_summary(
                 f"Advanced Solubility Module error: {exc}", structured=None
             )
+            self._complete_solubility_loading_phase(
+                solver_session_id,
+                message="Speciation failed.",
+                detail="See error details in summary output.",
+            )
+            self._sol_solver_progress_session_id = None
             try:
                 messagebox.showerror(
                     "Advanced Solubility Module", f"Unable to run analysis:\\n{exc}"
@@ -82275,8 +83120,10 @@ class UnifiedApp(tk.Tk):
                 pass
 
         # Submit async job so UI progress and callbacks can update when ready.
-        self._set_solver_progress(True)
-        self._submit_solubility_job(_worker, _on_ok, _on_err)
+        try:
+            self._submit_solubility_job(_worker, _on_ok, _on_err)
+        except Exception as exc:
+            _on_err(exc)
 
     def _prepare_solver_inputs(
         self, form_data: Dict[str, Any]
@@ -82324,37 +83171,66 @@ class UnifiedApp(tk.Tk):
 
     def _set_solver_progress(self, active: bool) -> None:
         """Set solver progress.
-        Purpose: Update solver status messaging and loading overlay state.
-        Why: Provide clear feedback during long-running solubility calculations.
+        Purpose: Toggle solver phase participation in the loading session model.
+        Why: Legacy call paths still use this helper, so it must cooperate with
+            multi-phase overlay gating instead of hiding the overlay early.
         Inputs:
             active (bool): True while solver work is running; False when complete.
         Outputs:
             None.
         Side Effects:
-            - Updates the solubility context label.
-            - Shows or hides the solubility loading overlay.
+            - Starts or completes one solver loading phase.
+            - Updates Advanced Speciation overlay stage messaging.
         Exceptions:
             - Best-effort; ignores UI update failures.
         """
-        label_var = getattr(self, "_sol_context_label_var", None)
         if active:
-            if label_var is not None:
-                label_var.set("Solving speciation - please wait...")
-            self._show_solubility_loading_overlay("Running speciation...")
+            session_id = getattr(self, "_sol_solver_progress_session_id", None)
+            if session_id is None:
+                session_id = self._begin_solubility_loading_phase(
+                    phase="solver",
+                    message="Solving speciation...",
+                    detail="Computing equilibrium state and guidance outputs.",
+                )
+                self._sol_solver_progress_session_id = session_id
+            else:
+                self._update_solubility_loading_phase(
+                    session_id,
+                    message="Solving speciation...",
+                    detail="Computing equilibrium state and guidance outputs.",
+                )
             return
-        if label_var is not None:
-            workflow_meta = SOL_WORKFLOW_TEMPLATES.get(
-                self._current_solubility_workflow(), {}
+        session_id = getattr(self, "_sol_solver_progress_session_id", None)
+        if session_id is not None:
+            self._complete_solubility_loading_phase(
+                session_id,
+                message="Finalizing workflow layout...",
+                detail="Applying main-thread solver updates.",
             )
-            label_var.set(workflow_meta.get("label", "Advanced Solubility"))
-        self._hide_solubility_loading_overlay(defer=True)
+        self._sol_solver_progress_session_id = None
 
     def _handle_solver_future_result(
         self, future, executor: ThreadPoolExecutor
     ) -> None:
-        """Handle solver future result.
-        Used as an event callback for solver future result."""
-        self._set_solver_progress(False)
+        """Handle completion of a legacy threaded solver future.
+
+        Purpose:
+            Marshal a completed solver future onto the UI update path.
+        Why:
+            Legacy executor paths still feed this callback, so results must update
+            summary widgets and loading state consistently with async workflows.
+        Inputs:
+            future: Completed future carrying solver outputs or an exception.
+            executor: Executor instance to shut down after callback handling.
+        Outputs:
+            None.
+        Side Effects:
+            Updates summary/guidance UI, records last-result state, and advances
+            solver loading overlay state via `_set_solver_progress(False)`.
+        Exceptions:
+            Future errors are converted into UI summary/error messaging and do not
+            propagate to the Tk event loop.
+        """
         try:
             summary, payload, co2_guidance, last_result = future.result()
         except Exception as exc:
@@ -82362,6 +83238,7 @@ class UnifiedApp(tk.Tk):
             self._update_solubility_summary(
                 f"Advanced Solubility Module error: {exc}", structured=None
             )
+            self._set_solver_progress(False)
             try:
                 messagebox.showerror(
                     "Advanced Solubility Module", f"Unable to run analysis:\\n{exc}"
@@ -82376,6 +83253,7 @@ class UnifiedApp(tk.Tk):
             guidance_var.set(co2_guidance)
         self._sol_math_sections = payload.math_sections
         self._update_solubility_summary(summary, structured=payload.to_dict())
+        self._set_solver_progress(False)
 
     def _execute_solubility_job(
         self,
@@ -93963,6 +94841,7 @@ class UnifiedApp(tk.Tk):
                 frame,
                 progress=65.0,
                 message="Building plot figure...",
+                stage_key="building_figure",
             )
         try:
             # Apply snapshot-derived globals on the UI thread for legacy consumers.
@@ -93998,6 +94877,13 @@ class UnifiedApp(tk.Tk):
                     frame, "_plot_render_task_id", None
                 ) != task_id:
                     continue
+                self._update_plot_loading_overlay_progress(
+                    frame,
+                    progress=100.0,
+                    message="Plot rendering failed.",
+                    detail="No figure output was produced for this request.",
+                    stage_key="failed",
+                )
                 if key in {"fig1", "fig2"} and bool(
                     getattr(frame, "_core_overlay_hold", False)
                 ):
@@ -94047,6 +94933,7 @@ class UnifiedApp(tk.Tk):
                 frame,
                 progress=78.0,
                 message="Installing refreshed figure...",
+                stage_key="installing",
             )
             self._install_rendered_plot_in_tab(
                 frame, canvas, key, fig, placement_state=placement_state
@@ -94112,6 +94999,7 @@ class UnifiedApp(tk.Tk):
                     frame,
                     progress=55.0,
                     message="Data prepared. Rendering plot...",
+                    stage_key="worker_compute",
                 )
             self._render_core_plot_ui(
                 packet,
@@ -94142,6 +95030,13 @@ class UnifiedApp(tk.Tk):
                     frame, "_plot_render_task_id", None
                 ) != task_state["id"]:
                     continue
+                self._update_plot_loading_overlay_progress(
+                    frame,
+                    progress=100.0,
+                    message="Plot rendering failed.",
+                    detail="See console output for error details.",
+                    stage_key="failed",
+                )
                 if key in {"fig1", "fig2"} and bool(
                     getattr(frame, "_core_overlay_hold", False)
                 ):
@@ -94178,6 +95073,7 @@ class UnifiedApp(tk.Tk):
                 frame,
                 progress=20.0,
                 message="Preparing plot data...",
+                stage_key="preparing_data",
             )
 
     def _start_combined_render_async(
@@ -94230,6 +95126,7 @@ class UnifiedApp(tk.Tk):
                     frame,
                     progress=55.0,
                     message="Data prepared. Rendering combined plot...",
+                    stage_key="worker_compute",
                 )
             self._render_combined_plot_ui(
                 packet,
@@ -94259,6 +95156,13 @@ class UnifiedApp(tk.Tk):
                 task_state["id"] is None
                 or getattr(frame, "_plot_render_task_id", None) == task_state["id"]
             ):
+                self._update_plot_loading_overlay_progress(
+                    frame,
+                    progress=100.0,
+                    message="Combined plot rendering failed.",
+                    detail="See console output for error details.",
+                    stage_key="failed",
+                )
                 if getattr(frame, "_plot_auto_refresh_state", None) == "refreshing":
                     self._complete_plot_auto_refresh(frame)
                 else:
@@ -94287,6 +95191,7 @@ class UnifiedApp(tk.Tk):
                 frame,
                 progress=20.0,
                 message="Preparing combined plot data...",
+                stage_key="preparing_data",
             )
 
     def _render_combined_plot_ui(
@@ -94328,6 +95233,7 @@ class UnifiedApp(tk.Tk):
                 frame,
                 progress=65.0,
                 message="Building combined figure...",
+                stage_key="building_figure",
             )
         try:
             fig = None
@@ -94383,6 +95289,7 @@ class UnifiedApp(tk.Tk):
                         target_frame,
                         progress=78.0,
                         message="Installing refreshed figure...",
+                        stage_key="installing",
                     )
                     self._install_rendered_plot_in_tab(
                         target_frame,
@@ -94406,6 +95313,13 @@ class UnifiedApp(tk.Tk):
                     task_id is None
                     or getattr(frame, "_plot_render_task_id", None) == task_id
                 ):
+                    self._update_plot_loading_overlay_progress(
+                        frame,
+                        progress=100.0,
+                        message="Combined plot rendering failed.",
+                        detail="No combined figure was produced for this request.",
+                        stage_key="failed",
+                    )
                     if getattr(frame, "_plot_auto_refresh_state", None) == "refreshing":
                         self._complete_plot_auto_refresh(frame)
                     else:

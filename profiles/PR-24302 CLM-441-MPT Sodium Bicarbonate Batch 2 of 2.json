@@ -522,6 +522,27 @@
           "type": "trace_mask",
           "visible": true,
           "zorder": 20.0
+        },
+        {
+          "axes_target": "primary",
+          "coord_space": "data",
+          "geometry": {
+            "trace_key": "y2",
+            "x0": 7.145933467032042,
+            "x1": 7.208776962998117
+          },
+          "id": "c22a34be-1d8a-4001-b277-18ad261662c4",
+          "locked": false,
+          "name": "Trace Mask 11",
+          "style": {
+            "alpha": 0.9,
+            "color": "#000000",
+            "linestyle": "solid",
+            "linewidth": 1.5
+          },
+          "type": "trace_mask",
+          "visible": true,
+          "zorder": 21.0
         }
       ]
     },
@@ -539,8 +560,8 @@
       "axis_pad_pct": 2.0,
       "combined_center_plot_legend": false,
       "combined_cycle_legend_anchor": [
-        0.37552627170486363,
-        0.20790558455572072
+        0.31714623133614683,
+        0.18248728366777828
       ],
       "combined_cycle_legend_anchor_mode": "loc_tuple",
       "combined_cycle_legend_anchor_space": "axes",
@@ -596,8 +617,8 @@
       "combined_x_axis_label": "",
       "combined_xlabel_tick_gap_pts": 10.0,
       "combined_y_left_key": "y1",
-      "combined_y_right_key": "z",
-      "combined_y_third_key": "y2",
+      "combined_y_right_key": "y2",
+      "combined_y_third_key": "z",
       "core_cycle_legend_fontsize": 10.0,
       "core_legend_fontsize": 10.0,
       "core_plot_render_profiles": {
@@ -668,6 +689,7 @@
           "xlabel_tick_gap_pts": 10.0
         }
       },
+      "core_render_cycle_side_effects_mode": "auto",
       "cycle_trace": {
         "line_color": "#FF0000",
         "line_style": "solid",
@@ -680,15 +702,15 @@
       },
       "deriv_major_tick": 200.0,
       "deriv_minor_tick": 100.0,
-      "deriv_y_max": 50.0,
-      "deriv_y_min": -50.0,
+      "deriv_y_max": 20.0,
+      "deriv_y_min": -20.0,
       "enable_deriv_axis": true,
       "enable_temp_axis": true,
       "include_moles_in_core_plot_legend": false,
-      "max_time": 7.22,
+      "max_time": 8.29,
       "max_y": 825.0,
       "min_cycle_drop": -10.0,
-      "min_time": -0.14,
+      "min_time": -0.16,
       "min_y": -15.0,
       "peak_distance": 1,
       "peak_prominence": 1.0,
@@ -746,7 +768,7 @@
       "y_major_tick": 50.0,
       "y_minor_tick": 5.0
     },
-    "selected_sheet": "Day 0 Pressure Test",
+    "selected_sheet": "Batch 2 Rxn Day 8.1-8.2",
     "selected_sheets": [
       "Batch 2 Rxn Day 1",
       "Batch 2 Rxn Day 1.1",
@@ -754,9 +776,10 @@
       "Batch 2 Rxn Day 5.1-6",
       "Batch 2 Rxn Day 6-7",
       "Batch 2 Rxn Day 7.1",
-      "Batch 2 Rxn Day 7.1-8"
+      "Batch 2 Rxn Day 7.1-8",
+      "Batch 2 Rxn Day 8.1-8.2"
     ]
   },
   "profile_version": 1,
-  "updated_at": "2026-02-20 12:46:47"
+  "updated_at": "2026-02-20 14:49:01"
 }
