@@ -62197,16 +62197,119 @@ class UnifiedApp(tk.Tk):
         )
 
     def _start_cycle_tab_build(self, *, defer=True):
-        """Build value.
-        Used by start cycle tab workflows to build value."""
+        """Initialize a fresh staged build of the Cycle Analysis tab.
+
+        Purpose:
+            Start or restart Cycle Analysis tab construction from a clean state.
+        Why:
+            Cycle tab construction can be scheduled multiple times during startup
+            and early column-apply workflows; stale deferred callbacks must not
+            leave duplicate canvas/toolbar surfaces stacked in the same pane.
+        Args:
+            defer: When True, stage one is scheduled on Tk's idle queue;
+                otherwise stage one is executed immediately.
+        Returns:
+            None.
+        Side Effects:
+            Increments the cycle-build generation token, clears existing cycle tab
+            widgets, tears down prior Matplotlib cycle surfaces/callback ids, and
+            schedules or runs stage-one construction for the active generation.
+        Exceptions:
+            Cleanup and teardown operations use best-effort guards to avoid UI
+            interruptions if stale widgets or callbacks already disappeared.
+        """
         self._cycle_ui_built = False
         self._cycle_build_ctx = {}
         self._cycle_button_fonts = []
-        self._cycle_build_gen = None  # legacy attribute, kept for compatibility
+        prior_gen = getattr(self, "_cycle_build_gen", 0)
+        try:
+            prior_gen_int = int(prior_gen or 0)
+        except Exception:
+            prior_gen_int = 0
+        build_gen = prior_gen_int + 1
+        self._cycle_build_gen = build_gen
         self._stop_cycle_loading_indicator(restore_text=False)
 
+        prior_canvas = getattr(self, "_cycle_canvas", None)
+        for cid_attr in (
+            "_cycle_cid",
+            "_cycle_release_cid",
+            "_cycle_kp_cid",
+            "_cycle_kr_cid",
+        ):
+            callback_id = getattr(self, cid_attr, None)
+            if prior_canvas is not None and callback_id is not None:
+                try:
+                    prior_canvas.mpl_disconnect(callback_id)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            setattr(self, cid_attr, None)
+
+        prior_span = getattr(self, "_cycle_span", None)
+        if prior_span is not None:
+            try:
+                prior_span.set_active(False)
+            except Exception:
+                try:
+                    prior_span.active = False
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+        self._cycle_span = None
+        self._sel_span_artist = None
+
+        prior_toolbar = getattr(self, "_cycle_toolbar", None)
+        if prior_toolbar is not None:
+            try:
+                prior_toolbar.destroy()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._cycle_toolbar = None
+
+        if prior_canvas is not None:
+            try:
+                prior_widget = prior_canvas.get_tk_widget()
+            except Exception:
+                prior_widget = None
+            if prior_widget is not None:
+                try:
+                    if prior_widget.winfo_exists():
+                        prior_widget.destroy()
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+        self._cycle_canvas = None
+
+        prior_fig = getattr(self, "_cycle_fig", None)
+        if prior_fig is not None:
+            try:
+                import matplotlib.pyplot as plt
+
+                plt.close(prior_fig)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._cycle_fig = None
+        self._cycle_ax = None
+
+        tab_cycle = getattr(self, "tab_cycle", None)
+        if tab_cycle is None or not tab_cycle.winfo_exists():
+            self._cycle_loading_frame = None
+            self._cycle_loading_label = None
+            return
+
+        # Remove stale tab children so only the newest generation owns the surface.
+        for child in tab_cycle.winfo_children():
+            try:
+                child.destroy()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
         if defer:
-            frame = ttk.Frame(self.tab_cycle)
+            frame = ttk.Frame(tab_cycle)
             frame.grid(row=0, column=0, sticky="nsew")
 
             label = ttk.Label(
@@ -62225,9 +62328,13 @@ class UnifiedApp(tk.Tk):
             self._cycle_loading_label = None
 
         if defer:
-            self.after_idle(self._build_tab_cycle_stage_one)
+            self.after_idle(
+                lambda _build_gen=build_gen: self._build_tab_cycle_stage_one(
+                    build_gen=_build_gen
+                )
+            )
         else:
-            self._build_tab_cycle_stage_one(defer=False)
+            self._build_tab_cycle_stage_one(defer=False, build_gen=build_gen)
             self.update_idletasks()
 
     def _build_tab_cycle(self):
@@ -62235,7 +62342,7 @@ class UnifiedApp(tk.Tk):
         Used to assemble tab cycle during UI or plot setup."""
         self._start_cycle_tab_build()
 
-    def _build_tab_cycle_stage_one(self, *, defer=True):
+    def _build_tab_cycle_stage_one(self, *, defer=True, build_gen: Optional[int] = None):
         """Build stage-one structure for the Cycle Analysis tab.
 
         Purpose:
@@ -62247,6 +62354,8 @@ class UnifiedApp(tk.Tk):
         Args:
             defer: When True, keeps stage orchestration compatible with deferred
                 build scheduling; retained for existing call paths.
+            build_gen: Cycle tab build-generation token used to ignore stale
+                deferred stage callbacks from superseded rebuilds.
         Returns:
             None.
         Side Effects:
@@ -62255,6 +62364,11 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             Missing tab references short-circuit safely without raising.
         """
+        if build_gen is None:
+            build_gen = getattr(self, "_cycle_build_gen", None)
+        if build_gen != getattr(self, "_cycle_build_gen", None):
+            # Ignore stale deferred callbacks from prior cycle rebuild generations.
+            return
         if not getattr(self, "tab_cycle", None):
             return
 
@@ -62494,11 +62608,15 @@ class UnifiedApp(tk.Tk):
             self._cycle_loading_label.config(text="Configuring cycle controls…")
 
         if defer:
-            self.after_idle(self._build_tab_cycle_stage_two)
+            self.after_idle(
+                lambda _build_gen=build_gen: self._build_tab_cycle_stage_two(
+                    build_gen=_build_gen
+                )
+            )
         else:
-            self._build_tab_cycle_stage_two(defer=False)
+            self._build_tab_cycle_stage_two(defer=False, build_gen=build_gen)
 
-    def _build_tab_cycle_stage_two(self, *, defer=True):
+    def _build_tab_cycle_stage_two(self, *, defer=True, build_gen: Optional[int] = None):
         """Build stage-two controls for Cycle Analysis workflows.
 
         Purpose:
@@ -62509,6 +62627,8 @@ class UnifiedApp(tk.Tk):
             preserving deferred-build responsiveness.
         Args:
             defer: Maintained for staged-build API compatibility.
+            build_gen: Cycle tab build-generation token used to ignore stale
+                deferred stage callbacks from superseded rebuilds.
         Returns:
             None.
         Side Effects:
@@ -62517,6 +62637,11 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             Returns early when stage-one context is unavailable.
         """
+        if build_gen is None:
+            build_gen = getattr(self, "_cycle_build_gen", None)
+        if build_gen != getattr(self, "_cycle_build_gen", None):
+            # Ignore stale deferred callbacks from prior cycle rebuild generations.
+            return
         ctx = self._cycle_build_ctx
         left = ctx.get("left_frame")
         right = ctx.get("right_frame")
@@ -62869,11 +62994,17 @@ class UnifiedApp(tk.Tk):
             self._cycle_loading_label.config(text="Preparing summary display…")
 
         if defer:
-            self.after_idle(self._build_tab_cycle_stage_three)
+            self.after_idle(
+                lambda _build_gen=build_gen: self._build_tab_cycle_stage_three(
+                    build_gen=_build_gen
+                )
+            )
         else:
-            self._build_tab_cycle_stage_three(defer=False)
+            self._build_tab_cycle_stage_three(defer=False, build_gen=build_gen)
 
-    def _build_tab_cycle_stage_three(self, *, defer=True):
+    def _build_tab_cycle_stage_three(
+        self, *, defer=True, build_gen: Optional[int] = None
+    ):
         """Build stage-three summary/format controls for Cycle Analysis.
 
         Purpose:
@@ -62884,6 +63015,8 @@ class UnifiedApp(tk.Tk):
             detection actions to keep the workflow readable.
         Args:
             defer: Maintained for staged-build API compatibility.
+            build_gen: Cycle tab build-generation token used to ignore stale
+                deferred stage callbacks from superseded rebuilds.
         Returns:
             None.
         Side Effects:
@@ -62892,6 +63025,11 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             Returns safely when prerequisite stage context is missing.
         """
+        if build_gen is None:
+            build_gen = getattr(self, "_cycle_build_gen", None)
+        if build_gen != getattr(self, "_cycle_build_gen", None):
+            # Ignore stale deferred callbacks from prior cycle rebuild generations.
+            return
         ctx = self._cycle_build_ctx
         left = ctx.get("left_frame")
         right = ctx.get("right_frame")
@@ -62982,7 +63120,12 @@ class UnifiedApp(tk.Tk):
         )
         left_mousewheel_binder = ctx.get("bind_left_mousewheel")
         if callable(left_mousewheel_binder):
-            self.after_idle(lambda: left_mousewheel_binder(left))
+            self.after_idle(
+                lambda _build_gen=build_gen: (
+                    _build_gen == getattr(self, "_cycle_build_gen", None)
+                )
+                and left_mousewheel_binder(left)
+            )
         self._set_cycle_summary(getattr(self, "_pending_cycle_summary", ""))
 
         right.grid_rowconfigure(1, weight=1)
@@ -62992,11 +63135,15 @@ class UnifiedApp(tk.Tk):
             self._cycle_loading_label.config(text="Initializing plot canvas…")
 
         if defer:
-            self.after_idle(self._build_tab_cycle_stage_four)
+            self.after_idle(
+                lambda _build_gen=build_gen: self._build_tab_cycle_stage_four(
+                    build_gen=_build_gen
+                )
+            )
         else:
-            self._build_tab_cycle_stage_four()
+            self._build_tab_cycle_stage_four(build_gen=build_gen)
 
-    def _build_tab_cycle_stage_four(self):
+    def _build_tab_cycle_stage_four(self, *, build_gen: Optional[int] = None):
         """Finalize Cycle Analysis UI construction and interactive plot wiring.
 
         Purpose:
@@ -63005,9 +63152,10 @@ class UnifiedApp(tk.Tk):
         Why:
             The cycle tab is built in deferred stages to keep startup responsive;
             this final stage marks cycle readiness for startup splash gating.
-        Inputs:
-            None.
-        Outputs:
+        Args:
+            build_gen: Cycle tab build-generation token used to ignore stale
+                deferred stage callbacks from superseded rebuilds.
+        Returns:
             None.
         Side Effects:
             Instantiates cycle figure/canvas widgets, binds interaction callbacks,
@@ -63015,6 +63163,11 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             Returns early when stage context is missing; widget errors are guarded.
         """
+        if build_gen is None:
+            build_gen = getattr(self, "_cycle_build_gen", None)
+        if build_gen != getattr(self, "_cycle_build_gen", None):
+            # Ignore stale deferred callbacks from prior cycle rebuild generations.
+            return
         ctx = self._cycle_build_ctx
         right = ctx.get("right_frame")
         if right is None:
@@ -72603,6 +72756,34 @@ class UnifiedApp(tk.Tk):
         widget.bind(
             "<Button-5>", lambda _event: widget.yview_scroll(1, "units"), add="+"
         )
+
+    def _widget_owns_vertical_scroll(self, widget: Any) -> bool:
+        """Check whether a widget should keep its own mousewheel behavior.
+
+        Purpose:
+            Detect controls that already provide native vertical scrolling.
+        Why:
+            Solubility canvas scrolling should be global, but text/list widgets
+            need direct wheel control for expected navigation behavior.
+        Args:
+            widget: Event target widget from mousewheel callbacks.
+        Returns:
+            True when wheel events should remain on the target widget; otherwise
+            False so the parent canvas can consume the scroll event.
+        Side Effects:
+            None.
+        Exceptions:
+            Returns False when widget inspection fails.
+        """
+        if widget is None:
+            return False
+        if isinstance(widget, (tk.Text, tk.Listbox, ttk.Treeview)):
+            return True
+        try:
+            widget_class = str(widget.winfo_class()).strip().lower()
+        except Exception:
+            return False
+        return widget_class in {"text", "listbox", "treeview"}
 
     def _get_sol_var_float(self, key: str) -> Optional[float]:
         """Return sol var float.
