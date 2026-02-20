@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-02-20 12:46:19",
+  "created_at": "2026-02-20 12:54:59",
   "description": "Autosave before loading a profile.",
   "payload": {
     "column_assignments": {
@@ -101,7 +101,7 @@
       "fig_combined_triple_axis": {
         "display": {
           "axis_labelpads": {
-            "primary": 3.0,
+            "primary": 4.0,
             "right": 15.0,
             "third": 15.0
           },
@@ -113,10 +113,10 @@
           "legend_anchor_y": null,
           "legend_loc": null,
           "margins": {
-            "bottom": 0.2,
-            "left": 0.095,
-            "right": 0.9,
-            "top": 0.88
+            "bottom": 0.182,
+            "left": 0.06,
+            "right": 0.89,
+            "top": 0.895
           },
           "suptitle_xy": null,
           "title_xy": null,
@@ -124,7 +124,7 @@
         },
         "export": {
           "axis_labelpads": {
-            "primary": 3.0,
+            "primary": 4.0,
             "right": 15.0,
             "third": 15.0
           },
@@ -137,8 +137,8 @@
           "legend_loc": null,
           "margins": {
             "bottom": 0.184,
-            "left": 0.095,
-            "right": 0.9,
+            "left": 0.07,
+            "right": 0.89,
             "top": 0.895
           },
           "suptitle_xy": null,
@@ -274,7 +274,256 @@
     "multi_sheet_enabled": true,
     "per_sheet_mapping": {},
     "plot_elements": {
-      "fig_combined_triple_axis": []
+      "fig_combined_triple_axis": [
+        {
+          "axes_target": "primary",
+          "coord_space": "data",
+          "geometry": {
+            "trace_key": "y2",
+            "x0": 0.22812477697359887,
+            "x1": -0.007366324305947469
+          },
+          "id": "3b06b7ae-2333-4642-ac96-43eb2b81dd65",
+          "locked": false,
+          "name": "Trace Mask 1",
+          "style": {
+            "alpha": 0.9,
+            "color": "#cccccc",
+            "linestyle": "solid",
+            "linewidth": 1.5
+          },
+          "type": "trace_mask",
+          "visible": true,
+          "zorder": 12.0
+        },
+        {
+          "axes_target": "primary",
+          "coord_space": "data",
+          "geometry": {
+            "trace_key": "y1",
+            "x0": 1.027229931700894,
+            "x1": 1.0851161891765069
+          },
+          "id": "b372821f-f702-446e-9ece-4d017c6adfc6",
+          "locked": false,
+          "name": "Trace Mask 2",
+          "style": {
+            "alpha": 0.9,
+            "color": "#cccccc",
+            "linestyle": "solid",
+            "linewidth": 1.5
+          },
+          "type": "trace_mask",
+          "visible": true,
+          "zorder": 13.0
+        },
+        {
+          "axes_target": "primary",
+          "coord_space": "data",
+          "geometry": {
+            "trace_key": "y3",
+            "x0": 1.0233708478691863,
+            "x1": 1.0851161891765069
+          },
+          "id": "0e5c0437-5635-4dce-8257-33afe962b2a7",
+          "locked": false,
+          "name": "Trace Mask 3",
+          "style": {
+            "alpha": 0.9,
+            "color": "#cccccc",
+            "linestyle": "solid",
+            "linewidth": 1.5
+          },
+          "type": "trace_mask",
+          "visible": true,
+          "zorder": 14.0
+        },
+        {
+          "axes_target": "primary",
+          "coord_space": "data",
+          "geometry": {
+            "x0": 0.9288232939923518,
+            "x1": 1.0860809601344337
+          },
+          "id": "c33bd80d-3d28-40e8-b4b7-5d31960093ef",
+          "locked": false,
+          "name": "X-Span 4",
+          "style": {
+            "alpha": 0.9,
+            "color": "#000000",
+            "edgecolor": "#ffff00",
+            "facecolor": "#ffff00",
+            "linestyle": "solid",
+            "linewidth": 1.5,
+            "span_layer": "behind_data"
+          },
+          "type": "xspan",
+          "visible": true,
+          "zorder": 11.0
+        },
+        {
+          "axes_target": "primary",
+          "coord_space": "data",
+          "geometry": {
+            "text": "Reactor Blend",
+            "wrap_width_x": 0.5613195294568746,
+            "x": 0.7931777289393578,
+            "y": 529.3522366937214
+          },
+          "id": "b236a49c-e6dd-4d5b-bc1e-7ad60fe9ec24",
+          "locked": false,
+          "name": "Text 5",
+          "style": {
+            "alpha": 0.9,
+            "bbox_alpha": 0.85,
+            "bbox_boxstyle": "round",
+            "bbox_edgecolor": "#000000",
+            "bbox_facecolor": "#ffffff",
+            "bbox_linestyle": "solid",
+            "bbox_linewidth": 1.0,
+            "bbox_pad": 0.3,
+            "bbox_shadow": true,
+            "bbox_shadow_alpha": 0.35,
+            "bbox_shadow_color": "#000000",
+            "bbox_shadow_offset_x": 2.0,
+            "bbox_shadow_offset_y": -2.0,
+            "color": "#000000",
+            "fontfamily": "STIXGeneral",
+            "fontsize": 10.0,
+            "fontweight": "normal",
+            "linestyle": "solid",
+            "linewidth": 1.5,
+            "text_align": "center",
+            "text_valign": "center"
+          },
+          "type": "text",
+          "visible": true,
+          "zorder": 15.0
+        },
+        {
+          "axes_target": "primary",
+          "coord_space": "data",
+          "geometry": {
+            "text": "Logging stopped over the long weekend",
+            "wrap_width_x": 1.5060407499889183,
+            "x": 3.1454390118828943,
+            "y": 487.8110911303759
+          },
+          "id": "db4f796e-5a01-4260-b4db-743a3e209a05",
+          "locked": false,
+          "name": "Text 6",
+          "style": {
+            "alpha": 0.9,
+            "bbox_alpha": 0.85,
+            "bbox_boxstyle": "round",
+            "bbox_edgecolor": "#000000",
+            "bbox_facecolor": "#ffffff",
+            "bbox_linestyle": "solid",
+            "bbox_linewidth": 1.0,
+            "bbox_pad": 0.3,
+            "bbox_shadow": true,
+            "bbox_shadow_alpha": 0.35,
+            "bbox_shadow_color": "#000000",
+            "bbox_shadow_offset_x": 2.0,
+            "bbox_shadow_offset_y": -2.0,
+            "color": "#000000",
+            "fontfamily": "STIXGeneral",
+            "fontsize": 10.0,
+            "fontweight": "normal",
+            "linestyle": "solid",
+            "linewidth": 1.5,
+            "text_align": "center",
+            "text_valign": "bottom"
+          },
+          "type": "text",
+          "visible": true,
+          "zorder": 16.0
+        },
+        {
+          "axes_target": "primary",
+          "coord_space": "data",
+          "geometry": {
+            "trace_key": "y2",
+            "x0": 5.176173665436842,
+            "x1": 5.223019243428606
+          },
+          "id": "bfb75c85-7459-409c-adb5-a75f2f67b093",
+          "locked": false,
+          "name": "Trace Mask 7",
+          "style": {
+            "alpha": 0.9,
+            "color": "#000000",
+            "linestyle": "solid",
+            "linewidth": 1.5
+          },
+          "type": "trace_mask",
+          "visible": true,
+          "zorder": 17.0
+        },
+        {
+          "axes_target": "primary",
+          "coord_space": "data",
+          "geometry": {
+            "trace_key": "y2",
+            "x0": 4.9466303332772,
+            "x1": 4.862308292892026
+          },
+          "id": "98677e7c-bdca-4760-aa77-6ae1db88794a",
+          "locked": false,
+          "name": "Trace Mask 8",
+          "style": {
+            "alpha": 0.9,
+            "color": "#000000",
+            "linestyle": "solid",
+            "linewidth": 1.5
+          },
+          "type": "trace_mask",
+          "visible": true,
+          "zorder": 18.0
+        },
+        {
+          "axes_target": "primary",
+          "coord_space": "data",
+          "geometry": {
+            "trace_key": "y2",
+            "x0": 6.011972566249751,
+            "x1": 6.07856677025765
+          },
+          "id": "f6f67b1a-c048-4b61-8627-4a9d7ce34e9e",
+          "locked": false,
+          "name": "Trace Mask 9",
+          "style": {
+            "alpha": 0.9,
+            "color": "#000000",
+            "linestyle": "solid",
+            "linewidth": 1.5
+          },
+          "type": "trace_mask",
+          "visible": true,
+          "zorder": 19.0
+        },
+        {
+          "axes_target": "primary",
+          "coord_space": "data",
+          "geometry": {
+            "trace_key": "y2",
+            "x0": 6.984172624423996,
+            "x1": 7.034876073544494
+          },
+          "id": "df217f94-ad3c-460b-8551-f5b178a12a8f",
+          "locked": false,
+          "name": "Trace Mask 10",
+          "style": {
+            "alpha": 0.9,
+            "color": "#000000",
+            "linestyle": "solid",
+            "linewidth": 1.5
+          },
+          "type": "trace_mask",
+          "visible": true,
+          "zorder": 20.0
+        }
+      ]
     },
     "plot_settings": {
       "auto_deriv_ticks": true,
@@ -290,8 +539,8 @@
       "axis_pad_pct": 2.0,
       "combined_center_plot_legend": false,
       "combined_cycle_legend_anchor": [
-        0.5479037181003878,
-        0.22306361002289543
+        0.31714623133614683,
+        0.18248728366777828
       ],
       "combined_cycle_legend_anchor_mode": "loc_tuple",
       "combined_cycle_legend_anchor_space": "axes",
@@ -313,7 +562,7 @@
       "combined_deriv_axis_offset": 1.08,
       "combined_deriv_labelpad": 15.0,
       "combined_disable_second_refresh": true,
-      "combined_export_pad_pts": 6.0,
+      "combined_export_pad_pts": 4.0,
       "combined_font_family": "STIXGeneral",
       "combined_include_zero_line": true,
       "combined_label_fontsize": 13.0,
@@ -331,12 +580,12 @@
       "combined_legend_shadowbox_fill_color": "#FFFFFF",
       "combined_legend_wrap": true,
       "combined_main_legend_enable_drag": false,
-      "combined_primary_axis_label": "",
-      "combined_primary_labelpad": 3.0,
+      "combined_primary_axis_label": "Pressure (PSIg)",
+      "combined_primary_labelpad": 4.0,
       "combined_right_pad_pct": 6.0,
       "combined_suptitle_fontsize": 18.0,
       "combined_suptitle_pad_pts": 2.0,
-      "combined_suptitle_y": 0.98,
+      "combined_suptitle_y": 0.99,
       "combined_temp_axis_label": "Temperature (\u00b0C)",
       "combined_temp_labelpad": 15.0,
       "combined_tick_fontsize": 12.0,
@@ -431,16 +680,16 @@
       },
       "deriv_major_tick": 200.0,
       "deriv_minor_tick": 100.0,
-      "deriv_y_max": 70.0,
-      "deriv_y_min": -70.0,
+      "deriv_y_max": 50.0,
+      "deriv_y_min": -50.0,
       "enable_deriv_axis": true,
       "enable_temp_axis": true,
       "include_moles_in_core_plot_legend": false,
-      "max_time": 0.74,
-      "max_y": 1300.76,
+      "max_time": 8.05,
+      "max_y": 825.0,
       "min_cycle_drop": -10.0,
-      "min_time": -0.01,
-      "min_y": 0.0,
+      "min_time": -0.16,
+      "min_y": -15.0,
       "peak_distance": 1,
       "peak_prominence": 1.0,
       "peak_width": 1,
@@ -490,7 +739,7 @@
       "temp_major_tick": 5.0,
       "temp_minor_tick": 2.5,
       "title_text": "Reaction Day 1-6 1/13-1/19",
-      "twin_y_max": 71.14,
+      "twin_y_max": 60.0,
       "twin_y_min": 15.46,
       "x_major_tick": 0.2,
       "x_minor_tick": 0.05,
@@ -499,9 +748,15 @@
     },
     "selected_sheet": "Day 0 Pressure Test",
     "selected_sheets": [
-      "Batch 2 Day 0 Pressure Test"
+      "Batch 2 Rxn Day 1",
+      "Batch 2 Rxn Day 1.1",
+      "Batch 2 Rxn Day 5",
+      "Batch 2 Rxn Day 5.1-6",
+      "Batch 2 Rxn Day 6-7",
+      "Batch 2 Rxn Day 7.1",
+      "Batch 2 Rxn Day 7.1-8"
     ]
   },
   "profile_version": 1,
-  "updated_at": "2026-02-20 12:46:19"
+  "updated_at": "2026-02-20 12:54:59"
 }

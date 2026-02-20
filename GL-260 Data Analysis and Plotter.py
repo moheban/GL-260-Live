@@ -60459,6 +60459,11 @@ class UnifiedApp(tk.Tk):
                 "third", self._combined_third_display_var.get()
             ),
         )
+        ttk.Checkbutton(
+            lf_combined_axis,
+            text="Include y=0 line",
+            variable=self.combined_include_zero_line,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(2, 4))
 
     def _build_plot_peak_section(self, parent, pad: dict[str, int]) -> None:
         """Build the Peak & Trough Detection card content.
@@ -60714,6 +60719,8 @@ class UnifiedApp(tk.Tk):
         self._plot_settings_drag_state = None
         self._plot_settings_drag_preview_line = None
         self._plot_settings_content_frame = None
+        self._plot_settings_mousewheel_bound = set()
+        self._plot_settings_bind_mousewheel_recursive = None
 
         scroll_shell = ttk.Frame(f)
         scroll_shell.grid(row=0, column=0, sticky="nsew", padx=8, pady=(8, 8))
@@ -60751,7 +60758,33 @@ class UnifiedApp(tk.Tk):
         self._plot_settings_refresh_scroll_region = _refresh_scroll_region
 
         def _bind_mousewheel(widget) -> None:
-            """Bind wheel-scrolling recursively for Plot Settings widgets."""
+            """Bind wheel-scrolling recursively for Plot Settings widgets.
+
+            Purpose:
+                Route wheel input to the Plot Settings canvas across the full card tree.
+            Why:
+                Stage-two cards are built after initial tab render, so bindings must
+                be re-runnable without stacking duplicate handlers on existing widgets.
+            Inputs:
+                widget: Root widget whose descendants should receive wheel bindings.
+            Outputs:
+                None.
+            Side Effects:
+                Adds mousewheel bindings to the target widget subtree and tracks
+                bound widget ids to avoid duplicate callback registration.
+            Exceptions:
+                Widget-introspection failures are ignored to preserve UI responsiveness.
+            """
+            try:
+                widget_id = str(widget)
+            except Exception:
+                widget_id = ""
+            bound_ids = getattr(self, "_plot_settings_mousewheel_bound", set())
+            if widget_id and widget_id in bound_ids:
+                return
+            if widget_id:
+                bound_ids.add(widget_id)
+                self._plot_settings_mousewheel_bound = bound_ids
 
             def _on_mousewheel(event):
                 delta = event.delta
@@ -60775,6 +60808,7 @@ class UnifiedApp(tk.Tk):
             for child in widget.winfo_children():
                 _bind_mousewheel(child)
 
+        self._plot_settings_bind_mousewheel_recursive = _bind_mousewheel
         self.after_idle(lambda: _bind_mousewheel(canvas))
         for i in range(4):
             content.grid_columnconfigure(i, weight=1)
@@ -60839,6 +60873,18 @@ class UnifiedApp(tk.Tk):
             builder = entry.get("builder")
             if callable(builder):
                 builder(body, pad)
+
+        # Stage-two cards are deferred, so re-run recursive wheel binding after
+        # they exist to keep scrolling active while hovering card controls.
+        mousewheel_binder = getattr(
+            self, "_plot_settings_bind_mousewheel_recursive", None
+        )
+        if callable(mousewheel_binder):
+            try:
+                mousewheel_binder(f)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
 
         self._refresh_combined_axis_choices()
         self._request_plot_settings_scroll_refresh()
