@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v4.1.1
+# Version: v4.2.1
 # Date: 2026-02-20
 
 import os
@@ -75,6 +75,33 @@ def _current_gil_status():
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             return None
     return None
+
+
+def _is_runtime_gil_disabled() -> bool:
+    """Return whether the current process is running with the GIL disabled.
+
+    Purpose:
+        Provide one canonical runtime gate for no-GIL optimized execution paths.
+    Why:
+        Free-threaded builds can still run with the GIL enabled depending on
+        launch mode, so build capability alone is not sufficient.
+    Inputs:
+        None.
+    Outputs:
+        True only when the interpreter build supports free-threading and runtime
+        GIL state is explicitly disabled; otherwise False.
+    Side Effects:
+        None.
+    Exceptions:
+        Any runtime probing failures are handled internally and treated as
+        GIL-enabled for safe fallback behavior.
+    """
+    if not _supports_free_threading_build():
+        return False
+    gil_status = _current_gil_status()
+    if gil_status is None:
+        return False
+    return not bool(gil_status)
 
 
 def _runtime_free_threading_fingerprint():
@@ -11199,7 +11226,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v4.1.1"
+APP_VERSION = "v4.2.1"
 
 
 def _apply_rust_runtime_settings_defaults(settings_dict: Dict[str, Any]) -> None:
@@ -24902,8 +24929,23 @@ def _get_peak_finder():
 
 
 def _suggest_max_workers(task_count: int, *, hard_cap: int = 32) -> int:
-    """Perform suggest max workers.
-    Used to keep the workflow logic localized and testable."""
+    """Suggest a default worker count for cycle/statistics fan-out.
+
+    Purpose:
+        Bound thread fan-out for background cycle metrics work.
+    Why:
+        Worker counts must stay within task cardinality and CPU capacity to
+        avoid oversubscription and unnecessary scheduling overhead.
+    Inputs:
+        task_count: Number of units of work to process.
+        hard_cap: Upper bound for worker count regardless of CPU count.
+    Outputs:
+        Integer worker count in the range `[1, min(task_count, cpu_total, hard_cap)]`.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid task-count input is handled internally and returns `1`.
+    """
 
     try:
 
@@ -24921,6 +24963,49 @@ def _suggest_max_workers(task_count: int, *, hard_cap: int = 32) -> int:
     cpu_total = os.cpu_count() or 1
 
     return max(1, min(count, cpu_total, int(hard_cap)))
+
+
+def _cycle_metrics_parallel_policy(
+    task_count: int, *, requested_workers: int, hard_cap: int = 32
+) -> Tuple[int, int]:
+    """Resolve worker/chunk policy for no-GIL cycle metrics execution.
+
+    Purpose:
+        Convert the requested parallelism into a deterministic worker/chunk
+        plan for cycle metrics processing.
+    Why:
+        Submitting one future per cycle creates avoidable overhead on large
+        cycle sets; chunking reduces scheduler churn while preserving order.
+    Inputs:
+        task_count: Number of cycle rows to process.
+        requested_workers: Caller-suggested worker count.
+        hard_cap: Global worker hard cap.
+    Outputs:
+        Tuple `(worker_count, chunk_size)` with both values >= 1.
+    Side Effects:
+        None.
+    Exceptions:
+        Any invalid numeric inputs are normalized to safe minimum defaults.
+    """
+    try:
+        count = max(1, int(task_count))
+    except Exception:
+        return 1, 1
+    try:
+        requested = max(1, int(requested_workers))
+    except Exception:
+        requested = 1
+    try:
+        cap = max(1, int(hard_cap))
+    except Exception:
+        cap = 32
+
+    cpu_total = max(1, int(os.cpu_count() or 1))
+    workers = max(1, min(count, requested, cpu_total, cap))
+    # Use at most ~2 chunks per worker so future management stays lightweight.
+    target_chunks = max(1, workers * 2)
+    chunk_size = max(1, int(math.ceil(count / float(target_chunks))))
+    return workers, chunk_size
 
 
 def _compute_cycle_metrics_single(
@@ -24984,8 +25069,28 @@ def _compute_cycle_statistics(
     allow_threads: bool = True,
     force_vdw: bool = False,
 ):
-    """Compute cycle statistics.
-    Used to derive cycle statistics for analysis or plotting."""
+    """Compute per-cycle and aggregate gas metrics for cycle analysis workflows.
+
+    Purpose:
+        Build per-cycle moles rows and aggregate totals from peak/trough cycles.
+    Why:
+        Cycle analysis and render precompute paths share this function, so one
+        implementation controls both correctness and runtime behavior.
+    Inputs:
+        cycles: Sequence of cycle dict rows with peak/trough/delta fields.
+        temp_values: Optional temperature series used for per-cycle mean values.
+        volume: Vessel volume used in gas calculations.
+        a_const: Van der Waals `a` constant.
+        b_const: Van der Waals `b` constant.
+        allow_threads: Enables worker parallelism when True.
+        force_vdw: Forces VDW calculation even when SciPy availability is unknown.
+    Outputs:
+        Tuple `(per_cycle_rows, total_moles_ideal, total_moles_vdw, scipy_available, vdw_used)`.
+    Side Effects:
+        Emits debug diagnostics through the shared debug logger.
+    Exceptions:
+        Numeric coercion failures are handled internally with stable defaults.
+    """
 
     cycles = list(cycles or [])
 
@@ -25051,6 +25156,9 @@ def _compute_cycle_statistics(
     per_cycle = []
 
     worker_count = _suggest_max_workers(len(cycles)) if allow_threads else 1
+    runtime_no_gil = _is_runtime_gil_disabled()
+    execution_profile = "legacy"
+    chunk_size = 1
 
     if worker_count <= 1:
 
@@ -25068,19 +25176,89 @@ def _compute_cycle_statistics(
                 totals_vdw.append(float(n_vdw))
 
     else:
+        if runtime_no_gil:
+            execution_profile = "no_gil_optimized"
+            worker_count, chunk_size = _cycle_metrics_parallel_policy(
+                len(cycles), requested_workers=worker_count
+            )
 
-        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            # Build contiguous chunks so result ordering is deterministic and
+            # scheduling overhead is lower than per-cycle task submission.
+            chunk_ranges = [
+                (start, min(start + chunk_size, len(cycles)))
+                for start in range(0, len(cycles), chunk_size)
+            ]
 
-            # Iterate over executor.map(compute, cycles) to apply the per-item logic.
-            for per_cycle_entry, n_ideal, n_vdw in executor.map(compute, cycles):
+            def _compute_chunk(start_end: Tuple[int, int]):
+                """Compute one contiguous cycle chunk for no-GIL worker mode.
 
-                per_cycle.append(per_cycle_entry)
+                Purpose:
+                    Process a bounded cycle slice in one worker task.
+                Why:
+                    Chunk-level tasks reduce executor overhead on large cycle
+                    sets while preserving stable merge semantics.
+                Inputs:
+                    start_end: `(start, end)` half-open cycle index range.
+                Outputs:
+                    Tuple containing chunk start index and local row/total lists.
+                Side Effects:
+                    None.
+                Exceptions:
+                    Exceptions propagate to the executor caller for handling.
+                """
+                start, end = start_end
+                local_per_cycle = []
+                local_ideal = []
+                local_vdw = []
+                # Run per-cycle math sequentially inside the chunk to avoid
+                # creating one future per cycle.
+                for per_cycle_entry, n_ideal, n_vdw in map(compute, cycles[start:end]):
+                    local_per_cycle.append(per_cycle_entry)
+                    local_ideal.append(float(n_ideal))
+                    if compute_vdw:
+                        local_vdw.append(float(n_vdw))
+                return start, local_per_cycle, local_ideal, local_vdw
 
-                totals_ideal.append(float(n_ideal))
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                ordered_chunks = sorted(
+                    executor.map(_compute_chunk, chunk_ranges),
+                    key=lambda item: item[0],
+                )
 
+            # Merge in chunk-index order to preserve deterministic row ordering.
+            for _, local_per_cycle, local_ideal, local_vdw in ordered_chunks:
+                per_cycle.extend(local_per_cycle)
+                totals_ideal.extend(local_ideal)
                 if compute_vdw:
+                    totals_vdw.extend(local_vdw)
+        else:
 
-                    totals_vdw.append(float(n_vdw))
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+
+                # Keep the legacy per-cycle parallel map path unchanged for
+                # GIL-enabled runs to preserve historical behavior.
+                for per_cycle_entry, n_ideal, n_vdw in executor.map(compute, cycles):
+
+                    per_cycle.append(per_cycle_entry)
+
+                    totals_ideal.append(float(n_ideal))
+
+                    if compute_vdw:
+
+                        totals_vdw.append(float(n_vdw))
+
+    if _GL260_LOGGER.isEnabledFor(logging.DEBUG):
+        _GL260_LOGGER.debug(
+            "cycle.stats profile=%s runtime_no_gil=%s allow_threads=%s "
+            "workers=%s chunk_size=%s cycles=%s compute_vdw=%s",
+            execution_profile,
+            runtime_no_gil,
+            allow_threads,
+            worker_count,
+            chunk_size,
+            len(cycles),
+            compute_vdw,
+        )
 
     total_moles_ideal = float(math.fsum(totals_ideal))
 
