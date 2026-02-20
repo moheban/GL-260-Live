@@ -506,6 +506,8 @@ Outputs:
 - Species tables, saturation tables, sensitivity analysis, and pH sweep plots.
 - Cycle speciation timeline (per-cycle pH and speciation results).
 - Timeline plot and timeline table with export options.
+- Timeline table/plot visibility is explicitly refreshed after scenario completion so no tab-switch is required to reveal cycle-speciation results.
+- Predicted pH callouts now insert all cycle entries and remain scrollable (mouse wheel + scrollbar) after bulk updates.
 
 Exports:
 - CSV and JSON outputs for species and timeline data.
@@ -697,9 +699,11 @@ Rendering Behavior:
 #### 2) Axis Architecture
 - X axis: elapsed time (stitched when multi-sheet mode is enabled).
 - Left Y axis: primary pressure (y1) and optional manifold pressure (y3).
-- Right Y axis: temperature traces (z/z2).
-- Detached right Y axis: derivative or auxiliary channel (y2) with configurable offset.
+- Right Y axis (inner-right): user-selectable temperature or derivative role.
+- Detached right Y axis (outer-right): user-selectable temperature or derivative role with configurable offset.
 - Combined layering is enforced at the Axes level from active trace priorities: left/right/third axis z-order is resolved dynamically, a dedicated top overlay axis carries cycle markers, and the derivative `y=0` dashed line is rendered on the overlay layer so it stays above X-span elements.
+- Combined Triple-Axis role swaps are applied in both full-build and reuse refresh paths, so changing inner-right/outer-right dataset roles in Plot Settings is reflected immediately.
+- `Include y=0 line` in Combined Triple-Axis settings now explicitly controls dashed derivative reference-line rendering whenever a derivative axis is active (inner-right or outer-right).
 
 #### 3) Axis Range Control System
 - Auto-range tools pull min/max from current data only for the axes enabled in Axis Auto-Range Settings.
@@ -854,7 +858,7 @@ Key persisted categories:
 - Plot settings: ranges, ticks, axis toggles, titles.
 - Scatter settings and per-series overrides.
 - Cycle analysis settings and manual marker edits.
-- Combined axis labels, offsets, and layout spacing.
+- Combined axis labels, offsets, layout spacing, and zero-line toggle (`combined_include_zero_line`).
 - Layout profiles (per-plot display/export margins, title/suptitle positions, legend anchors/loc, axis label padding).
 - Output profiles, export DPI, and final report settings.
 - Plot elements and annotation UI state.
@@ -891,6 +895,13 @@ Not retained scope for `Keep plot settings for New Profile`:
 - Annotation UI state
 
 The Include dataset file path option determines whether the Excel path is saved with the profile. If a profile does not include a path (or the file is missing), the app prompts you to relink the dataset before loading. This option is independent from `Keep plot settings for New Profile`. New Profile saves a dataset-optional profile that loads without a relink prompt. The current workspace is auto-backed up to `profiles/_autosave_last_workspace.json` before a profile load.
+
+#### Startup Restore and Splash Gating
+- Startup restore now checks `profiles/_autosave_last_workspace.json` first.
+- Legacy workbook restore (`last_file_path` / `last_sheet_name`) is used only when autosave is unavailable.
+- Splash teardown is gated on restore terminal state (`success`, `failed`, or `skipped`) plus tab-readiness checks.
+- Splash detail text includes checklist-style stage state and heartbeat wait messaging so startup wait conditions are explicit.
+- Missing/corrupt autosave payloads fail or skip cleanly and startup continues without hanging.
 
 #### Saved Output Profiles and Export Sizes
 Export functions are unified by shared output size profiles and DPI settings.
@@ -1002,6 +1013,11 @@ Apache-2.0. See `LICENSE`.
 - Kept optimization scope in Python compute paths only; no Rust-extension behavior changes were introduced in this release.
 - Because cycle analysis and render precompute both route through `_compute_cycle_statistics`, the runtime optimization now benefits both paths automatically when no-GIL mode is active.
 - Bumped application version metadata to `v4.2.1` in the script header and `APP_VERSION`, and synchronized README top-level version references.
+- Combined Triple-Axis axis-role swaps now map datasets to inner-right vs outer-right positions correctly in both rebuild and reuse paths.
+- Added persisted Combined setting `combined_include_zero_line` with Plot Settings checkbox (`Include y=0 line`) to explicitly control dashed derivative reference-line rendering.
+- Advanced Speciation timeline table/plot layout refresh is now forced after scenario completion/startup restore so cycle-speciation visuals are visible without tab switching.
+- Predicted pH callouts insertion was fixed so all cycle rows render, and parent-canvas wheel routing now avoids stealing scroll from text/tree widgets.
+- Startup restore is now autosave-first with legacy fallback only when autosave is unavailable, and splash completion waits on restore terminal state plus post-restore readiness refresh.
 
 ### v4.1.0 Rust Combined Precompute Expansion + CSV Import Profiling
 - Expanded optional Rust acceleration into combined triple-axis precompute paths while keeping Matplotlib/Tk rendering in Python.

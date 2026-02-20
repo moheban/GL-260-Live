@@ -549,8 +549,8 @@
       "combined_cycle_legend_enable_drag": true,
       "combined_cycle_legend_fontsize": 10.0,
       "combined_cycle_legend_loc": [
-        0.37552627170486363,
-        0.20790558455572072
+        0.31714623133614683,
+        0.18248728366777828
       ],
       "combined_cycle_legend_loc_choice": "upper right",
       "combined_cycle_legend_lock_position": false,
@@ -564,6 +564,7 @@
       "combined_disable_second_refresh": true,
       "combined_export_pad_pts": 4.0,
       "combined_font_family": "STIXGeneral",
+      "combined_include_zero_line": true,
       "combined_label_fontsize": 13.0,
       "combined_left_pad_pct": 1.0,
       "combined_legend_alignment": "center",
@@ -745,16 +746,17 @@
       "y_major_tick": 50.0,
       "y_minor_tick": 5.0
     },
-    "selected_sheet": "Batch 2 Rxn Day 7.1",
+    "selected_sheet": "Day 0 Pressure Test",
     "selected_sheets": [
       "Batch 2 Rxn Day 1",
       "Batch 2 Rxn Day 1.1",
       "Batch 2 Rxn Day 5",
       "Batch 2 Rxn Day 5.1-6",
       "Batch 2 Rxn Day 6-7",
-      "Batch 2 Rxn Day 7.1"
+      "Batch 2 Rxn Day 7.1",
+      "Batch 2 Rxn Day 7.1-8"
     ]
   },
   "profile_version": 1,
-  "updated_at": "2026-02-19 14:32:43"
+  "updated_at": "2026-02-20 12:46:47"
 }

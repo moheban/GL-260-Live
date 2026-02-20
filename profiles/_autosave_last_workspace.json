@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-02-13 09:22:37",
+  "created_at": "2026-02-20 12:46:19",
   "description": "Autosave before loading a profile.",
   "payload": {
     "column_assignments": {
@@ -300,8 +300,8 @@
       "combined_cycle_legend_enable_drag": true,
       "combined_cycle_legend_fontsize": 10.0,
       "combined_cycle_legend_loc": [
-        0.5479037181003878,
-        0.22306361002289543
+        0.31714623133614683,
+        0.18248728366777828
       ],
       "combined_cycle_legend_loc_choice": "upper right",
       "combined_cycle_legend_lock_position": false,
@@ -315,6 +315,7 @@
       "combined_disable_second_refresh": true,
       "combined_export_pad_pts": 6.0,
       "combined_font_family": "STIXGeneral",
+      "combined_include_zero_line": true,
       "combined_label_fontsize": 13.0,
       "combined_left_pad_pct": 1.0,
       "combined_legend_alignment": "center",
@@ -467,9 +468,9 @@
           "zorder": 2.0
         },
         "y3": {
-          "color": "#910B6E",
+          "color": "#FF5B0D",
           "linestyle": "solid",
-          "zorder": 5.0
+          "zorder": 2.0
         },
         "z": {
           "color": "#48A4FF",
@@ -496,11 +497,11 @@
       "y_major_tick": 50.0,
       "y_minor_tick": 5.0
     },
-    "selected_sheet": "Batch 2 Day 0 Pressure Test",
+    "selected_sheet": "Day 0 Pressure Test",
     "selected_sheets": [
       "Batch 2 Day 0 Pressure Test"
     ]
   },
   "profile_version": 1,
-  "updated_at": "2026-02-13 09:22:37"
+  "updated_at": "2026-02-20 12:46:19"
 }

@@ -23334,6 +23334,10 @@ if os.path.exists(SETTINGS_FILE):
     initial_combined_left_key = settings.get("combined_y_left_key", "y1")
     initial_combined_right_key = settings.get("combined_y_right_key", "z")
     initial_combined_third_key = settings.get("combined_y_third_key", "y2")
+    initial_combined_include_zero_line = bool(
+        settings.get("combined_include_zero_line", True)
+    )
+    settings["combined_include_zero_line"] = initial_combined_include_zero_line
 
     initial_starting_material_preset = settings.get(
         "starting_material_preset",
@@ -23566,6 +23570,8 @@ else:
     initial_combined_left_key = "y1"
     initial_combined_right_key = "z"
     initial_combined_third_key = "y2"
+    initial_combined_include_zero_line = True
+    settings["combined_include_zero_line"] = initial_combined_include_zero_line
 
     initial_starting_material_preset = next(iter(PRODUCT_PRESETS))
 
@@ -28861,6 +28867,138 @@ class PlotLayoutManager:
             last_state = new_state
 
 
+def _resolve_combined_right_axis_bindings(
+    dataset_meta: Mapping[str, Mapping[str, Any]],
+    *,
+    right_key: str,
+    third_key: str,
+    temp_axis_active: bool,
+    deriv_axis_active: bool,
+) -> Dict[str, Any]:
+    """Resolve Combined right-axis role bindings for inner/outer axis positions.
+
+    Purpose:
+        Determine which dataset role (temperature/derivative) is assigned to the
+        inner-right and outer-right axis positions.
+    Why:
+        Combined settings must honor user swaps between inner-right and outer-right
+        datasets while preserving axis-type guardrails and availability checks.
+    Inputs:
+        dataset_meta: Per-dataset metadata keyed by dataset id (`y1`, `y2`, `z`, etc.).
+        right_key: Requested dataset key for the inner-right axis.
+        third_key: Requested dataset key for the outer-right axis.
+        temp_axis_active: Whether temperature axis rendering is enabled/available.
+        deriv_axis_active: Whether derivative axis rendering is enabled/available.
+    Outputs:
+        Dict containing resolved right/third axis role assignments and positions.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid keys or unavailable datasets fall back to available role defaults.
+    """
+
+    def _is_available(key: str) -> bool:
+        """Check dataset availability for right-axis role assignment."""
+        meta = dataset_meta.get(key) or {}
+        return bool(meta.get("series") is not None and meta.get("selected"))
+
+    temp_keys_available = [key for key in ("z", "z2") if _is_available(key)]
+    temperature_available = bool(temp_axis_active and temp_keys_available)
+    derivative_available = bool(deriv_axis_active and _is_available("y2"))
+
+    def _requested_assignment(key: str) -> Optional[Tuple[str, str]]:
+        """Translate one requested dataset key to a valid right-axis role assignment."""
+        meta = dataset_meta.get(key) or {}
+        axis_role = str(meta.get("axis_type", "primary")).strip().lower()
+        if axis_role == "temperature":
+            if not temperature_available:
+                return None
+            if key in temp_keys_available:
+                return ("temperature", key)
+            return ("temperature", temp_keys_available[0])
+        if axis_role == "derivative":
+            if not derivative_available:
+                return None
+            return ("derivative", "y2")
+        return None
+
+    requested_by_position = {
+        "right": _requested_assignment(right_key),
+        "third": _requested_assignment(third_key),
+    }
+    assigned_by_position: Dict[str, Optional[Tuple[str, str]]] = {
+        "right": None,
+        "third": None,
+    }
+    used_roles: Set[str] = set()
+
+    # First pass: honor explicit position requests when valid and non-duplicated.
+    for position in ("right", "third"):
+        requested = requested_by_position[position]
+        if requested is None:
+            continue
+        role_name, dataset_key = requested
+        if role_name in used_roles:
+            continue
+        assigned_by_position[position] = (role_name, dataset_key)
+        used_roles.add(role_name)
+
+    preferred_temp_key = None
+    # Keep the originally requested temperature trace (z vs z2) when possible.
+    for candidate in (right_key, third_key):
+        if candidate in temp_keys_available:
+            preferred_temp_key = candidate
+            break
+    if preferred_temp_key is None and temp_keys_available:
+        preferred_temp_key = temp_keys_available[0]
+
+    fallback_roles: List[Tuple[str, str]] = []
+    if temperature_available and preferred_temp_key is not None:
+        fallback_roles.append(("temperature", preferred_temp_key))
+    if derivative_available:
+        fallback_roles.append(("derivative", "y2"))
+
+    # Second pass: fill any empty axis position from the remaining available roles.
+    for position in ("right", "third"):
+        if assigned_by_position[position] is not None:
+            continue
+        for role_name, dataset_key in fallback_roles:
+            if role_name in used_roles:
+                continue
+            assigned_by_position[position] = (role_name, dataset_key)
+            used_roles.add(role_name)
+            break
+
+    def _assignment_payload(
+        assignment: Optional[Tuple[str, str]],
+    ) -> Optional[Dict[str, Any]]:
+        """Normalize one resolved assignment into metadata used by render paths."""
+        if assignment is None:
+            return None
+        role_name, dataset_key = assignment
+        meta = dataset_meta.get(dataset_key)
+        if not isinstance(meta, Mapping):
+            return None
+        return {"role": role_name, "key": dataset_key, "meta": meta}
+
+    right_payload = _assignment_payload(assigned_by_position["right"])
+    third_payload = _assignment_payload(assigned_by_position["third"])
+    role_positions: Dict[str, str] = {}
+    if right_payload is not None:
+        role_positions[str(right_payload["role"])] = "right"
+    if third_payload is not None:
+        role_positions[str(third_payload["role"])] = "third"
+
+    return {
+        "right": right_payload,
+        "third": third_payload,
+        "right_role": right_payload["role"] if right_payload is not None else None,
+        "third_role": third_payload["role"] if third_payload is not None else None,
+        "temperature_position": role_positions.get("temperature"),
+        "derivative_position": role_positions.get("derivative"),
+    }
+
+
 def build_combined_triple_axis_figure(
     min_time,
     max_time,
@@ -28918,6 +29056,7 @@ def build_combined_triple_axis_figure(
     show_cycle_markers_on_core_plots=False,
     show_cycle_legend_on_core_plots=False,
     include_moles_in_core_plot_legend=False,
+    include_zero_line: bool = True,
     legend_anchor=None,
     cycle_legend_anchor=None,
     legend_loc=None,
@@ -28964,6 +29103,7 @@ def build_combined_triple_axis_figure(
     mode_value = (mode or "display").strip().lower()
     if mode_value not in {"display", "export"}:
         mode_value = "display"
+    include_zero_line = bool(include_zero_line)
 
     if mode_value == "export":
         target_figsize = (11.0, 8.5)
@@ -29507,48 +29647,19 @@ def build_combined_triple_axis_figure(
         return primary_artist
 
     primary_meta = dataset_meta.get(left_key, dataset_meta["y1"])
-    right_meta = dataset_meta.get(right_key, dataset_meta["z"])
-    third_meta = dataset_meta.get(third_key, dataset_meta["y2"])
-    temp_available = _is_available(dataset_meta["z"]) or _is_available(dataset_meta["z2"])
-    deriv_available = _is_available(dataset_meta["y2"])
-
-    def _temperature_meta() -> Mapping[str, Any]:
-        """Perform temperature meta.
-        Used to keep the workflow logic localized and testable."""
-        if _is_available(dataset_meta["z"]):
-            return dataset_meta["z"]
-        if _is_available(dataset_meta["z2"]):
-            return dataset_meta["z2"]
-        return dataset_meta["z"]
-
-    right_role = right_meta.get("axis_type", "primary")
-    third_role = third_meta.get("axis_type", "primary")
-
-    if temp_available and "temperature" not in {right_role, third_role}:
-        right_meta = _temperature_meta()
-        right_role = right_meta.get("axis_type", "primary")
-
-    if deriv_available and "derivative" not in {right_role, third_role}:
-        if third_role != "temperature":
-            third_meta = dataset_meta["y2"]
-        else:
-            if temp_available:
-                right_meta = _temperature_meta()
-                right_role = right_meta.get("axis_type", "primary")
-            third_meta = dataset_meta["y2"]
-        third_role = third_meta.get("axis_type", "primary")
-
-    right_role = right_meta.get("axis_type", "primary")
-    third_role = third_meta.get("axis_type", "primary")
-    if temp_available and "temperature" not in {right_role, third_role}:
-        right_meta = _temperature_meta()
-        right_role = right_meta.get("axis_type", "primary")
-    if temp_available and right_role == "temperature" and not _is_available(right_meta):
-        right_meta = _temperature_meta()
-        right_role = right_meta.get("axis_type", "primary")
-    if temp_available and third_role == "temperature" and not _is_available(third_meta):
-        third_meta = _temperature_meta()
-        third_role = third_meta.get("axis_type", "primary")
+    right_axis_bindings = _resolve_combined_right_axis_bindings(
+        dataset_meta,
+        right_key=right_key,
+        third_key=third_key,
+        temp_axis_active=temp_axis_active,
+        deriv_axis_active=deriv_axis_active,
+    )
+    right_axis_assignment = right_axis_bindings.get("right")
+    third_axis_assignment = right_axis_bindings.get("third")
+    right_role = right_axis_bindings.get("right_role")
+    third_role = right_axis_bindings.get("third_role")
+    temp_axis_position = right_axis_bindings.get("temperature_position")
+    deriv_axis_position = right_axis_bindings.get("derivative_position")
 
     def _axis_role_layer_zorder(
         series_keys: Sequence[str], role_bias: float, fallback: float
@@ -29585,10 +29696,25 @@ def build_combined_triple_axis_figure(
         base_value = max(z_values) if z_values else float(fallback)
         return float(base_value + role_bias)
 
+    right_axis_series_keys: Tuple[str, ...] = ()
+    third_axis_series_keys: Tuple[str, ...] = ()
+    if right_role == "temperature":
+        right_axis_series_keys = ("z", "z2")
+    elif right_role == "derivative":
+        right_axis_series_keys = ("y2",)
+    if third_role == "temperature":
+        third_axis_series_keys = ("z", "z2")
+    elif third_role == "derivative":
+        third_axis_series_keys = ("y2",)
+
     axis_layer_zorders = {
         "left": _axis_role_layer_zorder(("y1", "y3"), role_bias=0.01, fallback=0.0),
-        "right": _axis_role_layer_zorder(("z", "z2"), role_bias=0.02, fallback=0.0),
-        "third": _axis_role_layer_zorder(("y2",), role_bias=0.03, fallback=0.0),
+        "right": _axis_role_layer_zorder(
+            right_axis_series_keys, role_bias=0.02, fallback=0.0
+        ),
+        "third": _axis_role_layer_zorder(
+            third_axis_series_keys, role_bias=0.03, fallback=0.0
+        ),
     }
     axis_layer_zorders["overlay"] = max(axis_layer_zorders.values()) + 1000.0
     legend_layer_zorder = float(axis_layer_zorders["overlay"] + 1000.0)
@@ -29844,22 +29970,23 @@ def build_combined_triple_axis_figure(
 
     axis_for_role: Dict[str, Axes] = {"primary": ax}
     show_derivative_zero_line = False
+    derivative_zero_axis: Optional[Axes] = None
 
-    # Axis role mapping decides which datasets populate the right-side axes so
-    # overlays, legends, and layout rules can target consistent roles.
-    temp_meta = None
-    deriv_meta = None
-    if right_role == "temperature":
-        temp_meta = right_meta
-    if third_role == "temperature" and temp_meta is None:
-        temp_meta = third_meta
-    if right_role == "derivative":
-        deriv_meta = right_meta
-    if third_role == "derivative" and deriv_meta is None:
-        deriv_meta = third_meta
+    right_axis_role = None
+    right_axis_meta = None
+    if isinstance(right_axis_assignment, Mapping):
+        right_axis_role = right_axis_assignment.get("role")
+        right_axis_meta = right_axis_assignment.get("meta")
 
-    # Temperature axis is rendered as a twinned right spine on the primary axis.
-    if temp_meta is not None and _axis_enabled(temp_meta):
+    third_axis_role = None
+    third_axis_meta = None
+    if isinstance(third_axis_assignment, Mapping):
+        third_axis_role = third_axis_assignment.get("role")
+        third_axis_meta = third_axis_assignment.get("meta")
+
+    # Inner-right axis always uses the "right" role, but dataset role can be
+    # either temperature or derivative based on Combined settings.
+    if isinstance(right_axis_meta, Mapping) and _axis_enabled(right_axis_meta):
         ax_temp = ax.twinx()
         try:
             ax_temp._gl260_axis_role = "right"
@@ -29869,75 +29996,85 @@ def build_combined_triple_axis_figure(
         _position_extra_axis(ax_temp, 1.0)
         ax_temp.tick_params(axis="x", which="both", bottom=False, labelbottom=False)
 
-        temp_settings = _axis_settings(temp_meta)
+        right_settings = _axis_settings(right_axis_meta)
 
-        ax_temp.set_ylim(*temp_settings["ylim"])
-        temp_kwargs = {
+        ax_temp.set_ylim(*right_settings["ylim"])
+        right_kwargs = {
             "color": "black",
             "rotation": -90,
-            "labelpad": temp_settings["labelpad"],
+            "labelpad": right_settings["labelpad"],
             "fontsize": label_fontsize,
         }
         if family_value:
-            temp_kwargs["fontfamily"] = family_value
+            right_kwargs["fontfamily"] = family_value
         ax_temp.set_ylabel(
-            _label_or_default(temp_settings["label_key"], temp_meta.get("label", "")),
-            **temp_kwargs,
+            _label_or_default(
+                right_settings["label_key"], right_axis_meta.get("label", "")
+            ),
+            **right_kwargs,
         )
         ax_temp.tick_params(axis="y", labelcolor="black", labelsize=tick_fontsize)
         _apply_tick_font(ax_temp)
         _apply_axis_ticks(
             ax_temp,
-            temp_settings["auto"],
-            temp_settings["maj"],
-            temp_settings["min"],
+            right_settings["auto"],
+            right_settings["maj"],
+            right_settings["min"],
         )
         ax_temp.set_zorder(axis_layer_zorders["right"])
         ax_temp.patch.set_visible(False)
         ax_temp.set_facecolor("none")
-        axis_for_role.setdefault("temperature", ax_temp)
+        if right_axis_role in {"temperature", "derivative"}:
+            axis_for_role[str(right_axis_role)] = ax_temp
+        if right_settings["label_key"] == "derivative":
+            derivative_zero_axis = ax_temp
 
-    # Derivative axis is a second detached right spine to preserve readability.
-    if deriv_meta is not None and _axis_enabled(deriv_meta):
+    # Outer-right axis always uses the "third" role, which may now host either
+    # derivative or temperature depending on user axis-role selection.
+    if isinstance(third_axis_meta, Mapping) and _axis_enabled(third_axis_meta):
         ax_deriv = ax.twinx()
         try:
             ax_deriv._gl260_axis_role = "third"
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
-        # Offset the derivative spine to keep it clear of the temperature axis.
         _position_extra_axis(ax_deriv, deriv_spine_offset)
         ax_deriv.tick_params(axis="x", which="both", bottom=False, labelbottom=False)
 
-        deriv_settings = _axis_settings(deriv_meta)
+        third_settings = _axis_settings(third_axis_meta)
 
-        ax_deriv.set_ylim(*deriv_settings["ylim"])
-        deriv_kwargs = {
+        ax_deriv.set_ylim(*third_settings["ylim"])
+        third_kwargs = {
             "color": "black",
             "rotation": -90,
-            "labelpad": deriv_settings["labelpad"],
+            "labelpad": third_settings["labelpad"],
             "fontsize": label_fontsize,
         }
         if family_value:
-            deriv_kwargs["fontfamily"] = family_value
+            third_kwargs["fontfamily"] = family_value
         ax_deriv.set_ylabel(
-            _label_or_default(deriv_settings["label_key"], deriv_meta.get("label", "")),
-            **deriv_kwargs,
+            _label_or_default(
+                third_settings["label_key"], third_axis_meta.get("label", "")
+            ),
+            **third_kwargs,
         )
         ax_deriv.tick_params(axis="y", labelcolor="black", labelsize=tick_fontsize)
         _apply_tick_font(ax_deriv)
         _apply_axis_ticks(
             ax_deriv,
-            deriv_settings["auto"],
-            deriv_settings["maj"],
-            deriv_settings["min"],
+            third_settings["auto"],
+            third_settings["maj"],
+            third_settings["min"],
         )
-        if deriv_settings["label_key"] == "derivative":
-            show_derivative_zero_line = True
         ax_deriv.set_zorder(axis_layer_zorders["third"])
         ax_deriv.patch.set_visible(False)
         ax_deriv.set_facecolor("none")
-        axis_for_role.setdefault("derivative", ax_deriv)
+        if third_axis_role in {"temperature", "derivative"}:
+            axis_for_role[str(third_axis_role)] = ax_deriv
+        if third_settings["label_key"] == "derivative":
+            derivative_zero_axis = ax_deriv
+
+    show_derivative_zero_line = bool(include_zero_line and derivative_zero_axis is not None)
 
     # Overlay axis carries only cycle markers and must render above all data axes.
     ax_overlay = ax.twinx()
@@ -29973,7 +30110,7 @@ def build_combined_triple_axis_figure(
     _ensure_combined_derivative_zero_line(
         fig,
         ax_overlay,
-        ax_deriv,
+        derivative_zero_axis,
         visible=show_derivative_zero_line,
         zorder=6.0,
     )
@@ -30017,13 +30154,19 @@ def build_combined_triple_axis_figure(
     if temp_axis is not None:
         # Iterate over ("z", "z2") to apply the per-item logic.
         for key in ("z", "z2"):
-            artist = _plot_dataset(temp_axis, dataset_meta[key], axis_role="right")
+            artist = _plot_dataset(
+                temp_axis, dataset_meta[key], axis_role=str(temp_axis_position or "right")
+            )
             if artist is not None:
                 handles.append(artist)
 
     deriv_axis = axis_for_role.get("derivative")
     if deriv_axis is not None:
-        artist = _plot_dataset(deriv_axis, dataset_meta["y2"], axis_role="third")
+        artist = _plot_dataset(
+            deriv_axis,
+            dataset_meta["y2"],
+            axis_role=str(deriv_axis_position or "third"),
+        )
         if artist is not None:
             handles.append(artist)
 
@@ -32913,10 +33056,12 @@ class UnifiedApp(tk.Tk):
 
         self._startup_loading_overlay = None
         self._startup_loading_label = None
+        self._startup_loading_detail_label = None
         self._startup_loading_progress_var = None
         self._startup_loading_bar = None
         self._startup_loading_progress_label = None
         self._startup_loading_progress_value = 0.0
+        self._startup_loading_heartbeat_tick = 0
         self._startup_loading_poll_after_id = None
         self._startup_ui_built = False
         self._startup_plot_stage_two_ready = False
@@ -32924,6 +33069,7 @@ class UnifiedApp(tk.Tk):
         self._startup_tab_warmup_done = False
         self._startup_tab_readiness_reason = ""
         self._startup_restore_state = "pending"
+        self._startup_restore_post_refresh_done = False
         self._install_startup_loading_splash(
             message="Initializing startup...", progress=2.0
         )
@@ -33884,6 +34030,12 @@ class UnifiedApp(tk.Tk):
         self._register_var_default(self.combined_y_right_key, right_key)
         self.combined_y_third_key = tk.StringVar(value=third_key)
         self._register_var_default(self.combined_y_third_key, third_key)
+        self.combined_include_zero_line = tk.BooleanVar(
+            value=initial_combined_include_zero_line
+        )
+        self._register_var_default(
+            self.combined_include_zero_line, initial_combined_include_zero_line
+        )
         self._combined_left_display_var = tk.StringVar()
         self._combined_right_display_var = tk.StringVar()
         self._combined_third_display_var = tk.StringVar()
@@ -34735,8 +34887,8 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
-        width = 420
-        height = 165
+        width = 500
+        height = 230
         try:
             screen_w = int(self.winfo_screenwidth())
             screen_h = int(self.winfo_screenheight())
@@ -34748,6 +34900,7 @@ class UnifiedApp(tk.Tk):
             pass
 
         label = None
+        detail_label = None
         progress_var = None
         progress_bar = None
         progress_label = None
@@ -34763,6 +34916,14 @@ class UnifiedApp(tk.Tk):
                 body, text=str(message or "Starting GL-260..."), anchor="w"
             )
             label.pack(fill="x")
+            detail_label = ttk.Label(
+                body,
+                text="",
+                anchor="w",
+                justify="left",
+                wraplength=460,
+            )
+            detail_label.pack(fill="x", pady=(6, 0))
             progress_var = tk.DoubleVar(master=overlay, value=0.0)
             progress_bar = ttk.Progressbar(
                 body,
@@ -34776,16 +34937,19 @@ class UnifiedApp(tk.Tk):
             progress_label.pack(fill="x", pady=(6, 0))
         except Exception:
             label = None
+            detail_label = None
             progress_var = None
             progress_bar = None
             progress_label = None
 
         self._startup_loading_overlay = overlay
         self._startup_loading_label = label
+        self._startup_loading_detail_label = detail_label
         self._startup_loading_progress_var = progress_var
         self._startup_loading_bar = progress_bar
         self._startup_loading_progress_label = progress_label
         self._startup_loading_progress_value = 0.0
+        self._startup_loading_heartbeat_tick = 0
         self._update_startup_loading_splash_progress(
             progress=progress,
             message=message,
@@ -34804,6 +34968,7 @@ class UnifiedApp(tk.Tk):
         *,
         progress: Optional[float] = None,
         message: Optional[str] = None,
+        detail: Optional[str] = None,
         reset: bool = False,
     ) -> None:
         """Update startup splash message and determinate progress value.
@@ -34816,6 +34981,7 @@ class UnifiedApp(tk.Tk):
         Inputs:
             progress: Optional new progress value in the 0..100 range.
             message: Optional status message shown on the splash.
+            detail: Optional multi-line detail text shown under the main message.
             reset: When True, reset tracked progress before applying updates.
         Outputs:
             None.
@@ -34858,6 +35024,14 @@ class UnifiedApp(tk.Tk):
         if label is not None and message is not None:
             try:
                 label.configure(text=str(message))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        detail_label = getattr(self, "_startup_loading_detail_label", None)
+        if detail_label is not None and (detail is not None or reset):
+            try:
+                detail_label.configure(text=str(detail or ""))
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
@@ -34931,10 +35105,12 @@ class UnifiedApp(tk.Tk):
 
         self._startup_loading_overlay = None
         self._startup_loading_label = None
+        self._startup_loading_detail_label = None
         self._startup_loading_progress_var = None
         self._startup_loading_bar = None
         self._startup_loading_progress_label = None
         self._startup_loading_progress_value = 0.0
+        self._startup_loading_heartbeat_tick = 0
 
     def _startup_visible_tab_widgets(self) -> List[ttk.Frame]:
         """Return notebook-visible startup tab frames in display order.
@@ -35102,6 +35278,35 @@ class UnifiedApp(tk.Tk):
                 return self._set_startup_tab_readiness_failure(
                     "cycle canvas widget unavailable"
                 )
+        sol_tab = getattr(self, "tab_solubility_new", None)
+        if sol_tab is not None and str(sol_tab) in notebook_tabs:
+            timeline_tree = getattr(self, "_sol_cycle_timeline_tree", None)
+            if timeline_tree is None or not getattr(
+                timeline_tree, "winfo_exists", lambda: False
+            )():
+                return self._set_startup_tab_readiness_failure(
+                    "advanced speciation timeline table not ready"
+                )
+            spec_canvas = getattr(self, "_sol_cycle_spec_canvas", None)
+            if spec_canvas is None:
+                return self._set_startup_tab_readiness_failure(
+                    "advanced speciation timeline plot not ready"
+                )
+            try:
+                spec_widget = spec_canvas.get_tk_widget()
+            except Exception:
+                spec_widget = None
+            if spec_widget is None or not getattr(
+                spec_widget, "winfo_exists", lambda: False
+            )():
+                return self._set_startup_tab_readiness_failure(
+                    "advanced speciation timeline canvas unavailable"
+                )
+            try:
+                self._refresh_sol_workflow_layout()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
         self._startup_tab_readiness_reason = ""
         return True
 
@@ -35111,8 +35316,8 @@ class UnifiedApp(tk.Tk):
         Purpose:
             Keep startup splash open until the workspace is interaction-ready.
         Why:
-            Auto-restore can continue in the background, but tabs/listboxes should
-            not become interactive only after delayed focus or tab-cycling events.
+            Splash teardown must wait for restore terminal state and tab readiness
+            so users land in an immediately interactive workspace.
         Inputs:
             None.
         Outputs:
@@ -35139,6 +35344,18 @@ class UnifiedApp(tk.Tk):
         ui_ready = bool(getattr(self, "_startup_ui_built", False))
         tab_warmup_ready = bool(getattr(self, "_startup_tab_warmup_done", False))
         restore_ready = restore_state in {"success", "failed", "skipped"}
+        if restore_ready and not bool(
+            getattr(self, "_startup_restore_post_refresh_done", False)
+        ):
+            try:
+                self._refresh_startup_solubility_views()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            self._startup_restore_post_refresh_done = True
+        restore_post_refresh_ready = bool(
+            getattr(self, "_startup_restore_post_refresh_done", False)
+        )
         toggle_var = getattr(self, "_dev_disable_startup_tab_cycling_var", None)
         if toggle_var is not None:
             try:
@@ -35156,11 +35373,13 @@ class UnifiedApp(tk.Tk):
         if ui_ready:
             progress_target = 62.0
         if restore_ready:
-            progress_target = 94.0
+            progress_target = 84.0
+        if restore_post_refresh_ready:
+            progress_target = 92.0
         if tab_warmup_ready:
             progress_target = 98.0
 
-        if ui_ready and not tab_warmup_ready:
+        if ui_ready and restore_ready and restore_post_refresh_ready and not tab_warmup_ready:
             if disable_tab_cycling:
                 self._update_startup_loading_splash_progress(
                     progress=96.0,
@@ -35187,20 +35406,22 @@ class UnifiedApp(tk.Tk):
             tab_warmup_ready = self._startup_visible_tabs_ready_for_interaction()
             self._startup_tab_warmup_done = bool(tab_warmup_ready)
 
-        if ui_ready and tab_warmup_ready:
+        interaction_ready = False
+        if ui_ready and restore_ready and restore_post_refresh_ready and tab_warmup_ready:
             interaction_ready = self._startup_visible_tabs_ready_for_interaction()
             if interaction_ready:
                 # Explicit startup invariant: splash can close only after readiness.
                 self._startup_tab_warmup_done = True
                 self._finalize_startup_to_data_tab()
-                completion_message = "Startup complete. Opening workspace..."
-                if restore_state == "running":
-                    completion_message = (
-                        "Workspace ready. Restoring last session in background..."
-                    )
                 self._update_startup_loading_splash_progress(
                     progress=100.0,
-                    message=completion_message,
+                    message="Startup complete. Opening workspace...",
+                    detail=(
+                        "[x] Main interface built\n"
+                        "[x] Startup restore finalized\n"
+                        "[x] Advanced Speciation layout refreshed\n"
+                        "[x] Startup tabs ready"
+                    ),
                 )
                 try:
                     overlay.after(60, self._clear_startup_loading_splash)
@@ -35210,25 +35431,55 @@ class UnifiedApp(tk.Tk):
             tab_warmup_ready = False
             self._startup_tab_warmup_done = False
 
+        heartbeat_tick = int(getattr(self, "_startup_loading_heartbeat_tick", 0) or 0)
+        heartbeat_tick += 1
+        self._startup_loading_heartbeat_tick = heartbeat_tick
+
         if not ui_ready:
+            blocking_reason = "waiting for main interface build to finish"
             message = "Building main interface..."
-        elif not tab_warmup_ready:
-            if disable_tab_cycling or bool(
-                getattr(self, "_startup_tab_warmup_done", False)
-            ):
-                message = self._startup_tab_readiness_message()
-            else:
-                message = "Warming startup tabs..."
         elif not restore_ready:
             if restore_state == "running":
-                message = "Workspace ready. Restoring last session in background..."
+                blocking_reason = "waiting for startup restore task to reach terminal state"
+                message = "Restoring previous session..."
+            elif restore_state == "pending":
+                blocking_reason = "waiting for restore source resolution"
+                message = "Preparing startup restore..."
             else:
+                blocking_reason = "waiting for startup restore finalization"
                 message = "Finalizing startup restore..."
-        else:
+        elif not restore_post_refresh_ready:
+            blocking_reason = "refreshing Advanced Speciation timeline layout"
+            message = "Applying restored workspace layout..."
+        elif not tab_warmup_ready:
+            blocking_reason = self._startup_tab_readiness_message()
+            message = (
+                self._startup_tab_readiness_message()
+                if disable_tab_cycling
+                else "Warming startup tabs..."
+            )
+        elif not interaction_ready:
+            blocking_reason = "waiting for final interaction checks"
             message = "Finalizing startup checks..."
+        else:
+            blocking_reason = "waiting for splash teardown callback"
+            message = "Finalizing startup checks..."
+
+        checklist_lines = [
+            f"[{'x' if ui_ready else ' '}] Main interface built",
+            f"[{'x' if restore_ready else ' '}] Startup restore finalized",
+            f"[{'x' if restore_post_refresh_ready else ' '}] Advanced Speciation layout refreshed",
+            f"[{'x' if tab_warmup_ready else ' '}] Startup tabs ready",
+        ]
+        detail_message = (
+            "\n".join(checklist_lines)
+            + f"\nHeartbeat {heartbeat_tick}: {blocking_reason}"
+        )
+
         self._update_startup_loading_splash_progress(
             progress=progress_target,
             message=message,
+            detail=detail_message,
         )
         try:
             self._startup_loading_poll_after_id = self.after(
@@ -35424,11 +35675,14 @@ class UnifiedApp(tk.Tk):
         if normalized_state not in {"pending", "running", "success", "failed", "skipped"}:
             normalized_state = "pending"
         self._startup_restore_state = normalized_state
+        if normalized_state in {"pending", "running"}:
+            self._startup_restore_post_refresh_done = False
 
         if normalized_state == "pending":
             self._update_startup_loading_splash_progress(
                 progress=40.0,
                 message="Preparing startup restore...",
+                detail="Restore source check:\n[ ] Autosave workspace profile\n[ ] Legacy workbook fallback",
             )
             return
         if normalized_state == "running":
@@ -35437,20 +35691,27 @@ class UnifiedApp(tk.Tk):
                 filename = os.path.basename(path or "")
             except Exception:
                 filename = ""
-            message = (
-                f"Restoring last session from {filename}..."
-                if filename
-                else "Restoring last session workbook..."
-            )
+            if filename == "_autosave_last_workspace.json":
+                message = "Restoring autosave workspace profile..."
+                detail = "Applying saved workspace state.\nThis can take a moment while datasets and UI state are restored."
+            else:
+                message = (
+                    f"Restoring last session workbook from {filename}..."
+                    if filename
+                    else "Restoring last session workbook..."
+                )
+                detail = "Reading workbook metadata in the background and preparing the last used sheet."
             self._update_startup_loading_splash_progress(
                 progress=70.0,
                 message=message,
+                detail=detail,
             )
             return
         if normalized_state == "success":
             self._update_startup_loading_splash_progress(
                 progress=90.0,
                 message="Last session restored.",
+                detail="Restore stage complete. Verifying tab readiness before startup can finish.",
             )
             return
         if normalized_state == "failed":
@@ -35458,35 +35719,257 @@ class UnifiedApp(tk.Tk):
             self._update_startup_loading_splash_progress(
                 progress=90.0,
                 message="Restore failed. Continuing startup...",
+                detail="Startup will continue with the current workspace state.",
             )
             return
         self._update_startup_loading_splash_progress(
             progress=90.0,
             message="No previous session to restore.",
+            detail="Startup will continue with default/session-local state.",
         )
 
-    def _restore_last_session_async(self):
-        """Start asynchronous workbook restore for the previous session.
+    def _startup_autosave_profile_path(self) -> Optional[Path]:
+        """Return the startup autosave profile path when the profiles directory exists.
 
         Purpose:
-            Restore the most recently used workbook/sheet without blocking launch.
+            Resolve the autosave profile file checked during startup restore.
         Why:
-            Reading workbook metadata/data can be expensive and should run in a
-            background worker while the startup splash remains responsive.
+            Startup restore is autosave-first and needs one deterministic path source.
+        Inputs:
+            None.
+        Outputs:
+            Optional path to `profiles/_autosave_last_workspace.json`.
+        Side Effects:
+            May create the profiles directory via `_profile_storage_dir`.
+        Exceptions:
+            Returns None when profile storage cannot be initialized.
+        """
+        profiles_dir = self._profile_storage_dir()
+        if profiles_dir is None:
+            return None
+        return profiles_dir / "_autosave_last_workspace.json"
+
+    def _read_profile_document_silent(
+        self, path: Path
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[BaseException]]:
+        """Read a profile document without showing dialogs.
+
+        Purpose:
+            Load startup autosave data while splash gating is still in progress.
+        Why:
+            Startup restore should fail/skip cleanly without blocking with modal dialogs.
+        Inputs:
+            path: Profile path to read.
+        Outputs:
+            Tuple of `(document, error)` where `document` is a dict on success.
+        Side Effects:
+            Reads JSON from disk.
+        Exceptions:
+            Parsing/IO errors are returned in the tuple instead of raised.
+        """
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except Exception as exc:
+            return None, exc
+        if not isinstance(payload, dict):
+            return None, ValueError("Profile data is invalid.")
+        return payload, None
+
+    def _restore_startup_autosave_profile(
+        self, autosave_path: Path
+    ) -> Tuple[str, Optional[BaseException], str]:
+        """Restore startup workspace from autosave profile with non-blocking policy.
+
+        Purpose:
+            Apply autosaved workspace state during startup before legacy fallback logic.
+        Why:
+            Startup restore priority is autosave profile first, with missing datasets
+            treated as a skip condition instead of an interactive relink prompt.
+        Inputs:
+            autosave_path: Path to `_autosave_last_workspace.json`.
+        Outputs:
+            Tuple of `(state, error, status_text)` where state is `success`, `failed`,
+            or `skipped`.
+        Side Effects:
+            May update workspace state by invoking `_restore_workspace_from_profile`.
+        Exceptions:
+            Exceptions are captured and returned instead of raised.
+        """
+        profile_doc, read_error = self._read_profile_document_silent(autosave_path)
+        if profile_doc is None:
+            error_text = f"Autosave profile could not be read: {read_error}"
+            return "failed", read_error, error_text
+
+        state = self._deserialize_workspace_state(profile_doc.get("payload") or {})
+        if not state:
+            error = ValueError("Autosave payload is invalid.")
+            return "failed", error, "Autosave profile payload is invalid."
+
+        dataset_required = bool(state.get("dataset_required", True))
+        dataset_path = str(state.get("dataset_path") or "").strip()
+        if dataset_required and (not dataset_path or not os.path.exists(dataset_path)):
+            if dataset_path:
+                reason = f"Autosave skipped: dataset not found ({dataset_path})."
+            else:
+                reason = "Autosave skipped: dataset path missing in autosave payload."
+            return "skipped", None, reason
+
+        try:
+            restored = bool(self._restore_workspace_from_profile(profile_doc))
+        except Exception as exc:
+            return "failed", exc, f"Autosave restore failed: {exc}"
+        if not restored:
+            error = RuntimeError("Autosave restore did not complete successfully.")
+            return "failed", error, "Autosave restore did not complete successfully."
+        return "success", None, "Autosave workspace restored."
+
+    def _refresh_startup_solubility_views(self) -> None:
+        """Refresh Advanced Speciation workflow/timeline layout during startup gating.
+
+        Purpose:
+            Ensure the Advanced Speciation timeline table and plot are visible before
+            startup splash teardown.
+        Why:
+            Deferred geometry updates can leave timeline widgets hidden until a later
+            tab switch unless layout and timeline draws are explicitly refreshed.
         Inputs:
             None.
         Outputs:
             None.
         Side Effects:
-            Updates startup restore state, seeds file entry/status UI, and submits
-            the restore worker to `TkTaskRunner`.
+            Re-renders current workflow timeline view and flushes workflow layout.
         Exceptions:
-            Missing or malformed file paths short-circuit to a skipped restore
-            state; unexpected preflight errors are marked failed so startup can
+            Best-effort guards keep startup resilient when widgets are unavailable.
+        """
+        try:
+            workflow_key = self._current_solubility_workflow()
+        except Exception:
+            workflow_key = SOL_WORKFLOW_DEFAULT
+        try:
+            result = self._get_cycle_result_for_workflow(workflow_key) or {}
+            timeline = result.get("timeline") or []
+            self._update_cycle_spec_view(timeline, workflow_key=workflow_key)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            self._refresh_sol_workflow_layout()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _complete_startup_autosave_restore_when_ready(
+        self, autosave_path_text: str, status_text: str
+    ) -> None:
+        """Finalize autosave startup restore only after pending apply cycles settle.
+
+        Purpose:
+            Hold startup restore in a running state until profile-apply async work
+            has completed.
+        Why:
+            Autosave profile restore can trigger deferred column/data apply paths,
+            so startup should not mark restore complete until those paths settle.
+        Inputs:
+            autosave_path_text: Autosave profile path used for status messaging.
+            status_text: Final status label text for successful restore.
+        Outputs:
+            None.
+        Side Effects:
+            Updates startup restore state, refreshes status messaging, and schedules
+            polling callbacks until pending apply work is complete.
+        Exceptions:
+            Best-effort guards prevent callback failures from stalling startup.
+        """
+        if bool(getattr(self, "_is_applying_columns", False)) or bool(
+            getattr(self, "_profile_restore_pending", None)
+        ):
+            self._mark_startup_restore_state("running", path=autosave_path_text)
+            self._update_startup_loading_splash_progress(
+                progress=78.0,
+                message="Applying autosave workspace...",
+                detail=(
+                    "Autosave profile loaded.\n"
+                    "Waiting for column/data restore to finish before startup can continue."
+                ),
+            )
+            try:
+                self.after(
+                    90,
+                    lambda: self._complete_startup_autosave_restore_when_ready(
+                        autosave_path_text, status_text
+                    ),
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                self._mark_startup_restore_state("success", path=autosave_path_text)
+            return
+        self._mark_startup_restore_state("success", path=autosave_path_text)
+        try:
+            self.lbl_status.config(text=status_text)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            self._refresh_startup_solubility_views()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _restore_last_session_async(self):
+        """Start asynchronous workbook restore for the previous session.
+
+        Purpose:
+            Restore the previous session during startup using autosave-first policy.
+        Why:
+            Startup now prioritizes workspace autosave restore and falls back to the
+            legacy workbook path only when autosave is unavailable.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Updates startup restore state, applies autosave profile state when
+            available, or submits legacy workbook restore work to `TkTaskRunner`.
+        Exceptions:
+            Missing dataset paths in autosave payloads are treated as skipped
+            restore states; unexpected errors are marked failed so startup can
             continue without a stuck pending gate.
         """
         path_snapshot = ""
         last_sheet_snapshot = ""
+        autosave_path = self._startup_autosave_profile_path()
+        if autosave_path is not None and autosave_path.exists():
+            autosave_path_text = str(autosave_path)
+            self._startup_restore_path = autosave_path_text
+            self._mark_startup_restore_state("running", path=autosave_path_text)
+            try:
+                self.lbl_status.config(text="Restoring autosave workspace...")
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            restore_state, restore_error, restore_status = (
+                self._restore_startup_autosave_profile(autosave_path)
+            )
+            self._startup_restore_task_id = None
+            self._startup_restore_path = None
+            if restore_state == "success":
+                self._complete_startup_autosave_restore_when_ready(
+                    autosave_path_text, restore_status
+                )
+            else:
+                self._mark_startup_restore_state(
+                    restore_state,
+                    path=autosave_path_text,
+                    error=restore_error,
+                )
+                try:
+                    self.lbl_status.config(text=restore_status)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            return
+
         try:
             raw_path = settings.get("last_file_path")
             path_candidate = ""
@@ -35764,6 +36247,13 @@ class UnifiedApp(tk.Tk):
                     "restored automatically.\n"
                     f"Error: {dataframe_error}",
                 )
+
+        try:
+            self._refresh_startup_solubility_views()
+            self._startup_restore_post_refresh_done = True
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
 
     def _load_sheets_from_current_path(self):
         """Load sheets from current path.
@@ -52908,6 +53398,7 @@ class UnifiedApp(tk.Tk):
             ("combined_y_left_key", "combined_y_left_key"),
             ("combined_y_right_key", "combined_y_right_key"),
             ("combined_y_third_key", "combined_y_third_key"),
+            ("combined_include_zero_line", "combined_include_zero_line"),
             ("combined_center_plot_legend", "center_combined_plot_legend"),
         )
         # Iterate over the key map to ensure every profile-scoped setting is included.
@@ -53178,6 +53669,7 @@ class UnifiedApp(tk.Tk):
             ("combined_y_left_key", "combined_y_left_key"),
             ("combined_y_right_key", "combined_y_right_key"),
             ("combined_y_third_key", "combined_y_third_key"),
+            ("combined_include_zero_line", "combined_include_zero_line"),
             ("combined_x_axis_label", "combined_x_axis_label"),
             ("combined_primary_axis_label", "combined_primary_axis_label"),
             ("combined_deriv_axis_label", "combined_deriv_axis_label"),
@@ -55550,6 +56042,9 @@ class UnifiedApp(tk.Tk):
         )
         self.combined_cycle_legend_ref_corner.set(ref_corner_value)
         settings["combined_cycle_legend_ref_corner"] = ref_corner_value
+        settings["combined_include_zero_line"] = bool(
+            self.combined_include_zero_line.get()
+        )
 
         try:
             self._mark_plot_layout_dirty("fig_combined_triple_axis")
@@ -58494,6 +58989,11 @@ class UnifiedApp(tk.Tk):
                 "third", self._combined_third_display_var.get()
             ),
         )
+        ttk.Checkbutton(
+            lf_combined_axis,
+            text="Include y=0 line",
+            variable=self.combined_include_zero_line,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(2, 4))
 
         # Ticks
 
@@ -70909,6 +71409,82 @@ class UnifiedApp(tk.Tk):
             return text
         return SOL_WORKFLOW_DEFAULT
 
+    def _refresh_sol_workflow_layout(self, *, canvas_width: Optional[int] = None) -> None:
+        """Refresh Advanced Speciation workflow geometry and timeline visibility.
+
+        Purpose:
+            Recompute workflow notebook height and scrollable-canvas geometry after
+            timeline/table updates or workflow-tab switches.
+        Why:
+            Deferred geometry in the Advanced Speciation tab can leave timeline
+            widgets hidden until a later tab switch unless the layout is flushed.
+        Inputs:
+            canvas_width: Optional explicit canvas width from `<Configure>` events.
+        Outputs:
+            None.
+        Side Effects:
+            Updates workflow notebook height, refreshes scrollregion metrics, and
+            flushes cycle timeline widget geometry.
+        Exceptions:
+            Best-effort guards avoid interrupting UI flows when widgets are absent.
+        """
+        workflow_nb = getattr(self, "_sol_workflow_nb", None)
+        if workflow_nb is not None:
+            try:
+                workflow_nb.update_idletasks()
+                current_tab = workflow_nb.select()
+                if current_tab:
+                    tab_widget = workflow_nb.nametowidget(current_tab)
+                    tab_height = int(tab_widget.winfo_reqheight())
+                    if tab_height > 0:
+                        workflow_nb.configure(height=tab_height + 5)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        scroll_canvas = getattr(self, "_sol_scroll_canvas", None)
+        scroll_inner = getattr(self, "_sol_scroll_inner", None)
+        scroll_window_id = getattr(self, "_sol_scroll_window_id", None)
+        if (
+            scroll_canvas is not None
+            and scroll_window_id is not None
+            and scroll_inner is not None
+        ):
+            try:
+                width_value = canvas_width
+                if width_value is None:
+                    width_value = int(scroll_canvas.winfo_width())
+                if width_value is not None and int(width_value) > 0:
+                    scroll_canvas.itemconfigure(scroll_window_id, width=int(width_value))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            try:
+                scroll_canvas.configure(scrollregion=scroll_canvas.bbox("all"))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        timeline_tree = getattr(self, "_sol_cycle_timeline_tree", None)
+        if timeline_tree is not None:
+            try:
+                timeline_tree.update_idletasks()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        spec_canvas = getattr(self, "_sol_cycle_spec_canvas", None)
+        if spec_canvas is not None:
+            try:
+                spec_canvas.draw_idle()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        try:
+            self.update_idletasks()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
     def _cycle_state_for(self, workflow_key: Optional[str] = None) -> Dict[str, Any]:
         """Perform cycle state for.
         Used to keep the workflow logic localized and testable."""
@@ -71004,6 +71580,11 @@ class UnifiedApp(tk.Tk):
                 frame.grid()
             else:
                 frame.grid_remove()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            self._refresh_sol_workflow_layout()
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
@@ -73069,12 +73650,15 @@ class UnifiedApp(tk.Tk):
         inner = ttk.Frame(canvas)
         window = canvas.create_window((0, 0), window=inner, anchor="nw")
         inner.grid_columnconfigure(0, weight=1)
+        self._sol_scroll_canvas = canvas
+        self._sol_scroll_inner = inner
+        self._sol_scroll_window_id = window
 
         # Closure captures _build_tab_solubility_new state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _build_tab_solubility_new.
         def _refresh_scroll(_event=None):
             """Refresh scroll.
             Used to sync scroll with current settings."""
-            canvas.configure(scrollregion=canvas.bbox("all"))
+            self._refresh_sol_workflow_layout()
 
         inner.bind("<Configure>", _refresh_scroll)
 
@@ -73082,7 +73666,7 @@ class UnifiedApp(tk.Tk):
         def _expand_width(event):
             """Perform expand width.
             Used to keep the workflow logic localized and testable."""
-            canvas.itemconfigure(window, width=event.width)
+            self._refresh_sol_workflow_layout(canvas_width=getattr(event, "width", None))
 
         canvas.bind("<Configure>", _expand_width)
 
@@ -73092,17 +73676,35 @@ class UnifiedApp(tk.Tk):
         def _bind_mousewheel(widget):
             """Perform bind mousewheel.
             Used to keep the workflow logic localized and testable."""
-            widget.bind(
-                "<MouseWheel>",
-                lambda evt: canvas.yview_scroll(int(-1 * (evt.delta / 120)), "units"),
-                add="+",
-            )
-            widget.bind(
-                "<Button-4>", lambda _event: canvas.yview_scroll(-1, "units"), add="+"
-            )
-            widget.bind(
-                "<Button-5>", lambda _event: canvas.yview_scroll(1, "units"), add="+"
-            )
+
+            def _scroll_canvas(event: Any) -> Optional[str]:
+                """Route wheel events to the solubility canvas when child widgets do not own scrolling."""
+                if self._widget_owns_vertical_scroll(getattr(event, "widget", None)):
+                    return None
+                delta = int(getattr(event, "delta", 0) or 0)
+                step = 0
+                if delta != 0:
+                    step = -1 if delta > 0 else 1
+                    if abs(delta) >= 120:
+                        step = int(-delta / 120)
+                else:
+                    num = int(getattr(event, "num", 0) or 0)
+                    if num == 4:
+                        step = -1
+                    elif num == 5:
+                        step = 1
+                if step == 0:
+                    return None
+                try:
+                    canvas.yview_scroll(step, "units")
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    return None
+                return "break"
+
+            widget.bind("<MouseWheel>", _scroll_canvas, add="+")
+            widget.bind("<Button-4>", _scroll_canvas, add="+")
+            widget.bind("<Button-5>", _scroll_canvas, add="+")
             # Iterate over widget.winfo_children() to apply the per-item logic.
             for child in widget.winfo_children():
                 _bind_mousewheel(child)
@@ -73193,25 +73795,6 @@ class UnifiedApp(tk.Tk):
                 extra=workflow_meta.get("input_extra_fields"),
             )
 
-        # Closure captures _build_tab_solubility_new local context to keep helper logic scoped and invoked directly within _build_tab_solubility_new.
-        def _adjust_sol_workflow_height():
-            """Perform adjust sol workflow height.
-            Used to keep the workflow logic localized and testable."""
-            nb = workflow_nb
-            current = nb.select()
-            if not current:
-                return
-            try:
-                nb.update_idletasks()
-                tab = nb.nametowidget(current)
-                height = tab.winfo_reqheight()
-                if height <= 0:
-                    return
-                nb.configure(height=height + 5)
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-
         # Closure captures _build_tab_solubility_new state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _build_tab_solubility_new.
         def _on_workflow_tab_changed(_event=None):
             """Handle workflow tab changed.
@@ -73239,10 +73822,10 @@ class UnifiedApp(tk.Tk):
             )
             if workflow_key == "Planning":
                 self._refresh_planning_model_fields_visibility()
-            _adjust_sol_workflow_height()
+            self._refresh_sol_workflow_layout()
 
         workflow_nb.bind("<<NotebookTabChanged>>", _on_workflow_tab_changed)
-        self.after_idle(_adjust_sol_workflow_height)
+        self.after_idle(self._refresh_sol_workflow_layout)
 
         # Closure captures _build_tab_solubility_new local context to keep helper logic scoped and invoked directly within _build_tab_solubility_new.
         def _ensure_sol_var(key: str, default: str = "") -> tk.StringVar:
@@ -75427,6 +76010,11 @@ class UnifiedApp(tk.Tk):
         self._update_cycle_spec_view(
             timeline, workflow_key=workflow_key or self._current_solubility_workflow()
         )
+        try:
+            self._refresh_sol_workflow_layout()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
 
     def _collect_planning_timeline_legend_entries(
         self, axes: Sequence[Any]
@@ -75945,15 +76533,20 @@ class UnifiedApp(tk.Tk):
                     if co2_to_target_value is not None:
                         extras.append(f"CO2 to target {co2_to_target_value:.2f} g")
                     line += " | " + ", ".join(extras)
-        if warnings:
-            line += f" (warnings: {'; '.join(warnings)})"
-        callout.insert("end", line + "\n")
+                if warnings:
+                    line += f" (warnings: {'; '.join(warnings)})"
+                callout.insert("end", line + "\n")
         callout.configure(state="disabled")
         try:
             if stick_to_bottom:
                 callout.see("end")
             else:
                 callout.yview_moveto(preserve_top)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            self._refresh_sol_workflow_layout()
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
@@ -80467,6 +81060,7 @@ class UnifiedApp(tk.Tk):
             try:
                 if bar is not None:
                     bar.stop()
+                self._refresh_sol_workflow_layout()
                 overlay.place_forget()
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
@@ -93313,9 +93907,11 @@ class UnifiedApp(tk.Tk):
         show_cycle_markers = bool(args[-3])
         show_cycle_legend = bool(args[-2])
         include_moles_core = bool(args[-1])
+        include_zero_line = bool(self.combined_include_zero_line.get())
         settings["show_cycle_markers_on_core_plots"] = bool(show_cycle_markers)
         settings["show_cycle_legend_on_core_plots"] = bool(show_cycle_legend)
         settings["include_moles_in_core_plot_legend"] = bool(include_moles_core)
+        settings["combined_include_zero_line"] = include_zero_line
         legend_anchor = getattr(self, "_combined_legend_anchor", None)
         cycle_legend_anchor = getattr(self, "_combined_cycle_legend_anchor", None)
         legend_loc = getattr(self, "_combined_legend_loc", None)
@@ -93445,6 +94041,7 @@ class UnifiedApp(tk.Tk):
             "show_cycle_markers": show_cycle_markers,
             "show_cycle_legend": show_cycle_legend,
             "include_moles_core": include_moles_core,
+            "include_zero_line": include_zero_line,
             "legend_anchor": legend_anchor,
             "cycle_legend_anchor": cycle_legend_anchor,
             "legend_loc": legend_loc,
@@ -93993,6 +94590,7 @@ class UnifiedApp(tk.Tk):
                     show_cycle_markers_on_core_plots=config.get("show_cycle_markers"),
                     show_cycle_legend_on_core_plots=config.get("show_cycle_legend"),
                     include_moles_in_core_plot_legend=config.get("include_moles_core"),
+                    include_zero_line=config.get("include_zero_line", True),
                     legend_anchor=config.get("legend_anchor"),
                     cycle_legend_anchor=config.get("cycle_legend_anchor"),
                     legend_loc=config.get("legend_loc"),
@@ -94209,51 +94807,80 @@ class UnifiedApp(tk.Tk):
             Used to gate conditional behavior in the workflow."""
             return bool(meta.get("series") is not None and meta.get("selected"))
 
+        def _axis_settings(meta: Mapping[str, Any]) -> Dict[str, Any]:
+            """Resolve axis limits/ticks/label metadata for one combined-axis dataset."""
+            axis_kind = meta.get("axis_type", "primary")
+            if axis_kind == "temperature":
+                return {
+                    "ylim": (twin_y_min, twin_y_max),
+                    "auto": auto_temp_ticks,
+                    "maj": twin_maj_tick,
+                    "min": twin_min_tick,
+                    "label_key": "temperature",
+                    "labelpad": temp_labelpad,
+                }
+            if axis_kind == "derivative":
+                return {
+                    "ylim": (deriv_y_min, deriv_y_max),
+                    "auto": auto_deriv_ticks,
+                    "maj": deriv_maj_tick,
+                    "min": deriv_min_tick,
+                    "label_key": "derivative",
+                    "labelpad": deriv_labelpad,
+                }
+            return {
+                "ylim": (min_y, max_y),
+                "auto": auto_y_ticks,
+                "maj": ymaj_tick,
+                "min": ymin_tick,
+                "label_key": "primary",
+                "labelpad": primary_labelpad,
+            }
+
         temp_axis_active = bool(_enable_temp_axis) and (
             _is_available(dataset_meta["z"]) or _is_available(dataset_meta["z2"])
         )
         deriv_axis_active = bool(_enable_deriv_axis) and _is_available(dataset_meta["y2"])
 
-        right_meta = dataset_meta.get(right_key, dataset_meta["z"])
-        third_meta = dataset_meta.get(third_key, dataset_meta["y2"])
-        temp_available = _is_available(dataset_meta["z"]) or _is_available(dataset_meta["z2"])
-        deriv_available = _is_available(dataset_meta["y2"])
+        def _axis_enabled(meta: Mapping[str, Any]) -> bool:
+            """Evaluate whether a combined-axis dataset should render on reuse.
 
-        def _temperature_meta() -> Mapping[str, Any]:
-            """Perform temperature meta.
-            Used to keep the workflow logic localized and testable."""
-            if _is_available(dataset_meta["z"]):
-                return dataset_meta["z"]
-            if _is_available(dataset_meta["z2"]):
-                return dataset_meta["z2"]
-            return dataset_meta["z"]
+            Purpose:
+                Apply axis-role visibility gating for right/third axis datasets.
+            Why:
+                Reuse updates must mirror full-build axis enable rules so role swaps
+                and axis toggles stay consistent and do not raise scope errors.
+            Inputs:
+                meta: Dataset metadata dict for one combined-axis candidate.
+            Outputs:
+                True when the dataset is selected, has series data, and its axis
+                role is currently active; otherwise False.
+            Side Effects:
+                None.
+            Exceptions:
+                None; missing keys are treated as inactive defaults.
+            """
+            axis_kind = meta.get("axis_type", "primary")
+            has_series = meta.get("series") is not None
+            if not has_series or not meta.get("selected"):
+                return False
+            if axis_kind == "temperature":
+                return temp_axis_active
+            if axis_kind == "derivative":
+                return deriv_axis_active
+            return True
 
-        right_role = right_meta.get("axis_type", "primary")
-        third_role = third_meta.get("axis_type", "primary")
-        if temp_available and "temperature" not in {right_role, third_role}:
-            right_meta = _temperature_meta()
-            right_role = right_meta.get("axis_type", "primary")
-        if temp_available and right_role == "temperature" and not _is_available(right_meta):
-            right_meta = _temperature_meta()
-            right_role = right_meta.get("axis_type", "primary")
-        if temp_available and third_role == "temperature" and not _is_available(third_meta):
-            third_meta = _temperature_meta()
-            third_role = third_meta.get("axis_type", "primary")
-            right_role = right_meta.get("axis_type", "primary")
-        if deriv_available and "derivative" not in {right_role, third_role}:
-            if third_role != "temperature":
-                third_meta = dataset_meta["y2"]
-            else:
-                if temp_available:
-                    right_meta = _temperature_meta()
-                    right_role = right_meta.get("axis_type", "primary")
-                third_meta = dataset_meta["y2"]
-            third_role = third_meta.get("axis_type", "primary")
-
-        right_role = right_meta.get("axis_type", "primary")
-        third_role = third_meta.get("axis_type", "primary")
-        if temp_available and "temperature" not in {right_role, third_role}:
-            right_meta = _temperature_meta()
+        right_axis_bindings = _resolve_combined_right_axis_bindings(
+            dataset_meta,
+            right_key=right_key,
+            third_key=third_key,
+            temp_axis_active=temp_axis_active,
+            deriv_axis_active=deriv_axis_active,
+        )
+        right_axis_assignment = right_axis_bindings.get("right")
+        third_axis_assignment = right_axis_bindings.get("third")
+        right_role = right_axis_bindings.get("right_role")
+        third_role = right_axis_bindings.get("third_role")
 
         default_zorders = {"y1": 2, "y3": 1, "y2": 3, "z": 3, "z2": 3}
         resolved_trace_zorders: Dict[str, float] = {}
@@ -94299,14 +94926,27 @@ class UnifiedApp(tk.Tk):
             base_value = max(z_values) if z_values else float(fallback)
             return float(base_value + role_bias)
 
+        right_axis_series_keys: Tuple[str, ...] = ()
+        third_axis_series_keys: Tuple[str, ...] = ()
+        if right_role == "temperature":
+            right_axis_series_keys = ("z", "z2")
+        elif right_role == "derivative":
+            right_axis_series_keys = ("y2",)
+        if third_role == "temperature":
+            third_axis_series_keys = ("z", "z2")
+        elif third_role == "derivative":
+            third_axis_series_keys = ("y2",)
+
         axis_layer_zorders = {
             "left": _axis_role_layer_zorder(
                 ("y1", "y3"), role_bias=0.01, fallback=0.0
             ),
             "right": _axis_role_layer_zorder(
-                ("z", "z2"), role_bias=0.02, fallback=0.0
+                right_axis_series_keys, role_bias=0.02, fallback=0.0
             ),
-            "third": _axis_role_layer_zorder(("y2",), role_bias=0.03, fallback=0.0),
+            "third": _axis_role_layer_zorder(
+                third_axis_series_keys, role_bias=0.03, fallback=0.0
+            ),
         }
         axis_layer_zorders["overlay"] = max(axis_layer_zorders.values()) + 1000.0
         legend_layer_zorder = float(axis_layer_zorders["overlay"] + 1000.0)
@@ -94411,20 +95051,34 @@ class UnifiedApp(tk.Tk):
             ax_overlay.patch.set_visible(False)
             ax_overlay.set_facecolor("none")
 
+        right_axis_meta = None
+        if isinstance(right_axis_assignment, Mapping):
+            right_axis_meta = right_axis_assignment.get("meta")
+        right_axis_settings = (
+            _axis_settings(right_axis_meta)
+            if isinstance(right_axis_meta, Mapping)
+            else None
+        )
+        right_axis_visible = bool(
+            isinstance(right_axis_meta, Mapping) and _axis_enabled(right_axis_meta)
+        )
         if ax_temp is not None:
             try:
-                ax_temp.set_visible(bool(temp_axis_active))
+                ax_temp.set_visible(right_axis_visible)
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
-            if temp_axis_active:
-                ax_temp.set_ylim(twin_y_min, twin_y_max)
+            if right_axis_visible and isinstance(right_axis_settings, Mapping):
+                ax_temp.set_ylim(*right_axis_settings["ylim"])
                 ax_temp.set_zorder(axis_layer_zorders["right"])
                 ax_temp.patch.set_visible(False)
                 ax_temp.set_facecolor("none")
                 ax_temp.set_ylabel(
-                    _label_or_default("temperature", right_meta.get("label", "")),
-                    labelpad=temp_labelpad,
+                    _label_or_default(
+                        right_axis_settings["label_key"],
+                        right_axis_meta.get("label", ""),
+                    ),
+                    labelpad=right_axis_settings["labelpad"],
                     fontsize=label_fontsize,
                     fontfamily=family_value if family_value else None,
                     rotation=-90,
@@ -94432,20 +95086,34 @@ class UnifiedApp(tk.Tk):
                 )
                 ax_temp.tick_params(axis="y", labelcolor="black", labelsize=tick_fontsize)
 
+        third_axis_meta = None
+        if isinstance(third_axis_assignment, Mapping):
+            third_axis_meta = third_axis_assignment.get("meta")
+        third_axis_settings = (
+            _axis_settings(third_axis_meta)
+            if isinstance(third_axis_meta, Mapping)
+            else None
+        )
+        third_axis_visible = bool(
+            isinstance(third_axis_meta, Mapping) and _axis_enabled(third_axis_meta)
+        )
         if ax_deriv is not None:
             try:
-                ax_deriv.set_visible(bool(deriv_axis_active))
+                ax_deriv.set_visible(third_axis_visible)
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
-            if deriv_axis_active:
-                ax_deriv.set_ylim(deriv_y_min, deriv_y_max)
+            if third_axis_visible and isinstance(third_axis_settings, Mapping):
+                ax_deriv.set_ylim(*third_axis_settings["ylim"])
                 ax_deriv.set_zorder(axis_layer_zorders["third"])
                 ax_deriv.patch.set_visible(False)
                 ax_deriv.set_facecolor("none")
                 ax_deriv.set_ylabel(
-                    _label_or_default("derivative", third_meta.get("label", "")),
-                    labelpad=deriv_labelpad,
+                    _label_or_default(
+                        third_axis_settings["label_key"],
+                        third_axis_meta.get("label", ""),
+                    ),
+                    labelpad=third_axis_settings["labelpad"],
                     fontsize=label_fontsize,
                     fontfamily=family_value if family_value else None,
                     rotation=-90,
@@ -94453,15 +95121,29 @@ class UnifiedApp(tk.Tk):
                 )
                 ax_deriv.tick_params(axis="y", labelcolor="black", labelsize=tick_fontsize)
 
+        derivative_zero_axis = None
+        if (
+            isinstance(right_axis_settings, Mapping)
+            and right_axis_visible
+            and right_axis_settings.get("label_key") == "derivative"
+            and ax_temp is not None
+        ):
+            derivative_zero_axis = ax_temp
+        if (
+            isinstance(third_axis_settings, Mapping)
+            and third_axis_visible
+            and third_axis_settings.get("label_key") == "derivative"
+            and ax_deriv is not None
+        ):
+            derivative_zero_axis = ax_deriv
+
         show_derivative_zero_line = bool(
-            ax_deriv is not None
-            and deriv_axis_active
-            and str(third_role).strip().lower() == "derivative"
+            config.get("include_zero_line", True) and derivative_zero_axis is not None
         )
         _ensure_combined_derivative_zero_line(
             fig,
             ax_overlay,
-            ax_deriv,
+            derivative_zero_axis,
             visible=show_derivative_zero_line,
             zorder=6.0,
         )
@@ -94478,10 +95160,28 @@ class UnifiedApp(tk.Tk):
                 axis="both", which="major", labelcolor="black", labelsize=tick_fontsize
             )
 
-        if ax_temp is not None and temp_axis_active:
-            _apply_axis_ticks(ax_temp, auto_temp_ticks, twin_maj_tick, twin_min_tick)
-        if ax_deriv is not None and deriv_axis_active:
-            _apply_axis_ticks(ax_deriv, auto_deriv_ticks, deriv_maj_tick, deriv_min_tick)
+        if (
+            ax_temp is not None
+            and right_axis_visible
+            and isinstance(right_axis_settings, Mapping)
+        ):
+            _apply_axis_ticks(
+                ax_temp,
+                bool(right_axis_settings["auto"]),
+                right_axis_settings["maj"],
+                right_axis_settings["min"],
+            )
+        if (
+            ax_deriv is not None
+            and third_axis_visible
+            and isinstance(third_axis_settings, Mapping)
+        ):
+            _apply_axis_ticks(
+                ax_deriv,
+                bool(third_axis_settings["auto"]),
+                third_axis_settings["maj"],
+                third_axis_settings["min"],
+            )
 
         _apply_tick_font(ax)
         _apply_tick_font(ax_temp)
@@ -95370,6 +96070,7 @@ class UnifiedApp(tk.Tk):
                 show_cycle_markers_on_core_plots=show_cycle_markers,
                 show_cycle_legend_on_core_plots=show_cycle_legend,
                 include_moles_in_core_plot_legend=include_moles_core,
+                include_zero_line=config.get("include_zero_line", True),
                 legend_anchor=legend_anchor,
                 cycle_legend_anchor=cycle_legend_anchor,
                 legend_loc=legend_loc,
@@ -95652,6 +96353,11 @@ class UnifiedApp(tk.Tk):
         self._save_settings_dict(args)
         try:
             self._flush_save_settings()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            self._autosave_last_workspace()
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
@@ -95954,6 +96660,9 @@ class UnifiedApp(tk.Tk):
         settings["combined_y_left_key"] = self.combined_y_left_key.get()
         settings["combined_y_right_key"] = self.combined_y_right_key.get()
         settings["combined_y_third_key"] = self.combined_y_third_key.get()
+        settings["combined_include_zero_line"] = bool(
+            self.combined_include_zero_line.get()
+        )
         settings["combined_center_plot_legend"] = bool(
             self.center_combined_plot_legend.get()
         )
