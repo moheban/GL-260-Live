@@ -35688,15 +35688,17 @@ class UnifiedApp(tk.Tk):
             Display a determinate startup splash while launch tasks complete.
         Why:
             Startup can involve expensive UI construction and workbook restore, so
-            users need immediate progress feedback instead of an apparently frozen app.
+            users need immediate progress feedback instead of an apparently
+            frozen app.
         Inputs:
             message: Splash status text shown under the title.
             progress: Initial progress value in the 0..100 range.
         Outputs:
             None.
         Side Effects:
-            Creates a top-level splash window, initializes progress widgets, and
-            stores widget references on the app instance for later updates.
+            Creates a top-level splash window with a top status-content region and
+            a bottom-pinned progress footer, then stores widget references on the
+            app instance for later updates.
         Exceptions:
             Best-effort guards avoid interrupting startup if splash creation fails.
         """
@@ -35740,7 +35742,7 @@ class UnifiedApp(tk.Tk):
             try:
                 overlay.transient(self)
             except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                # Best-effort guard; ignore failures so startup keeps moving.
                 pass
         try:
             overlay.attributes("-topmost", True)
@@ -35773,34 +35775,43 @@ class UnifiedApp(tk.Tk):
         try:
             body = ttk.Frame(overlay, padding=14)
             body.pack(fill="both", expand=True)
+            body.grid_columnconfigure(0, weight=1)
+            body.grid_rowconfigure(0, weight=1)
+            content_frame = ttk.Frame(body)
+            content_frame.grid(row=0, column=0, sticky="nsew")
+            content_frame.grid_columnconfigure(0, weight=1)
             ttk.Label(
-                body,
+                content_frame,
                 text=f"GL-260 Data Analysis & Processing Engine {APP_VERSION}",
                 anchor="w",
-            ).pack(fill="x", pady=(0, 8))
+            ).grid(row=0, column=0, sticky="ew", pady=(0, 8))
             label = ttk.Label(
-                body, text=str(message or "Starting GL-260..."), anchor="w"
+                content_frame, text=str(message or "Starting GL-260..."), anchor="w"
             )
-            label.pack(fill="x")
+            label.grid(row=1, column=0, sticky="ew")
             detail_label = ttk.Label(
-                body,
+                content_frame,
                 text="",
                 anchor="w",
                 justify="left",
                 wraplength=470,
             )
-            detail_label.pack(fill="x", pady=(6, 0))
+            detail_label.grid(row=2, column=0, sticky="nw", pady=(6, 0))
+            # Pin footer at bottom so long status text cannot collide with progress.
+            footer_frame = ttk.Frame(body)
+            footer_frame.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+            footer_frame.grid_columnconfigure(0, weight=1)
             progress_var = tk.DoubleVar(master=overlay, value=0.0)
             progress_bar = ttk.Progressbar(
-                body,
+                footer_frame,
                 mode="determinate",
                 maximum=100.0,
                 variable=progress_var,
                 length=360,
             )
-            progress_bar.pack(fill="x", pady=(10, 0))
-            progress_label = ttk.Label(body, text="0%", anchor="e")
-            progress_label.pack(fill="x", pady=(6, 0))
+            progress_bar.grid(row=0, column=0, sticky="ew")
+            progress_label = ttk.Label(footer_frame, text="0%", anchor="e")
+            progress_label.grid(row=1, column=0, sticky="e", pady=(6, 0))
         except Exception:
             label = None
             detail_label = None
@@ -35822,7 +35833,7 @@ class UnifiedApp(tk.Tk):
             reset=True,
         )
         try:
-            # Force the first splash frame to paint before startup-heavy work begins.
+            # Paint one frame immediately before startup-heavy work begins.
             overlay.update_idletasks()
             overlay.update()
         except Exception:
