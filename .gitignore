@@ -22,3 +22,4 @@ Prompt Template.md
 .ruff_cache
 settings.json
 profiles/_autosave_last_workspace.json
+General Plotter Program/general_plotter_settings.json
