@@ -33807,12 +33807,14 @@ class UnifiedApp(tk.Tk):
         self._startup_tab_readiness_reason = ""
         self._startup_restore_state = "pending"
         self._startup_restore_post_refresh_done = False
-        self._install_startup_loading_splash(
-            message="Initializing startup...", progress=2.0
-        )
         global _BOOTSTRAP_STARTUP_SPLASH
         _clear_bootstrap_startup_splash(_BOOTSTRAP_STARTUP_SPLASH)
         _BOOTSTRAP_STARTUP_SPLASH = None
+        # Remove any stale startup splash windows before creating the managed one.
+        self._cleanup_stale_startup_loading_overlays()
+        self._install_startup_loading_splash(
+            message="Initializing startup...", progress=2.0
+        )
         if not self._is_startup_loading_active():
             self._reveal_main_window_after_startup()
 
@@ -35587,6 +35589,93 @@ class UnifiedApp(tk.Tk):
             pass
         self._combined_render_cursor = None
 
+    def _cleanup_stale_startup_loading_overlays(
+        self, *, keep_overlay: Optional[tk.Toplevel] = None
+    ) -> None:
+        """Destroy stale startup splash windows so only one loader remains.
+
+        Purpose:
+            Enforce a single visible startup splash instance during launch handoff.
+        Why:
+            Startup can transition across multiple splash stages, and stale top-level
+            windows can overlap and duplicate progress bars/text.
+        Inputs:
+            keep_overlay: Optional active splash window to preserve while cleaning up.
+        Outputs:
+            None.
+        Side Effects:
+            Destroys startup-tagged or startup-titled stale `tk.Toplevel` windows.
+        Exceptions:
+            Uses best-effort guards so startup cleanup never interrupts launch flow.
+        """
+        try:
+            children = list(self.winfo_children())
+        except Exception:
+            children = []
+        for child in children:
+            if child is keep_overlay or not isinstance(child, tk.Toplevel):
+                continue
+            should_destroy = False
+            try:
+                should_destroy = bool(
+                    getattr(child, "_gl260_startup_loading_splash", False)
+                )
+            except Exception:
+                should_destroy = False
+            if not should_destroy:
+                try:
+                    should_destroy = str(child.title() or "").strip() == "Starting GL-260"
+                except Exception:
+                    should_destroy = False
+            if not should_destroy:
+                continue
+            try:
+                if child.winfo_exists():
+                    child.destroy()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+    def _normalize_startup_loading_splash_text(
+        self, text: object, *, max_lines: int = 2
+    ) -> str:
+        """Normalize startup splash text into concise, non-overlapping lines.
+
+        Purpose:
+            Keep startup splash status text compact and readable in a fixed layout.
+        Why:
+            Verbose multiline updates can overflow the splash body and visually
+            collide with the progress widgets.
+        Inputs:
+            text: Raw text payload from startup status updates.
+            max_lines: Maximum rendered lines allowed on the splash text region.
+        Outputs:
+            str: Cleaned text constrained to the requested line count.
+        Side Effects:
+            None.
+        Exceptions:
+            Conversion/sanitization failures fall back to an empty string.
+        """
+        try:
+            normalized = str(text or "")
+        except Exception:
+            normalized = ""
+        normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
+        lines = [line.strip() for line in normalized.split("\n") if line.strip()]
+        if not lines:
+            return ""
+
+        line_limit = max(1, int(max_lines))
+        lines = lines[:line_limit]
+        max_chars = 92
+        compact_lines: list[str] = []
+        for line in lines:
+            if len(line) > max_chars:
+                compact_lines.append(f"{line[: max_chars - 3].rstrip()}...")
+            else:
+                compact_lines.append(line)
+        return "\n".join(compact_lines)
+
     def _install_startup_loading_splash(
         self,
         *,
@@ -35611,10 +35700,12 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             Best-effort guards avoid interrupting startup if splash creation fails.
         """
+        self._cleanup_stale_startup_loading_overlays()
         overlay = getattr(self, "_startup_loading_overlay", None)
         if overlay is not None:
             try:
                 if overlay.winfo_exists():
+                    self._cleanup_stale_startup_loading_overlays(keep_overlay=overlay)
                     overlay.lift()
                     self._update_startup_loading_splash_progress(
                         progress=progress,
@@ -35629,6 +35720,11 @@ class UnifiedApp(tk.Tk):
             overlay = tk.Toplevel(self)
         except Exception:
             return
+        try:
+            overlay._gl260_startup_loading_splash = True
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
         try:
             overlay.title("Starting GL-260")
         except Exception:
@@ -35658,7 +35754,7 @@ class UnifiedApp(tk.Tk):
             pass
 
         width = 500
-        height = 230
+        height = 220
         try:
             screen_w = int(self.winfo_screenwidth())
             screen_h = int(self.winfo_screenheight())
@@ -35691,7 +35787,7 @@ class UnifiedApp(tk.Tk):
                 text="",
                 anchor="w",
                 justify="left",
-                wraplength=460,
+                wraplength=470,
             )
             detail_label.pack(fill="x", pady=(6, 0))
             progress_var = tk.DoubleVar(master=overlay, value=0.0)
@@ -35760,6 +35856,23 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             Missing/destroyed splash widgets are ignored by best-effort guards.
         """
+        if threading.current_thread() is not threading.main_thread():
+            # Marshal to Tk thread to avoid cross-thread splash widget mutations.
+            try:
+                self.after(
+                    0,
+                    lambda: self._update_startup_loading_splash_progress(
+                        progress=progress,
+                        message=message,
+                        detail=detail,
+                        reset=reset,
+                    ),
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            return
+
         overlay = getattr(self, "_startup_loading_overlay", None)
         if overlay is None:
             return
@@ -35793,15 +35906,24 @@ class UnifiedApp(tk.Tk):
         label = getattr(self, "_startup_loading_label", None)
         if label is not None and message is not None:
             try:
-                label.configure(text=str(message))
+                label.configure(
+                    text=self._normalize_startup_loading_splash_text(
+                        message, max_lines=1
+                    )
+                )
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
 
         detail_label = getattr(self, "_startup_loading_detail_label", None)
         if detail_label is not None and (detail is not None or reset):
+            normalized_detail = (
+                ""
+                if detail is None
+                else self._normalize_startup_loading_splash_text(detail, max_lines=2)
+            )
             try:
-                detail_label.configure(text=str(detail or ""))
+                detail_label.configure(text=normalized_detail)
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
@@ -35873,6 +35995,7 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+        self._cleanup_stale_startup_loading_overlays()
 
         self._startup_loading_overlay = None
         self._startup_loading_label = None
@@ -36227,6 +36350,7 @@ class UnifiedApp(tk.Tk):
                 return
         except Exception:
             return
+        self._cleanup_stale_startup_loading_overlays(keep_overlay=overlay)
 
         restore_state = str(
             getattr(self, "_startup_restore_state", "pending") or "pending"
@@ -36306,12 +36430,7 @@ class UnifiedApp(tk.Tk):
                 self._update_startup_loading_splash_progress(
                     progress=100.0,
                     message="Startup complete. Opening workspace...",
-                    detail=(
-                        "[x] Main interface built\n"
-                        "[x] Startup restore finalized\n"
-                        "[x] Advanced Speciation layout refreshed\n"
-                        "[x] Startup tabs ready"
-                    ),
+                    detail="All startup checks passed. Preparing the workspace window.",
                 )
                 try:
                     overlay.after(60, self._clear_startup_loading_splash)
@@ -36355,15 +36474,14 @@ class UnifiedApp(tk.Tk):
             blocking_reason = "waiting for splash teardown callback"
             message = "Finalizing startup checks..."
 
-        checklist_lines = [
-            f"[{'x' if ui_ready else ' '}] Main interface built",
-            f"[{'x' if restore_ready else ' '}] Startup restore finalized",
-            f"[{'x' if restore_post_refresh_ready else ' '}] Advanced Speciation layout refreshed",
-            f"[{'x' if tab_warmup_ready else ' '}] Startup tabs ready",
-        ]
-        detail_message = (
-            "\n".join(checklist_lines)
-            + f"\nHeartbeat {heartbeat_tick}: {blocking_reason}"
+        detail_message = self._normalize_startup_loading_splash_text(
+            (
+                f"UI: {'ready' if ui_ready else 'building'} | "
+                f"Restore: {'ready' if restore_ready else restore_state} | "
+                f"Tabs: {'ready' if tab_warmup_ready else 'warming'}\n"
+                f"{blocking_reason}."
+            ),
+            max_lines=2,
         )
 
         self._update_startup_loading_splash_progress(
@@ -36373,7 +36491,7 @@ class UnifiedApp(tk.Tk):
         )
         try:
             self._startup_loading_poll_after_id = self.after(
-                90, self._poll_startup_loading_completion
+                140, self._poll_startup_loading_completion
             )
         except Exception:
             self._startup_loading_poll_after_id = None
