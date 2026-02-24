@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.3.7)
+# GL-260 Data Analysis and Plotter (v4.3.8)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.3.7`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.3.8`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.3.8 Final Report Timeline Reliability + Preview Splash Integration](#v438-final-report-timeline-reliability--preview-splash-integration)
   - [v4.3.7 Advanced Speciation Timeline Plot Preview + Consolidated Legend + Settings Parity](#v437-advanced-speciation-timeline-plot-preview--consolidated-legend--settings-parity)
   - [v4.3.6 Close-Time Apply for Non-Trace Elements + Trace-Only Full Rebuild](#v436-close-time-apply-for-non-trace-elements--trace-only-full-rebuild)
   - [v4.3.5 Circle Ring Element + Full-Rebuild Close Refresh + Real-Time Splash Timers](#v435-circle-ring-element--full-rebuild-close-refresh--real-time-splash-timers)
@@ -1031,6 +1032,14 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.3.8 Final Report Timeline Reliability + Preview Splash Integration
+- Removed Final Report section exclusions so all Final Report tab sections can be generated when selected, including cycle-analysis and cycle-speciation timeline plot pages.
+- Added a shared Final Report timeline data resolver with deterministic fallback order across structured payloads, active workflow results, prior workflow results, and visible timeline table rows.
+- Hardened Final Report cycle timeline plot/table numeric handling (`CO2`, `pH`, fractions) to tolerate mixed or partially populated timeline entries without breaking preview/export generation.
+- Added a blocking modal splash workflow for `Report Preview` and `Render Selected Page Preview`, including staged progress updates and guaranteed splash teardown on success/failure paths.
+- Updated Final Report preview page rendering error handling so failed per-page PNG serialization now clears the canvas safely, preserves navigation responsiveness, and surfaces a user warning.
+- Updated application version metadata to `v4.3.8` in script header and `APP_VERSION`, and synchronized README top-level version references.
 
 ### v4.3.7 Advanced Speciation Timeline Plot Preview + Consolidated Legend + Settings Parity
 - Updated Advanced Speciation cycle timeline plot behavior to always render a consolidated legend in a shadowbox, and made that legend draggable in interactive timeline views.

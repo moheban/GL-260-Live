@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v4.3.7
+# Version: v4.3.8
 # Date: 2026-02-24
 
 import os
@@ -11824,7 +11824,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v4.3.7"
+APP_VERSION = "v4.3.8"
 
 
 def _apply_rust_runtime_settings_defaults(settings_dict: Dict[str, Any]) -> None:
@@ -12405,7 +12405,7 @@ FINAL_REPORT_PLOT_SECTIONS = {
 }
 
 FINAL_REPORT_COMBINED_SECTION_ID = "combined_plot"
-FINAL_REPORT_EXCLUDED_SECTIONS = {"cycle_plot", "cycle_timeline_plot"}
+FINAL_REPORT_EXCLUDED_SECTIONS: Set[str] = set()
 
 FINAL_REPORT_ORIENTATION_OPTIONS = ("inherit", "portrait", "landscape")
 FINAL_REPORT_TEMPLATE_PLACEHOLDER = "[Current layout (unsaved)]"
@@ -34345,6 +34345,10 @@ class UnifiedApp(tk.Tk):
         self._final_report_preview_save_button: Optional[ttk.Button] = None
         self._final_report_preview_needs_initial_geometry = False
         self._final_report_preview_after_id: Optional[str] = None
+        self._final_report_preview_splash_window: Optional[tk.Toplevel] = None
+        self._final_report_preview_splash_label: Optional[ttk.Label] = None
+        self._final_report_preview_splash_progress_var: Optional[tk.DoubleVar] = None
+        self._final_report_preview_splash_progress_label: Optional[ttk.Label] = None
         self._final_report_combined_failure_reason: Optional[str] = None
         self._combined_export_artifact: Optional[Dict[str, Any]] = None
         self._combined_plot_preview_fig: Optional[Figure] = None
@@ -88498,6 +88502,154 @@ class UnifiedApp(tk.Tk):
             page_size,
         )
 
+    def _final_report_resolve_cycle_timeline_entries(
+        self, *, workflow_key: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Purpose: Resolve cycle timeline entries for Final Report figure/table builds.
+        Why: Keep all report timeline render paths synchronized on one deterministic
+            fallback chain so preview/export can still render when one data source is
+            empty or stale.
+        Args:
+            workflow_key (Optional[str]): Explicit workflow key override for timeline
+                retrieval; defaults to the currently selected workflow.
+        Returns:
+            List[Dict[str, Any]]: Timeline entry dictionaries in display order.
+        Side Effects:
+            - Reads workflow caches and visible timeline table rows.
+            - Does not mutate report or workflow state.
+        Exceptions:
+            - Best-effort guards suppress malformed source rows and return an empty
+              list when no usable timeline source exists.
+        """
+
+        def _normalize_entries(raw_entries: Any) -> List[Dict[str, Any]]:
+            """Purpose: Normalize raw timeline containers into plain dict rows.
+            Why: Timeline payloads can arrive from dataclasses/mappings and must be
+                normalized before report formatting logic consumes them.
+            Args:
+                raw_entries (Any): Candidate timeline value from workflow caches.
+            Returns:
+                List[Dict[str, Any]]: Filtered list containing mapping-like rows only.
+            Side Effects:
+                - None.
+            Exceptions:
+                - Invalid containers are ignored and return an empty list.
+            """
+            normalized: List[Dict[str, Any]] = []
+            if not isinstance(raw_entries, (list, tuple)):
+                return normalized
+            # Keep only mapping-like rows so downstream access patterns remain stable.
+            for entry in raw_entries:
+                if isinstance(entry, Mapping):
+                    normalized.append(dict(entry))
+            return normalized
+
+        active_workflow = workflow_key or self._current_solubility_workflow()
+        structured = getattr(self, "_sol_last_structured", None)
+        structured_timeline = None
+        if structured is not None:
+            if isinstance(structured, Mapping):
+                structured_timeline = structured.get("cycle_timeline")
+            else:
+                structured_timeline = getattr(structured, "cycle_timeline", None)
+        timeline_entries = _normalize_entries(structured_timeline)
+        if timeline_entries:
+            return timeline_entries
+
+        active_result = self._get_cycle_result_for_workflow(active_workflow) or {}
+        timeline_entries = _normalize_entries(active_result.get("timeline"))
+        if timeline_entries:
+            return timeline_entries
+
+        last_workflow_key = ""
+        form_data = getattr(self, "_sol_last_form_data", None)
+        if isinstance(form_data, Mapping):
+            last_workflow_key = str(form_data.get("workflow_key") or "").strip()
+        if last_workflow_key and last_workflow_key != active_workflow:
+            last_result = self._get_cycle_result_for_workflow(last_workflow_key) or {}
+            timeline_entries = _normalize_entries(last_result.get("timeline"))
+            if timeline_entries:
+                return timeline_entries
+
+        results_map = getattr(self, "_sol_cycle_results_map", None)
+        if isinstance(results_map, Mapping):
+            # Walk any cached workflow result before falling back to tree reconstruction.
+            for key, result in results_map.items():
+                if key in (active_workflow, last_workflow_key):
+                    continue
+                if not isinstance(result, Mapping):
+                    continue
+                timeline_entries = _normalize_entries(result.get("timeline"))
+                if timeline_entries:
+                    return timeline_entries
+
+        _headers, rows, column_ids = self._get_current_timeline_table_data()
+        if not rows or not column_ids:
+            return []
+        column_map = {column_id: idx for idx, column_id in enumerate(column_ids)}
+        reconstructed_rows: List[Dict[str, Any]] = []
+
+        def _row_value(row_values: Sequence[Any], column_id: str) -> Any:
+            """Purpose: Read one value from a reconstructed timeline table row.
+            Why: Centralizes index guards so row reconstruction avoids repeated
+                bounds-check boilerplate.
+            Args:
+                row_values (Sequence[Any]): Raw row values from the timeline tree.
+                column_id (str): Timeline column identifier.
+            Returns:
+                Any: Cell value when present; otherwise None.
+            Side Effects:
+                - None.
+            Exceptions:
+                - Out-of-range access safely returns None.
+            """
+            index = column_map.get(column_id)
+            if index is None or index >= len(row_values):
+                return None
+            return row_values[index]
+
+        # Best-effort fallback: rebuild timeline rows from what is currently visible.
+        for raw_row in rows:
+            row_values = list(raw_row) if isinstance(raw_row, (list, tuple)) else []
+            if not row_values:
+                continue
+            co2_total = _safe_float(_row_value(row_values, "co2_g"))
+            co2_cycle = _safe_float(_row_value(row_values, "co2_cycle_g"))
+            ph_value = _safe_float(_row_value(row_values, "ph"))
+            pco2_value = _safe_float(_row_value(row_values, "pco2_atm"))
+            h2co3_pct = _safe_float(_row_value(row_values, "h2co3_pct"))
+            hco3_pct = _safe_float(_row_value(row_values, "hco3_pct"))
+            co3_pct = _safe_float(_row_value(row_values, "co3_pct"))
+            h2co3_fraction = max(0.0, (h2co3_pct or 0.0) / 100.0)
+            hco3_fraction = max(0.0, (hco3_pct or 0.0) / 100.0)
+            co3_fraction = max(0.0, (co3_pct or 0.0) / 100.0)
+            warnings_raw = _row_value(row_values, "warnings")
+            warning_list: List[str] = []
+            if warnings_raw is not None:
+                warnings_text = str(warnings_raw).strip()
+                if warnings_text:
+                    warning_list = [
+                        item.strip()
+                        for item in warnings_text.split("|")
+                        if item and item.strip()
+                    ]
+            reconstructed_rows.append(
+                {
+                    "cycle_id": _row_value(row_values, "cycle"),
+                    "co2_g": co2_total if co2_total is not None else co2_cycle,
+                    "co2_mass_g": co2_cycle,
+                    "solution_ph": ph_value,
+                    "pco2_atm": pco2_value,
+                    "fractions": {
+                        "H2CO3": h2co3_fraction,
+                        "HCO3-": hco3_fraction,
+                        "CO3^2-": co3_fraction,
+                    },
+                    "warnings": warning_list,
+                }
+            )
+        return reconstructed_rows
+
     def _build_cycle_timeline_export_figure(
         self,
         page_size: Tuple[float, float],
@@ -88519,14 +88671,10 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             - Best-effort; returns None when data is missing or invalid.
         """
-        timeline = []
-        structured = getattr(self, "_sol_last_structured", None)
-        if structured is not None:
-            timeline = getattr(structured, "cycle_timeline", None) or []
         workflow = workflow_key or self._current_solubility_workflow()
-        if not timeline:
-            result = self._get_cycle_result_for_workflow(workflow)
-            timeline = (result or {}).get("timeline", []) or []
+        timeline = self._final_report_resolve_cycle_timeline_entries(
+            workflow_key=workflow
+        )
         reaction_guidance = getattr(self, "_sol_reaction_guidance", {}) or {}
         timeline = list(timeline or [])
         if workflow == "Reprocessing" and not timeline:
@@ -88660,21 +88808,40 @@ class UnifiedApp(tk.Tk):
         pco2_values: List[float] = []
         # Iterate over timeline to apply the per-item logic.
         for entry in timeline:
-            xs.append(
+            co2_value = (
                 _safe_float(entry.get("co2_g"))
                 or _safe_float(entry.get("co2_mass_g"))
+                or _safe_float(entry.get("cumulative_co2_added_mass_g"))
                 or 0.0
             )
+            xs.append(co2_value)
             fractions = entry.get("fractions") or {}
-            h2co3_vals.append(fractions.get("H2CO3", 0.0) * 100.0)
-            hco3_vals.append(fractions.get("HCO3-", 0.0) * 100.0)
-            co3_vals.append(fractions.get("CO3^2-", 0.0) * 100.0)
-            ph_val = entry.get("solution_ph")
+            h2co3 = _safe_float(fractions.get("H2CO3"))
+            hco3 = _safe_float(fractions.get("HCO3-"))
+            co3 = _safe_float(fractions.get("CO3^2-"))
+            if h2co3 is None:
+                h2co3 = 0.0
+            if hco3 is None:
+                hco3 = 0.0
+            if co3 is None:
+                co3 = 0.0
+            if h2co3 > 1.0:
+                h2co3 /= 100.0
+            if hco3 > 1.0:
+                hco3 /= 100.0
+            if co3 > 1.0:
+                co3 /= 100.0
+            h2co3_vals.append(h2co3 * 100.0)
+            hco3_vals.append(hco3 * 100.0)
+            co3_vals.append(co3 * 100.0)
+            ph_val = _safe_float(entry.get("solution_ph"))
+            if ph_val is None:
+                ph_val = _safe_float(entry.get("speciation_ph"))
             ph_values.append(ph_val if ph_val is not None else float("nan"))
-            try:
-                pco2_values.append(float(entry.get("pco2_atm")))
-            except Exception:
-                pco2_values.append(float("nan"))
+            pco2_value = _safe_float(entry.get("pco2_atm"))
+            pco2_values.append(
+                pco2_value if pco2_value is not None else float("nan")
+            )
         if not xs:
             return None
         if workflow == "Planning":
@@ -90532,15 +90699,20 @@ class UnifiedApp(tk.Tk):
     def _final_report_get_cycle_timeline_rows(
         self,
     ) -> Tuple[List[Dict[str, Any]], List[str]]:
-        """Return cycle timeline rows.
-        Used by final report workflows to return cycle timeline rows."""
-        structured = getattr(self, "_sol_last_structured", None)
-        timeline = getattr(structured, "cycle_timeline", None) or []
-        if not timeline:
-            result = self._get_cycle_result_for_workflow(
-                self._current_solubility_workflow()
-            )
-            timeline = (result or {}).get("timeline", []) or []
+        """Purpose: Build Final Report timeline-table rows and display columns.
+        Why: Keep cycle speciation timeline table rendering resilient when data is
+            sourced from multiple workflow caches or visible timeline rows.
+        Args:
+            None.
+        Returns:
+            Tuple[List[Dict[str, Any]], List[str]]: Timeline row dictionaries and
+            ordered column labels for report-table rendering.
+        Side Effects:
+            - None.
+        Exceptions:
+            - Missing timeline data returns an empty row/column tuple.
+        """
+        timeline = self._final_report_resolve_cycle_timeline_entries()
         if not timeline:
             return [], []
         rows = []
@@ -90549,21 +90721,36 @@ class UnifiedApp(tk.Tk):
             co2_total = (
                 _safe_float(entry.get("co2_g"))
                 or _safe_float(entry.get("co2_mass_g"))
+                or _safe_float(entry.get("cumulative_co2_added_mass_g"))
                 or 0.0
             )
             fractions = entry.get("fractions") or {}
+            h2co3_fraction = _safe_float(fractions.get("H2CO3"))
+            hco3_fraction = _safe_float(fractions.get("HCO3-"))
+            co3_fraction = _safe_float(fractions.get("CO3^2-"))
+            if h2co3_fraction is None:
+                h2co3_fraction = 0.0
+            if hco3_fraction is None:
+                hco3_fraction = 0.0
+            if co3_fraction is None:
+                co3_fraction = 0.0
+            if h2co3_fraction > 1.0:
+                h2co3_fraction /= 100.0
+            if hco3_fraction > 1.0:
+                hco3_fraction /= 100.0
+            if co3_fraction > 1.0:
+                co3_fraction /= 100.0
+            ph_value = _safe_float(entry.get("solution_ph"))
+            if ph_value is None:
+                ph_value = _safe_float(entry.get("speciation_ph"))
             rows.append(
                 {
                     "Cycle": entry.get("cycle_id") or "",
                     "CO₂ total (g)": f"{co2_total:.2f}",
-                    "pH": (
-                        f"{entry.get('solution_ph', ''):.2f}"
-                        if entry.get("solution_ph") is not None
-                        else ""
-                    ),
-                    "H₂CO₃ (%)": f"{fractions.get('H2CO3', 0.0) * 100:.1f}",
-                    "HCO₃⁻ (%)": f"{fractions.get('HCO3-', 0.0) * 100:.1f}",
-                    "CO₃²⁻ (%)": f"{fractions.get('CO3^2-', 0.0) * 100:.1f}",
+                    "pH": f"{ph_value:.2f}" if ph_value is not None else "",
+                    "H₂CO₃ (%)": f"{h2co3_fraction * 100:.1f}",
+                    "HCO₃⁻ (%)": f"{hco3_fraction * 100:.1f}",
+                    "CO₃²⁻ (%)": f"{co3_fraction * 100:.1f}",
                 }
             )
         columns = [
@@ -91519,8 +91706,8 @@ class UnifiedApp(tk.Tk):
             - Updates page labels, caption text, save button state, and nav controls.
             - Applies one-time initial preview window geometry when opening the window.
         Exceptions:
-            - Render/encode failures are swallowed to avoid interrupting the UI
-              workflow.
+            - Render failures are handled with a warning dialog and safe UI reset
+              so preview navigation remains responsive.
         """
         pages = self._final_report_preview_pages
         if not pages:
@@ -91546,8 +91733,56 @@ class UnifiedApp(tk.Tk):
         dpi = self._final_report_preview_effective_dpi(fig)
         try:
             fig.savefig(buffer, format="png", dpi=dpi)
-        except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+        except Exception as exc:
+            canvas = self._final_report_preview_canvas
+            if canvas is not None:
+                try:
+                    canvas.delete("all")
+                    canvas.configure(scrollregion=(0, 0, 0, 0))
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            page_label_widget = self._final_report_preview_page_label_widget
+            if page_label_widget is not None:
+                try:
+                    page_label_widget.configure(
+                        text=f"Page {index + 1} of {len(pages)} (render failed)"
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            caption_label = self._final_report_preview_caption_label
+            if caption_label is not None:
+                try:
+                    caption_label.configure(text="Preview render failed for this page.")
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            save_btn = self._final_report_preview_save_button
+            if save_btn is not None:
+                try:
+                    save_btn.configure(state="disabled")
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            self._final_report_preview_photo = None
+            self._final_report_preview_update_navigation_buttons()
+            section_label = str(
+                info.get("display_caption")
+                or info.get("section_id")
+                or f"Page {index + 1}"
+            ).strip()
+            try:
+                messagebox.showwarning(
+                    "Final Report Preview",
+                    (
+                        f"Could not render preview image for page {index + 1}"
+                        f" ({section_label}).\n{exc}"
+                    ),
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
             return
         buffer.seek(0)
         encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
@@ -91706,6 +91941,152 @@ class UnifiedApp(tk.Tk):
                     pass
         return None
 
+    def _show_final_report_preview_splash(self, title: str) -> None:
+        """Purpose: Show a blocking modal splash for Final Report preview builds.
+        Why: Preview page assembly can be expensive; a modal progress surface
+            keeps feedback visible and prevents duplicate preview actions.
+        Args:
+            title (str): Splash window title for the active preview action.
+        Returns:
+            None.
+        Side Effects:
+            - Creates/reuses a modal `Toplevel` with message/progress widgets.
+            - Acquires a local Tk grab while preview rendering is in flight.
+        Exceptions:
+            - Best-effort guards keep preview workflows running if splash creation
+              fails on a given platform/window manager.
+        """
+        window = getattr(self, "_final_report_preview_splash_window", None)
+        if window is not None and bool(getattr(window, "winfo_exists", lambda: False)()):
+            try:
+                window.title(title)
+                window.deiconify()
+                window.lift()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            return
+        window = tk.Toplevel(self)
+        window.title(title)
+        window.transient(self)
+        window.resizable(False, False)
+        window.protocol("WM_DELETE_WINDOW", lambda: None)
+        container = ttk.Frame(window, padding=12)
+        container.pack(fill="both", expand=True)
+        label = ttk.Label(container, text="Preparing preview...", justify="left")
+        label.pack(fill="x")
+        progress_var = tk.DoubleVar(master=window, value=0.0)
+        ttk.Progressbar(
+            container,
+            mode="determinate",
+            length=300,
+            maximum=100.0,
+            variable=progress_var,
+        ).pack(fill="x", pady=(10, 0))
+        progress_label = ttk.Label(container, text="0%")
+        progress_label.pack(anchor="e", pady=(6, 0))
+        self._final_report_preview_splash_window = window
+        self._final_report_preview_splash_label = label
+        self._final_report_preview_splash_progress_var = progress_var
+        self._final_report_preview_splash_progress_label = progress_label
+        try:
+            window.update_idletasks()
+            width = int(window.winfo_reqwidth())
+            height = int(window.winfo_reqheight())
+            pos_x = max(0, (int(window.winfo_screenwidth()) - width) // 2)
+            pos_y = max(0, (int(window.winfo_screenheight()) - height) // 2)
+            window.geometry(f"{width}x{height}+{pos_x}+{pos_y}")
+            window.grab_set()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _update_final_report_preview_splash(
+        self, *, message: Optional[str] = None, progress: Optional[float] = None
+    ) -> None:
+        """Purpose: Update Final Report preview splash message/progress state.
+        Why: Centralized updates keep full-preview and selected-page preview flows
+            aligned with the same deterministic progress semantics.
+        Args:
+            message (Optional[str]): Optional splash status text.
+            progress (Optional[float]): Optional 0..100 progress value.
+        Returns:
+            None.
+        Side Effects:
+            - Mutates splash label and determinate progress widgets.
+        Exceptions:
+            - Best-effort guards suppress widget update failures.
+        """
+        window = getattr(self, "_final_report_preview_splash_window", None)
+        if window is None or not bool(getattr(window, "winfo_exists", lambda: False)()):
+            return
+        if message is not None:
+            label = getattr(self, "_final_report_preview_splash_label", None)
+            if label is not None:
+                try:
+                    label.configure(text=str(message).strip() or "Working...")
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+        if progress is not None:
+            try:
+                clamped_progress = max(0.0, min(100.0, float(progress)))
+            except Exception:
+                clamped_progress = 0.0
+            progress_var = getattr(
+                self, "_final_report_preview_splash_progress_var", None
+            )
+            if progress_var is not None:
+                try:
+                    progress_var.set(clamped_progress)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            progress_label = getattr(
+                self, "_final_report_preview_splash_progress_label", None
+            )
+            if progress_label is not None:
+                try:
+                    progress_label.configure(text=f"{int(round(clamped_progress))}%")
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+        try:
+            window.update_idletasks()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _hide_final_report_preview_splash(self) -> None:
+        """Purpose: Tear down the blocking Final Report preview splash window.
+        Why: Preview actions must always release modal grab state to avoid stuck UI.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            - Releases splash grab and destroys splash widgets.
+            - Clears splash widget references on `self`.
+        Exceptions:
+            - Best-effort guards suppress teardown failures.
+        """
+        window = getattr(self, "_final_report_preview_splash_window", None)
+        if window is not None:
+            try:
+                window.grab_release()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            try:
+                window.destroy()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._final_report_preview_splash_window = None
+        self._final_report_preview_splash_label = None
+        self._final_report_preview_splash_progress_var = None
+        self._final_report_preview_splash_progress_label = None
+
     def _final_report_render_selected_page_preview(self) -> None:
         """Purpose: Render a single selected page preview.
         Why: Allow focused inspection of one report section layout.
@@ -91743,17 +92124,33 @@ class UnifiedApp(tk.Tk):
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
-        page_info = self._final_report_build_selected_page(section_id, state)
-        if page_info is None:
-            try:
-                messagebox.showwarning(
-                    "Final Report Preview",
-                    "Selected section could not be rendered for preview.",
-                )
-            except Exception:
-                pass
-            return
-        self._open_final_report_preview_window([page_info])
+        self._show_final_report_preview_splash("Render Selected Page Preview")
+        self._update_final_report_preview_splash(
+            message="Building selected report page...",
+            progress=35.0,
+        )
+        try:
+            page_info = self._final_report_build_selected_page(section_id, state)
+            if page_info is None:
+                try:
+                    messagebox.showwarning(
+                        "Final Report Preview",
+                        "Selected section could not be rendered for preview.",
+                    )
+                except Exception:
+                    pass
+                return
+            self._update_final_report_preview_splash(
+                message="Opening preview window...",
+                progress=85.0,
+            )
+            self._open_final_report_preview_window([page_info])
+            self._update_final_report_preview_splash(
+                message="Preview ready.",
+                progress=100.0,
+            )
+        finally:
+            self._hide_final_report_preview_splash()
 
     def _open_final_report_preview_window(
         self, page_figures: Optional[List[Dict[str, Any]]] = None
@@ -91769,117 +92166,144 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             - Errors are surfaced via message boxes.
         """
-        if page_figures is None:
-            page_figures = self._final_report_build_page_figures(
-                self._collect_final_report_state_from_ui()
+        owns_splash = page_figures is None
+        if owns_splash:
+            self._show_final_report_preview_splash("Report Preview")
+            self._update_final_report_preview_splash(
+                message="Collecting report settings...",
+                progress=10.0,
             )
-        if not page_figures:
-            try:
-                messagebox.showwarning(
-                    "Live Preview", "No sections are available for preview."
+        try:
+            if page_figures is None:
+                self._update_final_report_preview_splash(
+                    message="Building report preview pages...",
+                    progress=35.0,
                 )
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-            return
-        if (
-            self._final_report_preview_window is not None
-            and self._final_report_preview_window.winfo_exists()
-        ):
+                page_figures = self._final_report_build_page_figures(
+                    self._collect_final_report_state_from_ui()
+                )
+            if not page_figures:
+                try:
+                    messagebox.showwarning(
+                        "Live Preview", "No sections are available for preview."
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+                return
+            self._update_final_report_preview_splash(
+                message="Installing preview window...",
+                progress=75.0,
+            )
+            if (
+                self._final_report_preview_window is not None
+                and self._final_report_preview_window.winfo_exists()
+            ):
+                self._final_report_preview_clear_figures()
+                self._final_report_preview_pages = page_figures
+                self._final_report_preview_index = 0
+                self._final_report_preview_render_current_page()
+                try:
+                    self._final_report_preview_window.deiconify()
+                    self._final_report_preview_window.lift()
+                    self._final_report_preview_window.focus_force()
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+                self._update_final_report_preview_splash(
+                    message="Preview ready.",
+                    progress=100.0,
+                )
+                return
             self._final_report_preview_clear_figures()
             self._final_report_preview_pages = page_figures
-            self._final_report_preview_index = 0
+            window = tk.Toplevel(self)
+            window.title("Live Final Report Preview")
+            window.transient(self)
+            window.minsize(
+                FINAL_REPORT_PREVIEW_MIN_WINDOW_WIDTH,
+                FINAL_REPORT_PREVIEW_MIN_WINDOW_HEIGHT,
+            )
+            window.protocol("WM_DELETE_WINDOW", self._close_final_report_preview_window)
+            self._final_report_preview_window = window
+            self._final_report_preview_needs_initial_geometry = True
+
+            container = ttk.Frame(window, padding=8)
+            container.pack(fill="both", expand=True)
+
+            canvas_container = ttk.Frame(container)
+            canvas_container.pack(fill="both", expand=True)
+            canvas_container.grid_rowconfigure(0, weight=1)
+            canvas_container.grid_columnconfigure(0, weight=1)
+            canvas = tk.Canvas(canvas_container, bg="white", highlightthickness=0)
+            canvas.grid(row=0, column=0, sticky="nsew")
+            vert_scroll = ttk.Scrollbar(
+                canvas_container, orient="vertical", command=canvas.yview
+            )
+            vert_scroll.grid(row=0, column=1, sticky="ns")
+            horiz_scroll = ttk.Scrollbar(
+                canvas_container, orient="horizontal", command=canvas.xview
+            )
+            horiz_scroll.grid(row=1, column=0, sticky="ew")
+            canvas.configure(
+                yscrollcommand=vert_scroll.set, xscrollcommand=horiz_scroll.set
+            )
+            self._final_report_preview_canvas = canvas
+
+            caption_label = ttk.Label(
+                container, text="", wraplength=620, justify="left", anchor="w"
+            )
+            caption_label.pack(fill="x", pady=(4, 0))
+            self._final_report_preview_caption_label = caption_label
+
+            controls = ttk.Frame(container)
+            controls.pack(fill="x", pady=(4, 0))
+            prev_btn = ttk.Button(
+                controls,
+                text="Previous Page",
+                command=self._final_report_preview_prev_page,
+            )
+            prev_btn.pack(side="left")
+            next_btn = ttk.Button(
+                controls,
+                text="Next Page",
+                command=self._final_report_preview_next_page,
+            )
+            next_btn.pack(side="left", padx=(4, 0))
+            self._final_report_preview_nav_prev = prev_btn
+            self._final_report_preview_nav_next = next_btn
+            page_label = ttk.Label(controls, text="")
+            page_label.pack(side="left", padx=(8, 0))
+            self._final_report_preview_page_label_widget = page_label
+            ttk.Label(controls, text="Zoom:").pack(side="left", padx=(16, 0))
+            zoom_options = [50, 75, 100, 150, 200]
+            zoom_var = tk.StringVar(value=f"{self._final_report_preview_zoom_value}%")
+            combo = ttk.Combobox(
+                controls,
+                values=[f"{value}%" for value in zoom_options],
+                textvariable=zoom_var,
+                state="readonly",
+                width=6,
+            )
+            combo.pack(side="left", padx=(4, 0))
+            combo.bind("<<ComboboxSelected>>", self._final_report_preview_zoom_changed)
+            self._final_report_preview_zoom_combo_var = zoom_var
+            save_btn = ttk.Button(
+                controls,
+                text="Save Current Page",
+                command=self._final_report_preview_save_current,
+            )
+            save_btn.pack(side="right")
+            self._final_report_preview_save_button = save_btn
+
             self._final_report_preview_render_current_page()
-            try:
-                self._final_report_preview_window.deiconify()
-                self._final_report_preview_window.lift()
-                self._final_report_preview_window.focus_force()
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-            return
-        self._final_report_preview_clear_figures()
-        self._final_report_preview_pages = page_figures
-        window = tk.Toplevel(self)
-        window.title("Live Final Report Preview")
-        window.transient(self)
-        window.minsize(
-            FINAL_REPORT_PREVIEW_MIN_WINDOW_WIDTH,
-            FINAL_REPORT_PREVIEW_MIN_WINDOW_HEIGHT,
-        )
-        window.protocol("WM_DELETE_WINDOW", self._close_final_report_preview_window)
-        self._final_report_preview_window = window
-        self._final_report_preview_needs_initial_geometry = True
-
-        container = ttk.Frame(window, padding=8)
-        container.pack(fill="both", expand=True)
-
-        canvas_container = ttk.Frame(container)
-        canvas_container.pack(fill="both", expand=True)
-        canvas_container.grid_rowconfigure(0, weight=1)
-        canvas_container.grid_columnconfigure(0, weight=1)
-        canvas = tk.Canvas(canvas_container, bg="white", highlightthickness=0)
-        canvas.grid(row=0, column=0, sticky="nsew")
-        vert_scroll = ttk.Scrollbar(
-            canvas_container, orient="vertical", command=canvas.yview
-        )
-        vert_scroll.grid(row=0, column=1, sticky="ns")
-        horiz_scroll = ttk.Scrollbar(
-            canvas_container, orient="horizontal", command=canvas.xview
-        )
-        horiz_scroll.grid(row=1, column=0, sticky="ew")
-        canvas.configure(
-            yscrollcommand=vert_scroll.set, xscrollcommand=horiz_scroll.set
-        )
-        self._final_report_preview_canvas = canvas
-
-        caption_label = ttk.Label(
-            container, text="", wraplength=620, justify="left", anchor="w"
-        )
-        caption_label.pack(fill="x", pady=(4, 0))
-        self._final_report_preview_caption_label = caption_label
-
-        controls = ttk.Frame(container)
-        controls.pack(fill="x", pady=(4, 0))
-        prev_btn = ttk.Button(
-            controls,
-            text="Previous Page",
-            command=self._final_report_preview_prev_page,
-        )
-        prev_btn.pack(side="left")
-        next_btn = ttk.Button(
-            controls,
-            text="Next Page",
-            command=self._final_report_preview_next_page,
-        )
-        next_btn.pack(side="left", padx=(4, 0))
-        self._final_report_preview_nav_prev = prev_btn
-        self._final_report_preview_nav_next = next_btn
-        page_label = ttk.Label(controls, text="")
-        page_label.pack(side="left", padx=(8, 0))
-        self._final_report_preview_page_label_widget = page_label
-        ttk.Label(controls, text="Zoom:").pack(side="left", padx=(16, 0))
-        zoom_options = [50, 75, 100, 150, 200]
-        zoom_var = tk.StringVar(value=f"{self._final_report_preview_zoom_value}%")
-        combo = ttk.Combobox(
-            controls,
-            values=[f"{value}%" for value in zoom_options],
-            textvariable=zoom_var,
-            state="readonly",
-            width=6,
-        )
-        combo.pack(side="left", padx=(4, 0))
-        combo.bind("<<ComboboxSelected>>", self._final_report_preview_zoom_changed)
-        self._final_report_preview_zoom_combo_var = zoom_var
-        save_btn = ttk.Button(
-            controls,
-            text="Save Current Page",
-            command=self._final_report_preview_save_current,
-        )
-        save_btn.pack(side="right")
-        self._final_report_preview_save_button = save_btn
-
-        self._final_report_preview_render_current_page()
+            self._update_final_report_preview_splash(
+                message="Preview ready.",
+                progress=100.0,
+            )
+        finally:
+            if owns_splash:
+                self._hide_final_report_preview_splash()
 
     def _close_final_report_preview_window(self) -> None:
         """Close final report preview window.
