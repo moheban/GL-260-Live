@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.2.4)
+# GL-260 Data Analysis and Plotter (v4.3.4)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.2.4`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.3.4`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.3.4 General Plotter Launcher + Optional Data Handoff](#v434-general-plotter-launcher--optional-data-handoff)
   - [v4.2.4 Immediate Startup Visibility + Bootstrap Splash Handoff](#v424-immediate-startup-visibility--bootstrap-splash-handoff)
   - [v4.2.3 Combined Splash + Timeline Readiness](#v423-combined-splash--timeline-readiness)
   - [v4.2.2 Dynamic Render Readiness + Selective Core Generation](#v422-dynamic-render-readiness--selective-core-generation)
@@ -109,6 +110,7 @@ GL-260 Data Analysis and Plotter is designed for reproducible, end-to-end analys
 
 ### Repository Layout
 - `GL-260 Data Analysis and Plotter.py`: Main application script and UI.
+- `General Plotter program/General Plotting Program v1.0.0.py`: Standalone general-purpose plotting tool that can now be launched from the main app.
 - `solubility_models/`: Local package providing speciation constants, models, and the closed-system solver.
 - `naoh_co2_pitzer_ph_model.py`: Optional NaOH-CO2 Pitzer/HMW model used by the advanced speciation engine.
 - `pitzer.dat`: PHREEQC Pitzer database file used by the optional NaOH-CO2 Pitzer model.
@@ -226,28 +228,29 @@ Follow this linear workflow from start to finish:
 2. Select the target sheet (single sheet) or build the included sheet order (multi-sheet).
 3. Map columns on the Columns tab for pressure, temperature, derivative, and optional auxiliary channels.
 4. Click Apply Column Selection and confirm the applied indicator is green.
-5. Configure Plot Settings before any heavy analysis:
+5. Optional for non-GL-260 workflows: open `General Plotter -> Open General Plotter...` and decide whether to transfer current data via the launcher checkbox.
+6. Configure Plot Settings before any heavy analysis:
    - Open Axis Auto-Range Settings and choose which axes are allowed to update.
    - Set Axis Span Padding percent to add vertical breathing room.
    - Lock or auto-scale axes by updating min/max ranges as needed.
    - Configure plot styling (fonts, scatter settings, legend defaults) and layout preferences.
-6. Configure advanced automatic plot titling:
+7. Configure advanced automatic plot titling:
    - Enable Auto-generate Title and review the Auto Title Preview.
    - Choose the Data Type and template placeholders.
    - Decide whether to copy the auto title to the manual title for lock-in.
-7. Navigate to the Cycle Analysis tab:
+8. Navigate to the Cycle Analysis tab:
    - Run automatic peak/trough detection with tuned prominence/distance/width.
    - OR use manual peak/trough assignment with the interactive markers.
    - Iterate until the cycle markers match the physical experiment.
-8. Verify cycle metrics for consistency:
+9. Verify cycle metrics for consistency:
    - Delta-P per cycle.
    - Uptake moles (ideal and VDW when available).
    - Mean temperature per cycle.
    - Total uptake summary.
-9. Generate the Combined Triple-Axis Plot only after cycle analysis is finalized.
-10. Add plot elements and overlays (Plot Elements editor, cycle legend, annotations, spans).
-11. Export plots using the configured DPI and output size profiles.
-12. Generate the Final Report PDF so the report stitches exported figures in order.
+10. Generate the Combined Triple-Axis Plot only after cycle analysis is finalized.
+11. Add plot elements and overlays (Plot Elements editor, cycle legend, annotations, spans).
+12. Export plots using the configured DPI and output size profiles.
+13. Generate the Final Report PDF so the report stitches exported figures in order.
 
 Why this order is mandatory:
 - Cycle markers feed directly into combined plot overlays and report content. If cycle analysis is not finalized, combined plot overlays and report summaries will be out of sync.
@@ -284,6 +287,20 @@ Key controls:
 Runtime behavior:
 - Sheet names are read via `openpyxl` (read-only) with a pandas fallback.
 - The selected file path and last sheet are persisted to `settings.json`.
+
+#### General Plotter Launcher (Top Menu)
+Purpose: launch the standalone General Plotter from the main app, with optional Data/Columns handoff.
+
+Key controls:
+- `General Plotter -> Open General Plotter...` opens the launcher dialog.
+- Checkbox: `Transfer current Data + Columns to General Plotter`.
+- Buttons: `Launch` and `Cancel`.
+
+Runtime behavior:
+- Checkbox state is remembered via `settings.json` (`general_plotter_handoff_enabled`).
+- Launch uses a separate Python process (`subprocess.Popen`) to avoid multi-root Tk conflicts.
+- When handoff is enabled, GL-260 exports a temporary CSV + JSON payload and transfers `x` + `y1` mapping only.
+- When handoff is disabled, General Plotter opens with its normal blank startup workflow.
 
 #### GL-260 CSV Import (File menu or Data tab Import GL-260 CSV...)
 Purpose: convert raw Graphtec GL-260 CSV exports into a new Excel sheet that matches the app's expected schema.
@@ -1007,6 +1024,15 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.3.4 General Plotter Launcher + Optional Data Handoff
+- Added a new top-level `General Plotter` menu adjacent to `Tools`, including `Open General Plotter...` launcher entry.
+- Added a dedicated launcher dialog with checkbox control: `Transfer current Data + Columns to General Plotter`.
+- Added persistent checkbox preference storage in `settings.json` (`general_plotter_handoff_enabled`) so handoff behavior remembers the last selection.
+- Added optional cross-process handoff pipeline from GL-260 to General Plotter using temporary CSV + JSON payload files.
+- Scoped handoff mapping to `x` and `y1` only, with validation against currently loaded Data/Columns state.
+- Added `--handoff-json` CLI support in General Plotter to ingest transferred payloads and preselect transferred columns.
+- Updated application version metadata to `v4.3.4` in script header and `APP_VERSION`, and synchronized README top-level version references.
 
 ### v4.2.4 Immediate Startup Visibility + Bootstrap Splash Handoff
 - Added a lightweight bootstrap startup splash that is shown before heavyweight imports, so launches no longer appear blank during pre-UI initialization.

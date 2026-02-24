@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v4.2.4
+# Version: v4.3.4
 # Date: 2026-02-24
 
 import os
@@ -11588,7 +11588,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v4.2.4"
+APP_VERSION = "v4.3.4"
 
 
 def _apply_rust_runtime_settings_defaults(settings_dict: Dict[str, Any]) -> None:
@@ -34345,6 +34345,13 @@ class UnifiedApp(tk.Tk):
         self._axis_range_pref_window: Optional[tk.Toplevel] = None
         self._font_family_window: Optional[tk.Toplevel] = None
         self._csv_import_dialog: Optional[CsvImportDialog] = None
+        self._general_plotter_launcher_window: Optional[tk.Toplevel] = None
+        self._general_plotter_handoff_artifacts: List[str] = []
+        handoff_pref = settings.get("general_plotter_handoff_enabled")
+        if handoff_pref is None:
+            handoff_pref = True
+            settings["general_plotter_handoff_enabled"] = True
+        self._general_plotter_handoff_var = tk.BooleanVar(value=bool(handoff_pref))
 
         self._menubar = self._register_menu(tk.Menu(self))
         file_menu = self._register_menu(tk.Menu(self._menubar, tearoff=0))
@@ -34471,6 +34478,12 @@ class UnifiedApp(tk.Tk):
             command=self._open_developer_tools_dialog,
         )
         self._menubar.add_cascade(label="Tools", menu=tools_menu)
+        general_plotter_menu = self._register_menu(tk.Menu(self._menubar, tearoff=0))
+        general_plotter_menu.add_command(
+            label="Open General Plotter...",
+            command=self._open_general_plotter_launcher,
+        )
+        self._menubar.add_cascade(label="General Plotter", menu=general_plotter_menu)
 
         self.config(menu=self._menubar)
         self._apply_display_mode(self._display_mode_var.get(), persist=False)
@@ -58707,6 +58720,336 @@ class UnifiedApp(tk.Tk):
 
         dialog = CsvImportDialog(self, on_close=_clear_dialog)
         self._csv_import_dialog = dialog
+
+    def _persist_general_plotter_handoff_preference(self) -> None:
+        """Persist the General Plotter handoff checkbox state.
+
+        Purpose:
+            Save the launcher's handoff preference so the checkbox remembers the
+            user's last choice.
+        Why:
+            Users switch between blank launches and transfer launches, and this
+            preference should remain stable across sessions.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Updates `settings["general_plotter_handoff_enabled"]` and writes to
+            `settings.json`.
+        Exceptions:
+            Settings save failures are handled best-effort.
+        """
+        var = getattr(self, "_general_plotter_handoff_var", None)
+        enabled = bool(var.get()) if isinstance(var, tk.BooleanVar) else True
+        settings["general_plotter_handoff_enabled"] = enabled
+        try:
+            _save_settings_to_disk()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _close_general_plotter_launcher(self) -> None:
+        """Close the General Plotter launcher dialog safely.
+
+        Purpose:
+            Tear down the launcher popup and clear tracked window state.
+        Why:
+            A dedicated close helper keeps Cancel, Launch, and window-manager
+            close behavior consistent.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Releases any active grab, destroys the launcher window, and resets
+            `self._general_plotter_launcher_window`.
+        Exceptions:
+            Tk teardown failures are suppressed with best-effort guards.
+        """
+        window = getattr(self, "_general_plotter_launcher_window", None)
+        if window is None or not window.winfo_exists():
+            self._general_plotter_launcher_window = None
+            return
+        try:
+            window.grab_release()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            window.destroy()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        self._general_plotter_launcher_window = None
+
+    def _open_general_plotter_launcher(self) -> None:
+        """Open or focus the General Plotter launcher dialog.
+
+        Purpose:
+            Present an explicit launch UI with optional data handoff controls.
+        Why:
+            The handoff checkbox makes cross-app transfer optional without adding
+            extra menu items or prompts.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Creates/focuses a modal `Toplevel` with checkbox and action buttons.
+        Exceptions:
+            Widget focus/lift failures are handled best-effort.
+        """
+        existing = getattr(self, "_general_plotter_launcher_window", None)
+        if existing is not None and existing.winfo_exists():
+            try:
+                existing.deiconify()
+                existing.lift()
+                existing.focus_force()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            return
+
+        window = tk.Toplevel(self)
+        window.title("General Plotter Launcher")
+        window.transient(self)
+        window.resizable(False, False)
+        window.grab_set()
+        window.protocol("WM_DELETE_WINDOW", self._close_general_plotter_launcher)
+        self._general_plotter_launcher_window = window
+
+        container = ttk.Frame(window, padding=12)
+        container.grid(row=0, column=0, sticky="nsew")
+        container.grid_columnconfigure(0, weight=1)
+
+        ttk.Label(
+            container,
+            text=(
+                "Launch the standalone General Plotter tool.\n"
+                "Choose whether to transfer current Data + Columns."
+            ),
+            justify="left",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+        handoff_var = getattr(self, "_general_plotter_handoff_var", None)
+        if not isinstance(handoff_var, tk.BooleanVar):
+            handoff_var = tk.BooleanVar(
+                value=bool(settings.get("general_plotter_handoff_enabled", True))
+            )
+            self._general_plotter_handoff_var = handoff_var
+        ttk.Checkbutton(
+            container,
+            text="Transfer current Data + Columns to General Plotter",
+            variable=handoff_var,
+            command=self._persist_general_plotter_handoff_preference,
+        ).grid(row=1, column=0, sticky="w", pady=(0, 10))
+
+        button_row = ttk.Frame(container)
+        button_row.grid(row=2, column=0, sticky="e")
+        ttk.Button(
+            button_row,
+            text="Launch",
+            command=self._launch_general_plotter_from_launcher,
+        ).grid(row=0, column=0, padx=(0, 6))
+        ttk.Button(
+            button_row,
+            text="Cancel",
+            command=self._close_general_plotter_launcher,
+        ).grid(row=0, column=1)
+
+    def _resolve_general_plotter_script_path(self) -> Optional[str]:
+        """Resolve absolute path to the bundled General Plotter script.
+
+        Purpose:
+            Locate the launcher target relative to this application's script.
+        Why:
+            Menu-driven launch should remain reliable regardless of current
+            terminal working directory.
+        Inputs:
+            None.
+        Outputs:
+            Optional[str]: Absolute script path on success, otherwise None.
+        Side Effects:
+            Displays an error dialog when the expected script path is missing.
+        Exceptions:
+            Path resolution issues return None after user-facing messaging.
+        """
+        try:
+            project_root = Path(__file__).resolve().parent
+        except Exception:
+            project_root = Path(os.path.abspath(os.path.dirname(__file__)))
+        script_path = (
+            project_root
+            / "General Plotter program"
+            / "General Plotting Program v1.0.0.py"
+        )
+        if script_path.is_file():
+            return str(script_path)
+        messagebox.showerror(
+            "General Plotter",
+            f"General Plotter script was not found at:\n{script_path}",
+        )
+        return None
+
+    def _cleanup_general_plotter_handoff_artifacts(self) -> None:
+        """Delete temporary General Plotter handoff files.
+
+        Purpose:
+            Remove stale CSV/JSON transfer artifacts from prior launches.
+        Why:
+            Handoff files are transient and should not accumulate between runs.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Attempts to delete file paths in
+            `self._general_plotter_handoff_artifacts` and clears that list.
+        Exceptions:
+            Delete failures are ignored via best-effort guards.
+        """
+        artifacts = list(getattr(self, "_general_plotter_handoff_artifacts", []) or [])
+        self._general_plotter_handoff_artifacts = []
+        # Iterate over artifacts to apply the per-item logic.
+        for artifact_path in artifacts:
+            if not artifact_path:
+                continue
+            try:
+                os.remove(artifact_path)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+    def _build_general_plotter_handoff_payload(self) -> Optional[str]:
+        """Create temporary CSV/JSON payload files for data handoff.
+
+        Purpose:
+            Serialize the current in-memory dataset and selected column mapping
+            for the external General Plotter process.
+        Why:
+            Separate-process launching avoids Tk multi-root conflicts, so transfer
+            uses file-based interchange.
+        Inputs:
+            None.
+        Outputs:
+            Optional[str]: Path to the generated handoff JSON payload; None on
+            validation or serialization failure.
+        Side Effects:
+            Writes two temp files (dataset CSV + payload JSON) and replaces the
+            tracked handoff artifact list.
+        Exceptions:
+            Any serialization error triggers cleanup and a user-facing message.
+        """
+        data_frame = getattr(self, "df", None)
+        if data_frame is None:
+            messagebox.showerror(
+                "General Plotter",
+                "Load data and apply columns before transferring to General Plotter.",
+            )
+            return None
+
+        with self._data_lock:
+            data_snapshot = data_frame.copy(deep=True)
+
+        try:
+            effective_columns = dict(self._get_effective_columns() or {})
+        except Exception:
+            effective_columns = dict(self.columns or {})
+        x_col = str(effective_columns.get("x") or "").strip()
+        y1_col = str(effective_columns.get("y1") or "").strip()
+        if x_col in {"", "None", "(None)"} or x_col not in data_snapshot.columns:
+            x_col = ""
+        if y1_col in {"", "None", "(None)"} or y1_col not in data_snapshot.columns:
+            y1_col = ""
+
+        csv_path = os.path.join(
+            tempfile.gettempdir(), f"gl260_general_plotter_data_{uuid.uuid4().hex}.csv"
+        )
+        payload_path = os.path.join(
+            tempfile.gettempdir(),
+            f"gl260_general_plotter_handoff_{uuid.uuid4().hex}.json",
+        )
+
+        try:
+            data_snapshot.to_csv(csv_path, index=False)
+            payload = {
+                "schema_version": 1,
+                "source_app": "GL-260 Data Analysis and Plotter",
+                "dataset_csv_path": csv_path,
+                "selected_columns": {"x": x_col, "y1": y1_col},
+            }
+            with open(payload_path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, ensure_ascii=False)
+        except Exception as exc:
+            try:
+                if os.path.exists(csv_path):
+                    os.remove(csv_path)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            try:
+                if os.path.exists(payload_path):
+                    os.remove(payload_path)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            messagebox.showerror(
+                "General Plotter",
+                f"Failed to build transfer payload:\n{exc}",
+            )
+            return None
+
+        # Replace older temp artifacts only after the new payload is complete.
+        self._cleanup_general_plotter_handoff_artifacts()
+        self._general_plotter_handoff_artifacts = [csv_path, payload_path]
+        return payload_path
+
+    def _launch_general_plotter_from_launcher(self) -> None:
+        """Launch General Plotter using the current launcher checkbox state.
+
+        Purpose:
+            Start the external plotting tool with optional transfer payload.
+        Why:
+            Centralizing launch behavior ensures consistent path resolution,
+            preference persistence, and error handling.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Persists checkbox state, optionally creates temp transfer files, and
+            starts a subprocess.
+        Exceptions:
+            Launch failures are reported to the user and do not close the launcher.
+        """
+        script_path = self._resolve_general_plotter_script_path()
+        if not script_path:
+            return
+        self._persist_general_plotter_handoff_preference()
+
+        command = [sys.executable, script_path]
+        handoff_var = getattr(self, "_general_plotter_handoff_var", None)
+        handoff_enabled = (
+            bool(handoff_var.get()) if isinstance(handoff_var, tk.BooleanVar) else True
+        )
+        if handoff_enabled:
+            payload_path = self._build_general_plotter_handoff_payload()
+            if not payload_path:
+                return
+            command.extend(["--handoff-json", payload_path])
+        else:
+            self._cleanup_general_plotter_handoff_artifacts()
+
+        try:
+            subprocess.Popen(command, cwd=os.path.dirname(script_path) or None)
+        except Exception as exc:
+            messagebox.showerror(
+                "General Plotter",
+                f"Failed to launch General Plotter:\n{exc}",
+            )
+            return
+        self._close_general_plotter_launcher()
 
     def _refresh_font_family_previews(self) -> None:
         """Refresh font family previews.
@@ -99121,6 +99464,7 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
+        self._cleanup_general_plotter_handoff_artifacts()
         self.quit()  # end the Tk event loop
 
         self.destroy()
