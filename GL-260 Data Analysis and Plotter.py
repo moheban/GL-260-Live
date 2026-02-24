@@ -306,6 +306,45 @@ def _clear_bootstrap_startup_splash(splash_handle: object) -> None:
             pass
 
 
+def _claim_tk_default_root(app_root: object) -> None:
+    """Bind Tk's default-root pointer to the active UnifiedApp root.
+
+    Purpose:
+        Ensure Tk variable constructors without explicit `master` resolve to the
+        current application root during startup handoff.
+    Why:
+        Startup now creates a temporary bootstrap `Tk()` root before `UnifiedApp`.
+        Destroying that bootstrap root can clear Tk's global `_default_root`,
+        which causes `tk.StringVar(...)` and similar calls to fail early.
+    Inputs:
+        app_root: Active `UnifiedApp`/`tk.Tk` root that should own default-root
+            resolution for subsequent Tk variable creation.
+    Outputs:
+        None.
+    Side Effects:
+        Mutates the tkinter module's `_default_root` global when supported.
+    Exceptions:
+        Uses best-effort guards and never raises so startup cannot regress when
+        tkinter internals differ across runtimes.
+    """
+    module_ref = globals().get("tk", None)
+    if module_ref is None:
+        module_ref = _bootstrap_tk
+    if module_ref is None:
+        return
+    try:
+        support_default_root = bool(getattr(module_ref, "_support_default_root", False))
+    except Exception:
+        support_default_root = False
+    if not support_default_root:
+        return
+    try:
+        module_ref._default_root = app_root
+    except Exception:
+        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+        pass
+
+
 _BOOTSTRAP_STARTUP_SPLASH = _create_bootstrap_startup_splash(
     message="Starting GL-260...",
     detail="Initializing startup preflight checks...",
@@ -33740,6 +33779,8 @@ class UnifiedApp(tk.Tk):
         """
 
         super().__init__()
+        # Rebind default-root to this app before destroying bootstrap Tk root.
+        _claim_tk_default_root(self)
 
         self._startup_main_window_hidden_for_splash = False
         self._startup_main_window_revealed = False
