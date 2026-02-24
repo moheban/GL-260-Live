@@ -21,3 +21,4 @@ Prompt Template.md
 .DS_Store
 .ruff_cache
 settings.json
+profiles/_autosave_last_workspace.json
