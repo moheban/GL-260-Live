@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v4.3.6
+# Version: v4.3.7
 # Date: 2026-02-24
 
 import os
@@ -3341,6 +3341,9 @@ _DEFAULT_LAYOUT_MARGINS = {
     "fig_combined_triple_axis": {
         "display": {"left": 0.125, "right": 0.9, "top": 0.88, "bottom": 0.11},
     },
+    "fig_cycle_timeline": {
+        "display": {"left": 0.08, "right": 0.88, "top": 0.90, "bottom": 0.12},
+    },
 }
 _DEFAULT_LAYOUT_MARGINS_GENERIC = {
     "display": {"left": 0.08, "right": 0.97, "top": 0.92, "bottom": 0.12},
@@ -3350,6 +3353,7 @@ _DEFAULT_LAYOUT_PLOT_IDS = (
     "fig_pressure_derivative",
     "fig_combined_triple_axis",
     "fig_cycle_analysis",
+    "fig_cycle_timeline",
 )
 
 
@@ -11820,7 +11824,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v4.3.6"
+APP_VERSION = "v4.3.7"
 
 
 def _apply_rust_runtime_settings_defaults(settings_dict: Dict[str, Any]) -> None:
@@ -34286,6 +34290,10 @@ class UnifiedApp(tk.Tk):
             "ph_max": None,
             "show_legend": False,
             "export_title": CYCLE_TIMELINE_EXPORT_DEFAULT_TITLE,
+            "ph_axis_labelpad": 10.0,
+            "ph_axis_spine_offset": 1.02,
+            "pco2_axis_labelpad": 10.0,
+            "pco2_axis_spine_offset": 1.12,
         }
         stored_cycle_plot_prefs = settings.get("cycle_plot_prefs", {})
         merged_cycle_plot_prefs = dict(default_cycle_plot_prefs)
@@ -34357,6 +34365,26 @@ class UnifiedApp(tk.Tk):
         self._combined_plot_preview_message_base = ""
         self._combined_plot_preview_timer_after_id: Optional[str] = None
         self._combined_plot_preview_closing = False
+        self._cycle_timeline_preview_fig: Optional[Figure] = None
+        self._cycle_timeline_preview_window: Optional[tk.Toplevel] = None
+        self._cycle_timeline_preview_host: Optional[ttk.Frame] = None
+        self._cycle_timeline_preview_content: Optional[ttk.Frame] = None
+        self._cycle_timeline_preview_overlay: Optional[tk.Frame] = None
+        self._cycle_timeline_preview_overlay_label: Optional[ttk.Label] = None
+        self._cycle_timeline_preview_overlay_progress_var: Optional[tk.DoubleVar] = None
+        self._cycle_timeline_preview_overlay_progress_label: Optional[ttk.Label] = None
+        self._cycle_timeline_preview_canvas: Optional[FigureCanvasTkAgg] = None
+        self._cycle_timeline_preview_toolbar: Optional[NavigationToolbar2Tk] = None
+        self._cycle_timeline_preview_request_token = 0
+        self._cycle_timeline_preview_progress_value = 0.0
+        self._cycle_timeline_preview_started_at: Optional[float] = None
+        self._cycle_timeline_preview_message_base = ""
+        self._cycle_timeline_preview_closing = False
+        self._cycle_timeline_preview_annotation_controller: Optional[
+            PlotAnnotationsController
+        ] = None
+        self._cycle_timeline_preview_plot_id: Optional[str] = None
+        self._cycle_timeline_preview_elements_changed = False
         self._sol_loading_overlay: Optional[tk.Frame] = None
         self._sol_loading_label: Optional[tk.Label] = None
         self._sol_loading_detail_label: Optional[ttk.Label] = None
@@ -34668,6 +34696,10 @@ class UnifiedApp(tk.Tk):
         preferences_menu.add_command(
             label="Cycle Analysis Plot Settings...",
             command=self._open_cycle_trace_settings,
+        )
+        preferences_menu.add_command(
+            label="Cycle Timeline Plot Settings...",
+            command=self._open_cycle_plot_options,
         )
         preferences_menu.add_command(
             label="Saved Output Options...",
@@ -56568,6 +56600,7 @@ class UnifiedApp(tk.Tk):
             "fig_pressure_derivative": "Figure 2: Pressure + Derivative",
             "fig_combined_triple_axis": "Combined Triple-Axis",
             "fig_cycle_analysis": "Figure 3: Cycle Analysis",
+            "fig_cycle_timeline": "Cycle Timeline",
         }
         display_label = plot_label_map.get(plot_id, plot_id)
         window.title(f"Plot Settings - {display_label}")
@@ -77156,6 +77189,7 @@ class UnifiedApp(tk.Tk):
             (f"{model.label} [{model.key}]", model.key) for model in available_models
         )
         self._workflow_model_vars = {}
+        cycle_timeline_title_var = self._ensure_cycle_timeline_title_var()
 
         # Closure captures _build_tab_solubility_new local context to keep helper logic scoped and invoked directly within _build_tab_solubility_new.
         def _build_workflow_models_frame(parent: ttk.Frame, workflow_key: str) -> None:
@@ -77256,6 +77290,12 @@ class UnifiedApp(tk.Tk):
         _ui_button(
             planning_tab, text="Clear Inputs", command=self._clear_sol_helper_inputs
         ).grid(row=button_row, column=1, sticky="e", padx=8, pady=(2, 4))
+        ttk.Label(planning_tab, text="Cycle timeline plot title").grid(
+            row=button_row + 1, column=0, sticky="w", padx=8, pady=(6, 2)
+        )
+        _ui_entry(
+            planning_tab, textvariable=cycle_timeline_title_var, width=36
+        ).grid(row=button_row + 1, column=1, sticky="ew", padx=8, pady=(6, 2))
 
         plot_ph_label = "Speciation plot pH (default 8.0)"
         planning_plot_var = self._create_persistent_solubility_var(
@@ -77269,15 +77309,15 @@ class UnifiedApp(tk.Tk):
             "required": False,
         }
         ttk.Label(planning_tab, text=plot_ph_label).grid(
-            row=button_row + 1, column=0, sticky="w", padx=8, pady=(6, 2)
+            row=button_row + 2, column=0, sticky="w", padx=8, pady=(6, 2)
         )
         _ui_entry(planning_tab, textvariable=planning_plot_var, width=10).grid(
-            row=button_row + 1, column=1, sticky="w", padx=(0, 12), pady=(6, 2)
+            row=button_row + 2, column=1, sticky="w", padx=(0, 12), pady=(6, 2)
         )
 
         target_box = ttk.LabelFrame(planning_tab, text="Target pH & Headspace")
         target_box.grid(
-            row=button_row + 2, column=0, columnspan=2, sticky="ew", padx=8, pady=(8, 4)
+            row=button_row + 3, column=0, columnspan=2, sticky="ew", padx=8, pady=(8, 4)
         )
         target_box.grid_columnconfigure(0, weight=0)
         target_box.grid_columnconfigure(1, weight=1)
@@ -77320,7 +77360,7 @@ class UnifiedApp(tk.Tk):
 
         headspace_frame = ttk.Frame(planning_tab)
         headspace_frame.grid(
-            row=button_row + 3, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 8)
+            row=button_row + 4, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 8)
         )
         headspace_frame.grid_columnconfigure(1, weight=1)
 
@@ -77434,8 +77474,24 @@ class UnifiedApp(tk.Tk):
             padx=8,
             pady=(4, 2),
         )
+        ttk.Label(analysis_tab, text="Cycle timeline plot title").grid(
+            row=analysis_button_row + 1,
+            column=0,
+            sticky="w",
+            padx=8,
+            pady=(6, 2),
+        )
+        _ui_entry(
+            analysis_tab, textvariable=cycle_timeline_title_var, width=36
+        ).grid(
+            row=analysis_button_row + 1,
+            column=1,
+            sticky="ew",
+            padx=8,
+            pady=(6, 2),
+        )
         self._ensure_analysis_progress_vars()
-        progress_row = analysis_button_row + 1
+        progress_row = analysis_button_row + 2
         progress_frame = ttk.LabelFrame(analysis_tab, text="Reaction Progress")
         progress_frame.grid(
             row=progress_row,
@@ -77535,6 +77591,22 @@ class UnifiedApp(tk.Tk):
             sticky="e",
             padx=8,
             pady=(4, 2),
+        )
+        ttk.Label(reprocess_tab, text="Cycle timeline plot title").grid(
+            row=reprocess_button_row + 1,
+            column=0,
+            sticky="w",
+            padx=8,
+            pady=(6, 2),
+        )
+        _ui_entry(
+            reprocess_tab, textvariable=cycle_timeline_title_var, width=36
+        ).grid(
+            row=reprocess_button_row + 1,
+            column=1,
+            sticky="ew",
+            padx=8,
+            pady=(6, 2),
         )
         diag_target_var = self._solubility_vars.get("diag_target_ph")
         if diag_target_var is not None:
@@ -77797,8 +77869,16 @@ class UnifiedApp(tk.Tk):
         spec_ax = spec_fig.add_subplot(111)
         spec_ax2 = spec_ax.twinx()
         spec_ax3 = spec_ax.twinx()
+        try:
+            spec_ax._gl260_axis_role = "primary"
+            spec_ax2._gl260_axis_role = "right"
+            spec_ax3._gl260_axis_role = "third"
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
         spec_ax.set_xlabel(r"Total CO$_2$ added (g)", fontsize=11, labelpad=8)
         spec_ax.set_ylabel("Carbon species (%)", fontsize=11, labelpad=10)
+        spec_ax.set_title(self._cycle_timeline_title_text(), fontsize=11, pad=8)
         spec_ax2.set_ylabel("Predicted pH", fontsize=11, labelpad=20, rotation=180)
         spec_ax2.spines["right"].set_position(("axes", 1.02))
         spec_ax2.yaxis.set_label_coords(1.08, 0.5)
@@ -77822,7 +77902,7 @@ class UnifiedApp(tk.Tk):
         callout_frame.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
         callout_frame.grid_columnconfigure(0, weight=1)
         # Iterate over the configured range to apply the per-item logic.
-        for idx in range(1, 6):
+        for idx in range(1, 8):
             callout_frame.grid_columnconfigure(idx, weight=0)
         callout_frame.grid_rowconfigure(0, weight=1)
         callout_text = scrolledtext.ScrolledText(
@@ -77837,39 +77917,53 @@ class UnifiedApp(tk.Tk):
             command=self._export_cycle_timeline_csv,
         )
         export_csv_btn.grid(row=1, column=0, sticky="w", padx=4, pady=4)
+        preview_plot_btn = _ui_button(
+            callout_frame,
+            text="Plot Preview",
+            command=self._open_cycle_timeline_plot_preview,
+        )
+        preview_plot_btn.grid(row=1, column=1, sticky="w", padx=4, pady=4)
         export_plot_btn = _ui_button(
             callout_frame,
             text="Export Timeline Plot",
             command=self._export_cycle_timeline_plot,
         )
-        export_plot_btn.grid(row=1, column=1, sticky="w", padx=4, pady=4)
+        export_plot_btn.grid(row=1, column=2, sticky="w", padx=4, pady=4)
         export_table_btn = _ui_button(
             callout_frame,
             text="Export Timeline Table",
             command=self._export_cycle_timeline_table,
         )
-        export_table_btn.grid(row=1, column=2, sticky="w", padx=4, pady=4)
+        export_table_btn.grid(row=1, column=3, sticky="w", padx=4, pady=4)
         export_opts_btn = _ui_button(
             callout_frame,
             text="Export Options...",
             command=self._open_timeline_export_options,
         )
-        export_opts_btn.grid(row=1, column=3, sticky="w", padx=4, pady=4)
+        export_opts_btn.grid(row=1, column=4, sticky="w", padx=4, pady=4)
+        plot_elements_btn = _ui_button(
+            callout_frame,
+            text="Add Plot Elements...",
+            command=self._open_cycle_timeline_plot_elements_editor,
+        )
+        plot_elements_btn.grid(row=1, column=5, sticky="w", padx=4, pady=4)
         expand_btn = _ui_button(
             callout_frame,
             text="Expand Timeline",
             command=self._open_timeline_viewer,
         )
-        expand_btn.grid(row=1, column=4, sticky="w", padx=4, pady=4)
+        expand_btn.grid(row=1, column=6, sticky="w", padx=4, pady=4)
         _ui_button(
             callout_frame,
             text="Scroll to Latest",
             command=self._scroll_callouts_to_latest,
-        ).grid(row=1, column=5, sticky="e", padx=4, pady=4)
+        ).grid(row=1, column=7, sticky="e", padx=4, pady=4)
         self._sol_cycle_export_csv_btn = export_csv_btn
+        self._sol_cycle_preview_plot_btn = preview_plot_btn
         self._sol_cycle_export_plot_btn = export_plot_btn
         self._sol_cycle_export_table_btn = export_table_btn
         self._sol_cycle_export_opts_btn = export_opts_btn
+        self._sol_cycle_plot_elements_btn = plot_elements_btn
         self._sol_cycle_expand_btn = expand_btn
         self._set_timeline_action_state(False)
 
@@ -79153,9 +79247,13 @@ class UnifiedApp(tk.Tk):
     def _collect_planning_timeline_legend_entries(
         self, axes: Sequence[Any]
     ) -> Tuple[List[Any], List[str]]:
-        """Collect Planning timeline legend entries.
-        Purpose: Gather unique handles/labels across timeline axes.
-        Why: Planning plots use a consolidated legend for clarity and exports.
+        """Collect cycle timeline legend entries across all axes.
+
+        Purpose:
+            Gather unique legend handles/labels from timeline axes.
+        Why:
+            The timeline view now uses one consolidated legend for every
+            workflow mode (Planning/Analysis/Reprocessing) and export.
         Inputs:
             axes (Sequence[Any]): Axes to scan for legend entries.
         Outputs:
@@ -79167,7 +79265,7 @@ class UnifiedApp(tk.Tk):
         """
         handles: List[Any] = []
         labels: List[str] = []
-        # Collect handles across axes so Planning exports are self-explanatory.
+        # Collect handles across axes so timeline legends stay consolidated.
         for axis in axes:
             try:
                 axis_handles, axis_labels = axis.get_legend_handles_labels()
@@ -79183,9 +79281,13 @@ class UnifiedApp(tk.Tk):
     def _planning_timeline_legend_loc(
         self,
     ) -> Optional[Union[str, int, Tuple[float, float]]]:
-        """Return Planning timeline legend location.
-        Purpose: Reuse user-dragged legend placement in export figures.
-        Why: Exports should reflect the on-screen legend position.
+        """Return current cycle timeline legend location.
+
+        Purpose:
+            Reuse user-dragged timeline legend placement in export figures.
+        Why:
+            Timeline exports should reflect the same legend position used in the
+            interactive timeline panel.
         Inputs:
             None.
         Outputs:
@@ -79210,9 +79312,13 @@ class UnifiedApp(tk.Tk):
         labels: Sequence[str],
         host_axis: Any,
     ) -> None:
-        """Refresh Planning timeline legend entries in place.
-        Purpose: Update legend handles/labels without recreating the legend.
-        Why: Preserves drag state and avoids repeated layout registration.
+        """Refresh cycle timeline legend entries in place.
+
+        Purpose:
+            Update legend handles/labels without recreating the legend.
+        Why:
+            In-place updates preserve drag state and avoid repeated layout
+            registration churn during timeline redraws.
         Inputs:
             legend (Any): Existing legend instance to update.
             handles (Sequence[Any]): Legend handles to display.
@@ -79246,6 +79352,35 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
+    def _ensure_cycle_timeline_annotation_controller(self) -> None:
+        """Ensure timeline plot-elements controller is attached to display canvas.
+
+        Purpose:
+            Create or retarget the plot-elements controller for the main cycle
+            timeline display figure.
+        Why:
+            Timeline preview and timeline plot-element edits share one persisted
+            plot-id store and must stay bound to the latest display canvas.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Applies timeline layout profile/plot elements and binds controller
+            callbacks to the timeline display canvas.
+        Exceptions:
+            Best-effort guards suppress controller/layout failures.
+        """
+        fig = getattr(self, "_sol_cycle_spec_fig", None)
+        canvas = getattr(self, "_sol_cycle_spec_canvas", None)
+        if fig is None or canvas is None:
+            return
+        try:
+            self._apply_display_settings_for_plot(fig, "fig_cycle_timeline", canvas)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
     def _update_cycle_spec_view(
         self, timeline: Sequence[Dict[str, Any]], *, workflow_key: Optional[str] = None
     ) -> None:
@@ -79259,7 +79394,8 @@ class UnifiedApp(tk.Tk):
             None.
         Side Effects:
             - Clears and redraws axes, legends, and callout widgets.
-            - Updates the Planning legend in place when applicable.
+            - Updates the consolidated cycle timeline legend in place.
+            - Rebinds plot-elements controller state to timeline display canvas.
         Exceptions:
             - Best-effort; exits early when plot widgets are unavailable.
         """
@@ -79399,17 +79535,47 @@ class UnifiedApp(tk.Tk):
         ax2.clear()
         ax3.clear()
         prefs = self._get_cycle_plot_prefs()
+        axis_layout = self._cycle_timeline_axis_layout_prefs(prefs)
         ax.set_xlabel(r"Total CO$_2$ added (g)", fontsize=11, labelpad=8)
         ax.set_ylabel("Carbon species (%)", fontsize=11, labelpad=10)
+        title_text = self._cycle_timeline_title_text(prefs)
+        ax.set_title(title_text, fontsize=11, pad=8)
         ax.tick_params(axis="both", labelsize=9, pad=4)
-        ax2.set_ylabel("Predicted pH", fontsize=11, labelpad=10, rotation=-90)
-        ax2.spines["right"].set_position(("axes", 1.02))
-        ax2.yaxis.set_label_coords(1.08, 0.5)
+        ax2.set_ylabel(
+            "Predicted pH",
+            fontsize=11,
+            labelpad=axis_layout.get("ph_axis_labelpad", 10.0),
+            rotation=-90,
+        )
+        ax2.spines["right"].set_position(
+            ("axes", axis_layout.get("ph_axis_spine_offset", 1.02))
+        )
+        ax2.yaxis.set_label_coords(
+            axis_layout.get("ph_axis_spine_offset", 1.02) + 0.06,
+            0.5,
+        )
         ax2.tick_params(axis="both", labelsize=9, pad=4)
-        ax3.set_ylabel("Headspace pCO2 (atm)", fontsize=11, labelpad=10, rotation=-90)
-        ax3.spines["right"].set_position(("axes", 1.12))
-        ax3.yaxis.set_label_coords(1.18, 0.5)
+        ax3.set_ylabel(
+            "Headspace pCO2 (atm)",
+            fontsize=11,
+            labelpad=axis_layout.get("pco2_axis_labelpad", 10.0),
+            rotation=-90,
+        )
+        ax3.spines["right"].set_position(
+            ("axes", axis_layout.get("pco2_axis_spine_offset", 1.12))
+        )
+        ax3.yaxis.set_label_coords(
+            axis_layout.get("pco2_axis_spine_offset", 1.12) + 0.06,
+            0.5,
+        )
         ax3.tick_params(axis="both", labelsize=8, pad=3)
+        try:
+            ax._gl260_axis_role = "primary"
+            ax2._gl260_axis_role = "right"
+            ax3._gl260_axis_role = "third"
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
         if not timeline:
             ax.text(0.5, 0.5, "No cycle data", ha="center", va="center")
             ax2.text(
@@ -79420,6 +79586,7 @@ class UnifiedApp(tk.Tk):
                 va="center",
             )
             ax3.text(0.5, 0.5, "Headspace pCO2 unavailable", ha="center", va="center")
+            self._ensure_cycle_timeline_annotation_controller()
             canvas.draw_idle()
             return
         xs = []
@@ -79445,7 +79612,6 @@ class UnifiedApp(tk.Tk):
                 pco2_values.append(float(entry.get("pco2_atm")))
             except Exception:
                 pco2_values.append(float("nan"))
-        show_legend = bool(prefs.get("show_legend"))
         if workflow == "Planning":
             species = [
                 ("Carbonic acid (H2CO3)", h2co3_vals, "#55a868"),
@@ -79579,36 +79745,32 @@ class UnifiedApp(tk.Tk):
                 ha="center",
                 fontsize=7,
             )
-        if workflow == "Planning":
-            # Planning timeline legend is consolidated and draggable for clarity.
-            handles, labels = self._collect_planning_timeline_legend_entries(
-                (ax, ax2, ax3)
-            )
-            legend = getattr(self, "_planning_timeline_legend", None)
-            if handles:
-                if legend is None:
-                    legend = ax.legend(
-                        handles=handles, labels=labels, loc="upper left", fontsize=8
-                    )
-                    self._planning_timeline_legend = legend
-                    _make_legend_draggable(legend)
-                    layout_mgr = getattr(ax.figure, "_gl260_layout_manager", None)
-                    if layout_mgr is not None:
-                        layout_mgr.register_artist("plot_legend", legend)
-                else:
-                    self._refresh_planning_timeline_legend(
-                        legend, handles, labels, ax
-                    )
-            elif legend is not None:
-                try:
-                    legend.set_visible(False)
-                except Exception:
-                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                    pass
-        elif show_legend:
-            ax.legend(loc="upper left", fontsize=8)
-            ax2.legend(loc="upper right", fontsize=8)
-            ax3.legend(loc="center right", fontsize=8)
+        handles, labels = self._collect_planning_timeline_legend_entries((ax, ax2, ax3))
+        legend = getattr(self, "_planning_timeline_legend", None)
+        if handles:
+            legend_loc = self._planning_timeline_legend_loc() or "upper left"
+            if legend is None:
+                legend = ax.legend(
+                    handles=handles,
+                    labels=labels,
+                    loc=legend_loc,
+                    fontsize=8,
+                    **_legend_shadowbox_kwargs(),
+                )
+                self._planning_timeline_legend = legend
+            else:
+                self._refresh_planning_timeline_legend(legend, handles, labels, ax)
+            _make_legend_draggable(legend, enabled=True, update_mode="loc")
+            layout_mgr = getattr(ax.figure, "_gl260_layout_manager", None)
+            if layout_mgr is not None:
+                layout_mgr.register_artist("plot_legend", legend)
+        elif legend is not None:
+            try:
+                legend.set_visible(False)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._ensure_cycle_timeline_annotation_controller()
         canvas.draw_idle()
 
         callout = getattr(self, "_sol_cycle_callouts", None)
@@ -79713,8 +79875,10 @@ class UnifiedApp(tk.Tk):
         # Iterate to apply the per-item logic.
         for attr in (
             "_sol_cycle_export_csv_btn",
+            "_sol_cycle_preview_plot_btn",
             "_sol_cycle_export_plot_btn",
             "_sol_cycle_export_table_btn",
+            "_sol_cycle_plot_elements_btn",
             "_sol_cycle_expand_btn",
         ):
             btn = getattr(self, attr, None)
@@ -79947,11 +80111,17 @@ class UnifiedApp(tk.Tk):
             "ph_max": None,
             "show_legend": False,
             "export_title": CYCLE_TIMELINE_EXPORT_DEFAULT_TITLE,
+            "ph_axis_labelpad": 10.0,
+            "ph_axis_spine_offset": 1.02,
+            "pco2_axis_labelpad": 10.0,
+            "pco2_axis_spine_offset": 1.12,
         }
         prefs = getattr(self, "_cycle_plot_prefs", {}) or {}
         merged = dict(defaults)
         if isinstance(prefs, dict):
             merged.update({k: prefs.get(k, v) for k, v in defaults.items()})
+        title_text = (merged.get("export_title") or "").strip()
+        merged["export_title"] = title_text or CYCLE_TIMELINE_EXPORT_DEFAULT_TITLE
         self._cycle_plot_prefs = merged
         settings = getattr(self, "settings", None)
         if isinstance(settings, dict):
@@ -79961,11 +80131,216 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+        title_var = getattr(self, "_cycle_timeline_title_var", None)
+        if isinstance(title_var, tk.StringVar):
+            desired_title = str(merged.get("export_title") or "").strip()
+            desired_title = desired_title or CYCLE_TIMELINE_EXPORT_DEFAULT_TITLE
+            try:
+                current_title = title_var.get().strip()
+            except Exception:
+                current_title = ""
+            if current_title != desired_title:
+                self._cycle_timeline_title_syncing = True
+                try:
+                    title_var.set(desired_title)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+                self._cycle_timeline_title_syncing = False
         return merged
 
+    def _cycle_timeline_title_text(
+        self, prefs: Optional[Mapping[str, Any]] = None
+    ) -> str:
+        """Return the normalized cycle timeline title text.
+
+        Purpose:
+            Resolve one canonical cycle timeline title string for display/export.
+        Why:
+            Planning, Analysis, and Reprocessing inputs must share one title source
+            so timeline plot rendering and exports stay synchronized.
+        Inputs:
+            prefs: Optional pre-fetched cycle plot preference mapping.
+        Outputs:
+            str: Non-empty timeline title text.
+        Side Effects:
+            None.
+        Exceptions:
+            Uses safe fallback defaults when preference lookup fails.
+        """
+        prefs_map = dict(prefs or self._get_cycle_plot_prefs())
+        raw_title = str(prefs_map.get("export_title") or "").strip()
+        return raw_title or CYCLE_TIMELINE_EXPORT_DEFAULT_TITLE
+
+    def _ensure_cycle_timeline_title_var(self) -> tk.StringVar:
+        """Return the shared cycle timeline title variable.
+
+        Purpose:
+            Create/reuse one Tk variable that drives timeline title edits across
+            all Advanced Speciation workflow input tabs and settings dialogs.
+        Why:
+            A shared variable keeps Planning/Analysis/Reprocessing title controls
+            synchronized while persisting into `cycle_plot_prefs`.
+        Inputs:
+            None.
+        Outputs:
+            tk.StringVar: Shared title variable bound to timeline title controls.
+        Side Effects:
+            - Creates and stores `_cycle_timeline_title_var` when missing.
+            - Persists title updates into `settings["cycle_plot_prefs"]`.
+            - Refreshes cycle timeline plot after title edits.
+        Exceptions:
+            Best-effort guards prevent UI interruptions on save/refresh failures.
+        """
+        existing_var = getattr(self, "_cycle_timeline_title_var", None)
+        desired_title = self._cycle_timeline_title_text()
+        if not isinstance(existing_var, tk.StringVar):
+            existing_var = tk.StringVar(value=desired_title)
+            self._cycle_timeline_title_var = existing_var
+
+            def _persist(*_args: Any) -> None:
+                """Persist shared cycle timeline title edits.
+
+                Purpose:
+                    Save shared title changes into cycle plot preferences.
+                Why:
+                    Timeline title edits should apply immediately to display and
+                    export flows regardless of the editing workflow tab.
+                Inputs:
+                    *_args: Tk trace callback payload (unused).
+                Outputs:
+                    None.
+                Side Effects:
+                    Writes to `cycle_plot_prefs`, schedules settings save, and
+                    refreshes timeline views when available.
+                Exceptions:
+                    Best-effort; callback silently returns on save/refresh errors.
+                """
+                if bool(getattr(self, "_cycle_timeline_title_syncing", False)):
+                    return
+                try:
+                    raw_value = str(existing_var.get() or "").strip()
+                except Exception:
+                    raw_value = ""
+                normalized_title = raw_value or CYCLE_TIMELINE_EXPORT_DEFAULT_TITLE
+                if raw_value != normalized_title:
+                    self._cycle_timeline_title_syncing = True
+                    try:
+                        existing_var.set(normalized_title)
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+                    self._cycle_timeline_title_syncing = False
+                prefs = self._get_cycle_plot_prefs()
+                if prefs.get("export_title") == normalized_title:
+                    return
+                prefs["export_title"] = normalized_title
+                self._cycle_plot_prefs = prefs
+                settings_ref = getattr(self, "settings", None)
+                if isinstance(settings_ref, dict):
+                    settings_ref["cycle_plot_prefs"] = prefs
+                    try:
+                        self._schedule_save_settings()
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+                if getattr(self, "_sol_cycle_spec_canvas", None) is not None:
+                    try:
+                        self._refresh_cycle_views()
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
+
+            self._cycle_timeline_title_trace = existing_var.trace_add("write", _persist)
+            return existing_var
+        try:
+            current_title = str(existing_var.get() or "").strip()
+        except Exception:
+            current_title = ""
+        if current_title != desired_title:
+            self._cycle_timeline_title_syncing = True
+            try:
+                existing_var.set(desired_title)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            self._cycle_timeline_title_syncing = False
+        return existing_var
+
+    def _cycle_timeline_axis_layout_prefs(
+        self, prefs: Optional[Mapping[str, Any]] = None
+    ) -> Dict[str, float]:
+        """Return normalized axis spacing controls for the timeline plot.
+
+        Purpose:
+            Resolve second/third y-axis spacing overrides for timeline rendering.
+        Why:
+            Timeline settings now expose pH and detached pCO2 axis spacing controls
+            that must be applied consistently in display and export figures.
+        Inputs:
+            prefs: Optional pre-fetched cycle plot preference mapping.
+        Outputs:
+            Dict[str, float]: Normalized numeric spacing values for axis label pads
+            and right-side spine offsets.
+        Side Effects:
+            None.
+        Exceptions:
+            Invalid values fall back to historical default spacing.
+        """
+        prefs_map = dict(prefs or self._get_cycle_plot_prefs())
+
+        def _normalize_value(key: str, fallback: float) -> float:
+            """Normalize one timeline axis spacing value.
+
+            Purpose:
+                Coerce a persisted preference into a finite float.
+            Why:
+                Timeline axis spacing controls accept free-form text and can be
+                missing/invalid in older settings snapshots.
+            Inputs:
+                key: Preference key to resolve.
+                fallback: Fallback float used when value is invalid.
+            Outputs:
+                float: Finite spacing value for renderer use.
+            Side Effects:
+                None.
+            Exceptions:
+                Returns fallback when conversion fails.
+            """
+            try:
+                value = float(prefs_map.get(key))
+            except Exception:
+                value = float(fallback)
+            if not math.isfinite(value):
+                value = float(fallback)
+            return float(value)
+
+        return {
+            "ph_axis_labelpad": _normalize_value("ph_axis_labelpad", 10.0),
+            "ph_axis_spine_offset": _normalize_value("ph_axis_spine_offset", 1.02),
+            "pco2_axis_labelpad": _normalize_value("pco2_axis_labelpad", 10.0),
+            "pco2_axis_spine_offset": _normalize_value("pco2_axis_spine_offset", 1.12),
+        }
+
     def _open_cycle_plot_options(self) -> None:
-        """Open cycle plot options.
-        Used by UI actions to open cycle plot options."""
+        """Open the Cycle Timeline Plot Settings dialog.
+
+        Purpose:
+            Expose focused cycle timeline plot controls for axis ranges, title, and
+            second/third y-axis spacing.
+        Why:
+            Users need timeline-specific controls equivalent to key combined plot
+            spacing options without opening the full combined Plot Settings dialog.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Creates one settings toplevel, persists preference edits, and refreshes
+            timeline views when Apply/Reset actions run.
+        Exceptions:
+            Best-effort guards keep dialog actions resilient.
+        """
 
         # Closure captures _open_cycle_plot_options state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _open_cycle_plot_options.
         def _close() -> None:
@@ -79987,8 +80362,10 @@ class UnifiedApp(tk.Tk):
                 self._cycle_plot_opts_win = None
 
         prefs = self._get_cycle_plot_prefs()
+        axis_layout = self._cycle_timeline_axis_layout_prefs(prefs)
+        title_var = self._ensure_cycle_timeline_title_var()
         top = tk.Toplevel(self)
-        top.title("Cycle Plot Options")
+        top.title("Cycle Timeline Plot Settings")
         top.resizable(False, False)
         self._cycle_plot_opts_win = top
 
@@ -80009,19 +80386,42 @@ class UnifiedApp(tk.Tk):
         species_max_var = _make_entry(1, "Species y-max", prefs.get("species_max"))
         ph_min_var = _make_entry(2, "pH y-min", prefs.get("ph_min"))
         ph_max_var = _make_entry(3, "pH y-max", prefs.get("ph_max"))
-        export_title_var = tk.StringVar(
-            value=prefs.get("export_title") or CYCLE_TIMELINE_EXPORT_DEFAULT_TITLE
+        ph_axis_labelpad_var = _make_entry(
+            4,
+            "pH axis label padding",
+            axis_layout.get("ph_axis_labelpad"),
         )
-        ttk.Label(top, text="Export title").grid(
-            row=4, column=0, sticky="w", padx=6, pady=4
+        ph_axis_spine_offset_var = _make_entry(
+            5,
+            "pH axis offset (axes units)",
+            axis_layout.get("ph_axis_spine_offset"),
         )
-        ttk.Entry(top, textvariable=export_title_var, width=32).grid(
-            row=4, column=1, sticky="w", padx=6, pady=4
+        pco2_axis_labelpad_var = _make_entry(
+            6,
+            "Detached pCO2 axis label padding",
+            axis_layout.get("pco2_axis_labelpad"),
         )
-        show_legend_var = tk.BooleanVar(value=bool(prefs.get("show_legend", False)))
-        ttk.Checkbutton(top, text="Show legend", variable=show_legend_var).grid(
-            row=5, column=0, columnspan=2, sticky="w", padx=6, pady=4
+        pco2_axis_spine_offset_var = _make_entry(
+            7,
+            "Detached pCO2 axis offset (axes units)",
+            axis_layout.get("pco2_axis_spine_offset"),
         )
+        ttk.Label(top, text="Cycle timeline title").grid(
+            row=8, column=0, sticky="w", padx=6, pady=4
+        )
+        _ui_entry(top, textvariable=title_var, width=32).grid(
+            row=8, column=1, sticky="w", padx=6, pady=4
+        )
+        ttk.Label(
+            top,
+            text="This title is shared across Planning, Analysis, and Reprocessing.",
+        ).grid(row=9, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
+        ttk.Label(top, text="Used for on-screen timeline and exports.").grid(
+            row=10, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4)
+        )
+        ttk.Label(
+            top, text="(Legacy show-legend preference is retained automatically.)"
+        ).grid(row=11, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
 
         # Closure captures _open_cycle_plot_options local context to keep helper logic scoped and invoked directly within _open_cycle_plot_options.
         def _parse_field(var: tk.StringVar) -> Optional[float]:
@@ -80053,17 +80453,41 @@ class UnifiedApp(tk.Tk):
                         "ph_max": None,
                         "show_legend": False,
                         "export_title": CYCLE_TIMELINE_EXPORT_DEFAULT_TITLE,
+                        "ph_axis_labelpad": 10.0,
+                        "ph_axis_spine_offset": 1.02,
+                        "pco2_axis_labelpad": 10.0,
+                        "pco2_axis_spine_offset": 1.12,
                     }
                 )
             else:
+                resolved_title = str(title_var.get() or "").strip()
+                resolved_title = resolved_title or CYCLE_TIMELINE_EXPORT_DEFAULT_TITLE
+                ph_axis_labelpad = _parse_field(ph_axis_labelpad_var)
+                ph_axis_offset = _parse_field(ph_axis_spine_offset_var)
+                pco2_axis_labelpad = _parse_field(pco2_axis_labelpad_var)
+                pco2_axis_offset = _parse_field(pco2_axis_spine_offset_var)
                 new_prefs.update(
                     {
                         "species_min": _parse_field(species_min_var),
                         "species_max": _parse_field(species_max_var),
                         "ph_min": _parse_field(ph_min_var),
                         "ph_max": _parse_field(ph_max_var),
-                        "show_legend": bool(show_legend_var.get()),
-                        "export_title": export_title_var.get().strip(),
+                        "show_legend": bool(new_prefs.get("show_legend", False)),
+                        "export_title": resolved_title,
+                        "ph_axis_labelpad": (
+                            ph_axis_labelpad if ph_axis_labelpad is not None else 10.0
+                        ),
+                        "ph_axis_spine_offset": (
+                            ph_axis_offset if ph_axis_offset is not None else 1.02
+                        ),
+                        "pco2_axis_labelpad": (
+                            pco2_axis_labelpad
+                            if pco2_axis_labelpad is not None
+                            else 10.0
+                        ),
+                        "pco2_axis_spine_offset": (
+                            pco2_axis_offset if pco2_axis_offset is not None else 1.12
+                        ),
                     }
                 )
             self._cycle_plot_prefs = new_prefs
@@ -80075,6 +80499,18 @@ class UnifiedApp(tk.Tk):
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
+            shared_title_var = self._ensure_cycle_timeline_title_var()
+            normalized_title = str(
+                new_prefs.get("export_title") or CYCLE_TIMELINE_EXPORT_DEFAULT_TITLE
+            ).strip()
+            normalized_title = normalized_title or CYCLE_TIMELINE_EXPORT_DEFAULT_TITLE
+            self._cycle_timeline_title_syncing = True
+            try:
+                shared_title_var.set(normalized_title)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            self._cycle_timeline_title_syncing = False
             try:
                 self._refresh_cycle_views()
             except Exception:
@@ -80082,7 +80518,7 @@ class UnifiedApp(tk.Tk):
                 pass
 
         btn_frame = ttk.Frame(top)
-        btn_frame.grid(row=6, column=0, columnspan=2, sticky="e", padx=6, pady=6)
+        btn_frame.grid(row=12, column=0, columnspan=2, sticky="e", padx=6, pady=6)
         ttk.Button(btn_frame, text="Apply", command=lambda: _apply(False)).grid(
             row=0, column=0, padx=4
         )
@@ -80129,6 +80565,630 @@ class UnifiedApp(tk.Tk):
             getattr(self, "_sol_reaction_guidance", {}) or {},
             getattr(self, "_sol_tracking_entries", []),
         )
+
+    def _open_cycle_timeline_plot_elements_editor(self) -> None:
+        """Open the Plot Elements editor for the cycle timeline display plot.
+
+        Purpose:
+            Expose direct plot-element editing controls for the cycle timeline.
+        Why:
+            Timeline workflows now support persistent plot elements and preview
+            synchronization, so users need a first-class editor entry point.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Opens/reuses the plot-elements editor bound to `fig_cycle_timeline`.
+        Exceptions:
+            Best-effort guards prevent UI interruption when timeline canvas is
+            unavailable.
+        """
+        fig = getattr(self, "_sol_cycle_spec_fig", None)
+        canvas = getattr(self, "_sol_cycle_spec_canvas", None)
+        if fig is None or canvas is None:
+            return
+        self._ensure_cycle_timeline_annotation_controller()
+        try:
+            self._open_plot_elements_editor(fig, canvas, "fig_cycle_timeline")
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _set_cycle_timeline_preview_loading_state(
+        self,
+        *,
+        progress: Optional[float] = None,
+        message: Optional[str] = None,
+        reset: bool = False,
+        show: bool = True,
+    ) -> None:
+        """Update cycle timeline Plot Preview overlay progress and status text.
+
+        Purpose:
+            Keep cycle timeline preview overlay feedback synchronized with preview
+            build/install stages.
+        Why:
+            Timeline preview should mirror combined preview loading feedback so
+            users can track rendering progress deterministically.
+        Inputs:
+            progress: Optional 0..100 progress value.
+            message: Optional stage message for overlay label.
+            reset: True to reset cached progress/message before updates.
+            show: True to keep overlay visible after the update.
+        Outputs:
+            None.
+        Side Effects:
+            Updates overlay label/progress bar and visibility in preview window.
+        Exceptions:
+            Best-effort guards ignore stale/destroyed overlay widgets.
+        """
+        overlay = getattr(self, "_cycle_timeline_preview_overlay", None)
+        if overlay is None:
+            return
+        try:
+            if not overlay.winfo_exists():
+                return
+        except Exception:
+            return
+        if reset:
+            self._cycle_timeline_preview_progress_value = 0.0
+            self._cycle_timeline_preview_started_at = time.monotonic()
+            self._cycle_timeline_preview_message_base = ""
+        current_value = getattr(self, "_cycle_timeline_preview_progress_value", 0.0)
+        try:
+            current_value = float(current_value)
+        except Exception:
+            current_value = 0.0
+        if not math.isfinite(current_value):
+            current_value = 0.0
+        target_value = current_value
+        if progress is not None:
+            try:
+                parsed = float(progress)
+            except Exception:
+                parsed = current_value
+            if not math.isfinite(parsed):
+                parsed = current_value
+            parsed = max(0.0, min(100.0, parsed))
+            target_value = parsed if reset else max(current_value, parsed)
+        if message is not None:
+            self._cycle_timeline_preview_message_base = str(message).strip()
+        label = getattr(self, "_cycle_timeline_preview_overlay_label", None)
+        if label is not None:
+            try:
+                label.configure(
+                    text=str(self._cycle_timeline_preview_message_base or "")
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        progress_var = getattr(
+            self, "_cycle_timeline_preview_overlay_progress_var", None
+        )
+        if progress_var is not None:
+            try:
+                progress_var.set(float(target_value))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        progress_label = getattr(
+            self, "_cycle_timeline_preview_overlay_progress_label", None
+        )
+        if progress_label is not None:
+            try:
+                progress_label.configure(text=f"{int(round(target_value))}%")
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._cycle_timeline_preview_progress_value = float(target_value)
+        if show:
+            try:
+                overlay.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
+                overlay.lift()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        window = getattr(self, "_cycle_timeline_preview_window", None)
+        if window is not None:
+            try:
+                window.update_idletasks()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+    def _hide_cycle_timeline_preview_loading(self) -> None:
+        """Hide the cycle timeline Plot Preview overlay.
+
+        Purpose:
+            Clear timeline preview splash UI after success/failure handling.
+        Why:
+            Overlay teardown should be centralized so preview paths stay
+            deterministic and avoid stale loading layers.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Calls `place_forget()` on the cycle timeline preview overlay.
+        Exceptions:
+            Best-effort guards ignore missing/stale overlay widgets.
+        """
+        overlay = getattr(self, "_cycle_timeline_preview_overlay", None)
+        if overlay is None:
+            return
+        try:
+            overlay.place_forget()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _teardown_cycle_timeline_preview_annotation_controller(
+        self, *, clear_dirty_flag: bool
+    ) -> None:
+        """Disconnect and clear cycle timeline preview annotation controller.
+
+        Purpose:
+            Remove preview-only annotation event hooks during preview rebuild/close.
+        Why:
+            Preview canvas swaps and window teardown must not leak stale Matplotlib
+            callback bindings.
+        Inputs:
+            clear_dirty_flag: True to clear pending preview-change sync markers.
+        Outputs:
+            None.
+        Side Effects:
+            Disconnects controller and resets preview controller attributes.
+        Exceptions:
+            Best-effort guards suppress disconnect failures.
+        """
+        controller = getattr(
+            self, "_cycle_timeline_preview_annotation_controller", None
+        )
+        if controller is not None:
+            try:
+                controller.disconnect()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._cycle_timeline_preview_annotation_controller = None
+        if clear_dirty_flag:
+            self._cycle_timeline_preview_plot_id = None
+            self._cycle_timeline_preview_elements_changed = False
+
+    def _on_cycle_timeline_preview_elements_changed(self, plot_id: str) -> None:
+        """Track timeline Plot Preview element edits for close-time sync.
+
+        Purpose:
+            Mark preview element edits so they can be pushed to display on close.
+        Why:
+            Requested behavior keeps display synchronization explicit at preview
+            close rather than on every drag event.
+        Inputs:
+            plot_id: Plot identifier reported by preview annotation controller.
+        Outputs:
+            None.
+        Side Effects:
+            Sets preview dirty flags and marks plot-elements dirty for plot id.
+        Exceptions:
+            Best-effort guards suppress dirty-flag errors.
+        """
+        if not plot_id:
+            return
+        self._cycle_timeline_preview_plot_id = plot_id
+        self._cycle_timeline_preview_elements_changed = True
+        try:
+            self._mark_plot_elements_dirty(plot_id)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _install_cycle_timeline_preview_annotation_controller(
+        self,
+        fig: Optional[Figure],
+        canvas: Optional[FigureCanvasTkAgg],
+        *,
+        plot_id: str,
+    ) -> None:
+        """Attach preview-only plot-elements controller for timeline preview.
+
+        Purpose:
+            Enable element drag/edit interactions inside cycle timeline preview.
+        Why:
+            Preview adjustments should persist to the shared plot-elements store and
+            sync back to display when the preview closes.
+        Inputs:
+            fig: Preview figure.
+            canvas: Preview canvas.
+            plot_id: Plot identifier for persisted element storage.
+        Outputs:
+            None.
+        Side Effects:
+            Replaces any existing preview controller and binds event callbacks.
+        Exceptions:
+            Best-effort guards keep preview usable when controller setup fails.
+        """
+        self._teardown_cycle_timeline_preview_annotation_controller(
+            clear_dirty_flag=False
+        )
+        if fig is None or canvas is None or not plot_id:
+            return
+        try:
+            axes_map = self._resolve_plot_element_axes(fig)
+        except Exception:
+            axes_map = {}
+        try:
+            axis_labels = self._plot_element_axis_labels(fig)
+        except Exception:
+            axis_labels = {}
+        try:
+            controller = PlotAnnotationsController(
+                plot_id,
+                fig,
+                canvas,
+                self._annotation_store,
+                self._annotation_renderer,
+                axes_map,
+                axis_labels,
+                on_elements_changed=self._on_cycle_timeline_preview_elements_changed,
+            )
+            controller.set_mode("select")
+            controller.cancel_place_element()
+            self._cycle_timeline_preview_annotation_controller = controller
+            self._cycle_timeline_preview_plot_id = plot_id
+        except Exception:
+            self._cycle_timeline_preview_annotation_controller = None
+
+    def _sync_cycle_timeline_preview_elements_to_display(self, plot_id: str) -> None:
+        """Apply preview element edits to the main cycle timeline display plot.
+
+        Purpose:
+            Synchronize close-time preview edits into the visible timeline plot.
+        Why:
+            The timeline preview workflow commits element drags when the preview
+            window closes.
+        Inputs:
+            plot_id: Plot identifier whose preview elements changed.
+        Outputs:
+            None.
+        Side Effects:
+            Re-renders plot elements on the display timeline figure/canvas and
+            refreshes an open plot-elements panel for the same plot id.
+        Exceptions:
+            Best-effort guards keep close workflow resilient on sync failures.
+        """
+        if not plot_id:
+            return
+        display_fig = getattr(self, "_sol_cycle_spec_fig", None)
+        display_canvas = getattr(self, "_sol_cycle_spec_canvas", None)
+        if display_fig is None or display_canvas is None:
+            return
+        controller = self._plot_annotation_controllers.get(plot_id)
+        if controller is not None:
+            try:
+                axes_map = self._resolve_plot_element_axes(display_fig)
+            except Exception:
+                axes_map = {}
+            try:
+                axis_labels = self._plot_element_axis_labels(display_fig)
+            except Exception:
+                axis_labels = {}
+            try:
+                controller.set_target(display_fig, display_canvas)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            try:
+                controller.update_axis_map(display_fig, axes_map, axis_labels)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            try:
+                controller.render()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            panel = self._plot_annotation_panels.get(plot_id)
+            if panel is not None:
+                try:
+                    panel.refresh()
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+        else:
+            try:
+                self._apply_plot_elements(display_fig, plot_id)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        try:
+            display_canvas.draw_idle()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _close_cycle_timeline_plot_preview_window(self, _event: Any = None) -> None:
+        """Close cycle timeline Plot Preview and sync element edits on close.
+
+        Purpose:
+            Tear down timeline preview resources safely.
+        Why:
+            Preview callbacks and interactive controllers must be cleaned up, and
+            requested behavior syncs element edits back to display at close time.
+        Inputs:
+            _event: Optional Tk event payload from window destroy hook.
+        Outputs:
+            None.
+        Side Effects:
+            Destroys preview figure/widgets, clears preview state, and applies
+            pending plot-element edits to display timeline plot.
+        Exceptions:
+            Best-effort guards suppress cleanup and sync exceptions.
+        """
+        window = getattr(self, "_cycle_timeline_preview_window", None)
+        if window is None:
+            return
+        if _event is not None and getattr(_event, "widget", None) is not window:
+            return
+        if bool(getattr(self, "_cycle_timeline_preview_closing", False)):
+            return
+        self._cycle_timeline_preview_closing = True
+        try:
+            self._cycle_timeline_preview_request_token += 1
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        preview_plot_id = getattr(self, "_cycle_timeline_preview_plot_id", None)
+        preview_elements_changed = bool(
+            getattr(self, "_cycle_timeline_preview_elements_changed", False)
+        )
+        self._teardown_cycle_timeline_preview_annotation_controller(
+            clear_dirty_flag=False
+        )
+        preview_fig = getattr(self, "_cycle_timeline_preview_fig", None)
+        if preview_fig is not None:
+            try:
+                plt.close(preview_fig)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        try:
+            if _event is None and window.winfo_exists():
+                window.destroy()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        self._cycle_timeline_preview_window = None
+        self._cycle_timeline_preview_host = None
+        self._cycle_timeline_preview_content = None
+        self._cycle_timeline_preview_overlay = None
+        self._cycle_timeline_preview_overlay_label = None
+        self._cycle_timeline_preview_overlay_progress_var = None
+        self._cycle_timeline_preview_overlay_progress_label = None
+        self._cycle_timeline_preview_canvas = None
+        self._cycle_timeline_preview_toolbar = None
+        self._cycle_timeline_preview_fig = None
+        self._cycle_timeline_preview_progress_value = 0.0
+        self._cycle_timeline_preview_started_at = None
+        self._cycle_timeline_preview_message_base = ""
+        if preview_elements_changed and preview_plot_id:
+            try:
+                self._sync_cycle_timeline_preview_elements_to_display(preview_plot_id)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._teardown_cycle_timeline_preview_annotation_controller(
+            clear_dirty_flag=True
+        )
+        self._cycle_timeline_preview_closing = False
+
+    def _open_cycle_timeline_plot_preview(self) -> None:
+        """Open cycle timeline Plot Preview with plot-element editing support.
+
+        Purpose:
+            Render an export-sized (11x8.5) timeline preview with toolbar controls
+            and interactive plot-element dragging.
+        Why:
+            Timeline users need the same preview/edit workflow available on the
+            combined triple-axis plot before committing layout adjustments.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Creates/reuses preview window, builds preview figure, installs preview
+            plot-elements controller, and updates loading overlay states.
+        Exceptions:
+            Failures are surfaced to users and preview overlay is cleared.
+        """
+        preview_plot_id = "fig_cycle_timeline"
+        window = getattr(self, "_cycle_timeline_preview_window", None)
+        if window is None or not bool(getattr(window, "winfo_exists", lambda: False)()):
+            window = tk.Toplevel(self)
+            window.title("Cycle Timeline Plot Preview (Export 11x8.5)")
+            window.transient(self)
+            host = ttk.Frame(window)
+            host.pack(fill="both", expand=True)
+            content = ttk.Frame(host)
+            content.pack(fill="both", expand=True)
+            try:
+                base_bg = window.cget("background")
+            except Exception:
+                base_bg = None
+            overlay = tk.Frame(host, background=base_bg)
+            center = ttk.Frame(overlay)
+            center.place(relx=0.5, rely=0.5, anchor="center")
+            label = ttk.Label(center, text="Opening Preview...")
+            label.pack(side="top", pady=(0, 8))
+            progress_var = tk.DoubleVar(master=overlay, value=0.0)
+            ttk.Progressbar(
+                center,
+                mode="determinate",
+                length=260,
+                maximum=100.0,
+                variable=progress_var,
+            ).pack(side="top")
+            progress_label = ttk.Label(center, text="0%")
+            progress_label.pack(side="top", pady=(6, 0))
+            overlay.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
+            overlay.place_forget()
+            self._cycle_timeline_preview_window = window
+            self._cycle_timeline_preview_host = host
+            self._cycle_timeline_preview_content = content
+            self._cycle_timeline_preview_overlay = overlay
+            self._cycle_timeline_preview_overlay_label = label
+            self._cycle_timeline_preview_overlay_progress_var = progress_var
+            self._cycle_timeline_preview_overlay_progress_label = progress_label
+            self._cycle_timeline_preview_progress_value = 0.0
+            self._cycle_timeline_preview_started_at = None
+            self._cycle_timeline_preview_message_base = ""
+            self._cycle_timeline_preview_canvas = None
+            self._cycle_timeline_preview_toolbar = None
+            window.protocol(
+                "WM_DELETE_WINDOW", self._close_cycle_timeline_plot_preview_window
+            )
+            window.bind(
+                "<Destroy>",
+                self._close_cycle_timeline_plot_preview_window,
+                add="+",
+            )
+        else:
+            try:
+                window.deiconify()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        try:
+            window.lift()
+            window.focus_force()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+        self._cycle_timeline_preview_request_token += 1
+        request_token = int(getattr(self, "_cycle_timeline_preview_request_token", 0))
+        self._set_cycle_timeline_preview_loading_state(
+            progress=10.0, message="Opening Preview...", reset=True, show=True
+        )
+        self._set_cycle_timeline_preview_loading_state(
+            progress=45.0, message="Building Preview Figure..."
+        )
+        fig = self._build_cycle_timeline_export_figure(
+            (11.0, 8.5), workflow_key=self._current_solubility_workflow()
+        )
+        if fig is None:
+            self._set_cycle_timeline_preview_loading_state(
+                progress=100.0,
+                message="Preview unavailable. Run a workflow first.",
+            )
+            self._hide_cycle_timeline_preview_loading()
+            try:
+                messagebox.showinfo(
+                    "Cycle Timeline Plot Preview",
+                    "Run a workflow to generate cycle timeline data before opening preview.",
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            return
+        active_window = getattr(self, "_cycle_timeline_preview_window", None)
+        if (
+            request_token != getattr(self, "_cycle_timeline_preview_request_token", 0)
+            or active_window is None
+            or not bool(getattr(active_window, "winfo_exists", lambda: False)())
+        ):
+            try:
+                plt.close(fig)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            return
+        content = getattr(self, "_cycle_timeline_preview_content", None)
+        if content is None:
+            try:
+                plt.close(fig)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            return
+        self._teardown_cycle_timeline_preview_annotation_controller(
+            clear_dirty_flag=False
+        )
+        old_toolbar = getattr(self, "_cycle_timeline_preview_toolbar", None)
+        if old_toolbar is not None:
+            try:
+                old_toolbar.destroy()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        old_canvas = getattr(self, "_cycle_timeline_preview_canvas", None)
+        if old_canvas is not None:
+            try:
+                old_widget = old_canvas.get_tk_widget()
+            except Exception:
+                old_widget = None
+            if old_widget is not None:
+                try:
+                    old_widget.destroy()
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+        old_fig = getattr(self, "_cycle_timeline_preview_fig", None)
+        if old_fig is not None and old_fig is not fig:
+            try:
+                plt.close(old_fig)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        self._set_cycle_timeline_preview_loading_state(
+            progress=72.0, message="Adding Plot Elements..."
+        )
+        try:
+            self._apply_gl260_legend_sizing(
+                fig,
+                plot_id=preview_plot_id,
+                plot_key="fig_cycle_timeline_preview",
+            )
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        canvas = FigureCanvasTkAgg(fig, master=content)
+        toolbar = NavigationToolbar2Tk(canvas, content)
+        toolbar.update()
+        toolbar.pack(side="top", fill="x")
+        widget = canvas.get_tk_widget()
+        widget.pack(fill="both", expand=True)
+        self._cycle_timeline_preview_canvas = canvas
+        self._cycle_timeline_preview_toolbar = toolbar
+        self._cycle_timeline_preview_fig = fig
+        self._set_cycle_timeline_preview_loading_state(
+            progress=92.0, message="Final Layout Adjustments..."
+        )
+        try:
+            self._finalize_matplotlib_canvas_layout(
+                canvas=canvas,
+                fig=fig,
+                tk_widget=widget,
+                keep_export_size=True,
+                trigger_resize_event=False,
+                force_draw=True,
+            )
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            self._install_cycle_timeline_preview_annotation_controller(
+                fig,
+                canvas,
+                plot_id=preview_plot_id,
+            )
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        self._set_cycle_timeline_preview_loading_state(
+            progress=100.0, message="Preview Ready."
+        )
+        self._hide_cycle_timeline_preview_loading()
 
     def _export_cycle_timeline_csv(self) -> None:
         """Export cycle timeline CSV.
@@ -87454,7 +88514,8 @@ class UnifiedApp(tk.Tk):
             Optional[Figure]: Matplotlib figure, or None if no timeline data exists.
         Side Effects:
             - Creates a new Matplotlib figure and axes.
-            - Applies legend placement from the Planning timeline when available.
+            - Applies consolidated legend placement from the interactive timeline.
+            - Applies persisted timeline plot elements for export parity.
         Exceptions:
             - Best-effort; returns None when data is missing or invalid.
         """
@@ -87547,6 +88608,8 @@ class UnifiedApp(tk.Tk):
         if not timeline:
             return None
         prefs = self._get_cycle_plot_prefs()
+        settings = self._settings_dict()
+        axis_layout = self._cycle_timeline_axis_layout_prefs(prefs)
         fig = Figure(figsize=page_size)
         ax = fig.add_subplot(111)
         ax2 = ax.twinx()
@@ -87554,14 +88617,41 @@ class UnifiedApp(tk.Tk):
         ax.set_xlabel(r"Total CO$_2$ added (g)", fontsize=11, labelpad=8)
         ax.set_ylabel("Carbon species (%)", fontsize=11, labelpad=10)
         ax.tick_params(axis="both", labelsize=9, pad=4)
-        ax2.set_ylabel("Predicted pH", fontsize=11, labelpad=10, rotation=-90)
-        ax2.spines["right"].set_position(("axes", 1.02))
-        ax2.yaxis.set_label_coords(1.08, 0.5)
+        ax2.set_ylabel(
+            "Predicted pH",
+            fontsize=11,
+            labelpad=axis_layout.get("ph_axis_labelpad", 10.0),
+            rotation=-90,
+        )
+        ax2.spines["right"].set_position(
+            ("axes", axis_layout.get("ph_axis_spine_offset", 1.02))
+        )
+        ax2.yaxis.set_label_coords(
+            axis_layout.get("ph_axis_spine_offset", 1.02) + 0.06,
+            0.5,
+        )
         ax2.tick_params(axis="both", labelsize=9, pad=4)
-        ax3.set_ylabel("Headspace pCO2 (atm)", fontsize=11, labelpad=10, rotation=-90)
-        ax3.spines["right"].set_position(("axes", 1.12))
-        ax3.yaxis.set_label_coords(1.18, 0.5)
+        ax3.set_ylabel(
+            "Headspace pCO2 (atm)",
+            fontsize=11,
+            labelpad=axis_layout.get("pco2_axis_labelpad", 10.0),
+            rotation=-90,
+        )
+        ax3.spines["right"].set_position(
+            ("axes", axis_layout.get("pco2_axis_spine_offset", 1.12))
+        )
+        ax3.yaxis.set_label_coords(
+            axis_layout.get("pco2_axis_spine_offset", 1.12) + 0.06,
+            0.5,
+        )
         ax3.tick_params(axis="both", labelsize=8, pad=3)
+        try:
+            ax._gl260_axis_role = "primary"
+            ax2._gl260_axis_role = "right"
+            ax3._gl260_axis_role = "third"
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
         xs = []
         h2co3_vals = []
         hco3_vals = []
@@ -87587,7 +88677,6 @@ class UnifiedApp(tk.Tk):
                 pco2_values.append(float("nan"))
         if not xs:
             return None
-        show_legend = bool(prefs.get("show_legend"))
         if workflow == "Planning":
             species = [
                 ("Carbonic acid (H2CO3)", h2co3_vals, "#55a868"),
@@ -87718,24 +88807,20 @@ class UnifiedApp(tk.Tk):
                 ha="center",
                 fontsize=7,
             )
-        if workflow == "Planning":
-            # Planning timeline legend is consolidated and draggable for clarity.
-            handles, labels = self._collect_planning_timeline_legend_entries(
-                (ax, ax2, ax3)
+        handles, labels = self._collect_planning_timeline_legend_entries((ax, ax2, ax3))
+        if handles:
+            legend_loc = self._planning_timeline_legend_loc() or "upper left"
+            legend = ax.legend(
+                handles=handles,
+                labels=labels,
+                loc=legend_loc,
+                fontsize=8,
+                **_legend_shadowbox_kwargs(),
             )
-            if handles:
-                legend_loc = self._planning_timeline_legend_loc() or "upper left"
-                legend = ax.legend(
-                    handles=handles, labels=labels, loc=legend_loc, fontsize=8
-                )
-                layout_mgr = getattr(fig, "_gl260_layout_manager", None)
-                if layout_mgr is not None:
-                    layout_mgr.register_artist("plot_legend", legend)
-        elif show_legend:
-            ax.legend(loc="upper left", fontsize=8)
-            ax2.legend(loc="upper right", fontsize=8)
-            ax3.legend(loc="center right", fontsize=8)
-        title_text = (prefs.get("export_title") or "").strip()
+            layout_mgr = getattr(fig, "_gl260_layout_manager", None)
+            if layout_mgr is not None:
+                layout_mgr.register_artist("plot_legend", legend)
+        title_text = self._cycle_timeline_title_text(prefs)
         if title_text:
             font_family = (settings.get("font_family") or "").strip()
             _center_titles_to_axes_union(
@@ -87750,14 +88835,16 @@ class UnifiedApp(tk.Tk):
                 0.0,
                 suptitle_y=0.99,
             )
-        # Iterate over indexed elements from fig.axes[1 to apply the per-item logic.
-        for idx, axis in enumerate(fig.axes[1:], start=1):
-            try:
-                axis.yaxis.get_label().set_labelpad(18 + 4 * idx)
-                axis.yaxis.set_label_coords(1.02 + 0.1 * idx, 0.5)
-            except Exception:
-                continue
-        fig.subplots_adjust(left=0.08, right=0.88, top=0.90, bottom=0.12)
+        try:
+            _apply_layout_profile_to_figure(fig, "fig_cycle_timeline", "export")
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            fig.subplots_adjust(left=0.08, right=0.88, top=0.90, bottom=0.12)
+        try:
+            self._apply_plot_elements(fig, "fig_cycle_timeline")
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
         return fig
 
     def _build_export_figure_for_final_report(

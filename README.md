@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.3.6)
+# GL-260 Data Analysis and Plotter (v4.3.7)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.3.6`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.3.7`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.3.7 Advanced Speciation Timeline Plot Preview + Consolidated Legend + Settings Parity](#v437-advanced-speciation-timeline-plot-preview--consolidated-legend--settings-parity)
   - [v4.3.6 Close-Time Apply for Non-Trace Elements + Trace-Only Full Rebuild](#v436-close-time-apply-for-non-trace-elements--trace-only-full-rebuild)
   - [v4.3.5 Circle Ring Element + Full-Rebuild Close Refresh + Real-Time Splash Timers](#v435-circle-ring-element--full-rebuild-close-refresh--real-time-splash-timers)
   - [v4.3.4 General Plotter Launcher + Optional Data Handoff](#v434-general-plotter-launcher--optional-data-handoff)
@@ -528,6 +529,10 @@ Outputs:
 - Species tables, saturation tables, sensitivity analysis, and pH sweep plots.
 - Cycle speciation timeline (per-cycle pH and speciation results).
 - Timeline plot and timeline table with export options.
+- Timeline plot uses an always-on consolidated draggable legend rendered in a shadowbox.
+- Timeline plot settings include axis range controls plus pH/pCO2 right-side axis spacing controls.
+- Cycle timeline plot title is shared across Planning, Analysis, and Reprocessing workflow inputs.
+- Cycle timeline Plot Preview (11x8.5) supports interactive Plot Elements edits that sync to display when preview closes.
 - Timeline table/plot visibility is explicitly refreshed after scenario completion so no tab-switch is required to reveal cycle-speciation results.
 - Predicted pH callouts now insert all cycle entries and remain scrollable (mouse wheel + scrollbar) after bulk updates.
 
@@ -1026,6 +1031,18 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.3.7 Advanced Speciation Timeline Plot Preview + Consolidated Legend + Settings Parity
+- Updated Advanced Speciation cycle timeline plot behavior to always render a consolidated legend in a shadowbox, and made that legend draggable in interactive timeline views.
+- Added new cycle timeline plot settings controls for pH-axis label padding/offset and detached pCO2-axis label padding/offset, while retaining existing range controls and title persistence.
+- Added shared cycle timeline title inputs to Planning, Analysis, and Reprocessing workflow input tabs; edits now update one shared timeline title used in display and export.
+- Added `Cycle Timeline Plot Settings...` to Preferences for direct access to timeline-specific controls.
+- Added cycle timeline action-row buttons for `Plot Preview` and `Add Plot Elements...`.
+- Added cycle timeline Plot Preview window (11x8.5 export geometry) with toolbar and loading overlay behavior similar to combined preview.
+- Added cycle timeline preview plot-elements controller wiring so element drag edits persist in preview and synchronize back to the main timeline plot when preview closes.
+- Added new internal plot id `fig_cycle_timeline` to layout/profile defaults and plot-elements routing so timeline display and preview share a stable annotation target.
+- Updated cycle timeline rendering/export paths to apply shared axis-spacing preferences and removed hardcoded export-only labelpad overrides that conflicted with user settings.
+- Updated application version metadata to `v4.3.7` in script header and `APP_VERSION`, and synchronized README top-level version references.
 
 ### v4.3.6 Close-Time Apply for Non-Trace Elements + Trace-Only Full Rebuild
 - Updated Plot Elements close behavior to conditionally apply pending manual property edits (equivalent to `Apply to Selected`) before closing when Live Update is off.
