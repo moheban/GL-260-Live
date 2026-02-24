@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.3.4)
+# GL-260 Data Analysis and Plotter (v4.3.5)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.3.4`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.3.5`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.3.5 Circle Ring Element + Full-Rebuild Close Refresh + Real-Time Splash Timers](#v435-circle-ring-element--full-rebuild-close-refresh--real-time-splash-timers)
   - [v4.3.4 General Plotter Launcher + Optional Data Handoff](#v434-general-plotter-launcher--optional-data-handoff)
   - [v4.2.4 Immediate Startup Visibility + Bootstrap Splash Handoff](#v424-immediate-startup-visibility--bootstrap-splash-handoff)
   - [v4.2.3 Combined Splash + Timeline Readiness](#v423-combined-splash--timeline-readiness)
@@ -1024,6 +1025,18 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.3.5 Circle Ring Element + Full-Rebuild Close Refresh + Real-Time Splash Timers
+- Added a new `Circle` Plot Element type that uses click-drag ellipse geometry (`x0/y0/x1/y1`) and renders as a transparent-center ring for trend highlighting.
+- Added full Circle interaction support across placement, hit-testing, drag/move/resize handles, nudge behavior, and persistence/migration paths.
+- Added Circle geometry and appearance editors in Plot Elements Properties, including user-adjustable ring edge color, line width, line style, and alpha.
+- Added Circle to Plot Elements Add Element controls, selection labels, canonical type aliases, and style apply/copy/paste/preset key filtering.
+- Added `force_full_rebuild` refresh control plumbing through the refresh pipeline; combined render reuse is now explicitly bypassed when requested.
+- Updated Plot Elements window close refresh to run with `force_full_rebuild=True`, fixing post-close element placement drift that previously required a manual full rebuild.
+- Upgraded plot-tab loading overlays to real-time wall-clock elapsed timers (no pulse text), with higher-frequency updates and elapsed composition into detail/progress status.
+- Added real-time elapsed timer updates to Combined Plot Preview loading overlay status/progress text with clean timer teardown on hide/close/terminal states.
+- Added real-time elapsed timer updates to the startup splash, including clean timer lifecycle handling across reset/completion/overlay teardown.
+- Updated application version metadata to `v4.3.5` in script header and `APP_VERSION`, and synchronized README top-level version references.
 
 ### v4.3.4 General Plotter Launcher + Optional Data Handoff
 - Added a new top-level `General Plotter` menu adjacent to `Tools`, including `Open General Plotter...` launcher entry.

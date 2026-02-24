@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v4.3.4
+# Version: v4.3.5
 # Date: 2026-02-24
 
 import os
@@ -2794,6 +2794,7 @@ ANNOTATION_MODES = (
     "trace_mask",
     "trace_start",
     "rect",
+    "circle",
     "ref_line",
     "ink",
     "erase",
@@ -2809,6 +2810,7 @@ ANNOTATION_TYPE_LABELS = {
     "trace_mask": "Trace Mask",
     "trace_start": "Trace Start",
     "rect": "Box Region",
+    "circle": "Circle",
     "ref_line": "Reference Line",
     "ink": "Freehand",
 }
@@ -2908,6 +2910,9 @@ def _canonicalize_annotation_type(value: str) -> Optional[str]:
         "rectangle": "rect",
         "rect_region": "rect",
         "box_region": "rect",
+        "ellipse": "circle",
+        "ring": "circle",
+        "circle_ring": "circle",
         "reference_line": "ref_line",
         "refline": "ref_line",
     }
@@ -3091,6 +3096,11 @@ def _migrate_legacy_geometry(
         label = data.get("text")
         if label is not None:
             geometry["text"] = str(label)
+    elif element_type == "circle":
+        geometry["x0"] = _coerce_float(data.get("x0"))
+        geometry["x1"] = _coerce_float(data.get("x1"))
+        geometry["y0"] = _coerce_float(data.get("y0"))
+        geometry["y1"] = _coerce_float(data.get("y1"))
     elif element_type == "ref_line":
         orientation = data.get("orientation")
         if isinstance(orientation, str):
@@ -3191,6 +3201,14 @@ def _normalize_plot_elements(value: Any) -> Dict[str, List[Dict[str, Any]]]:
                 geometry = {
                     "x_start": _coerce_float(geometry.get("x_start")),
                     "trace_key": _normalize_trace_series_key(geometry.get("trace_key")),
+                }
+                normalized["geometry"] = geometry
+            if element_type == "circle":
+                geometry = {
+                    "x0": _coerce_float(geometry.get("x0")),
+                    "x1": _coerce_float(geometry.get("x1")),
+                    "y0": _coerce_float(geometry.get("y0")),
+                    "y1": _coerce_float(geometry.get("y1")),
                 }
                 normalized["geometry"] = geometry
             if element_type in {"xspan", "xspan_label"}:
@@ -5225,6 +5243,14 @@ class AnnotationRenderer:
             if None not in (x0, x1, y0, y1):
                 geometry["x0"], geometry["y0"] = _axes_to_data(x0, y0)
                 geometry["x1"], geometry["y1"] = _axes_to_data(x1, y1)
+        elif element_type == "circle":
+            x0 = _coerce_float(geometry.get("x0"))
+            x1 = _coerce_float(geometry.get("x1"))
+            y0 = _coerce_float(geometry.get("y0"))
+            y1 = _coerce_float(geometry.get("y1"))
+            if None not in (x0, x1, y0, y1):
+                geometry["x0"], geometry["y0"] = _axes_to_data(x0, y0)
+                geometry["x1"], geometry["y1"] = _axes_to_data(x1, y1)
         elif element_type == "ref_line":
             orientation = str(geometry.get("orientation") or "vertical").strip().lower()
             value = _coerce_float(geometry.get("value"))
@@ -5547,6 +5573,36 @@ class AnnotationRenderer:
                 self._apply_text_shadow(text_artist, style)
                 artists.append(text_artist)
             return artists
+
+        if element_type == "circle":
+            from matplotlib import patches as mpatches
+
+            x0 = _coerce_float(geometry.get("x0"))
+            x1 = _coerce_float(geometry.get("x1"))
+            y0 = _coerce_float(geometry.get("y0"))
+            y1 = _coerce_float(geometry.get("y1"))
+            if None in (x0, x1, y0, y1):
+                return None
+            center_x = (x0 + x1) / 2.0
+            center_y = (y0 + y1) / 2.0
+            width = abs(x1 - x0)
+            height = abs(y1 - y0)
+            edge = self._resolve_color(style, "edgecolor", "color")
+            ring = mpatches.Ellipse(
+                (center_x, center_y),
+                width,
+                height,
+                transform=transform,
+                facecolor="none",
+                fill=False,
+                edgecolor=edge,
+                linewidth=linewidth,
+                linestyle=style.get("linestyle", "solid"),
+                alpha=alpha,
+                zorder=zorder,
+            )
+            ax.add_patch(ring)
+            return [ring]
 
         if element_type == "ref_line":
             orientation = str(geometry.get("orientation") or "vertical").strip().lower()
@@ -5907,6 +5963,33 @@ class AnnotationRenderer:
                     self._arm_text_bbox_picker(
                         text_artist, str(element.get("id") or ""), "label"
                     )
+                return True
+
+            if element_type == "circle":
+                from matplotlib import patches as mpatches
+
+                patch = next(
+                    (a for a in artists if isinstance(a, mpatches.Ellipse)), None
+                )
+                if patch is None:
+                    return False
+                x0 = _coerce_float(geometry.get("x0"))
+                x1 = _coerce_float(geometry.get("x1"))
+                y0 = _coerce_float(geometry.get("y0"))
+                y1 = _coerce_float(geometry.get("y1"))
+                if None in (x0, x1, y0, y1):
+                    return False
+                patch.set_center(((x0 + x1) / 2.0, (y0 + y1) / 2.0))
+                patch.set_width(abs(x1 - x0))
+                patch.set_height(abs(y1 - y0))
+                patch.set_transform(transform)
+                patch.set_fill(False)
+                patch.set_facecolor("none")
+                patch.set_edgecolor(self._resolve_color(style, "edgecolor", "color"))
+                patch.set_alpha(alpha)
+                patch.set_linewidth(linewidth)
+                patch.set_linestyle(style.get("linestyle", "solid"))
+                patch.set_zorder(zorder)
                 return True
 
             if element_type == "ref_line":
@@ -6418,6 +6501,48 @@ class AnnotationHitTest:
                 return "move"
             return None
 
+        if element_type == "circle":
+            x0 = _coerce_float(geometry.get("x0"))
+            x1 = _coerce_float(geometry.get("x1"))
+            y0 = _coerce_float(geometry.get("y0"))
+            y1 = _coerce_float(geometry.get("y1"))
+            if None in (x0, x1, y0, y1):
+                return None
+            # Corner handles follow the same drag vocabulary as rectangle geometry.
+            for handle_id, (hx, hy) in {
+                "nw": (x0, y1),
+                "ne": (x1, y1),
+                "sw": (x0, y0),
+                "se": (x1, y0),
+            }.items():
+                if _dist_to_point(hx, hy) <= self._pixel_tolerance:
+                    return handle_id
+            center_x = (x0 + x1) / 2.0
+            center_y = (y0 + y1) / 2.0
+            radius_x = abs(x1 - x0) / 2.0
+            radius_y = abs(y1 - y0) / 2.0
+            if radius_x <= 0.0 or radius_y <= 0.0:
+                return None
+            try:
+                center_disp = transform.transform((center_x, center_y))
+                rx_disp = transform.transform((center_x + radius_x, center_y))
+                ry_disp = transform.transform((center_x, center_y + radius_y))
+            except Exception:
+                return None
+            radius_x_px = abs(rx_disp[0] - center_disp[0])
+            radius_y_px = abs(ry_disp[1] - center_disp[1])
+            if radius_x_px <= 1e-6 or radius_y_px <= 1e-6:
+                return None
+            px = event_xy[0] - center_disp[0]
+            py = event_xy[1] - center_disp[1]
+            norm = math.sqrt((px / radius_x_px) ** 2 + (py / radius_y_px) ** 2)
+            edge_distance_px = abs(1.0 - norm) * min(radius_x_px, radius_y_px)
+            if edge_distance_px <= self._pixel_tolerance:
+                return "move"
+            if norm < 1.0:
+                return "move"
+            return None
+
         if element_type == "ref_line":
             orientation = str(geometry.get("orientation") or "vertical").strip().lower()
             value = _coerce_float(geometry.get("value"))
@@ -6671,7 +6796,14 @@ def _default_style_for_type(element_type: str) -> Dict[str, Any]:
         "linewidth": 1.5,
         "linestyle": "solid",
     }
-    if element_type in {"text", "callout", "arrow", "xspan_label", "rect", "ref_line"}:
+    if element_type in {
+        "text",
+        "callout",
+        "arrow",
+        "xspan_label",
+        "rect",
+        "ref_line",
+    }:
         base.update(
             {
                 "fontsize": 10.0,
@@ -6705,6 +6837,8 @@ def _default_style_for_type(element_type: str) -> Dict[str, Any]:
         )
     if element_type in {"xspan", "xspan_label", "rect"}:
         base.update({"facecolor": "#cccccc", "edgecolor": "#333333"})
+    if element_type == "circle":
+        base.update({"edgecolor": "#d62728", "facecolor": "none", "linestyle": "solid"})
     if element_type in {"xspan", "xspan_label"}:
         base.setdefault("span_layer", "behind_data")
     if element_type in {"callout", "arrow"}:
@@ -6757,6 +6891,8 @@ def _annotation_style_keys_for_type(element_type: str) -> Set[str]:
         )
     if element_type in {"xspan", "xspan_label", "rect"}:
         keys.update({"facecolor", "edgecolor", "linewidth", "linestyle"})
+    if element_type == "circle":
+        keys.update({"edgecolor", "linewidth", "linestyle"})
     if element_type in {"callout", "arrow", "ref_line", "ink"}:
         keys.update({"color", "linewidth", "linestyle"})
     if element_type in {"callout", "arrow"}:
@@ -7697,6 +7833,20 @@ class PlotAnnotationsController:
                         ("se", (x1, y0)),
                     ]
                 )
+        elif element_type == "circle":
+            x0 = _coerce_float(geometry.get("x0"))
+            x1 = _coerce_float(geometry.get("x1"))
+            y0 = _coerce_float(geometry.get("y0"))
+            y1 = _coerce_float(geometry.get("y1"))
+            if None not in (x0, x1, y0, y1):
+                handles.extend(
+                    [
+                        ("nw", (x0, y1)),
+                        ("ne", (x1, y1)),
+                        ("sw", (x0, y0)),
+                        ("se", (x1, y0)),
+                    ]
+                )
         elif element_type == "ref_line":
             value = _coerce_float(geometry.get("value"))
             if value is not None:
@@ -7839,6 +7989,14 @@ class PlotAnnotationsController:
                 if key in geometry:
                     geometry[key] = (_coerce_float(geometry.get(key)) or 0.0) + dx
             # Iterate over ("y0", "y1") to apply the per-item logic.
+            for key in ("y0", "y1"):
+                if key in geometry:
+                    geometry[key] = (_coerce_float(geometry.get(key)) or 0.0) + dy
+        elif element_type == "circle":
+            # Circle uses ellipse bounding-box coordinates and moves like a box.
+            for key in ("x0", "x1"):
+                if key in geometry:
+                    geometry[key] = (_coerce_float(geometry.get(key)) or 0.0) + dx
             for key in ("y0", "y1"):
                 if key in geometry:
                     geometry[key] = (_coerce_float(geometry.get(key)) or 0.0) + dy
@@ -8041,6 +8199,15 @@ class PlotAnnotationsController:
                 if _coerce_float(geometry.get("x_start")) is None:
                     valid = False
             if element_type == "rect":
+                x0 = _coerce_float(geometry.get("x0"))
+                x1 = _coerce_float(geometry.get("x1"))
+                y0 = _coerce_float(geometry.get("y0"))
+                y1 = _coerce_float(geometry.get("y1"))
+                if None in (x0, x1, y0, y1):
+                    valid = False
+                elif abs(x1 - x0) <= 1e-12 and abs(y1 - y0) <= 1e-12:
+                    valid = False
+            if element_type == "circle":
                 x0 = _coerce_float(geometry.get("x0"))
                 x1 = _coerce_float(geometry.get("x1"))
                 y0 = _coerce_float(geometry.get("y0"))
@@ -8429,6 +8596,8 @@ class PlotAnnotationsController:
             geometry.update({"x0": x, "y0": y, "x1": x, "y1": y})
             if isinstance(label_text, str) and label_text.strip():
                 geometry["text"] = label_text
+        elif element_type == "circle":
+            geometry.update({"x0": x, "y0": y, "x1": x, "y1": y})
         elif element_type == "ink":
             geometry.update({"points": [(x, y)]})
         else:
@@ -8476,7 +8645,7 @@ class PlotAnnotationsController:
             else {}
         )
         element_type = str(self._draft_element.get("type") or "").strip().lower()
-        if element_type in {"callout", "arrow", "rect"}:
+        if element_type in {"callout", "arrow", "rect", "circle"}:
             geometry["x1"] = x
             geometry["y1"] = y
         elif element_type in {"xspan", "trace_mask"}:
@@ -8531,6 +8700,17 @@ class PlotAnnotationsController:
             y0 = _coerce_float(geometry.get("y0"))
             y1 = _coerce_float(geometry.get("y1"))
             if None in (x0, x1, y0, y1):
+                valid = False
+            elif abs(x1 - x0) <= 1e-12 and abs(y1 - y0) <= 1e-12:
+                valid = False
+        if element_type == "circle":
+            x0 = _coerce_float(geometry.get("x0"))
+            x1 = _coerce_float(geometry.get("x1"))
+            y0 = _coerce_float(geometry.get("y0"))
+            y1 = _coerce_float(geometry.get("y1"))
+            if None in (x0, x1, y0, y1):
+                valid = False
+            elif abs(x1 - x0) <= 1e-12 and abs(y1 - y0) <= 1e-12:
                 valid = False
         if element_type == "ink":
             points = geometry.get("points")
@@ -8650,6 +8830,8 @@ class PlotAnnotationsController:
             if wrap_width is not None:
                 geometry["wrap_width_x"] = wrap_width
         elif element_type == "rect":
+            geometry.update({"x0": x, "y0": y, "x1": x, "y1": y})
+        elif element_type == "circle":
             geometry.update({"x0": x, "y0": y, "x1": x, "y1": y})
         elif element_type == "ref_line":
             geometry.update({"orientation": "vertical", "value": x})
@@ -8811,6 +8993,21 @@ class PlotAnnotationsController:
                 geometry["x1"] = start_geom.get("x1", x) + dx
                 geometry["label_x"] = start_geom.get("label_x", x) + dx
         elif element_type == "rect":
+            if handle in {"nw", "ne", "sw", "se"}:
+                if "n" in handle:
+                    geometry["y1"] = y
+                if "s" in handle:
+                    geometry["y0"] = y
+                if "w" in handle:
+                    geometry["x0"] = x
+                if "e" in handle:
+                    geometry["x1"] = x
+            else:
+                geometry["x0"] = start_geom.get("x0", x) + dx
+                geometry["x1"] = start_geom.get("x1", x) + dx
+                geometry["y0"] = start_geom.get("y0", y) + dy
+                geometry["y1"] = start_geom.get("y1", y) + dy
+        elif element_type == "circle":
             if handle in {"nw", "ne", "sw", "se"}:
                 if "n" in handle:
                     geometry["y1"] = y
@@ -9453,6 +9650,7 @@ class AnnotationsPanel:
             ("Trace Mask", "trace_mask"),
             ("Trace Start", "trace_start"),
             ("Box Region", "rect"),
+            ("Circle", "circle"),
             ("Reference Line", "ref_line"),
             ("Freehand", "ink"),
         ]
@@ -9477,6 +9675,7 @@ class AnnotationsPanel:
                 "arrow": "Click-drag start + end.",
                 "callout": "Click-drag start + end (label attaches to end).",
                 "rect": "Click-drag to draw.",
+                "circle": "Click-drag to size the circle ring.",
                 "ref_line": "Click for vertical line. Shift + click for horizontal.",
                 "xspan": "Drag across plot; release to create.",
                 "xspan_label": "Drag across plot; release to create.",
@@ -10315,6 +10514,7 @@ class AnnotationsPanel:
             "Trace Mask": "trace_mask",
             "Trace Start": "trace_start",
             "Box Region": "rect",
+            "Circle": "circle",
             "Reference Line": "ref_line",
             "Freehand": "ink",
         }
@@ -10356,6 +10556,8 @@ class AnnotationsPanel:
         style_overrides = {"alpha": alpha_value}
         if canonical in {"xspan", "xspan_label", "rect"}:
             style_overrides["facecolor"] = fill_color
+            style_overrides["edgecolor"] = fill_color
+        elif canonical == "circle":
             style_overrides["edgecolor"] = fill_color
         else:
             style_overrides["color"] = fill_color
@@ -11195,6 +11397,8 @@ class AnnotationsPanel:
                 fields.append(("label_y_data", "label_y_data"))
         elif element_type == "rect":
             fields = [("x0", "x0"), ("y0", "y0"), ("x1", "x1"), ("y1", "y1")]
+        elif element_type == "circle":
+            fields = [("x0", "x0"), ("y0", "y0"), ("x1", "x1"), ("y1", "y1")]
         elif element_type == "ref_line":
             fields = [
                 ("orientation", "orientation"),
@@ -11326,6 +11530,11 @@ class AnnotationsPanel:
         if element_type in patch_types:
             _add_color_field("Fill Color", "facecolor", "#cccccc")
             _add_color_field("Edge Color", "edgecolor", "#333333")
+            _add_entry("Alpha", "alpha", width=8)
+            _add_entry("Line Width", "linewidth", width=8)
+            _add_entry("Line Style", "linestyle")
+        elif element_type == "circle":
+            _add_color_field("Ring Color", "edgecolor", "#d62728")
             _add_entry("Alpha", "alpha", width=8)
             _add_entry("Line Width", "linewidth", width=8)
             _add_entry("Line Style", "linestyle")
@@ -11588,7 +11797,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v4.3.4"
+APP_VERSION = "v4.3.5"
 
 
 def _apply_rust_runtime_settings_defaults(settings_dict: Dict[str, Any]) -> None:
@@ -33798,6 +34007,9 @@ class UnifiedApp(tk.Tk):
         self._startup_loading_bar = None
         self._startup_loading_progress_label = None
         self._startup_loading_progress_value = 0.0
+        self._startup_loading_started_at = None
+        self._startup_loading_detail_base = ""
+        self._startup_loading_timer_after_id = None
         self._startup_loading_heartbeat_tick = 0
         self._startup_loading_poll_after_id = None
         self._startup_ui_built = False
@@ -34118,6 +34330,9 @@ class UnifiedApp(tk.Tk):
         self._combined_plot_preview_task_id: Optional[int] = None
         self._combined_plot_preview_request_token = 0
         self._combined_plot_preview_progress_value = 0.0
+        self._combined_plot_preview_started_at: Optional[float] = None
+        self._combined_plot_preview_message_base = ""
+        self._combined_plot_preview_timer_after_id: Optional[str] = None
         self._combined_plot_preview_closing = False
         self._sol_loading_overlay: Optional[tk.Frame] = None
         self._sol_loading_label: Optional[tk.Label] = None
@@ -35689,6 +35904,111 @@ class UnifiedApp(tk.Tk):
                 compact_lines.append(line)
         return "\n".join(compact_lines)
 
+    def _stop_startup_loading_timer(self) -> None:
+        """Cancel startup splash real-time timer callbacks.
+
+        Purpose:
+            Stop splash elapsed-time updates when startup overlay closes/finishes.
+        Why:
+            Startup teardown must not leave orphaned `after` callbacks.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Cancels and clears the tracked startup timer callback id.
+        Exceptions:
+            Best-effort guard suppresses stale callback cancellation failures.
+        """
+        after_id = getattr(self, "_startup_loading_timer_after_id", None)
+        if after_id is None:
+            return
+        try:
+            self.after_cancel(after_id)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        self._startup_loading_timer_after_id = None
+
+    def _start_startup_loading_timer(self) -> None:
+        """Start high-frequency startup splash elapsed-time updates.
+
+        Purpose:
+            Keep startup splash detail text synchronized with wall-clock elapsed.
+        Why:
+            Startup completion polling updates state milestones, but elapsed-time
+            text should update independently in real time.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Schedules recurring Tk callbacks while startup splash is active.
+        Exceptions:
+            Missing/destroyed splash widgets short-circuit safely.
+        """
+        if getattr(self, "_startup_loading_timer_after_id", None) is not None:
+            return
+
+        def _tick() -> None:
+            """Refresh one startup splash elapsed-time frame."""
+            self._startup_loading_timer_after_id = None
+            overlay = getattr(self, "_startup_loading_overlay", None)
+            if overlay is None:
+                return
+            try:
+                if not overlay.winfo_exists():
+                    return
+            except Exception:
+                return
+            started_at = getattr(self, "_startup_loading_started_at", None)
+            if not isinstance(started_at, (int, float)):
+                started_at = time.monotonic()
+                self._startup_loading_started_at = started_at
+            elapsed_text = self._format_wall_clock_elapsed(
+                max(0.0, time.monotonic() - float(started_at))
+            )
+            detail_base = str(getattr(self, "_startup_loading_detail_base", "") or "")
+            detail_base = self._normalize_startup_loading_splash_text(
+                detail_base, max_lines=2
+            )
+            if detail_base:
+                composed_detail = self._normalize_startup_loading_splash_text(
+                    f"{detail_base}\nElapsed: {elapsed_text}",
+                    max_lines=2,
+                )
+            else:
+                composed_detail = f"Elapsed: {elapsed_text}"
+            detail_label = getattr(self, "_startup_loading_detail_label", None)
+            if detail_label is not None:
+                try:
+                    detail_label.configure(text=composed_detail)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            progress_value = getattr(self, "_startup_loading_progress_value", 0.0)
+            try:
+                progress_value = float(progress_value)
+            except Exception:
+                progress_value = 0.0
+            progress_label = getattr(self, "_startup_loading_progress_label", None)
+            if progress_label is not None:
+                try:
+                    progress_label.configure(
+                        text=f"{int(round(progress_value))}% | {elapsed_text}"
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            if progress_value >= 100.0:
+                return
+            try:
+                self._startup_loading_timer_after_id = self.after(80, _tick)
+            except Exception:
+                self._startup_loading_timer_after_id = None
+
+        _tick()
+
     def _install_startup_loading_splash(
         self,
         *,
@@ -35839,6 +36159,9 @@ class UnifiedApp(tk.Tk):
         self._startup_loading_bar = progress_bar
         self._startup_loading_progress_label = progress_label
         self._startup_loading_progress_value = 0.0
+        self._startup_loading_started_at = None
+        self._startup_loading_detail_base = ""
+        self._startup_loading_timer_after_id = None
         self._startup_loading_heartbeat_tick = 0
         self._update_startup_loading_splash_progress(
             progress=progress,
@@ -35908,6 +36231,8 @@ class UnifiedApp(tk.Tk):
 
         if reset:
             self._startup_loading_progress_value = 0.0
+            self._startup_loading_started_at = time.monotonic()
+            self._startup_loading_detail_base = ""
 
         current_value = getattr(self, "_startup_loading_progress_value", 0.0)
         try:
@@ -35940,14 +36265,29 @@ class UnifiedApp(tk.Tk):
                 pass
 
         detail_label = getattr(self, "_startup_loading_detail_label", None)
-        if detail_label is not None and (detail is not None or reset):
-            normalized_detail = (
-                ""
-                if detail is None
-                else self._normalize_startup_loading_splash_text(detail, max_lines=2)
+        if detail is not None:
+            self._startup_loading_detail_base = (
+                self._normalize_startup_loading_splash_text(detail, max_lines=2)
             )
+        started_at = getattr(self, "_startup_loading_started_at", None)
+        if not isinstance(started_at, (int, float)):
+            started_at = time.monotonic()
+            self._startup_loading_started_at = started_at
+        elapsed_text = self._format_wall_clock_elapsed(
+            max(0.0, time.monotonic() - float(started_at))
+        )
+        detail_base = str(getattr(self, "_startup_loading_detail_base", "") or "")
+        composed_detail = (
+            self._normalize_startup_loading_splash_text(
+                f"{detail_base}\nElapsed: {elapsed_text}",
+                max_lines=2,
+            )
+            if detail_base
+            else f"Elapsed: {elapsed_text}"
+        )
+        if detail_label is not None:
             try:
-                detail_label.configure(text=normalized_detail)
+                detail_label.configure(text=composed_detail)
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
@@ -35971,12 +36311,18 @@ class UnifiedApp(tk.Tk):
         progress_label = getattr(self, "_startup_loading_progress_label", None)
         if progress_label is not None:
             try:
-                progress_label.configure(text=f"{int(round(target_value))}%")
+                progress_label.configure(
+                    text=f"{int(round(target_value))}% | {elapsed_text}"
+                )
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
 
         self._startup_loading_progress_value = float(target_value)
+        if target_value >= 100.0:
+            self._stop_startup_loading_timer()
+        else:
+            self._start_startup_loading_timer()
         try:
             overlay.lift()
             overlay.update_idletasks()
@@ -35997,7 +36343,7 @@ class UnifiedApp(tk.Tk):
         Outputs:
             None.
         Side Effects:
-            Cancels splash polling timer, destroys splash window, and clears all
+            Cancels splash polling/timer callbacks, destroys splash window, and clears all
             cached startup-splash widget references. Reveals the main window and
             replays any plot loading overlays deferred during startup.
         Exceptions:
@@ -36011,6 +36357,7 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
             self._startup_loading_poll_after_id = None
+        self._stop_startup_loading_timer()
 
         overlay = getattr(self, "_startup_loading_overlay", None)
         if overlay is not None:
@@ -36028,6 +36375,9 @@ class UnifiedApp(tk.Tk):
         self._startup_loading_bar = None
         self._startup_loading_progress_label = None
         self._startup_loading_progress_value = 0.0
+        self._startup_loading_started_at = None
+        self._startup_loading_detail_base = ""
+        self._startup_loading_timer_after_id = None
         self._startup_loading_heartbeat_tick = 0
         self._reveal_main_window_after_startup()
         self._replay_deferred_plot_loading_overlays()
@@ -36463,10 +36813,6 @@ class UnifiedApp(tk.Tk):
                 return
             tab_warmup_ready = False
             self._startup_tab_warmup_done = False
-
-        heartbeat_tick = int(getattr(self, "_startup_loading_heartbeat_tick", 0) or 0)
-        heartbeat_tick += 1
-        self._startup_loading_heartbeat_tick = heartbeat_tick
 
         if not ui_ready:
             blocking_reason = "waiting for main interface build to finish"
@@ -41887,6 +42233,37 @@ class UnifiedApp(tk.Tk):
             return "refreshing"
         return "queued"
 
+    def _format_wall_clock_elapsed(self, elapsed_seconds: Any) -> str:
+        """Format elapsed monotonic seconds for real-time splash displays.
+
+        Purpose:
+            Provide one consistent elapsed-time formatter for all loading overlays.
+        Why:
+            Plot, preview, and startup splash timers should present the same
+            wall-clock time style without pulse-based text.
+        Inputs:
+            elapsed_seconds: Elapsed duration in seconds.
+        Outputs:
+            str: Human-readable elapsed time with sub-second precision.
+        Side Effects:
+            None.
+        Exceptions:
+            Invalid values are coerced to `0.00s`.
+        """
+        try:
+            elapsed_value = float(elapsed_seconds)
+        except Exception:
+            elapsed_value = 0.0
+        if not math.isfinite(elapsed_value) or elapsed_value < 0.0:
+            elapsed_value = 0.0
+        if elapsed_value < 60.0:
+            return f"{elapsed_value:0.2f}s"
+        minutes, seconds = divmod(elapsed_value, 60.0)
+        if minutes < 60.0:
+            return f"{int(minutes):02d}:{seconds:05.2f}"
+        hours, rem_minutes = divmod(int(minutes), 60)
+        return f"{hours:02d}:{rem_minutes:02d}:{seconds:05.2f}"
+
     def _stop_plot_loading_overlay_heartbeat(self, frame) -> None:
         """Stop one plot loading overlay heartbeat timer.
 
@@ -41928,7 +42305,7 @@ class UnifiedApp(tk.Tk):
             None.
         Side Effects:
             Schedules recurring `after` callbacks while loading remains active and
-            updates the overlay detail label with elapsed-time pulse text.
+            updates the overlay detail label with real-time wall-clock elapsed text.
         Exceptions:
             Missing/destroyed widgets short-circuit safely.
         """
@@ -41956,13 +42333,12 @@ class UnifiedApp(tk.Tk):
                 started_at = time.monotonic()
                 frame._plot_loading_started_at = started_at
             elapsed = max(0.0, time.monotonic() - float(started_at))
-            pulse = "." * ((int(elapsed * 4.0) % 3) + 1)
+            elapsed_text = self._format_wall_clock_elapsed(elapsed)
             base_detail = str(getattr(frame, "_plot_loading_detail_base", "") or "").strip()
-            heartbeat_text = f"Working{pulse} {elapsed:0.1f}s elapsed"
             composed = (
-                f"{base_detail} | {heartbeat_text}"
+                f"{base_detail} | Elapsed: {elapsed_text}"
                 if base_detail
-                else heartbeat_text
+                else f"Elapsed: {elapsed_text}"
             )
             detail_label = getattr(frame, "_plot_loading_detail_label", None)
             if detail_label is not None:
@@ -41972,7 +42348,7 @@ class UnifiedApp(tk.Tk):
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
             try:
-                frame._plot_loading_heartbeat_after_id = self.after(250, _tick)
+                frame._plot_loading_heartbeat_after_id = self.after(80, _tick)
             except Exception:
                 frame._plot_loading_heartbeat_after_id = None
 
@@ -42147,6 +42523,24 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
         if normalized_stage in {"ready", "failed"}:
+            started_at = getattr(frame, "_plot_loading_started_at", None)
+            if isinstance(started_at, (int, float)):
+                elapsed_value = max(0.0, time.monotonic() - float(started_at))
+                elapsed_text = self._format_wall_clock_elapsed(elapsed_value)
+                base_detail = str(
+                    getattr(frame, "_plot_loading_detail_base", "") or ""
+                ).strip()
+                final_detail = (
+                    f"{base_detail} | Elapsed: {elapsed_text}"
+                    if base_detail
+                    else f"Elapsed: {elapsed_text}"
+                )
+                if detail_label is not None:
+                    try:
+                        detail_label.configure(text=final_detail)
+                    except Exception:
+                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        pass
             self._stop_plot_loading_overlay_heartbeat(frame)
         else:
             self._start_plot_loading_overlay_heartbeat(frame)
@@ -44301,6 +44695,7 @@ class UnifiedApp(tk.Tk):
         *,
         capture_combined_legend: bool = True,
         refresh_reason: Optional[str] = None,
+        force_full_rebuild: bool = False,
     ):
         """Force a plot refresh and rebuild as needed.
 
@@ -44318,6 +44713,8 @@ class UnifiedApp(tk.Tk):
                 before refresh if persistence is enabled and not locked.
             refresh_reason: Optional splash message shown while the refresh
                 pipeline runs.
+            force_full_rebuild: When True, bypass combined display reuse and
+                force a fresh figure rebuild.
 
         Returns:
             None.
@@ -44333,7 +44730,8 @@ class UnifiedApp(tk.Tk):
             rendering/overlay updates. Refresh kickoff updates the stage/message
             without resetting active overlay progress so nested passes remain
             monotonic. When provided, `refresh_reason` is used as the initial
-            overlay message.
+            overlay message. When `force_full_rebuild` is True, combined plot
+            display reuse is bypassed for the refresh.
 
         Exceptions:
             Internal errors are caught and ignored to keep UI responsive.
@@ -44397,6 +44795,11 @@ class UnifiedApp(tk.Tk):
             message=overlay_message,
             stage_key="refreshing",
         )
+        if force_full_rebuild and plot_key == "fig_combined":
+            # Force rebuild path clears reusable combined state before async render.
+            self._combined_plot_state = None
+            self._combined_layout_state = None
+            self._combined_layout_dirty = True
         combined_widget = None
         combined_size = None
         if plot_key == "fig_combined":
@@ -44526,6 +44929,7 @@ class UnifiedApp(tk.Tk):
                                     canvas,
                                     capture_combined_legend=capture_combined_legend,
                                     refresh_reason=refresh_reason,
+                                    force_full_rebuild=force_full_rebuild,
                                 )
                             )
                         except Exception:
@@ -44534,6 +44938,7 @@ class UnifiedApp(tk.Tk):
                                 canvas,
                                 capture_combined_legend=capture_combined_legend,
                                 refresh_reason=refresh_reason,
+                                force_full_rebuild=force_full_rebuild,
                             )
 
                     def _on_geometry_signal(_event: Any = None) -> None:
@@ -44651,6 +45056,7 @@ class UnifiedApp(tk.Tk):
                     [plot_key],
                     warn_on_failure=False,
                     placement_states={plot_key: placement_state},
+                    force_full_rebuild=force_full_rebuild,
                 )
                 return
             if plot_key == "fig_combined":
@@ -44665,6 +45071,7 @@ class UnifiedApp(tk.Tk):
                     frame=frame,
                     canvas=canvas,
                     placement_state=placement_state,
+                    force_full_rebuild=force_full_rebuild,
                 )
                 return
         except Exception:
@@ -45365,6 +45772,7 @@ class UnifiedApp(tk.Tk):
         reason: Optional[str] = None,
         rearm_overlay: bool = False,
         capture_combined_legend: bool = True,
+        force_full_rebuild: bool = False,
     ) -> None:
         """Run one unified refresh pipeline for a plot tab.
 
@@ -45381,6 +45789,8 @@ class UnifiedApp(tk.Tk):
                 invoking refresh.
             capture_combined_legend: When True, capture combined legend anchors
                 before combined refresh rebuild.
+            force_full_rebuild: When True, force the refresh pipeline to bypass
+                combined display reuse and rebuild the figure from scratch.
         Outputs:
             None.
         Side Effects:
@@ -45409,6 +45819,7 @@ class UnifiedApp(tk.Tk):
                         canvas,
                         capture_combined_legend=capture_combined_legend,
                         refresh_reason=reason,
+                        force_full_rebuild=force_full_rebuild,
                     )
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
@@ -45831,7 +46242,8 @@ class UnifiedApp(tk.Tk):
                     Outputs:
                         None.
                     Side Effects:
-                        Invokes `_refresh_plot_for_plot_id` for the owning plot.
+                        Invokes `_refresh_plot_for_plot_id` for the owning plot
+                        with forced full rebuild to stabilize element placement.
                     Exceptions:
                         Errors are guarded to keep close flow resilient.
                     """
@@ -45841,6 +46253,7 @@ class UnifiedApp(tk.Tk):
                             reason="Refreshing Plot Elements...",
                             rearm_overlay=True,
                             capture_combined_legend=False,
+                            force_full_rebuild=True,
                         )
                     except Exception:
                         # Best-effort guard; ignore failures to avoid interrupting the workflow.
@@ -49503,6 +49916,110 @@ class UnifiedApp(tk.Tk):
 
         return frame
 
+    def _stop_combined_plot_preview_timer(self) -> None:
+        """Cancel the combined preview real-time elapsed timer callback.
+
+        Purpose:
+            Stop the high-frequency elapsed-time updates for preview overlays.
+        Why:
+            Preview overlays can be hidden/destroyed while callbacks are pending.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Cancels `after` callback id tracked for preview elapsed updates.
+        Exceptions:
+            Best-effort guard suppresses stale callback cancellation failures.
+        """
+        after_id = getattr(self, "_combined_plot_preview_timer_after_id", None)
+        if after_id is None:
+            return
+        try:
+            self.after_cancel(after_id)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        self._combined_plot_preview_timer_after_id = None
+
+    def _start_combined_plot_preview_timer(self) -> None:
+        """Start high-frequency real-time elapsed updates for preview overlays.
+
+        Purpose:
+            Keep preview splash text synchronized with wall-clock elapsed time.
+        Why:
+            Preview builds span worker/UI phases and should show continuously
+            updating elapsed status derived from the true start timestamp.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Schedules recurring Tk callbacks that update preview message/progress
+            labels with elapsed wall-clock time.
+        Exceptions:
+            Missing/destroyed overlay widgets short-circuit safely.
+        """
+        if getattr(self, "_combined_plot_preview_timer_after_id", None) is not None:
+            return
+
+        def _tick() -> None:
+            """Refresh one preview overlay elapsed-timer frame."""
+            self._combined_plot_preview_timer_after_id = None
+            overlay = getattr(self, "_combined_plot_preview_overlay", None)
+            if overlay is None:
+                return
+            try:
+                if not overlay.winfo_exists():
+                    return
+            except Exception:
+                return
+            started_at = getattr(self, "_combined_plot_preview_started_at", None)
+            if not isinstance(started_at, (int, float)):
+                started_at = time.monotonic()
+                self._combined_plot_preview_started_at = started_at
+            elapsed_text = self._format_wall_clock_elapsed(
+                max(0.0, time.monotonic() - float(started_at))
+            )
+            message_base = str(
+                getattr(self, "_combined_plot_preview_message_base", "") or ""
+            ).strip()
+            if message_base:
+                composed_message = f"{message_base} | Elapsed: {elapsed_text}"
+            else:
+                composed_message = f"Elapsed: {elapsed_text}"
+            label = getattr(self, "_combined_plot_preview_overlay_label", None)
+            if label is not None:
+                try:
+                    label.configure(text=composed_message)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            progress_value = getattr(self, "_combined_plot_preview_progress_value", 0.0)
+            try:
+                progress_value = float(progress_value)
+            except Exception:
+                progress_value = 0.0
+            progress_label = getattr(
+                self, "_combined_plot_preview_overlay_progress_label", None
+            )
+            if progress_label is not None:
+                try:
+                    progress_label.configure(
+                        text=f"{int(round(progress_value))}% | {elapsed_text}"
+                    )
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            if progress_value >= 100.0:
+                return
+            try:
+                self._combined_plot_preview_timer_after_id = self.after(80, _tick)
+            except Exception:
+                self._combined_plot_preview_timer_after_id = None
+
+        _tick()
+
     def _set_combined_plot_preview_loading_state(
         self,
         *,
@@ -49526,7 +50043,8 @@ class UnifiedApp(tk.Tk):
         Outputs:
             None.
         Side Effects:
-            Mutates preview overlay widgets and cached progress value.
+            Mutates preview overlay widgets, cached progress state, and preview
+            timer lifecycle.
         Exceptions:
             Best-effort behavior; missing widgets are ignored.
         """
@@ -49540,6 +50058,8 @@ class UnifiedApp(tk.Tk):
             return
         if reset:
             self._combined_plot_preview_progress_value = 0.0
+            self._combined_plot_preview_started_at = time.monotonic()
+            self._combined_plot_preview_message_base = ""
         current_value = getattr(self, "_combined_plot_preview_progress_value", 0.0)
         try:
             current_value = float(current_value)
@@ -49557,10 +50077,27 @@ class UnifiedApp(tk.Tk):
                 candidate = current_value
             candidate = max(0.0, min(100.0, candidate))
             target_value = candidate if reset else max(current_value, candidate)
+        if message is not None:
+            self._combined_plot_preview_message_base = str(message).strip()
+        started_at = getattr(self, "_combined_plot_preview_started_at", None)
+        if not isinstance(started_at, (int, float)):
+            started_at = time.monotonic()
+            self._combined_plot_preview_started_at = started_at
+        elapsed_text = self._format_wall_clock_elapsed(
+            max(0.0, time.monotonic() - float(started_at))
+        )
+        message_base = str(
+            getattr(self, "_combined_plot_preview_message_base", "") or ""
+        ).strip()
+        composed_message = (
+            f"{message_base} | Elapsed: {elapsed_text}"
+            if message_base
+            else f"Elapsed: {elapsed_text}"
+        )
         label = getattr(self, "_combined_plot_preview_overlay_label", None)
-        if label is not None and message is not None:
+        if label is not None:
             try:
-                label.configure(text=str(message))
+                label.configure(text=composed_message)
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
@@ -49574,11 +50111,17 @@ class UnifiedApp(tk.Tk):
         progress_label = getattr(self, "_combined_plot_preview_overlay_progress_label", None)
         if progress_label is not None:
             try:
-                progress_label.configure(text=f"{int(round(target_value))}%")
+                progress_label.configure(
+                    text=f"{int(round(target_value))}% | {elapsed_text}"
+                )
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
         self._combined_plot_preview_progress_value = float(target_value)
+        if target_value >= 100.0:
+            self._stop_combined_plot_preview_timer()
+        else:
+            self._start_combined_plot_preview_timer()
         if show:
             try:
                 overlay.place(relx=0.0, rely=0.0, relwidth=1.0, relheight=1.0)
@@ -49606,7 +50149,7 @@ class UnifiedApp(tk.Tk):
         Outputs:
             None.
         Side Effects:
-            Hides the preview overlay frame.
+            Hides the preview overlay frame and stops preview timer callbacks.
         Exceptions:
             Best-effort behavior; widget errors are ignored.
         """
@@ -49627,6 +50170,7 @@ class UnifiedApp(tk.Tk):
             Exceptions:
                 Best-effort behavior; errors are ignored.
             """
+            self._stop_combined_plot_preview_timer()
             overlay = getattr(self, "_combined_plot_preview_overlay", None)
             if overlay is None:
                 return
@@ -49875,6 +50419,7 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
         self._combined_plot_preview_resize_after_id = None
+        self._stop_combined_plot_preview_timer()
         preview_plot_id = getattr(self, "_combined_plot_preview_plot_id", None)
         preview_elements_changed = bool(
             getattr(self, "_combined_plot_preview_elements_changed", False)
@@ -49914,6 +50459,9 @@ class UnifiedApp(tk.Tk):
         self._combined_plot_preview_toolbar = None
         self._combined_plot_preview_fig = None
         self._combined_plot_preview_progress_value = 0.0
+        self._combined_plot_preview_started_at = None
+        self._combined_plot_preview_message_base = ""
+        self._combined_plot_preview_timer_after_id = None
         self._combined_plot_preview_task_id = None
         try:
             tabs = list(getattr(self, "_plot_tabs", []) or [])
@@ -50022,6 +50570,9 @@ class UnifiedApp(tk.Tk):
             self._combined_plot_preview_overlay_progress_var = progress_var
             self._combined_plot_preview_overlay_progress_label = progress_label
             self._combined_plot_preview_progress_value = 0.0
+            self._combined_plot_preview_started_at = None
+            self._combined_plot_preview_message_base = ""
+            self._combined_plot_preview_timer_after_id = None
             self._combined_plot_preview_canvas = None
             self._combined_plot_preview_toolbar = None
             self._combined_plot_preview_resize_after_id = None
@@ -95840,6 +96391,7 @@ class UnifiedApp(tk.Tk):
         warn_on_failure: bool,
         placement_states: Optional[Dict[str, Any]] = None,
         task_id: Optional[int] = None,
+        force_full_rebuild: bool = False,
     ) -> None:
         """Render core plots on the UI thread from a prepared packet.
 
@@ -95853,6 +96405,8 @@ class UnifiedApp(tk.Tk):
             warn_on_failure: Whether to warn when no plots render.
             placement_states: Optional placement state per plot key.
             task_id: Optional task identifier for stale-result checks.
+            force_full_rebuild: Reserved parity flag with combined refresh path.
+                Core plots always rebuild per render request.
         Outputs:
             None.
         Side Effects:
@@ -95991,6 +96545,7 @@ class UnifiedApp(tk.Tk):
         *,
         warn_on_failure: bool,
         placement_states: Optional[Dict[str, Any]] = None,
+        force_full_rebuild: bool = False,
     ) -> None:
         """Start core plot rendering in a background worker.
 
@@ -96003,6 +96558,8 @@ class UnifiedApp(tk.Tk):
             plot_keys: Plot keys to update on completion.
             warn_on_failure: Whether to warn on render failure.
             placement_states: Optional placement state per plot key.
+            force_full_rebuild: Reserved parity flag with combined refresh path.
+                Core plots always rebuild per render request.
         Outputs:
             None.
         Side Effects:
@@ -96041,6 +96598,7 @@ class UnifiedApp(tk.Tk):
                 warn_on_failure=warn_on_failure,
                 placement_states=placement_states,
                 task_id=task_state["id"],
+                force_full_rebuild=force_full_rebuild,
             )
 
         def _on_err(exc):
@@ -96119,6 +96677,7 @@ class UnifiedApp(tk.Tk):
         canvas: Optional[FigureCanvasTkAgg] = None,
         placement_state: Optional[Dict[str, Any]] = None,
         on_success: Optional[Callable[[Figure], None]] = None,
+        force_full_rebuild: bool = False,
     ) -> None:
         """Start combined render async.
 
@@ -96133,6 +96692,8 @@ class UnifiedApp(tk.Tk):
             canvas: Optional target canvas to update.
             placement_state: Optional placement state to restore after render.
             on_success: Optional callback invoked with the rendered figure.
+            force_full_rebuild: When True, bypass combined display reuse and
+                force a fresh figure rebuild.
         Outputs:
             None.
         Side Effects:
@@ -96170,6 +96731,7 @@ class UnifiedApp(tk.Tk):
                 placement_state=placement_state,
                 task_id=task_state["id"],
                 on_success=on_success,
+                force_full_rebuild=force_full_rebuild,
             )
 
         def _on_err(exc):
@@ -96238,6 +96800,7 @@ class UnifiedApp(tk.Tk):
         placement_state: Optional[Dict[str, Any]] = None,
         task_id: Optional[int] = None,
         on_success: Optional[Callable[[Figure], None]] = None,
+        force_full_rebuild: bool = False,
     ) -> None:
         """Render the combined plot on the UI thread from a prepared packet.
 
@@ -96253,6 +96816,8 @@ class UnifiedApp(tk.Tk):
             placement_state: Optional plot element placement state to restore.
             task_id: Optional task identifier for stale-result checks.
             on_success: Optional callback invoked with the rendered figure.
+            force_full_rebuild: When True, bypass combined display reuse and
+                force a fresh figure rebuild.
         Outputs:
             None.
         Side Effects:
@@ -96277,7 +96842,7 @@ class UnifiedApp(tk.Tk):
                     args=packet.args,
                     fig_size=packet.fig_size,
                     mode="display",
-                    reuse=True,
+                    reuse=not force_full_rebuild,
                     render_ctx=packet.render_ctx,
                     perf_run=perf_run,
                 )
