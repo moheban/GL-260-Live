@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-02-24 08:07:06",
+  "created_at": "2026-02-24 08:24:34",
   "description": "Autosave before loading a profile.",
   "payload": {
     "column_assignments": {
@@ -781,5 +781,5 @@
     ]
   },
   "profile_version": 1,
-  "updated_at": "2026-02-24 08:07:06"
+  "updated_at": "2026-02-24 08:24:34"
 }

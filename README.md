@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.2.3)
+# GL-260 Data Analysis and Plotter (v4.2.4)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.2.3`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.2.4`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.2.4 Immediate Startup Visibility + Bootstrap Splash Handoff](#v424-immediate-startup-visibility--bootstrap-splash-handoff)
   - [v4.2.3 Combined Splash + Timeline Readiness](#v423-combined-splash--timeline-readiness)
   - [v4.2.2 Dynamic Render Readiness + Selective Core Generation](#v422-dynamic-render-readiness--selective-core-generation)
   - [v4.2.1 Free-Threaded Cycle Metrics Optimization + Version Sync](#v421-free-threaded-cycle-metrics-optimization--version-sync)
@@ -1006,6 +1007,14 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.2.4 Immediate Startup Visibility + Bootstrap Splash Handoff
+- Added a lightweight bootstrap startup splash that is shown before heavyweight imports, so launches no longer appear blank during pre-UI initialization.
+- Added staged bootstrap progress updates across binary compatibility checks and dependency import milestones to keep startup feedback visible.
+- Added deterministic bootstrap-to-main handoff cleanup so temporary bootstrap windows are destroyed once the main startup splash is active (and during abnormal exit paths).
+- Adjusted startup splash ownership behavior so the startup splash can remain visible even while the main root window is initially withdrawn.
+- Updated startup flow to reveal the main window as soon as base UI construction completes, while deferred startup readiness tasks continue under splash progress updates.
+- Bumped application version metadata to `v4.2.4` in the script header and `APP_VERSION`, and synchronized README top-level version references.
 
 ### v4.2.3 Combined Splash + Timeline Readiness
 - Startup now keeps a single visible loading surface by hiding the main window behind the startup splash, then revealing it once startup readiness gating completes.

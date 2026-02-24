@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: v4.2.3
-# Date: 2026-02-20
+# Version: v4.2.4
+# Date: 2026-02-24
 
 import os
 import sys
@@ -8,6 +8,313 @@ import sysconfig
 import importlib.metadata as importlib_metadata
 import logging
 from logging.handlers import RotatingFileHandler
+
+try:
+    import tkinter as _bootstrap_tk
+    from tkinter import ttk as _bootstrap_ttk
+except Exception:
+    _bootstrap_tk = None
+    _bootstrap_ttk = None
+
+
+def _is_gui_bootstrap_startup_mode() -> bool:
+    """Return whether startup should show the pre-import bootstrap splash.
+
+    Purpose:
+        Decide if the process should display the lightweight splash before heavy
+        dependency imports begin.
+    Why:
+        GUI launches can spend noticeable time importing scientific/UI modules,
+        so users need immediate visual confirmation that startup is in progress.
+    Inputs:
+        None.
+    Outputs:
+        bool: True for normal GUI app launches, False for CLI/test runs or when
+        bootstrap splash is explicitly disabled.
+    Side Effects:
+        None.
+    Exceptions:
+        Any argument/environment probing failures are handled defensively and
+        return False for safe no-splash fallback behavior.
+    """
+    try:
+        if str(globals().get("__name__", "")) != "__main__":
+            return False
+    except Exception:
+        return False
+
+    if str(os.environ.get("GL260_DISABLE_BOOTSTRAP_SPLASH", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return False
+    if os.environ.get("RUN_SOLUBILITY_REGRESSION") == "1":
+        return False
+    if os.environ.get("RUN_PITZER_TESTS") == "1":
+        return False
+    if os.environ.get("RUN_TIMELINE_TABLE_EXPORT_TEST") == "1":
+        return False
+
+    argv = tuple(str(arg) for arg in sys.argv[1:])
+    if "--debug-validate-svg" in argv:
+        return False
+    if "--benchmark" in argv:
+        return False
+    return True
+
+
+def _create_bootstrap_startup_splash(
+    *,
+    message: str = "Starting GL-260...",
+    detail: str = "",
+) -> object:
+    """Create a lightweight splash window used before heavyweight imports.
+
+    Purpose:
+        Display immediate startup feedback before `UnifiedApp` and its in-app
+        splash can be initialized.
+    Why:
+        Importing scientific plotting/data dependencies can take seconds, which
+        otherwise appears as a blank/no-response launch.
+    Inputs:
+        message: Primary status text shown in the bootstrap splash.
+        detail: Secondary detail text shown under the primary message.
+    Outputs:
+        object: Splash handle dict containing Tk widgets, or None when splash
+        creation is unavailable/disabled.
+    Side Effects:
+        Creates a temporary hidden-root + top-level splash window and forces an
+        initial paint so users see progress immediately.
+    Exceptions:
+        Any Tk creation/layout failures are swallowed and return None so startup
+        continues without interruption.
+    """
+    if not _is_gui_bootstrap_startup_mode():
+        return None
+    if _bootstrap_tk is None or _bootstrap_ttk is None:
+        return None
+
+    root = None
+    overlay = None
+    label = None
+    detail_label = None
+    progress_var = None
+    progress_label = None
+    try:
+        root = _bootstrap_tk.Tk()
+        root.withdraw()
+        overlay = _bootstrap_tk.Toplevel(root)
+        overlay.title("Starting GL-260")
+        try:
+            overlay.attributes("-topmost", True)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            overlay.resizable(False, False)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            overlay.protocol("WM_DELETE_WINDOW", lambda: None)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+        width = 520
+        height = 188
+        try:
+            screen_w = int(overlay.winfo_screenwidth())
+            screen_h = int(overlay.winfo_screenheight())
+            pos_x = max(0, int((screen_w - width) / 2))
+            pos_y = max(0, int((screen_h - height) / 2))
+            overlay.geometry(f"{width}x{height}+{pos_x}+{pos_y}")
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+        body = _bootstrap_ttk.Frame(overlay, padding=14)
+        body.pack(fill="both", expand=True)
+        _bootstrap_ttk.Label(
+            body, text="GL-260 Data Analysis & Processing Engine", anchor="w"
+        ).pack(fill="x", pady=(0, 8))
+        label = _bootstrap_ttk.Label(body, text=str(message or ""), anchor="w")
+        label.pack(fill="x")
+        detail_label = _bootstrap_ttk.Label(
+            body,
+            text=str(detail or ""),
+            anchor="w",
+            justify="left",
+            wraplength=476,
+        )
+        detail_label.pack(fill="x", pady=(6, 0))
+        progress_var = _bootstrap_tk.DoubleVar(master=overlay, value=2.0)
+        _bootstrap_ttk.Progressbar(
+            body,
+            mode="determinate",
+            maximum=100.0,
+            variable=progress_var,
+            length=360,
+        ).pack(fill="x", pady=(12, 0))
+        progress_label = _bootstrap_ttk.Label(body, text="2%", anchor="e")
+        progress_label.pack(fill="x", pady=(6, 0))
+
+        overlay.update_idletasks()
+        overlay.update()
+    except Exception:
+        try:
+            if overlay is not None:
+                overlay.destroy()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            if root is not None:
+                root.destroy()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        return None
+
+    return {
+        "root": root,
+        "overlay": overlay,
+        "label": label,
+        "detail_label": detail_label,
+        "progress_var": progress_var,
+        "progress_label": progress_label,
+        "progress_value": 2.0,
+    }
+
+
+def _update_bootstrap_startup_splash(
+    splash_handle: object,
+    *,
+    message: str | None = None,
+    detail: str | None = None,
+    progress: float | None = None,
+) -> None:
+    """Update bootstrap splash text/progress while imports continue.
+
+    Purpose:
+        Keep early-launch progress messaging visible between heavyweight import
+        milestones before `UnifiedApp` becomes available.
+    Why:
+        Import cost can vary by environment, so deterministic progress updates
+        reduce perceived hangs and improve startup clarity.
+    Inputs:
+        splash_handle: Handle returned from `_create_bootstrap_startup_splash`.
+        message: Optional primary status text.
+        detail: Optional secondary detail text.
+        progress: Optional determinate progress value in the 0..100 range.
+    Outputs:
+        None.
+    Side Effects:
+        Mutates bootstrap splash labels/progress bar and repaints the window.
+    Exceptions:
+        Missing/destroyed widgets are ignored by best-effort guards.
+    """
+    if not isinstance(splash_handle, dict):
+        return
+    overlay = splash_handle.get("overlay")
+    if overlay is None:
+        return
+    try:
+        if not overlay.winfo_exists():
+            return
+    except Exception:
+        return
+
+    if message is not None:
+        label = splash_handle.get("label")
+        if label is not None:
+            try:
+                label.configure(text=str(message))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+    if detail is not None:
+        detail_label = splash_handle.get("detail_label")
+        if detail_label is not None:
+            try:
+                detail_label.configure(text=str(detail))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+    if progress is not None:
+        current_value = float(splash_handle.get("progress_value", 0.0) or 0.0)
+        target_value = max(current_value, max(0.0, min(100.0, float(progress))))
+        splash_handle["progress_value"] = target_value
+        progress_var = splash_handle.get("progress_var")
+        if progress_var is not None:
+            try:
+                progress_var.set(target_value)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        progress_label = splash_handle.get("progress_label")
+        if progress_label is not None:
+            try:
+                progress_label.configure(text=f"{int(round(target_value))}%")
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+    try:
+        overlay.lift()
+        overlay.update_idletasks()
+        overlay.update()
+    except Exception:
+        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+        pass
+
+
+def _clear_bootstrap_startup_splash(splash_handle: object) -> None:
+    """Destroy the pre-import bootstrap splash and its temporary Tk root.
+
+    Purpose:
+        Tear down bootstrap splash resources after handoff to `UnifiedApp` or on
+        abnormal startup exit.
+    Why:
+        The bootstrap splash uses a temporary hidden root that must be cleaned up
+        to avoid leaking windows/timers.
+    Inputs:
+        splash_handle: Handle returned from `_create_bootstrap_startup_splash`.
+    Outputs:
+        None.
+    Side Effects:
+        Destroys bootstrap splash widgets and their hidden Tk root.
+    Exceptions:
+        Teardown errors are swallowed to avoid masking primary startup failures.
+    """
+    if not isinstance(splash_handle, dict):
+        return
+    overlay = splash_handle.get("overlay")
+    if overlay is not None:
+        try:
+            overlay.destroy()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+    root = splash_handle.get("root")
+    if root is not None:
+        try:
+            root.destroy()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+
+_BOOTSTRAP_STARTUP_SPLASH = _create_bootstrap_startup_splash(
+    message="Starting GL-260...",
+    detail="Initializing startup preflight checks...",
+)
+_update_bootstrap_startup_splash(
+    _BOOTSTRAP_STARTUP_SPLASH,
+    message="Checking runtime binary compatibility...",
+    progress=6.0,
+)
 
 
 def _py_gil_disabled_build_flag():
@@ -385,6 +692,11 @@ def _note_gil_reenable(module_name, before_status):
 
 
 _raise_on_binary_abi_mismatch()
+_update_bootstrap_startup_splash(
+    _BOOTSTRAP_STARTUP_SPLASH,
+    message="Loading plotting libraries...",
+    progress=16.0,
+)
 
 
 import matplotlib.pyplot as plt
@@ -406,6 +718,11 @@ from matplotlib.ft2font import FT2Font
 import great_tables as gt
 
 _GIL_IMPORT_STATUS = _note_gil_reenable("great_tables", _GIL_IMPORT_STATUS)
+_update_bootstrap_startup_splash(
+    _BOOTSTRAP_STARTUP_SPLASH,
+    message="Loading data processing libraries...",
+    progress=32.0,
+)
 
 import pandas as pd
 
@@ -430,6 +747,11 @@ try:
     import customtkinter as ctk  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     ctk = None
+_update_bootstrap_startup_splash(
+    _BOOTSTRAP_STARTUP_SPLASH,
+    message="Preparing scientific analysis modules...",
+    progress=44.0,
+)
 
 
 def _ui_button(parent, *args, **kwargs):
@@ -11227,7 +11549,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v4.2.3"
+APP_VERSION = "v4.2.4"
 
 
 def _apply_rust_runtime_settings_defaults(settings_dict: Dict[str, Any]) -> None:
@@ -12536,6 +12858,11 @@ def _svg_safe_text(value: Any) -> str:
 
 
 try:
+    _update_bootstrap_startup_splash(
+        _BOOTSTRAP_STARTUP_SPLASH,
+        message="Loading SciPy optimization and signal tools...",
+        progress=56.0,
+    )
     _gil_before_scipy = _current_gil_status()
     from scipy.optimize import fsolve  # type: ignore
     from scipy.signal import find_peaks  # type: ignore
@@ -12553,6 +12880,12 @@ except Exception as _scipy_exc:  # pragma: no cover - optional dependency
 else:
 
     _SCIPY_IMPORT_ERROR = None
+_update_bootstrap_startup_splash(
+    _BOOTSTRAP_STARTUP_SPLASH,
+    message="Building GL-260 interface...",
+    detail="Handoff to the main startup window...",
+    progress=68.0,
+)
 
 
 def _enable_windows_dpi_awareness() -> None:
@@ -33436,6 +33769,9 @@ class UnifiedApp(tk.Tk):
         self._install_startup_loading_splash(
             message="Initializing startup...", progress=2.0
         )
+        global _BOOTSTRAP_STARTUP_SPLASH
+        _clear_bootstrap_startup_splash(_BOOTSTRAP_STARTUP_SPLASH)
+        _BOOTSTRAP_STARTUP_SPLASH = None
         if not self._is_startup_loading_active():
             self._reveal_main_window_after_startup()
 
@@ -35262,11 +35598,13 @@ class UnifiedApp(tk.Tk):
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
-        try:
-            overlay.transient(self)
-        except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-            pass
+        # Keep splash ownerless while root is withdrawn so it still appears.
+        if not bool(getattr(self, "_startup_main_window_hidden_for_splash", False)):
+            try:
+                overlay.transient(self)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
         try:
             overlay.attributes("-topmost", True)
         except Exception:
@@ -40994,6 +41332,8 @@ class UnifiedApp(tk.Tk):
             command=self.save_and_close,
         ).grid(row=0, column=4, sticky="ew", padx=(0, 0))
         self._startup_ui_built = True
+        # Show the main workspace as soon as base UI construction is complete.
+        self._reveal_main_window_after_startup()
         self._update_startup_loading_splash_progress(
             progress=62.0,
             message="Main interface ready. Finalizing deferred startup tasks...",
@@ -99042,6 +99382,11 @@ if __name__ == "__main__":
 
         except Exception:
 
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        try:
+            _clear_bootstrap_startup_splash(_BOOTSTRAP_STARTUP_SPLASH)
+        except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
