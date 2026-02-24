@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v4.3.5
+# Version: v4.3.6
 # Date: 2026-02-24
 
 import os
@@ -11129,6 +11129,29 @@ class AnnotationsPanel:
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
 
+    def has_pending_apply_changes(self) -> bool:
+        """Return whether close-time Apply should run for manual edit mode.
+
+        Purpose:
+            Expose whether selected-element property edits remain unapplied.
+        Why:
+            Plot Elements close flow should trigger the same apply path as the
+            Apply button only when manual mode has pending staged changes.
+        Inputs:
+            None.
+        Outputs:
+            True when Live Update is off and pending property/z-order edits
+            exist; otherwise False.
+        Side Effects:
+            None.
+        Exceptions:
+            None; state fields are interpreted with safe boolean coercion.
+        """
+        manual_apply_required = not bool(self._live_update_var.get())
+        if not manual_apply_required:
+            return False
+        return bool(self._pending_manual_changes or self._zorder_pending_change)
+
     def _register_live_update(self, var: tk.Variable) -> None:
         """Register one property variable for pending-state and live-update flow.
 
@@ -11797,7 +11820,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v4.3.5"
+APP_VERSION = "v4.3.6"
 
 
 def _apply_rust_runtime_settings_defaults(settings_dict: Dict[str, Any]) -> None:
@@ -46125,7 +46148,13 @@ class UnifiedApp(tk.Tk):
         panel.frame.grid(row=0, column=0, sticky="nsew")
         controller.set_panel(panel)
         self._plot_annotation_panels[plot_id] = panel
-        close_state = {"closing": False, "refresh_scheduled": False}
+        close_state = {
+            "closing": False,
+            "refresh_scheduled": False,
+            "trace_behavior_signature_open": self._plot_elements_trace_behavior_signature(
+                plot_id
+            ),
+        }
 
         buttons = ttk.Frame(main)
         buttons.grid(row=1, column=0, sticky="ew", pady=(6, 0))
@@ -46181,23 +46210,24 @@ class UnifiedApp(tk.Tk):
                 pass
 
         def _close_editor() -> None:
-            """Close Plot Elements editor and schedule one post-close refresh.
+            """Close Plot Elements editor with conditional apply/rebuild behavior.
 
             Purpose:
                 Persist editor UI state, release editor/controller bindings, and
                 close the Plot Elements window.
             Why:
-                Closing the editor should immediately re-run the shared plot
-                refresh pipeline so users see the same splash/progress behavior
-                as the plot tab Refresh action.
+                Non-trace element edits should finalize without rebuilding the
+                full figure, while trace-behavior edits still require a forced
+                rebuild for consistent filtering.
             Inputs:
                 None.
             Outputs:
                 None.
             Side Effects:
-                Cancels active placement mode, persists geometry/sash state,
-                destroys the editor, and schedules one idle refresh for the
-                owning plot tab.
+                Optionally applies pending selected properties, cancels active
+                placement mode, persists geometry/sash state, destroys the
+                editor, and schedules either a forced full rebuild (trace-change)
+                or a lightweight plot-elements layer refresh (non-trace change).
             Exceptions:
                 Errors are guarded to avoid interrupting the close workflow.
             """
@@ -46205,10 +46235,28 @@ class UnifiedApp(tk.Tk):
                 return
             close_state["closing"] = True
             try:
+                if panel.has_pending_apply_changes():
+                    panel.apply_selected()
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            try:
                 controller.cancel_place_element()
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+            try:
+                controller.set_selected_id(None)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+            trace_behavior_signature_close = self._plot_elements_trace_behavior_signature(
+                plot_id
+            )
+            trace_behavior_changed = (
+                trace_behavior_signature_close
+                != close_state.get("trace_behavior_signature_open", ())
+            )
             try:
                 sash_pos = panel.get_sash_pos()
                 self._annotation_store.set_ui_state(
@@ -46230,31 +46278,45 @@ class UnifiedApp(tk.Tk):
                 close_state["refresh_scheduled"] = True
 
                 def _refresh_after_close() -> None:
-                    """Trigger one refresh after Plot Elements editor close.
+                    """Finalize close using rebuild or lightweight layer refresh.
 
                     Purpose:
-                        Run the existing plot-tab refresh pipeline after close.
+                        Apply the close-time refresh mode required by element
+                        changes made during this editor session.
                     Why:
-                        Reuses the shared splash/progress refresh behavior
-                        instead of introducing a separate refresh path.
+                        Trace-behavior changes require forced rebuild, while
+                        non-trace changes should avoid rebuilding base figure.
                     Inputs:
                         None.
                     Outputs:
                         None.
                     Side Effects:
-                        Invokes `_refresh_plot_for_plot_id` for the owning plot
-                        with forced full rebuild to stabilize element placement.
+                        Either invokes `_refresh_plot_for_plot_id` with
+                        `force_full_rebuild=True` or reapplies only the
+                        plot-elements layer and redraws idle.
                     Exceptions:
                         Errors are guarded to keep close flow resilient.
                     """
                     try:
-                        self._refresh_plot_for_plot_id(
-                            plot_id,
-                            reason="Refreshing Plot Elements...",
-                            rearm_overlay=True,
-                            capture_combined_legend=False,
-                            force_full_rebuild=True,
-                        )
+                        if trace_behavior_changed:
+                            self._refresh_plot_for_plot_id(
+                                plot_id,
+                                reason="Refreshing Plot Elements...",
+                                rearm_overlay=True,
+                                capture_combined_legend=False,
+                                force_full_rebuild=True,
+                            )
+                            return
+                        # Non-trace close path intentionally updates only the
+                        # plot-elements layer to avoid unnecessary figure rebuilds.
+                        active_fig = getattr(controller, "_fig", None) or fig
+                        active_canvas = getattr(controller, "_canvas", None) or canvas
+                        if active_fig is not None:
+                            self._apply_plot_elements(active_fig, plot_id)
+                        if active_canvas is not None:
+                            active_canvas.draw_idle()
+                        elif active_fig is not None and getattr(active_fig, "canvas", None):
+                            active_fig.canvas.draw_idle()
                     except Exception:
                         # Best-effort guard; ignore failures to avoid interrupting the workflow.
                         pass
@@ -97973,6 +98035,108 @@ class UnifiedApp(tk.Tk):
                 return repr(value)
 
         return tuple(_signature(item) for item in elements)
+
+    def _is_trace_behavior_plot_element_type(self, element_type: Any) -> bool:
+        """Return whether one plot-element type uses trace-behavior filtering.
+
+        Purpose:
+            Classify plot-element types that affect trace visibility/masking rules.
+        Why:
+            Plot Elements close-time rebuild decisions should only force full
+            figure refresh when trace-behavior element state changes.
+        Inputs:
+            element_type: Raw element type value from persisted element payloads.
+        Outputs:
+            True for trace-behavior element types, otherwise False.
+        Side Effects:
+            None.
+        Exceptions:
+            Invalid/unknown values are normalized and treated as non-trace types.
+        """
+        canonical = _canonicalize_annotation_type(element_type)
+        return canonical in {"trace_mask", "trace_start"}
+
+    def _plot_elements_trace_behavior_signature(
+        self, plot_id: Optional[str]
+    ) -> Tuple[Any, ...]:
+        """Collect a deterministic signature for trace-behavior plot elements.
+
+        Purpose:
+            Build a compact signature from only trace-interacting plot elements.
+        Why:
+            Plot Elements close-time refresh should force full rebuild only when
+            trace-behavior element state changed during the editor session.
+        Inputs:
+            plot_id: Plot identifier used to resolve persisted plot elements.
+        Outputs:
+            Tuple signature containing only normalized trace-behavior elements.
+        Side Effects:
+            None.
+        Exceptions:
+            Invalid element payloads are ignored or normalized safely.
+        """
+        if not plot_id:
+            return ()
+        elements_map = settings.get("plot_elements", {})
+        elements = (
+            elements_map.get(plot_id) if isinstance(elements_map, dict) else None
+        )
+        elements = elements if isinstance(elements, list) else []
+
+        def _signature(value: Any) -> Any:
+            """Normalize one value for deterministic signature comparison."""
+            if isinstance(value, dict):
+                return tuple(sorted((str(k), _signature(v)) for k, v in value.items()))
+            if isinstance(value, (list, tuple)):
+                return tuple(_signature(v) for v in value)
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                return value
+            try:
+                return str(value)
+            except Exception:
+                return repr(value)
+
+        trace_items: List[Any] = []
+        # Iterate over elements and keep only trace-behavior signatures.
+        for element in elements:
+            if not isinstance(element, Mapping):
+                continue
+            raw_type = element.get("type")
+            if not self._is_trace_behavior_plot_element_type(raw_type):
+                continue
+            canonical_type = _canonicalize_annotation_type(raw_type) or ""
+            geometry = (
+                element.get("geometry")
+                if isinstance(element.get("geometry"), Mapping)
+                else {}
+            )
+            style = (
+                element.get("style")
+                if isinstance(element.get("style"), Mapping)
+                else {}
+            )
+            coord_space = str(element.get("coord_space") or "data").strip().lower()
+            if coord_space not in {"data", "axes"}:
+                coord_space = "data"
+            trace_items.append(
+                _signature(
+                    {
+                        "id": str(element.get("id") or ""),
+                        "type": canonical_type,
+                        "name": str(element.get("name") or ""),
+                        "visible": bool(element.get("visible", True)),
+                        "locked": bool(element.get("locked", False)),
+                        "axes_target": _normalize_axes_target(
+                            element.get("axes_target")
+                        ),
+                        "coord_space": coord_space,
+                        "zorder": _coerce_float(element.get("zorder")),
+                        "geometry": geometry,
+                        "style": style,
+                    }
+                )
+            )
+        return tuple(trace_items)
 
     def _combined_preview_decimate(
         self,

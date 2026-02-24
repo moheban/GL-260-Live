@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.3.5)
+# GL-260 Data Analysis and Plotter (v4.3.6)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.3.5`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.3.6`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.3.6 Close-Time Apply for Non-Trace Elements + Trace-Only Full Rebuild](#v436-close-time-apply-for-non-trace-elements--trace-only-full-rebuild)
   - [v4.3.5 Circle Ring Element + Full-Rebuild Close Refresh + Real-Time Splash Timers](#v435-circle-ring-element--full-rebuild-close-refresh--real-time-splash-timers)
   - [v4.3.4 General Plotter Launcher + Optional Data Handoff](#v434-general-plotter-launcher--optional-data-handoff)
   - [v4.2.4 Immediate Startup Visibility + Bootstrap Splash Handoff](#v424-immediate-startup-visibility--bootstrap-splash-handoff)
@@ -1025,6 +1026,14 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.3.6 Close-Time Apply for Non-Trace Elements + Trace-Only Full Rebuild
+- Updated Plot Elements close behavior to conditionally apply pending manual property edits (equivalent to `Apply to Selected`) before closing when Live Update is off.
+- Added close-time trace-behavior signature detection so only trace-interacting element changes trigger `_refresh_plot_for_plot_id(... force_full_rebuild=True)`.
+- Restricted close-time full rebuild triggers to trace-behavior element changes (`trace_mask` / `trace_start`), regardless of active trace selection.
+- Updated non-trace close path to skip the full refresh pipeline and reapply only the plot-elements layer with idle redraw, avoiding unnecessary base-figure rebuilds.
+- Added internal helper methods for trace-behavior element classification/signature generation and panel-level pending-apply detection used by close-time gating.
+- Updated application version metadata to `v4.3.6` in script header and `APP_VERSION`, and synchronized README top-level version references.
 
 ### v4.3.5 Circle Ring Element + Full-Rebuild Close Refresh + Real-Time Splash Timers
 - Added a new `Circle` Plot Element type that uses click-drag ellipse geometry (`x0/y0/x1/y1`) and renders as a transparent-center ring for trend highlighting.
