@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.3.8)
+# GL-260 Data Analysis and Plotter (v4.4.8)
 
 ## Overview
-GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, and running solubility/speciation workflows. It also includes a contamination calculator and a configurable final report generator.
+GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.3.8`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.4.8`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.4.8 Legacy/Contamination Tab De-Integration + Final Report Split Persistence](#v448-legacycontamination-tab-de-integration--final-report-split-persistence)
   - [v4.3.8 Final Report Timeline Reliability + Preview Splash Integration](#v438-final-report-timeline-reliability--preview-splash-integration)
   - [v4.3.7 Advanced Speciation Timeline Plot Preview + Consolidated Legend + Settings Parity](#v437-advanced-speciation-timeline-plot-preview--consolidated-legend--settings-parity)
   - [v4.3.6 Close-Time Apply for Non-Trace Elements + Trace-Only Full Rebuild](#v436-close-time-apply-for-non-trace-elements--trace-only-full-rebuild)
@@ -110,7 +111,7 @@ GL-260 Data Analysis and Plotter is designed for reproducible, end-to-end analys
 ### Intended Audience
 - Chemists, process engineers, and researchers analyzing GL-260 pressure/temperature datasets.
 - Advanced data analysts who need reproducible plotting and cycle-by-cycle gas uptake estimates.
-- Users who need carbonate speciation, solubility, and contamination workflows tied to cycle data.
+- Users who need carbonate speciation and solubility workflows tied to cycle data.
 
 ### Repository Layout
 - `GL-260 Data Analysis and Plotter.py`: Main application script and UI.
@@ -214,7 +215,7 @@ The application is a single Tkinter process with background workers for long-run
 3. Apply columns (build numeric series, compute auto ranges, prime cycle state).
 4. Generate plots (Figure 1, Figure 2, Figure 3 cycle analysis, combined triple-axis).
 5. Cycle analysis (detect peaks/troughs, compute moles, produce summary and figure).
-6. Solubility/speciation workflows (legacy and advanced tabs).
+6. Solubility/speciation workflows (Advanced Speciation tab).
 7. Final report (compile selected figures, tables, and narratives into PDF/PNG).
 
 Internally, the app stores the active data in:
@@ -467,51 +468,6 @@ Outputs:
 - Cycle statistics table (per-cycle metrics).
 - Cycle plot (Figure 3: Cycle Analysis).
 
-#### Contamination Calculator Tab (optional)
-Purpose: estimate Na2CO3 contamination and CO2 required to reach target pH.
-
-Core inputs:
-- Sample pH, NaOH pellet mass, NaOH purity, temperature, final volume, pKa2.
-- Optional CoA carbonate (Na2CO3 wt%).
-
-Equilibrium options (optional):
-- Slurry pH override.
-- pKa1, Henry constant, pCO2.
-- Solubility caps for HCO3- and CO3^2-.
-- Iteration limits and tolerance.
-
-Outputs:
-- Carbonate speciation and Na2CO3 contamination mass.
-- CO2 required to reach target pH.
-- Optional SLE and CO2 diagnostics.
-
-Export:
-- Save Summary PNG for the contamination summary.
-
-#### Legacy Speciation Tab (tab label: "Legacy Speciation Tab")
-Purpose: run solubility and speciation analysis using Debye-Huckel or related models.
-
-Key elements:
-- Speciation Model selector (Debye-Huckel, Davies, Pitzer-lite, etc.).
-- Simulation Basis (mode-specific guidance, assumptions, and steps).
-- Input helpers and checklists for required fields.
-- pH sweep settings.
-- Run and export controls:
-  - Run Solubility Analysis
-  - Export Summary PNG
-  - Copy Summary
-  - Export CSV
-  - Export JSON
-  - Send to Contamination
-
-Outputs and panels:
-- Highlights and narrative summary.
-- Species table (concentrations, moles, fractional carbon).
-- Saturation indices and ionic strength.
-- Sensitivity analysis table.
-- pH sweep table and plot.
-- Math and glossary viewers.
-
 #### Advanced Speciation and Equilibrium Engine
 Purpose: guided workflows for planning, analysis, and reprocessing with cycle integration.
 
@@ -564,6 +520,7 @@ Key controls:
 - Table style preset: Compact / Normal / Large.
 - Per-section toggles: Include Section Header, Include Caption, Caption Placement (Same Page / Next Page).
 - Section selection and ordering.
+- Final Report split pane behavior: `Sections Included` defaults to 60% width on first load (`final_report_split_frac`), and sash adjustments are persisted across sessions.
 - Preview actions: Open Preview Window, Render Selected Page Preview, Update Layout Preview.
 
 Report sections (examples):
@@ -863,7 +820,7 @@ PDF assembly behavior:
 
 #### Preferences
 Use File -> Preferences to configure:
-- Optional tab visibility and tab order.
+- Advanced Speciation tab visibility and notebook tab order.
 - Data and column defaults (elapsed time units).
 - Scatter plot styling and cycle plot marker styling.
 - Output DPI and size profiles for exports.
@@ -890,7 +847,7 @@ Key persisted categories:
 - Layout profiles (per-plot display/export margins, title/suptitle positions, legend anchors/loc, axis label padding).
 - Output profiles, export DPI, and final report settings.
 - Plot elements and annotation UI state.
-- Tab visibility and tab order.
+- Advanced Speciation tab visibility, tab order, and Final Report split (`final_report_split_frac`).
 - Window geometry and UI font scaling.
 
 #### Process Profiles
@@ -1032,6 +989,16 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.4.8 Legacy/Contamination Tab De-Integration + Final Report Split Persistence
+- Removed runtime notebook integration for Legacy Speciation and Contamination Calculator tabs; Advanced Speciation remains the only solubility/speciation runtime tab.
+- Removed legacy/contamination tab visibility controls from Preferences and Tab Layout, and sanitized persisted `tab_order` to supported tab keys only.
+- Added startup settings migration to drop deprecated keys (`show_contamination_tab`, `show_solubility_tab`) and normalize Final Report split state.
+- Added shared solubility runtime initialization so Advanced Speciation no longer depends on legacy tab build side effects.
+- Updated cycle-to-solubility handoff paths to select the Advanced Speciation tab directly.
+- Updated solubility summary update/copy/export paths so they continue working when legacy summary widgets are absent.
+- Updated Final Report split-pane defaults to favor `Sections Included` at 60% width (left pane weight 3, right pane weight 2) and persist user sash position via `final_report_split_frac`.
+- Updated application version metadata to `v4.4.8` in script header and `APP_VERSION`, and synchronized README top-level version references.
 
 ### v4.3.8 Final Report Timeline Reliability + Preview Splash Integration
 - Removed Final Report section exclusions so all Final Report tab sections can be generated when selected, including cycle-analysis and cycle-speciation timeline plot pages.

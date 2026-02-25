@@ -1,6 +1,6 @@
 # GL-260 Data Analysis and Plotter
-# Version: v4.3.8
-# Date: 2026-02-24
+# Version: v4.4.8
+# Date: 2026-02-25
 
 import os
 import sys
@@ -1365,8 +1365,6 @@ DEFAULT_TAB_ORDER_KEYS = (
     "columns",
     "plot",
     "cycle",
-    "contamination",
-    "solubility",
     "solubility_new",
     "final_report",
 )
@@ -11824,7 +11822,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v4.3.8"
+APP_VERSION = "v4.4.8"
 
 
 def _apply_rust_runtime_settings_defaults(settings_dict: Dict[str, Any]) -> None:
@@ -23455,6 +23453,70 @@ def _normalize_plot_settings_card_order(value: Any) -> List[str]:
     return normalized
 
 
+def _normalize_tab_order_settings(value: Any) -> List[str]:
+    """Normalize persisted notebook tab order for supported runtime tabs.
+
+    Purpose:
+        Sanitize stored `tab_order` data to the current runtime-supported tab
+        keys.
+    Why:
+        Legacy settings may still reference removed tabs; startup must drop
+        unsupported keys while preserving user ordering for active tabs.
+    Args:
+        value: Raw settings value for `tab_order`.
+    Returns:
+        List[str]: Ordered, de-duplicated tab keys constrained to
+        `DEFAULT_TAB_ORDER_KEYS`.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid payload types are treated as empty and replaced with defaults.
+    """
+    normalized: List[str] = []
+    seen: Set[str] = set()
+    if isinstance(value, list):
+        # Iterate over persisted keys and keep only supported runtime tabs.
+        for raw_key in value:
+            key = str(raw_key or "").strip()
+            if key in DEFAULT_TAB_ORDER_KEYS and key not in seen:
+                normalized.append(key)
+                seen.add(key)
+    # Ensure all supported tabs are present in deterministic fallback order.
+    for key in DEFAULT_TAB_ORDER_KEYS:
+        if key in seen:
+            continue
+        normalized.append(key)
+        seen.add(key)
+    return normalized
+
+
+def _normalize_final_report_split_frac(value: Any, default: float = 0.60) -> float:
+    """Normalize the Final Report split fraction preference.
+
+    Purpose:
+        Coerce persisted Final Report pane split ratios into safe bounds.
+    Why:
+        Invalid, missing, or out-of-range fractions can hide controls in either
+        pane and make the sash position unstable at startup.
+    Args:
+        value: Raw settings value for `final_report_split_frac`.
+        default: Fallback fraction used when value is missing/invalid.
+    Returns:
+        float: Clamped split fraction in the inclusive range `[0.40, 0.85]`.
+    Side Effects:
+        None.
+    Exceptions:
+        Non-numeric values fall back to `default` before clamping.
+    """
+    try:
+        candidate = float(value)
+    except Exception:
+        candidate = float(default)
+    if not math.isfinite(candidate):
+        candidate = float(default)
+    return max(0.40, min(0.85, candidate))
+
+
 def _normalize_core_render_cycle_side_effects_mode(value: Any) -> str:
     """Normalize the core-render cycle side-effects mode.
 
@@ -24805,6 +24867,12 @@ settings["ui_display_mode"] = _normalize_ui_display_mode(
 )
 settings["plot_settings_card_order"] = _normalize_plot_settings_card_order(
     settings.get("plot_settings_card_order")
+)
+settings.pop("show_contamination_tab", None)
+settings.pop("show_solubility_tab", None)
+settings["tab_order"] = _normalize_tab_order_settings(settings.get("tab_order"))
+settings["final_report_split_frac"] = _normalize_final_report_split_frac(
+    settings.get("final_report_split_frac", 0.60)
 )
 _normalize_current_workspace_profile_settings(settings)
 
@@ -34169,6 +34237,7 @@ class UnifiedApp(tk.Tk):
         self._planning_mass_lock = False
         self._sol_math_view_text = None
         self._init_solubility_styles()
+        self._initialize_shared_solubility_runtime_state()
         self._cycle_last_transfer_payload: Optional[Dict[str, Any]] = None
         self._cycle_marker_undo_stack: List[Dict[str, Any]] = []
         self._cycle_marker_redo_stack: List[Dict[str, Any]] = []
@@ -34196,18 +34265,9 @@ class UnifiedApp(tk.Tk):
         self._last_applied_columns = None
         self._vdw_trace_ids = []
 
-        # Track contamination tab preference and bind it to the menu toggle
-        self._contamination_tab_title = "Contamination Calculator"
-        self._contamination_tab_visible = bool(
-            settings.get("show_contamination_tab", True)
-        )
-        if "show_contamination_tab" not in settings:
-            settings["show_contamination_tab"] = self._contamination_tab_visible
-        self._solubility_tab_title = "Legacy Speciation Tab"
+        # Legacy tab visibility settings were removed; keep only Advanced
+        # Speciation visibility as the active runtime toggle.
         self._solubility_new_tab_title = "Advanced Speciation & Equilibrium Engine"
-        self._solubility_tab_visible = bool(settings.get("show_solubility_tab", True))
-        if "show_solubility_tab" not in settings:
-            settings["show_solubility_tab"] = self._solubility_tab_visible
         self._solubility_new_tab_visible = bool(
             settings.get("show_solubility_new_tab", True)
         )
@@ -34326,6 +34386,7 @@ class UnifiedApp(tk.Tk):
         self._tab_order_listbox_keys: List[str] = []
         self._tab_order_up_button: Optional[ttk.Button] = None
         self._tab_order_down_button: Optional[ttk.Button] = None
+        self._final_report_paned: Optional[ttk.Panedwindow] = None
         self._final_report_preview_window: Optional[tk.Toplevel] = None
         self._final_report_preview_pages: List[Dict[str, Any]] = []
         self._final_report_preview_index = 0
@@ -34458,8 +34519,6 @@ class UnifiedApp(tk.Tk):
         else:
             self._combined_cycle_legend_anchor_space = None
         self._combined_legend_cid = None
-        self._visible_tabs_var = tk.BooleanVar(value=self._contamination_tab_visible)
-        self._solubility_visible_var = tk.BooleanVar(value=self._solubility_tab_visible)
         self._solubility_new_visible_var = tk.BooleanVar(
             value=self._solubility_new_tab_visible
         )
@@ -34640,20 +34699,6 @@ class UnifiedApp(tk.Tk):
         file_menu.add_separator()
 
         preferences_menu = self._register_menu(tk.Menu(file_menu, tearoff=0))
-        preferences_menu.add_checkbutton(
-            label="Show Contamination Calculator Tab",
-            variable=self._visible_tabs_var,
-            command=lambda: self._set_contamination_tab_visible(
-                self._visible_tabs_var.get()
-            ),
-        )
-        preferences_menu.add_checkbutton(
-            label="Show Legacy Speciation Tab",
-            variable=self._solubility_visible_var,
-            command=lambda: self._set_solubility_tab_visible(
-                self._solubility_visible_var.get()
-            ),
-        )
         preferences_menu.add_checkbutton(
             label="Show Advanced Speciation & Equilibrium Engine Tab",
             variable=self._solubility_new_visible_var,
@@ -41759,10 +41804,6 @@ class UnifiedApp(tk.Tk):
         self._plot_settings_tab = self.tab_plot
 
         self.tab_cycle = ttk.Frame(self.nb)
-
-        self.tab_contamination = ttk.Frame(self.nb)
-
-        self.tab_solubility = ttk.Frame(self.nb)
         self.tab_solubility_new = ttk.Frame(self.nb)
         self.tab_final_report = ttk.Frame(self.nb)
 
@@ -41795,11 +41836,6 @@ class UnifiedApp(tk.Tk):
             message="Building secondary analysis tabs...",
         )
 
-        self._build_tab_contamination()
-
-        self._apply_contamination_tab_visibility(initial=True)
-
-        self._build_tab_solubility()
         self._build_tab_solubility_new()
         self.nb.add(self.tab_final_report, text="Final Report")
         self._build_tab_final_report()
@@ -60283,96 +60319,72 @@ class UnifiedApp(tk.Tk):
         win.protocol("WM_DELETE_WINDOW", _on_close)
 
     def _apply_contamination_tab_visibility(self, *, initial: bool = False) -> None:
-        """Apply contamination tab visibility.
-        Used to apply contamination tab visibility changes to live state."""
-        notebook = getattr(self, "nb", None)
-        tab = getattr(self, "tab_contamination", None)
+        """Retained compatibility stub for removed Contamination tab visibility.
 
-        if notebook is None or tab is None:
-            return
-
-        show = bool(self._contamination_tab_visible)
-
+        Purpose:
+            Keep legacy callback entry points callable after Contamination tab
+            UI de-integration.
+        Why:
+            Older settings/UI paths may still invoke this method during upgrade
+            sessions, and it must remain a safe no-op.
+        Args:
+            initial: True when called during startup wiring.
+        Returns:
+            None.
+        Side Effects:
+            Triggers tab-order refresh so notebook order remains deterministic.
+        Exceptions:
+            Best-effort; ignores ordering refresh failures.
+        """
         try:
-            tabs = list(notebook.tabs())
+            self._apply_tab_order_from_settings(initial=initial)
         except Exception:
-            tabs = []
-
-        tab_id = str(tab)
-        currently_added = tab_id in tabs
-
-        if show and not currently_added:
-            insert_index: Union[int, str] = "end"
-            try:
-                tabs = list(notebook.tabs())
-                cycle_tab = getattr(self, "tab_cycle", None)
-                if cycle_tab is not None:
-                    cycle_id = str(cycle_tab)
-                    if cycle_id in tabs:
-                        insert_index = tabs.index(cycle_id) + 1
-            except Exception:
-                insert_index = "end"
-
-            try:
-                notebook.insert(
-                    insert_index,
-                    tab,
-                    text=self._contamination_tab_title,
-                )
-            except Exception:
-                notebook.add(tab, text=self._contamination_tab_title)
-
-        elif not show and currently_added:
-            if notebook.select() == tab_id:
-                fallback = getattr(self, "tab_plot", None) or getattr(
-                    self, "tab_data", None
-                )
-                if fallback is not None:
-                    try:
-                        notebook.select(fallback)
-                    except Exception:
-                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                        pass
-
-            notebook.forget(tab)
-
-        visible_var = getattr(self, "_visible_tabs_var", None)
-        if visible_var is not None:
-            try:
-                visible_var.set(show)
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-
-        if not initial:
-            settings["show_contamination_tab"] = show
-            try:
-                _save_settings_to_disk()
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-        self._apply_tab_order_from_settings(initial=initial)
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
 
     def _set_contamination_tab_visible(self, value: bool) -> None:
-        """Set contamination tab visible.
-        Used to persist contamination tab visible into the current state."""
-        desired = bool(value)
-        if desired == bool(self._contamination_tab_visible):
-            return
+        """Retained compatibility shim for removed Contamination tab visibility.
 
-        self._contamination_tab_visible = desired
+        Purpose:
+            Accept legacy visibility-toggle callbacks without raising errors.
+        Why:
+            Removed-tab controls are de-integrated, but old integrations may
+            still route into this method during transition.
+        Args:
+            value: Legacy visibility toggle value (ignored).
+        Returns:
+            None.
+        Side Effects:
+            May refresh tab ordering through the compatibility path.
+        Exceptions:
+            None.
+        """
+        _ = value
         self._apply_contamination_tab_visibility()
 
     def _apply_solubility_tab_visibility(self, *, initial: bool = False) -> None:
-        """Apply solubility tab visibility.
-        Used to apply solubility tab visibility changes to live state."""
+        """Apply Advanced Speciation tab visibility to the main notebook.
+
+        Purpose:
+            Manage runtime visibility for the Advanced Speciation tab.
+        Why:
+            Legacy Speciation UI was removed, so only the Advanced tab should
+            be shown/hidden through preferences and persisted settings.
+        Args:
+            initial: True when running startup synchronization.
+        Returns:
+            None.
+        Side Effects:
+            Adds/removes the Advanced tab in the notebook, persists
+            `show_solubility_new_tab`, and reapplies notebook tab order.
+        Exceptions:
+            Best-effort; UI/persistence failures are guarded.
+        """
         notebook = getattr(self, "nb", None)
-        legacy_tab = getattr(self, "tab_solubility", None)
         preview_tab = getattr(self, "tab_solubility_new", None)
-        if notebook is None or legacy_tab is None:
+        if notebook is None or preview_tab is None:
             return
 
-        show_legacy = bool(self._solubility_tab_visible)
         show_preview = bool(getattr(self, "_solubility_new_tab_visible", True))
         try:
             current_tabs = list(notebook.tabs())
@@ -60385,24 +60397,39 @@ class UnifiedApp(tk.Tk):
         except Exception:
             selected = None
 
-        tabs_to_manage: List[Tuple[Optional[ttk.Frame], str, bool]] = [
-            (legacy_tab, self._solubility_tab_title, show_legacy),
-            (
-                preview_tab,
-                getattr(self, "_solubility_new_tab_title", "Advanced Solubility (New)"),
-                show_preview,
-            ),
-        ]
-
-        removed_ids: List[str] = []
-        # Iterate over tabs_to_manage to apply the per-item logic.
-        for tab_obj, _label, should_show in tabs_to_manage:
-            if tab_obj is None or should_show:
-                continue
-            tab_id = str(tab_obj)
-            if tab_id not in current_tabs:
-                continue
-            if selected == tab_id and not removed_ids:
+        tab_id = str(preview_tab)
+        currently_added = tab_id in current_tabs
+        if show_preview and not currently_added:
+            insert_index: Union[int, str] = "end"
+            cycle_tab = getattr(self, "tab_cycle", None)
+            try:
+                if cycle_tab is not None:
+                    cycle_id = str(cycle_tab)
+                    if cycle_id in current_tabs:
+                        insert_index = current_tabs.index(cycle_id) + 1
+            except Exception:
+                insert_index = "end"
+            try:
+                notebook.insert(
+                    insert_index,
+                    preview_tab,
+                    text=getattr(
+                        self,
+                        "_solubility_new_tab_title",
+                        "Advanced Speciation & Equilibrium Engine",
+                    ),
+                )
+            except Exception:
+                notebook.add(
+                    preview_tab,
+                    text=getattr(
+                        self,
+                        "_solubility_new_tab_title",
+                        "Advanced Speciation & Equilibrium Engine",
+                    ),
+                )
+        elif not show_preview and currently_added:
+            if selected == tab_id:
                 fallback = getattr(self, "tab_plot", None) or getattr(
                     self, "tab_data", None
                 )
@@ -60412,64 +60439,8 @@ class UnifiedApp(tk.Tk):
                     except Exception:
                         # Best-effort guard; ignore failures to avoid interrupting the workflow.
                         pass
-            notebook.forget(tab_obj)
-            removed_ids.append(tab_id)
             try:
-                current_tabs.remove(tab_id)
-            except ValueError:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-
-        try:
-            current_tabs = list(notebook.tabs())
-        except Exception:
-            current_tabs = []
-
-        insert_index: Union[int, str] = "end"
-        try:
-            contam_tab = getattr(self, "tab_contamination", None)
-            if contam_tab is not None:
-                contam_id = str(contam_tab)
-                if contam_id in current_tabs:
-                    insert_index = current_tabs.index(contam_id) + 1
-        except Exception:
-            insert_index = "end"
-
-        # Closure captures _apply_solubility_tab_visibility local context to keep helper logic scoped and invoked directly within _apply_solubility_tab_visibility.
-        def _current_index(tab_id: str) -> Optional[int]:
-            """Return current index.
-            Used to surface index for downstream logic."""
-            try:
-                return current_tabs.index(tab_id)
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                return None
-
-        # Iterate over tabs_to_manage to apply the per-item logic.
-        for tab_obj, label, should_show in tabs_to_manage:
-            if tab_obj is None or not should_show:
-                continue
-            tab_id = str(tab_obj)
-            if tab_id in current_tabs:
-                idx = _current_index(tab_id)
-                if idx is not None:
-                    insert_index = idx + 1
-                continue
-            try:
-                notebook.insert(insert_index, tab_obj, text=label)
-            except Exception:
-                notebook.add(tab_obj, text=label)
-            try:
-                current_tabs = list(notebook.tabs())
-                idx = current_tabs.index(tab_id)
-                insert_index = idx + 1
-            except Exception:
-                insert_index = "end"
-
-        visible_var = getattr(self, "_solubility_visible_var", None)
-        if visible_var is not None:
-            try:
-                visible_var.set(show_legacy)
+                notebook.forget(preview_tab)
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
@@ -60483,7 +60454,6 @@ class UnifiedApp(tk.Tk):
                 pass
 
         if not initial:
-            settings["show_solubility_tab"] = show_legacy
             settings["show_solubility_new_tab"] = show_preview
             try:
                 _save_settings_to_disk()
@@ -60493,14 +60463,24 @@ class UnifiedApp(tk.Tk):
         self._apply_tab_order_from_settings(initial=initial)
 
     def _set_solubility_tab_visible(self, value: bool) -> None:
-        """Set solubility tab visible.
-        Used to persist solubility tab visible into the current state."""
-        desired = bool(value)
-        if desired == bool(self._solubility_tab_visible):
-            return
+        """Compatibility bridge mapping legacy toggle calls to Advanced tab.
 
-        self._solubility_tab_visible = desired
-        self._apply_solubility_tab_visibility()
+        Purpose:
+            Preserve compatibility with old callbacks named for the removed
+            Legacy Speciation tab.
+        Why:
+            Transition paths may still call this method while the runtime only
+            supports Advanced Speciation visibility.
+        Args:
+            value: Desired visibility state.
+        Returns:
+            None.
+        Side Effects:
+            Delegates to `_set_solubility_new_tab_visible`.
+        Exceptions:
+            None.
+        """
+        self._set_solubility_new_tab_visible(value)
 
     def _set_solubility_new_tab_visible(self, value: bool) -> None:
         """Set solubility new tab visible.
@@ -60530,10 +60510,6 @@ class UnifiedApp(tk.Tk):
             return "Plot Settings"
         if key == "cycle":
             return "Cycle Analysis"
-        if key == "contamination":
-            return getattr(self, "_contamination_tab_title", "Contamination")
-        if key == "solubility":
-            return getattr(self, "_solubility_tab_title", "Legacy Speciation Tab")
         if key == "solubility_new":
             return getattr(
                 self,
@@ -60547,10 +60523,6 @@ class UnifiedApp(tk.Tk):
     def _tab_is_visible(self, key: str) -> bool:
         """Check whether it is visible.
         Used by tab workflows to check visible."""
-        if key == "contamination":
-            return bool(getattr(self, "_contamination_tab_visible", True))
-        if key == "solubility":
-            return bool(getattr(self, "_solubility_tab_visible", True))
         if key == "solubility_new":
             return bool(getattr(self, "_solubility_new_tab_visible", True))
         return True
@@ -60750,20 +60722,6 @@ class UnifiedApp(tk.Tk):
         visibility_frame.pack(fill="x")
         visibility_frame.grid_columnconfigure(0, weight=1)
         tab_controls = [
-            (
-                "Show Contamination Calculator Tab",
-                self._visible_tabs_var,
-                lambda: self._set_contamination_tab_visible(
-                    self._visible_tabs_var.get()
-                ),
-            ),
-            (
-                "Show Legacy Speciation Tab",
-                self._solubility_visible_var,
-                lambda: self._set_solubility_tab_visible(
-                    self._solubility_visible_var.get()
-                ),
-            ),
             (
                 "Show Advanced Speciation & Equilibrium Engine Tab",
                 self._solubility_new_visible_var,
@@ -74260,6 +74218,116 @@ class UnifiedApp(tk.Tk):
             "<Button-5>", lambda _event: widget.yview_scroll(1, "units"), add="+"
         )
 
+    def _initialize_shared_solubility_runtime_state(self) -> None:
+        """Initialize shared solubility runtime state independent of legacy UI.
+
+        Purpose:
+            Prepare all shared solubility caches/variables required by the
+            Advanced Speciation workflows.
+        Why:
+            Legacy Speciation tab construction previously initialized many
+            shared attributes as side effects. With that tab de-integrated,
+            Advanced workflows must not depend on legacy widget creation.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            - Creates missing solubility variable maps and metadata caches.
+            - Seeds default highlight/warning/assumption StringVars.
+            - Initializes table column metadata and optional widget references.
+            - Normalizes/persists default `solubility_inputs` container.
+        Exceptions:
+            Best-effort initialization; invalid pre-existing attributes are
+            replaced with safe defaults.
+        """
+        settings.setdefault("solubility_inputs", {})
+
+        vars_map = getattr(self, "_solubility_vars", None)
+        if not isinstance(vars_map, dict):
+            self._solubility_vars = {}
+
+        field_meta = getattr(self, "_solubility_field_meta", None)
+        if not isinstance(field_meta, dict):
+            self._solubility_field_meta = {}
+
+        observer_handles = getattr(self, "_sol_observer_handles", None)
+        if not isinstance(observer_handles, list):
+            self._sol_observer_handles = []
+
+        highlight_meta = getattr(self, "_sol_highlight_meta", None)
+        if not isinstance(highlight_meta, OrderedDict) or not highlight_meta:
+            self._sol_highlight_meta = OrderedDict(
+                [
+                    ("ph", "Equilibrium pH"),
+                    ("ionic_strength", "Ionic strength"),
+                    ("alkalinity", "Alkalinity"),
+                    ("carbonate", "Na2CO3 equivalent"),
+                    ("charge", "Charge residual"),
+                    ("dissolved", "Dissolved NaHCO3"),
+                    ("solids", "Undissolved NaHCO3"),
+                ]
+            )
+
+        highlight_vars = getattr(self, "_sol_highlight_vars", None)
+        if not isinstance(highlight_vars, dict):
+            highlight_vars = {}
+            self._sol_highlight_vars = highlight_vars
+        # Ensure all highlight slots have bound variables even without legacy UI.
+        for key, label in self._sol_highlight_meta.items():
+            var = highlight_vars.get(key)
+            if var is None:
+                highlight_vars[key] = tk.StringVar(value=f"{label}: --")
+        self._sol_highlight_defaults = {
+            key: f"{label}: --" for key, label in self._sol_highlight_meta.items()
+        }
+
+        if getattr(self, "_sol_warning_var", None) is None:
+            self._sol_warning_var = tk.StringVar(
+                value="Warnings will appear after running the analysis."
+            )
+        if getattr(self, "_sol_assumptions_var", None) is None:
+            self._sol_assumptions_var = tk.StringVar(
+                value="Assumptions will be listed after running the module."
+            )
+        if getattr(self, "_sol_reaction_guidance", None) is None:
+            self._sol_reaction_guidance = {}
+
+        default_guidance_msg = (
+            "Enter NaOH/CO2 inputs to activate the guidance overlay."
+        )
+        self._sol_reaction_default_msg = default_guidance_msg
+        if getattr(self, "_sol_reaction_summary_var", None) is None:
+            self._sol_reaction_summary_var = tk.StringVar(value=default_guidance_msg)
+        if getattr(self, "_sol_new_reaction_summary_var", None) is None:
+            self._sol_new_reaction_summary_var = tk.StringVar(value=default_guidance_msg)
+
+        if not isinstance(getattr(self, "_sol_species_columns", None), tuple):
+            self._sol_species_columns = ("species", "molar", "mass", "moles", "gamma")
+        if not isinstance(getattr(self, "_sol_saturation_columns", None), tuple):
+            self._sol_saturation_columns = ("salt", "ratio", "status")
+        if not isinstance(getattr(self, "_sol_sensitivity_columns", None), tuple):
+            self._sol_sensitivity_columns = (
+                "label",
+                "ph",
+                "ionic_strength",
+                "na2co3_si",
+            )
+        if not isinstance(getattr(self, "_sol_sweep_columns", None), tuple):
+            self._sol_sweep_columns = ("ph", "hco3_pct", "co3_pct", "h2co3_pct")
+
+        # Legacy widgets are optional after de-integration; keep nullable refs.
+        for attr_name in (
+            "_sol_species_tree",
+            "_sol_saturation_tree",
+            "_sol_sensitivity_tree",
+            "_sol_sweep_tree",
+            "_solubility_summary",
+            "_solubility_summary_new",
+        ):
+            if not hasattr(self, attr_name):
+                setattr(self, attr_name, None)
+
     def _widget_owns_vertical_scroll(self, widget: Any) -> bool:
         """Check whether a widget should keep its own mousewheel behavior.
 
@@ -75557,7 +75625,9 @@ class UnifiedApp(tk.Tk):
     def _build_tab_solubility(self):
         """Build tab solubility.
         Used to assemble tab solubility during UI or plot setup."""
-        frame = self.tab_solubility
+        frame = getattr(self, "tab_solubility", None)
+        if frame is None:
+            return
 
         frame.grid_columnconfigure(0, weight=1)
         frame.grid_rowconfigure(0, weight=0)
@@ -76756,6 +76826,7 @@ class UnifiedApp(tk.Tk):
         frame = getattr(self, "tab_solubility_new", None)
         if frame is None:
             return
+        self._initialize_shared_solubility_runtime_state()
 
         frame.grid_columnconfigure(0, weight=1)
         frame.grid_rowconfigure(0, weight=1)
@@ -78620,11 +78691,7 @@ class UnifiedApp(tk.Tk):
         combined = preserved_entries + imported_entries
         self._sol_tracking_entries = combined
         self._apply_sol_tracking_entries_to_structured()
-        try:
-            self.nb.select(self.tab_solubility)
-        except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-            pass
+        self._select_advanced_solubility_tab()
         try:
             messagebox.showinfo(
                 "Cycle Analysis",
@@ -78768,11 +78835,7 @@ class UnifiedApp(tk.Tk):
         combined = preserved_entries + imported_entries + [entry]
         self._sol_tracking_entries = combined
         self._apply_sol_tracking_entries_to_structured()
-        try:
-            self.nb.select(self.tab_solubility)
-        except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-            pass
+        self._select_advanced_solubility_tab()
         self._set_cycle_payload_for_workflow(workflow, payload)
         if run_simulation:
             self._run_cycle_solubility_simulation(
@@ -82189,16 +82252,82 @@ class UnifiedApp(tk.Tk):
             return
         slider.set(min(max(value, 6.5), 9.0))
 
+    def _solubility_summary_widgets(self) -> List[tk.Text]:
+        """Return available solubility summary text widgets.
+
+        Purpose:
+            Resolve the active summary text widgets across legacy/new layouts.
+        Why:
+            Summary copy/export/update flows must remain functional even when
+            legacy tab widgets are absent.
+        Args:
+            None.
+        Returns:
+            List[tk.Text]: Existing summary text widgets, ordered by priority.
+        Side Effects:
+            None.
+        Exceptions:
+            Widget liveness checks are guarded and skip invalid references.
+        """
+        widgets: List[tk.Text] = []
+        # Prefer the Advanced summary widget but keep legacy compatibility.
+        for attr_name in ("_solubility_summary_new", "_solubility_summary"):
+            widget = getattr(self, attr_name, None)
+            if widget is None:
+                continue
+            try:
+                if widget.winfo_exists():
+                    widgets.append(widget)
+            except Exception:
+                # Best-effort guard; skip invalid widget handles.
+                pass
+        return widgets
+
+    def _read_solubility_summary_text(self) -> str:
+        """Return the current solubility summary text from any active widget.
+
+        Purpose:
+            Read text from whichever summary widget is currently available.
+        Why:
+            Copy/export actions should not fail just because one widget tree is
+            missing after legacy tab de-integration.
+        Args:
+            None.
+        Returns:
+            str: Trimmed summary text, or an empty string when unavailable.
+        Side Effects:
+            None.
+        Exceptions:
+            Widget read failures are handled and treated as empty content.
+        """
+        # Iterate over available widgets and return the first non-empty summary.
+        for widget in self._solubility_summary_widgets():
+            try:
+                text = widget.get("1.0", "end").strip()
+            except Exception:
+                text = ""
+            if text:
+                return text
+        return ""
+
     def _copy_solubility_summary(self) -> None:
-        """Perform copy solubility summary.
-        Used to keep the workflow logic localized and testable."""
-        widget = getattr(self, "_solubility_summary", None)
-        if widget is None or not widget.winfo_exists():
-            return
-        try:
-            text = widget.get("1.0", "end").strip()
-        except Exception:
-            text = ""
+        """Copy the current solubility summary text to the clipboard.
+
+        Purpose:
+            Export summary text quickly for downstream notes/reporting.
+        Why:
+            The active summary source can be the Advanced widget (or legacy
+            widget if present), and copy should work in either case.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Writes text to the system clipboard and shows a status dialog.
+        Exceptions:
+            Best-effort; clipboard/UI errors are ignored.
+        """
+        text = self._read_solubility_summary_text()
         if not text:
             return
         try:
@@ -83546,27 +83675,44 @@ class UnifiedApp(tk.Tk):
     def _update_solubility_summary(
         self, message: str, structured: Optional[Dict[str, Any]] = None
     ) -> None:
-        """Update solubility summary.
-        Used to keep solubility summary in sync with current state."""
+        """Update all available solubility summary widgets and structured state.
 
-        widget = getattr(self, "_solubility_summary", None)
-
-        if widget is None or not widget.winfo_exists():
-
-            return
-
-        widget.configure(state="normal")
-        widget.delete("1.0", "end")
-        widget.insert("end", message.strip() if message else "")
-        widget.configure(state="disabled")
-        widget.see("end")
-        preview_widget = getattr(self, "_solubility_summary_new", None)
-        if preview_widget is not None and preview_widget.winfo_exists():
-            preview_widget.configure(state="normal")
-            preview_widget.delete("1.0", "end")
-            preview_widget.insert("end", message.strip() if message else "")
-            preview_widget.configure(state="disabled")
-            preview_widget.see("end")
+        Purpose:
+            Synchronize summary text output and structured payload widgets after
+            a solubility workflow run.
+        Why:
+            Summary updates must continue to work even when legacy summary
+            widgets are unavailable.
+        Args:
+            message: Summary text to render.
+            structured: Optional structured payload used to refresh dependent UI.
+        Returns:
+            None.
+        Side Effects:
+            Writes text into any active summary widgets and refreshes structured
+            solubility widgets.
+        Exceptions:
+            Best-effort; per-widget update failures are ignored.
+        """
+        summary_text = message.strip() if message else ""
+        # Keep both legacy/new summary panes in sync when present.
+        for widget in self._solubility_summary_widgets():
+            try:
+                widget.configure(state="normal")
+                widget.delete("1.0", "end")
+                widget.insert("end", summary_text)
+                widget.configure(state="disabled")
+                widget.see("end")
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        summary_var = getattr(self, "_sol_reaction_summary_var", None)
+        if summary_var is not None:
+            try:
+                summary_var.set(summary_text)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
         self._update_solubility_structured_widgets(structured)
 
     def _collect_solubility_form_data(self) -> Dict[str, Any]:
@@ -84213,47 +84359,42 @@ class UnifiedApp(tk.Tk):
         }
 
     def _save_solubility_summary_png(self) -> None:
-        """Save solubility summary PNG.
-        Used when persisting solubility summary PNG to storage."""
+        """Export the active solubility summary text as a PNG artifact.
 
-        widget = getattr(self, "_solubility_summary", None)
-
-        if widget is None or not widget.winfo_exists():
-
+        Purpose:
+            Persist summary output for reports and external sharing.
+        Why:
+            Export must remain available when only the Advanced summary widget
+            exists after legacy tab de-integration.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Opens a save dialog and writes a PNG file when confirmed.
+        Exceptions:
+            Best-effort; dialog/export failures are reported and do not raise.
+        """
+        text = self._read_solubility_summary_text()
+        if not self._solubility_summary_widgets():
             try:
-
                 messagebox.showwarning(
                     "Advanced Solubility Module",
                     "The solubility summary is not available yet.",
                 )
-
             except Exception:
-
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
-
             return
 
-        try:
-
-            text = widget.get("1.0", "end").strip()
-
-        except Exception:
-
-            text = ""
-
         if not text:
-
             try:
-
                 messagebox.showinfo(
                     "Advanced Solubility Module",
                     "The solubility summary is currently empty. "
                     "Run the analysis before exporting.",
                 )
-
             except Exception:
-
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
 
@@ -84267,7 +84408,6 @@ class UnifiedApp(tk.Tk):
         )
 
         if not path:
-
             return
 
         metadata = self._solubility_export_metadata()
@@ -86539,6 +86679,41 @@ class UnifiedApp(tk.Tk):
         self._refresh_sol_mode_guidance()
         self._run_solubility_analysis()
 
+    def _select_advanced_solubility_tab(self) -> None:
+        """Select the Advanced Speciation tab in the main notebook.
+
+        Purpose:
+            Focus the active Advanced Speciation tab for cycle-to-solubility
+            handoff flows.
+        Why:
+            Legacy Speciation tab UI was removed; all handoffs must target the
+            Advanced tab and auto-restore it if a user hid it.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            May force-show the Advanced tab and then select it in `self.nb`.
+        Exceptions:
+            Best-effort; ignores notebook visibility/selection failures.
+        """
+        notebook = getattr(self, "nb", None)
+        advanced_tab = getattr(self, "tab_solubility_new", None)
+        if notebook is None or advanced_tab is None:
+            return
+        try:
+            tabs = list(notebook.tabs())
+        except Exception:
+            tabs = []
+        if str(advanced_tab) not in tabs:
+            self._solubility_new_tab_visible = True
+            self._apply_solubility_tab_visibility()
+        try:
+            notebook.select(advanced_tab)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
     def _select_sol_workflow_tab(self, workflow_key: str) -> None:
         """Perform select sol workflow tab.
         Used to keep the workflow logic localized and testable."""
@@ -87081,11 +87256,14 @@ class UnifiedApp(tk.Tk):
 
         paned = ttk.Panedwindow(scroll_content, orient="horizontal")
         paned.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self._final_report_paned = paned
 
         left_panel = ttk.Frame(paned)
         right_panel = ttk.Frame(paned)
-        paned.add(left_panel, weight=1)
+        paned.add(left_panel, weight=3)
         paned.add(right_panel, weight=2)
+        paned.bind("<ButtonRelease-1>", self._on_final_report_paned_release, add="+")
+        self._apply_initial_final_report_split()
 
         sections_frame = ttk.LabelFrame(left_panel, text="Sections Included")
         sections_frame.pack(fill="both", expand=True, pady=(0, 8), padx=0)
@@ -87273,6 +87451,113 @@ class UnifiedApp(tk.Tk):
         self._apply_final_report_state_to_ui(final_state)
         self._refresh_final_report_template_list()
         self._refresh_final_report_preview()
+
+    def _on_final_report_paned_release(
+        self, _event: Optional[tk.Event] = None
+    ) -> None:
+        """Persist Final Report splitter position after user sash drag.
+
+        Purpose:
+            Capture user-adjusted width split between left/right Final Report
+            panes when the sash drag completes.
+        Why:
+            Final Report controls should reopen with the same usable layout the
+            user selected during prior sessions.
+        Args:
+            _event: Tk event payload from `<ButtonRelease-1>`.
+        Returns:
+            None.
+        Side Effects:
+            Updates `settings["final_report_split_frac"]` and saves settings.
+        Exceptions:
+            Best-effort; persistence failures are ignored.
+        """
+        _ = _event
+        self._persist_final_report_split_from_widget(save=True)
+
+    def _apply_initial_final_report_split(self) -> None:
+        """Apply the initial Final Report left/right pane split ratio.
+
+        Purpose:
+            Restore the stored Final Report sash position when the tab builds.
+        Why:
+            Users need the Sections Included pane to default to a usable width
+            (60%) and remain stable across startup geometry timing.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Writes normalized split preference to settings and schedules
+            deferred sash-position updates.
+        Exceptions:
+            Best-effort; Tk geometry races are handled with retry passes.
+        """
+        split_frac = _normalize_final_report_split_frac(
+            settings.get("final_report_split_frac", 0.60)
+        )
+        settings["final_report_split_frac"] = split_frac
+
+        def _apply_with_retries(remaining: int) -> None:
+            """Apply the saved split fraction once paned width is measurable."""
+            paned = getattr(self, "_final_report_paned", None)
+            if paned is None or not paned.winfo_exists():
+                return
+            total_width = int(paned.winfo_width() or 0)
+            if total_width <= 1:
+                if remaining > 0:
+                    self.after(60, lambda: _apply_with_retries(remaining - 1))
+                return
+            try:
+                paned.sashpos(0, int(total_width * split_frac))
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+
+        self.after_idle(lambda: _apply_with_retries(10))
+        self.after(220, lambda: _apply_with_retries(4))
+
+    def _persist_final_report_split_from_widget(self, *, save: bool = True) -> None:
+        """Persist the current Final Report paned sash ratio to settings.
+
+        Purpose:
+            Convert the active Final Report sash position into a normalized
+            fraction and store it in settings.
+        Why:
+            Startup and explicit Save Settings flows need a shared persistence
+            path for Final Report split state.
+        Args:
+            save: When True, write settings to disk immediately.
+        Returns:
+            None.
+        Side Effects:
+            Updates `settings["final_report_split_frac"]` and may call
+            `_save_settings_to_disk()`.
+        Exceptions:
+            Best-effort; invalid geometry or save failures are ignored.
+        """
+        paned = getattr(self, "_final_report_paned", None)
+        if paned is None or not paned.winfo_exists():
+            return
+        try:
+            total_width = int(paned.winfo_width() or 0)
+            if total_width <= 1:
+                return
+            fraction = paned.sashpos(0) / total_width
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            return
+        settings["final_report_split_frac"] = _normalize_final_report_split_frac(
+            fraction,
+            default=settings.get("final_report_split_frac", 0.60),
+        )
+        if not save:
+            return
+        try:
+            _save_settings_to_disk()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
 
     def _prompt_final_report_generation(self) -> None:
         """Open the final-report export format prompt and dispatch generation.
@@ -92344,7 +92629,9 @@ class UnifiedApp(tk.Tk):
         """Build tab contamination.
         Used to assemble tab contamination during UI or plot setup."""
 
-        frame = self.tab_contamination
+        frame = getattr(self, "tab_contamination", None)
+        if frame is None:
+            return
 
         frame.grid_columnconfigure(0, weight=1)
         frame.grid_rowconfigure(0, weight=0)
@@ -101884,8 +102171,8 @@ class UnifiedApp(tk.Tk):
                 else settings.get("core_render_cycle_side_effects_mode", "auto")
             )
         )
-        settings["show_contamination_tab"] = bool(self._contamination_tab_visible)
-        settings["show_solubility_tab"] = bool(self._solubility_tab_visible)
+        settings.pop("show_contamination_tab", None)
+        settings.pop("show_solubility_tab", None)
         settings["show_solubility_new_tab"] = bool(self._solubility_new_tab_visible)
         settings["solubility_model_key"] = getattr(
             self, "_sol_model_key", DEFAULT_SPEC_MODEL_KEY
@@ -101976,6 +102263,12 @@ class UnifiedApp(tk.Tk):
 
         except Exception:
 
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+        try:
+            self._persist_final_report_split_from_widget(save=False)
+        except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
