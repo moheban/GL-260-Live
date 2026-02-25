@@ -925,6 +925,42 @@ Developer tools (Tools -> Developer Tools...) provide:
 - Rust install/repair failures always print a concise reason to terminal (`stderr`) and emit category-gated diagnostics under `rust.backend`.
 - Free-threading & GIL controls, dependency free-threading audit, regression checks, and timeline table export validation via dedicated dialogs/actions launched from the hub.
 
+#### Runtime/Render Tuning Settings
+Combined render and startup responsiveness are now controlled by explicit runtime settings:
+
+- `combined_refresh_mode`:
+  - `single_pass` (default): skip post-first-draw combined auto-refresh.
+  - `adaptive`: only request pass 2 when baseline/current signatures are complete and indicate material instability.
+  - `two_pass`: force conservative two-pass behavior.
+- Backward compatibility for legacy key:
+  - `combined_disable_second_refresh=True` maps to `combined_refresh_mode=single_pass`.
+  - `combined_disable_second_refresh=False` maps to `combined_refresh_mode=adaptive` when no explicit `combined_refresh_mode` exists.
+- `startup_interactive_first` (default `True`):
+  - Splash teardown is gated by interactive essentials (Data/Columns/Plot) instead of heavy tab readiness.
+- `startup_background_tab_warmup` (default `True`):
+  - After reveal, heavy startup tabs (Cycle/Solubility/Final Report) continue warmup/readiness checks in the background.
+- `dev_disable_startup_tab_cycling` (default `True`):
+  - Keeps splash startup from tab-cycling unless explicitly overridden for legacy comparisons.
+
+Developer Tools -> Performance Diagnostics now includes quick actions:
+
+- `Set Single-Pass`
+- `Render Combined Once`
+- `Dump Timings`
+
+Combined performance diagnostics now expose structured fields for tuning:
+
+- `worker_ms`, `build_ms`, `layout_ms`, `install_ms`, `finalize_ms`
+- `auto_refresh_mode`, `auto_refresh_target`, `auto_refresh_passes`
+- runner snapshots (`runner_start` / `runner_end`) with `active`/`pending` counts for both task runners
+
+Recommended free-threaded profile (`.venv-314t`):
+
+1. `dev_worker_threads=4` (or CPU-appropriate value).
+2. `dev_enable_parallel_compute=True`.
+3. `combined_refresh_mode=single_pass` for first-latency optimization.
+4. Keep `startup_interactive_first=True` and `startup_background_tab_warmup=True` for fastest initial interaction.
+
 #### Debug Logging and Performance Stats
 The debug/logging framework is centralized and off by default. Use the following workflow:
 
