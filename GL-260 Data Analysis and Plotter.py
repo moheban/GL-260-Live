@@ -13957,6 +13957,7 @@ SOL_MODE_FIELD_HELP: Dict[str, str] = {
     "planning_cycle_co2_g": "Manual per-cycle CO₂ dose (g). When set, it overrides the ΔP/headspace-derived value.",
     "planning_stop_co2_added_g": "Optional stop cap: halt planning projection once total CO₂ added reaches this mass (g).",
     "planning_stop_ph": "Optional stop: halt planning projection once pH is at or below this value.",
+    "reaction_co2_charged_g": "Running CO2 total in grams; this field is overwritten when importing from Cycle Analysis.",
 }
 
 SOL_PLANNING_DEFAULTS: Dict[str, str] = {
@@ -14093,6 +14094,7 @@ SOL_WORKFLOW_TEMPLATES: "OrderedDict[str, Dict[str, Any]]" = OrderedDict(
                 "mode_key": "naoh_reaction",
                 "guide_mode": "naoh_reaction",
                 "input_include_keys": [
+                    "temperature_c",
                     "reaction_naoh_mass_g",
                     "reaction_solution_volume_l",
                     "reaction_co2_charged_g",
@@ -14148,6 +14150,18 @@ SOL_WORKFLOW_TEMPLATES: "OrderedDict[str, Dict[str, Any]]" = OrderedDict(
 )
 
 SOL_WORKFLOW_DEFAULT = next(iter(SOL_WORKFLOW_TEMPLATES.keys()))
+
+SOL_TEMP_SOURCE_MANUAL = "manual"
+SOL_TEMP_SOURCE_TRACE = "trace"
+SOL_TEMP_SOURCE_CHOICES: Tuple[str, ...] = (
+    SOL_TEMP_SOURCE_MANUAL,
+    SOL_TEMP_SOURCE_TRACE,
+)
+SOL_TEMP_TRACE_KEYS: Tuple[str, ...] = ("z", "z2")
+SOL_TEMP_TRACE_LABELS: Dict[str, str] = {
+    "z": "Internal Temperature (z)",
+    "z2": "External Temperature (z2)",
+}
 
 _SOL_IDEAL_GAS_R_L_ATM_PER_MOLK = 0.082057
 
@@ -74357,8 +74371,25 @@ class UnifiedApp(tk.Tk):
         return widget_class in {"text", "listbox", "treeview"}
 
     def _get_sol_var_float(self, key: str) -> Optional[float]:
-        """Return sol var float.
-        Used to retrieve sol var float for downstream logic."""
+        """Return a numeric solubility input value for the requested key.
+
+        Purpose:
+            Parse one solubility input variable as a finite float.
+        Why:
+            Guided-step completion and validation helpers rely on a single parser
+            for numeric input checks.
+        Inputs:
+            key: Solubility input key to parse.
+        Outputs:
+            Optional[float]: Parsed finite float, or None when unresolved.
+        Side Effects:
+            None.
+        Exceptions:
+            Parsing failures return None instead of raising.
+        """
+
+        if key == "temperature_c":
+            return self._resolve_workflow_temperature_input(strict=False)
 
         var = getattr(self, "_solubility_vars", {}).get(key)
         if var is None:
@@ -74602,6 +74633,413 @@ class UnifiedApp(tk.Tk):
         if text in SOL_WORKFLOW_TEMPLATES:
             return text
         return SOL_WORKFLOW_DEFAULT
+
+    def _sol_temp_source_setting_keys(
+        self, workflow_key: Optional[str] = None
+    ) -> Tuple[str, str]:
+        """Return persistent solubility keys for workflow temperature source controls.
+
+        Purpose:
+            Resolve the `solubility_inputs` keys used to persist one workflow's
+            temperature-source mode and selected Columns-tab trace.
+        Why:
+            Each workflow (Planning/Analysis/Reprocessing) needs independent source
+            selection, and key generation must stay consistent across UI rebuilds.
+        Inputs:
+            workflow_key: Optional workflow name. When omitted, the active
+                workflow tab is used.
+        Outputs:
+            Tuple[str, str]: (`mode_key`, `trace_key`) persistence keys.
+        Side Effects:
+            None.
+        Exceptions:
+            None.
+        """
+        workflow = workflow_key or self._current_solubility_workflow()
+        normalized = "".join(
+            char.lower() if char.isalnum() else "_" for char in str(workflow)
+        ).strip("_")
+        if not normalized:
+            normalized = SOL_WORKFLOW_DEFAULT.lower()
+        return (
+            f"sol_temp_source_mode_{normalized}",
+            f"sol_temp_trace_key_{normalized}",
+        )
+
+    def _ensure_workflow_temp_source_vars(
+        self, workflow_key: Optional[str] = None
+    ) -> Tuple[tk.StringVar, tk.StringVar]:
+        """Create or return workflow-specific temperature source variables.
+
+        Purpose:
+            Guarantee that per-workflow temperature source controls are backed by
+            persistent Tk variables.
+        Why:
+            Temperature-source mode and trace choice must persist and participate
+            in existing observer-driven UI refreshes.
+        Inputs:
+            workflow_key: Optional workflow name. Defaults to the active workflow.
+        Outputs:
+            Tuple[tk.StringVar, tk.StringVar]: (`mode_var`, `trace_var`) for the
+            selected workflow.
+        Side Effects:
+            - Creates missing persistent `solubility_inputs` variables.
+            - Registers defaults and solubility observers for new variables.
+        Exceptions:
+            Best-effort guards keep existing variables when initialization fails.
+        """
+        vars_map = getattr(self, "_solubility_vars", None)
+        if not isinstance(vars_map, dict):
+            vars_map = {}
+            self._solubility_vars = vars_map
+        mode_key, trace_key = self._sol_temp_source_setting_keys(workflow_key)
+        mode_var = vars_map.get(mode_key)
+        if mode_var is None:
+            mode_var = self._create_persistent_solubility_var(
+                mode_key, SOL_TEMP_SOURCE_MANUAL
+            )
+            vars_map[mode_key] = mode_var
+            self._record_solubility_default(mode_key, SOL_TEMP_SOURCE_MANUAL)
+            self._register_solubility_observer(mode_var)
+        trace_var = vars_map.get(trace_key)
+        if trace_var is None:
+            trace_var = self._create_persistent_solubility_var(trace_key, "")
+            vars_map[trace_key] = trace_var
+            self._record_solubility_default(trace_key, "")
+            self._register_solubility_observer(trace_var)
+        try:
+            mode_value = (mode_var.get() or "").strip().lower()
+        except Exception:
+            mode_value = SOL_TEMP_SOURCE_MANUAL
+        if mode_value not in SOL_TEMP_SOURCE_CHOICES:
+            try:
+                mode_var.set(SOL_TEMP_SOURCE_MANUAL)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        return mode_var, trace_var
+
+    def _workflow_uses_trace_temperature(
+        self, workflow_key: Optional[str] = None
+    ) -> bool:
+        """Return whether a workflow currently sources temperature from a trace.
+
+        Purpose:
+            Detect whether the active workflow should resolve temperature from
+            Columns-tab trace data instead of manual input text.
+        Why:
+            Form validation and guided-step completeness use this switch to decide
+            when manual temperature entry can be skipped.
+        Inputs:
+            workflow_key: Optional workflow name. Defaults to the active workflow.
+        Outputs:
+            bool: True when trace mode is selected; otherwise False.
+        Side Effects:
+            May lazily create missing workflow source variables.
+        Exceptions:
+            None.
+        """
+        mode_var, _trace_var = self._ensure_workflow_temp_source_vars(workflow_key)
+        try:
+            return (mode_var.get() or "").strip().lower() == SOL_TEMP_SOURCE_TRACE
+        except Exception:
+            return False
+
+    def _sol_temperature_trace_options(self) -> List[Dict[str, str]]:
+        """Return available temperature trace options sourced from Columns mappings.
+
+        Purpose:
+            Build workflow temperature-trace choices from currently selected `z`
+            and `z2` column assignments.
+        Why:
+            Solubility workflows should only offer temperature traces that are
+            explicitly mapped in the Columns tab.
+        Inputs:
+            None.
+        Outputs:
+            List[Dict[str, str]]: Options containing `trace_key`, `column_name`,
+            and display `label`.
+        Side Effects:
+            None.
+        Exceptions:
+            None.
+        """
+        columns_map = self.columns if isinstance(getattr(self, "columns", None), dict) else {}
+        options: List[Dict[str, str]] = []
+        # Iterate over known temperature trace keys so UI choices stay constrained
+        # to Columns-tab temperature assignments only.
+        for trace_key in SOL_TEMP_TRACE_KEYS:
+            raw_column = columns_map.get(trace_key, "")
+            column_name = "" if raw_column is None else str(raw_column).strip()
+            if not column_name or column_name == "None":
+                continue
+            options.append(
+                {
+                    "trace_key": trace_key,
+                    "column_name": column_name,
+                    "label": (
+                        f"{SOL_TEMP_TRACE_LABELS.get(trace_key, trace_key)} -> "
+                        f"{column_name}"
+                    ),
+                }
+            )
+        return options
+
+    def _refresh_sol_temperature_source_controls(
+        self, workflow_key: Optional[str] = None
+    ) -> None:
+        """Refresh workflow temperature-source UI state and available trace choices.
+
+        Purpose:
+            Synchronize per-workflow temperature source controls with current
+            Columns mappings and selected source mode.
+        Why:
+            Trace options can change after Columns apply operations, and controls
+            must prevent invalid selections from lingering in the UI.
+        Inputs:
+            workflow_key: Optional workflow key. When omitted, refresh all
+                workflow control groups.
+        Outputs:
+            None.
+        Side Effects:
+            - Updates trace combobox option lists and widget states.
+            - Normalizes invalid persisted trace selections to valid fallbacks.
+            - Updates per-workflow explanatory labels.
+        Exceptions:
+            Best-effort guards prevent UI synchronization failures from blocking
+            the workflow.
+        """
+        controls = getattr(self, "_sol_temp_source_controls", {})
+        if not isinstance(controls, dict) or not controls:
+            return
+        options = self._sol_temperature_trace_options()
+        trace_values = [item["trace_key"] for item in options]
+        trace_notes = (
+            "; ".join(f"{item['trace_key']} -> {item['column_name']}" for item in options)
+            if options
+            else "No mapped temperature traces. Map z or z2 on the Columns tab and apply."
+        )
+        workflow_keys: List[str]
+        if workflow_key:
+            workflow_keys = [workflow_key]
+        else:
+            workflow_keys = list(SOL_WORKFLOW_TEMPLATES.keys())
+        for key in workflow_keys:
+            mode_var, trace_var = self._ensure_workflow_temp_source_vars(key)
+            mode_value = (mode_var.get() or "").strip().lower()
+            if mode_value not in SOL_TEMP_SOURCE_CHOICES:
+                mode_value = SOL_TEMP_SOURCE_MANUAL
+                try:
+                    mode_var.set(mode_value)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            trace_value = (trace_var.get() or "").strip()
+            if trace_value not in trace_values:
+                fallback = trace_values[0] if trace_values else ""
+                try:
+                    trace_var.set(fallback)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+                trace_value = fallback
+            control_meta = controls.get(key, {})
+            trace_combo = control_meta.get("trace_combo")
+            trace_info_var = control_meta.get("trace_info_var")
+            if trace_combo is not None:
+                combo_values = trace_values if trace_values else [""]
+                try:
+                    trace_combo.configure(values=combo_values)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+                try:
+                    trace_combo.set(trace_value if trace_value in trace_values else "")
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+                desired_state = (
+                    "readonly"
+                    if mode_value == SOL_TEMP_SOURCE_TRACE and bool(trace_values)
+                    else "disabled"
+                )
+                try:
+                    trace_combo.configure(state=desired_state)
+                except Exception:
+                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    pass
+            if isinstance(trace_info_var, tk.StringVar):
+                if mode_value == SOL_TEMP_SOURCE_TRACE:
+                    trace_info_var.set(
+                        "Columns trace mode uses the mean of valid values from the selected trace. "
+                        + trace_notes
+                    )
+                else:
+                    trace_info_var.set(
+                        "Manual mode uses the Temperature (°C) input in this workflow."
+                    )
+
+    def _on_sol_temp_source_mode_changed(self, workflow_key: str) -> None:
+        """Handle workflow temperature source mode changes.
+
+        Purpose:
+            React to Manual/Columns Trace toggles in workflow temperature controls.
+        Why:
+            Source-mode changes affect temperature validation and should invalidate
+            cached form payloads before the next run.
+        Inputs:
+            workflow_key: Workflow whose source mode changed.
+        Outputs:
+            None.
+        Side Effects:
+            - Refreshes trace control enable/disable state.
+            - Clears cached solubility form data.
+        Exceptions:
+            Best-effort guards keep UI responsive if refresh operations fail.
+        """
+        self._sol_last_form_data = None
+        try:
+            self._refresh_sol_temperature_source_controls(workflow_key)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _on_sol_temp_trace_selected(
+        self, workflow_key: str, _event: Optional[tk.Event] = None
+    ) -> None:
+        """Handle workflow temperature trace selections.
+
+        Purpose:
+            Invalidate cached form state when users choose a different trace source.
+        Why:
+            Subsequent solver runs must recompute temperature using the newly
+            selected trace.
+        Inputs:
+            workflow_key: Workflow whose trace selection changed.
+            _event: Optional Tk event payload from combobox selection callbacks.
+        Outputs:
+            None.
+        Side Effects:
+            - Clears cached solubility form data.
+            - Refreshes control text/state to reflect current mappings.
+        Exceptions:
+            Best-effort guards prevent callback errors from disrupting UI flow.
+        """
+        del _event
+        self._sol_last_form_data = None
+        try:
+            self._refresh_sol_temperature_source_controls(workflow_key)
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+
+    def _resolve_workflow_temperature_input(
+        self,
+        workflow_key: Optional[str] = None,
+        *,
+        strict: bool = False,
+    ) -> Optional[float]:
+        """Resolve effective workflow temperature from manual input or trace source.
+
+        Purpose:
+            Compute the scalar temperature used by solubility workflows based on
+            the current per-workflow source mode selection.
+        Why:
+            Analysis, Planning, and Reprocessing must support manual temperature
+            entry and Columns trace-derived temperature without changing solver APIs.
+        Inputs:
+            workflow_key: Optional workflow name. Defaults to active workflow.
+            strict: When True, raise actionable validation errors for missing or
+                invalid source data; otherwise return None on unresolved input.
+        Outputs:
+            Optional[float]: Resolved temperature in deg C, or None when unresolved
+            in non-strict mode.
+        Side Effects:
+            May normalize invalid persisted mode/trace values to safe defaults.
+        Exceptions:
+            Raises ValueError in strict mode for missing temperature input, invalid
+            trace selection, unavailable source columns, or non-finite results.
+        """
+        workflow = workflow_key or self._current_solubility_workflow()
+        workflow_label = SOL_WORKFLOW_TEMPLATES.get(workflow, {}).get(
+            "label", str(workflow)
+        )
+        mode_var, trace_var = self._ensure_workflow_temp_source_vars(workflow)
+        mode_value = (mode_var.get() or "").strip().lower()
+        if mode_value not in SOL_TEMP_SOURCE_CHOICES:
+            mode_value = SOL_TEMP_SOURCE_MANUAL
+            try:
+                mode_var.set(mode_value)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        if mode_value != SOL_TEMP_SOURCE_TRACE:
+            temp_var = getattr(self, "_solubility_vars", {}).get("temperature_c")
+            raw = ""
+            if temp_var is not None:
+                try:
+                    raw = temp_var.get().strip()
+                except Exception:
+                    raw = ""
+            if not raw:
+                if strict:
+                    raise ValueError(f"{workflow_label}: Temperature (°C) is required.")
+                return None
+            try:
+                value = float(raw)
+            except ValueError as exc:
+                if strict:
+                    raise ValueError(
+                        f"{workflow_label}: Temperature (°C) must be numeric."
+                    ) from exc
+                return None
+            if not math.isfinite(value):
+                if strict:
+                    raise ValueError(
+                        f"{workflow_label}: Temperature (°C) must be finite."
+                    )
+                return None
+            return value
+
+        options = self._sol_temperature_trace_options()
+        option_map = {item["trace_key"]: item for item in options}
+        selected_trace = (trace_var.get() or "").strip()
+        if not selected_trace and len(options) == 1:
+            selected_trace = options[0]["trace_key"]
+            try:
+                trace_var.set(selected_trace)
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        if selected_trace not in option_map:
+            if strict:
+                raise ValueError(
+                    f"{workflow_label}: Select a temperature trace (z or z2) from Columns and click Apply Column Selection, or switch source to Manual."
+                )
+            return None
+        column_name = option_map[selected_trace]["column_name"]
+        series = self._get_numeric_series(column_name)
+        if series is None:
+            if strict:
+                raise ValueError(
+                    f"{workflow_label}: Temperature trace {selected_trace} ({column_name}) is unavailable. Re-apply column selection or switch source to Manual."
+                )
+            return None
+        numeric = pd.to_numeric(series, errors="coerce").dropna()
+        if numeric.empty:
+            if strict:
+                raise ValueError(
+                    f"{workflow_label}: Temperature trace {selected_trace} ({column_name}) has no valid numeric values."
+                )
+            return None
+        value = float(numeric.mean())
+        if not math.isfinite(value):
+            if strict:
+                raise ValueError(
+                    f"{workflow_label}: Temperature trace {selected_trace} ({column_name}) produced a non-finite mean value."
+                )
+            return None
+        return value
 
     def _refresh_sol_workflow_layout(self, *, canvas_width: Optional[int] = None) -> None:
         """Refresh Advanced Speciation workflow geometry and timeline visibility.
@@ -76977,6 +77415,7 @@ class UnifiedApp(tk.Tk):
         self._sol_workflow_nb = workflow_nb
         workflow_tabs: Dict[str, ttk.Frame] = {}
         self._sol_workflow_tabs = workflow_tabs
+        self._sol_temp_source_controls = {}
 
         # Closure captures _build_tab_solubility_new local context to keep helper logic scoped and invoked directly within _build_tab_solubility_new.
         def _workflow_input_specs(workflow_key: str):
@@ -77182,6 +77621,105 @@ class UnifiedApp(tk.Tk):
             return row_cursor
 
         # Closure captures _build_tab_solubility_new local context to keep helper logic scoped and invoked directly within _build_tab_solubility_new.
+        def _insert_temperature_source_section(
+            tab: ttk.Frame, workflow_key: str, row_index: int
+        ) -> int:
+            """Insert per-workflow temperature source controls.
+
+            Purpose:
+                Add Manual vs Columns Trace temperature source controls beneath
+                workflow input fields.
+            Why:
+                Workflows need an explicit way to source temperature from either
+                the manual temperature entry or Columns-tab trace mappings.
+            Inputs:
+                tab: Workflow tab frame receiving the controls.
+                workflow_key: Workflow identifier (Planning/Analysis/Reprocessing).
+                row_index: Grid row where the section should be inserted.
+            Outputs:
+                int: Next grid row index after inserting the section.
+            Side Effects:
+                - Creates mode/trace widgets and stores references for refreshes.
+                - Initializes persistent source-mode and trace variables.
+            Exceptions:
+                Best-effort guards avoid interrupting tab construction.
+            """
+            source_box = ttk.LabelFrame(tab, text="Temperature Source")
+            source_box.grid(
+                row=row_index,
+                column=0,
+                columnspan=2,
+                sticky="ew",
+                padx=8,
+                pady=(2, 4),
+            )
+            source_box.grid_columnconfigure(2, weight=1)
+            mode_var, trace_var = self._ensure_workflow_temp_source_vars(workflow_key)
+            ttk.Label(source_box, text="Source mode").grid(
+                row=0, column=0, sticky="w", padx=(8, 4), pady=(4, 2)
+            )
+            _ui_radiobutton(
+                source_box,
+                text="Manual",
+                value=SOL_TEMP_SOURCE_MANUAL,
+                variable=mode_var,
+                command=lambda key=workflow_key: self._on_sol_temp_source_mode_changed(
+                    key
+                ),
+            ).grid(row=0, column=1, sticky="w", padx=(0, 8), pady=(4, 2))
+            _ui_radiobutton(
+                source_box,
+                text="Columns Trace",
+                value=SOL_TEMP_SOURCE_TRACE,
+                variable=mode_var,
+                command=lambda key=workflow_key: self._on_sol_temp_source_mode_changed(
+                    key
+                ),
+            ).grid(row=0, column=2, sticky="w", padx=(0, 8), pady=(4, 2))
+            ttk.Label(source_box, text="Trace key").grid(
+                row=1, column=0, sticky="w", padx=(8, 4), pady=(0, 2)
+            )
+            trace_combo = _ui_combobox(
+                source_box,
+                textvariable=trace_var,
+                state="readonly",
+                values=list(SOL_TEMP_TRACE_KEYS),
+                width=22,
+            )
+            trace_combo.grid(row=1, column=1, columnspan=2, sticky="w", padx=(0, 8))
+            trace_combo.bind(
+                "<<ComboboxSelected>>",
+                lambda event, key=workflow_key: self._on_sol_temp_trace_selected(
+                    key, event
+                ),
+            )
+            info_var = tk.StringVar(
+                value="Manual mode uses the Temperature (°C) input in this workflow."
+            )
+            ttk.Label(
+                source_box,
+                textvariable=info_var,
+                style="Sol.FieldHelp.TLabel",
+                wraplength=560,
+                justify="left",
+            ).grid(
+                row=2,
+                column=0,
+                columnspan=3,
+                sticky="w",
+                padx=8,
+                pady=(0, 4),
+            )
+            controls = getattr(self, "_sol_temp_source_controls", {})
+            controls[workflow_key] = {
+                "trace_combo": trace_combo,
+                "trace_info_var": info_var,
+            }
+            self._sol_temp_source_controls = controls
+            self._refresh_sol_temperature_source_controls(workflow_key)
+            return row_index + 1
+
+        # Closure captures _build_tab_solubility_new local context to keep helper logic scoped and invoked directly within _build_tab_solubility_new.
         def _insert_shared_slider(tab, row_index):
             """Perform insert shared slider.
             Used to keep the workflow logic localized and testable."""
@@ -77349,6 +77887,9 @@ class UnifiedApp(tk.Tk):
             planning_specs,
             start_row=1,
             workflow_key="Planning",
+        )
+        planning_rows = _insert_temperature_source_section(
+            planning_tab, "Planning", planning_rows
         )
         _ensure_sol_var("mass_na_hco3_g")
         mass_naoh_var = self._solubility_vars.get("mass_naoh_g")
@@ -77525,6 +78066,9 @@ class UnifiedApp(tk.Tk):
         analysis_rows = _build_input_grid(
             analysis_tab, analysis_specs, start_row=1, workflow_key="Analysis"
         )
+        analysis_rows = _insert_temperature_source_section(
+            analysis_tab, "Analysis", analysis_rows
+        )
         helper_end_row = _insert_workflow_helper_section(analysis_tab, analysis_rows)
         analysis_slider_row = helper_end_row
         _insert_shared_slider(analysis_tab, analysis_slider_row)
@@ -77632,6 +78176,9 @@ class UnifiedApp(tk.Tk):
         reprocess_rows = _build_input_grid(
             reprocess_tab, reprocess_specs, start_row=1, workflow_key="Reprocessing"
         )
+        reprocess_rows = _insert_temperature_source_section(
+            reprocess_tab, "Reprocessing", reprocess_rows
+        )
         helper_end_row = _insert_workflow_helper_section(reprocess_tab, reprocess_rows)
         reprocess_slider_row = helper_end_row
         _insert_shared_slider(reprocess_tab, reprocess_slider_row)
@@ -77686,6 +78233,7 @@ class UnifiedApp(tk.Tk):
         diag_target_var = self._solubility_vars.get("diag_target_ph")
         if diag_target_var is not None:
             diag_target_var.trace_add("write", self._sync_target_slider_from_entry)
+        self._refresh_sol_temperature_source_controls()
 
         last_workflow = settings.get("sol_last_workflow")
         if last_workflow in workflow_tabs:
@@ -78767,15 +79315,8 @@ class UnifiedApp(tk.Tk):
         co2_autofilled = False
         target_var = self._solubility_vars.get("reaction_co2_charged_g")
         if target_var is not None:
-            try:
-                current_value = target_var.get()
-            except Exception:
-                current_value = ""
-            current_str = "" if current_value is None else str(current_value)
-            # Analysis: preserve user-entered CO2 unless the field is blank.
-            if workflow != "Analysis" or not current_str.strip():
-                target_var.set(f"{co2_g:.2f}")
-                co2_autofilled = True
+            target_var.set(f"{co2_g:.2f}")
+            co2_autofilled = True
 
         reaction_naoh_var = self._solubility_vars.get("reaction_naoh_mass_g")
         planning_naoh_var = self._solubility_vars.get("mass_naoh_g")
@@ -83716,8 +84257,25 @@ class UnifiedApp(tk.Tk):
         self._update_solubility_structured_widgets(structured)
 
     def _collect_solubility_form_data(self) -> Dict[str, Any]:
-        """Collect solubility form data.
-        Used to gather solubility form data into a structured payload."""
+        """Collect workflow-scoped solubility inputs into a validated payload.
+
+        Purpose:
+            Parse and validate Advanced Speciation workflow inputs before solver
+            execution.
+        Why:
+            Solver orchestration expects one normalized payload regardless of
+            whether inputs come from Planning, Analysis, or Reprocessing tabs.
+        Inputs:
+            None.
+        Outputs:
+            Dict[str, Any]: Structured workflow payload containing parsed inputs,
+            model keys, solver options, and workflow metadata.
+        Side Effects:
+            Reads current Tk-bound workflow inputs and may update parsed-value
+            defaults when optional fields are omitted.
+        Exceptions:
+            Raises ValueError when required fields are missing or invalid.
+        """
         vars_map = getattr(self, "_solubility_vars", {})
         field_meta = getattr(self, "_solubility_field_meta", {})
         if not vars_map:
@@ -83726,6 +84284,7 @@ class UnifiedApp(tk.Tk):
         workflow_key, guide_key, guide, workflow_meta = self._active_sol_input_guide()
         workflow_label = workflow_meta.get("label", workflow_key)
         workflow_mode_key = workflow_meta.get("mode_key", guide_key)
+        workflow_trace_temperature = self._workflow_uses_trace_temperature(workflow_key)
         include_keys = set(workflow_meta.get("input_include_keys") or [])
         extra_fields = list(workflow_meta.get("input_extra_fields") or [])
         allowed_keys: Set[str] = set()
@@ -83757,6 +84316,8 @@ class UnifiedApp(tk.Tk):
             allowed_keys.update(
                 {"planning_headspace_volume_l", "planning_speciation_ph"}
             )
+        if workflow_trace_temperature and "temperature_c" in allowed_keys:
+            self._resolve_workflow_temperature_input(workflow_key, strict=True)
         missing_specs: List[str] = []
         # Iterate over guide to apply the per-item logic.
         for spec in guide:
@@ -83802,6 +84363,8 @@ class UnifiedApp(tk.Tk):
                 parsed_values[key] = value
                 return value
             required = bool(meta.get("required", False)) and key not in optional_keys
+            if key == "temperature_c" and workflow_trace_temperature:
+                required = False
             if workflow_key == "Planning" and not self._planning_field_is_visible(key):
                 required = False
             if not raw:
@@ -83812,6 +84375,9 @@ class UnifiedApp(tk.Tk):
             try:
                 value = float(raw)
             except ValueError as exc:
+                if key == "temperature_c" and workflow_trace_temperature:
+                    parsed_values[key] = None
+                    return None
                 raise ValueError(f"{label} must be numeric.") from exc
             parsed_values[key] = value
             return value
@@ -83910,6 +84476,11 @@ class UnifiedApp(tk.Tk):
         water_mass = _parse_scoped("water_mass_g")
         solution_volume = _parse_scoped("solution_volume_l")
         temperature = _parse_scoped("temperature_c")
+        if "temperature_c" in allowed_keys and workflow_trace_temperature:
+            temperature = self._resolve_workflow_temperature_input(
+                workflow_key, strict=True
+            )
+            parsed_values["temperature_c"] = temperature
         initial_ph = _parse_scoped("initial_ph_guess")
         forced_ph_value = _parse_scoped("forced_ph_target")
 
@@ -95555,8 +96126,27 @@ class UnifiedApp(tk.Tk):
     def _on_apply_columns_complete(
         self, payload, ranges, auto_refresh_axes, auto_flags=None
     ):
-        """Handle apply columns complete.
-        Used as an event callback for apply columns complete."""
+        """Finalize successful Columns-tab apply operations on the UI thread.
+
+        Purpose:
+            Commit prepared series payload, axis ranges, and post-apply UI state.
+        Why:
+            Column mapping changes drive cycle analysis, plotting, and any
+            workflow controls that depend on mapped traces.
+        Inputs:
+            payload: Prepared series payload from the background apply worker.
+            ranges: Optional axis ranges when auto-refresh is enabled.
+            auto_refresh_axes: Whether axis ranges should be applied immediately.
+            auto_flags: Optional axis auto-range flag overrides.
+        Outputs:
+            None.
+        Side Effects:
+            - Updates globals and cycle-analysis readiness state.
+            - Persists apply status and may trigger cycle recomputation.
+            - Refreshes workflow temperature-trace source controls.
+        Exceptions:
+            Routes failures to `_on_apply_columns_failed` and returns early.
+        """
 
         self._apply_columns_task_id = None
         self._stop_cycle_loading_indicator()
@@ -95570,6 +96160,12 @@ class UnifiedApp(tk.Tk):
             self._on_apply_columns_failed(exc)
 
             return
+
+        try:
+            self._refresh_sol_temperature_source_controls()
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
 
         if auto_refresh_axes:
             if not isinstance(ranges, dict):
