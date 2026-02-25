@@ -17806,18 +17806,53 @@ def _solve_carbonate_state(
     ka2: float,
     kw: float,
     ionic_strength_cap: Optional[float],
-    initial_ph_guess: float,
+    initial_ph_guess: Optional[float],
     speciation_mode: Optional[str] = None,
     fixed_h2co3: Optional[float] = None,
 ) -> Tuple[float, float, float, float, float, Dict[str, float], float]:
-    """Solve carbonate state.
-    Used to run the solver for carbonate state workflows."""
+    """Solve carbonate equilibrium for closed and fixed-pCO2 workflows.
+
+    Purpose:
+        Solve the carbonate charge-balance system and return the species/state terms
+        required by downstream solubility reporting.
+    Why:
+        Analysis and planning workflows can provide a blank initial pH guess, so the
+        solver must sanitize seed values to avoid failing while building Newton seeds.
+    Inputs:
+        total_carbon_m (float): Total dissolved inorganic carbon basis (mol/L).
+        na_conc (float): Sodium concentration basis (mol/L).
+        ka1 (float): First dissociation constant for carbonic acid.
+        ka2 (float): Second dissociation constant for carbonic acid.
+        kw (float): Water autoionization constant.
+        ionic_strength_cap (Optional[float]): Optional ionic strength cap for activity
+            coefficient evaluation.
+        initial_ph_guess (Optional[float]): Optional initial pH seed. Missing or
+            non-finite values fall back to `DEFAULT_SOLUBILITY_INPUTS.initial_ph_guess`.
+        speciation_mode (Optional[str]): Solver mode selector.
+        fixed_h2co3 (Optional[float]): Optional fixed dissolved CO2 boundary for
+            fixed-pCO2 mode.
+    Outputs:
+        Tuple[float, float, float, float, float, Dict[str, float], float]:
+            H, HCO3-, CO3^2-, H2CO3, OH-, activity coefficients, ionic strength.
+    Side Effects:
+        None.
+    Exceptions:
+        Raises RuntimeError when Newton solve attempts do not converge.
+    """
 
     total_carbon_m = max(total_carbon_m, 1e-16)
     na_conc = max(na_conc, 0.0)
     mode = _normalize_speciation_mode(speciation_mode)
     fixed_h2co3_value = max(fixed_h2co3 or 0.0, 0.0)
     use_fixed_pco2 = mode == SPEC_MODE_FIXED_PCO2
+    guess_ph = float(DEFAULT_SOLUBILITY_INPUTS.initial_ph_guess)
+    try:
+        if initial_ph_guess is not None:
+            candidate_guess = float(initial_ph_guess)
+            if math.isfinite(candidate_guess):
+                guess_ph = candidate_guess
+    except Exception:
+        guess_ph = float(DEFAULT_SOLUBILITY_INPUTS.initial_ph_guess)
 
     def build_log_vector_closed(
         pH: float, hco3_fraction: float, co3_fraction: float
@@ -17890,7 +17925,7 @@ def _solve_carbonate_state(
     solution: Optional[List[float]] = None
     if use_fixed_pco2:
         guess_ph_values = [
-            initial_ph_guess,
+            guess_ph,
             8.2,
             7.8,
             9.0,
@@ -17906,7 +17941,7 @@ def _solve_carbonate_state(
                 continue
     else:
         guess_specs = [
-            (initial_ph_guess, 0.85, 0.12),
+            (guess_ph, 0.85, 0.12),
             (8.8, 0.80, 0.19),
             (7.5, 0.95, 0.03),
             (9.2, 0.70, 0.29),
@@ -84482,6 +84517,10 @@ class UnifiedApp(tk.Tk):
             )
             parsed_values["temperature_c"] = temperature
         initial_ph = _parse_scoped("initial_ph_guess")
+        if initial_ph is None or not math.isfinite(initial_ph):
+            # Keep the initial pH entry optional while using a stable solver seed.
+            initial_ph = float(DEFAULT_SOLUBILITY_INPUTS.initial_ph_guess)
+            parsed_values["initial_ph_guess"] = initial_ph
         forced_ph_value = _parse_scoped("forced_ph_target")
 
         reaction_naoh_mass: Optional[float] = None
