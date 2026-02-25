@@ -198,6 +198,7 @@ rustup run stable rustc --version
 rustup run stable cargo --version
 python -c "import gl260_rust_ext; print('gl260_rust_ext import OK')"
 ```
+If you launch the app with a specific interpreter (for example `.\.venv-314t\Scripts\python.exe`), run manual Rust build commands with that same interpreter path so `gl260_rust_ext` installs into the matching environment.
 
 ### Running the Application
 From the repository root:
