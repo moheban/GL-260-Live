@@ -1,5 +1,5 @@
 # GL-260 Data Analysis and Plotter
-# Version: v4.4.8
+# Version: v4.5.0
 # Date: 2026-02-25
 
 import os
@@ -754,9 +754,8 @@ from matplotlib.ticker import FuncFormatter, ScalarFormatter
 from matplotlib import font_manager, mathtext
 from matplotlib.ft2font import FT2Font
 
-import great_tables as gt
-
-_GIL_IMPORT_STATUS = _note_gil_reenable("great_tables", _GIL_IMPORT_STATUS)
+_GREAT_TABLES_MODULE = None
+_GREAT_TABLES_IMPORT_ERROR = None
 _update_bootstrap_startup_splash(
     _BOOTSTRAP_STARTUP_SPLASH,
     message="Loading data processing libraries...",
@@ -2230,8 +2229,24 @@ def _detect_rust_runtime_requirements() -> Dict[str, Any]:
 
 class TkTaskRunner:
     def __init__(self, tk_root: tk.Misc, max_workers: int = 1) -> None:
-        """Initialize TkTaskRunner instance.
-        Used at object creation to configure initial state and bindings."""
+        """Initialize a Tk-aware background task runner.
+
+        Purpose:
+            Create a reusable executor bridge between background workers and Tk
+            main-thread callbacks.
+        Why:
+            App workflows need one shared scheduling utility that enforces
+            latest-task-wins semantics per task name.
+        Inputs:
+            tk_root: Tk root/widget used to marshal callbacks via `after`.
+            max_workers: Maximum worker threads for the backing executor.
+        Outputs:
+            None.
+        Side Effects:
+            Allocates a `ThreadPoolExecutor` and initializes in-memory task state.
+        Exceptions:
+            Invalid `max_workers` values are normalized to safe minimums.
+        """
         self._root = tk_root
         self._max_workers = max(1, int(max_workers))
         self._executor = ThreadPoolExecutor(max_workers=self._max_workers)
@@ -2242,8 +2257,23 @@ class TkTaskRunner:
         self._futures: Dict[int, Any] = {}
 
     def set_max_workers(self, max_workers: int) -> None:
-        """Set max workers.
-        Used to persist max workers into the current state."""
+        """Update the executor worker capacity.
+
+        Purpose:
+            Reconfigure background concurrency for subsequent submitted tasks.
+        Why:
+            Developer runtime controls need to tune worker pool size without
+            restarting the application.
+        Inputs:
+            max_workers: Desired worker capacity.
+        Outputs:
+            None.
+        Side Effects:
+            Replaces the internal executor and requests non-blocking shutdown on
+            the previous executor instance.
+        Exceptions:
+            Invalid values are normalized; shutdown failures are ignored.
+        """
         max_workers = max(1, int(max_workers))
         if max_workers == self._max_workers:
             return
@@ -2263,8 +2293,26 @@ class TkTaskRunner:
         on_ok: Optional[Callable[[Any], None]],
         on_err: Optional[Callable[[BaseException], None]],
     ) -> int:
-        """Perform submit.
-        Used to keep the workflow logic localized and testable."""
+        """Submit work and marshal completion handlers back to Tk.
+
+        Purpose:
+            Run one background callable and deliver completion on the UI thread.
+        Why:
+            Tk widgets must only be touched on the main thread, while expensive
+            work should run in background workers.
+        Inputs:
+            task_name: Logical task key used for latest-task-wins cancellation.
+            fn: Background callable executed by the worker pool.
+            on_ok: Optional success callback executed on Tk thread.
+            on_err: Optional error callback executed on Tk thread.
+        Outputs:
+            Integer task identifier for stale-result checks.
+        Side Effects:
+            Cancels prior same-name pending futures when possible and tracks the
+            submitted future for diagnostics.
+        Exceptions:
+            Worker exceptions are forwarded to `on_err` when provided.
+        """
         with self._lock:
             self._task_counter += 1
             task_id = self._task_counter
@@ -2285,6 +2333,9 @@ class TkTaskRunner:
             """Handle result.
             Used as an event callback for result."""
             with self._lock:
+                self._futures.pop(task_id, None)
+                if self._latest_future.get(task_name) is fut:
+                    self._latest_future.pop(task_name, None)
                 is_latest = self._latest_task_id.get(task_name) == task_id
             if not is_latest:
                 return
@@ -2299,6 +2350,62 @@ class TkTaskRunner:
 
         future.add_done_callback(lambda fut: self._root.after(0, _handle_result, fut))
         return task_id
+
+    def get_diagnostics(self) -> Dict[str, Any]:
+        """Return runtime diagnostics for the current task-runner state.
+
+        Purpose:
+            Expose executor/task metrics for in-app diagnostics panels.
+        Why:
+            Concurrency tuning requires visibility into configured worker limits,
+            active futures, pending queue depth, and live worker threads.
+        Inputs:
+            None.
+        Outputs:
+            Dict containing worker counts and task/queue health metrics.
+        Side Effects:
+            None.
+        Exceptions:
+            Best-effort guards normalize missing private executor attributes.
+        """
+        with self._lock:
+            futures = list(self._futures.values())
+            latest_task_names = tuple(sorted(self._latest_task_id.keys()))
+            max_workers = int(self._max_workers)
+        active_tasks = sum(
+            1
+            for fut in futures
+            if not fut.done() and bool(getattr(fut, "running", lambda: False)())
+        )
+        pending_tasks = sum(
+            1
+            for fut in futures
+            if not fut.done() and not bool(getattr(fut, "running", lambda: False)())
+        )
+        done_tasks = sum(1 for fut in futures if fut.done())
+        queue_depth = None
+        live_threads = None
+        try:
+            work_queue = getattr(self._executor, "_work_queue", None)
+            if work_queue is not None and hasattr(work_queue, "qsize"):
+                queue_depth = int(work_queue.qsize())
+        except Exception:
+            queue_depth = None
+        try:
+            threads = list(getattr(self._executor, "_threads", set()) or set())
+            live_threads = sum(1 for thread in threads if thread.is_alive())
+        except Exception:
+            live_threads = None
+        return {
+            "max_workers": max_workers,
+            "tracked_tasks": len(futures),
+            "active_tasks": int(active_tasks),
+            "pending_tasks": int(pending_tasks),
+            "done_tasks": int(done_tasks),
+            "queue_depth": queue_depth,
+            "live_threads": live_threads,
+            "task_names": latest_task_names,
+        }
 
 
 def _get_font_path(font_name: str) -> Optional[str]:
@@ -11822,7 +11929,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v4.4.8"
+APP_VERSION = "v4.5.0"
 
 
 def _apply_rust_runtime_settings_defaults(settings_dict: Dict[str, Any]) -> None:
@@ -12059,7 +12166,36 @@ def _apply_csv_import_settings_defaults(settings_dict: Dict[str, Any]) -> None:
         window_value = CSV_IMPORT_DEFAULT_MOVING_AVG_WINDOW
     settings_dict["csv_import_moving_average_window"] = window_value
 
-_FINAL_REPORT_FONT_FAMILY = _preferred_plot_font_stack()
+_FINAL_REPORT_FONT_FAMILY: Optional[Tuple[str, ...]] = None
+
+
+def _get_final_report_font_family_defaults() -> Tuple[str, ...]:
+    """Return cached default font-family fallback stack for Final Report output.
+
+    Purpose:
+        Lazily resolve report font defaults only when report rendering needs them.
+    Why:
+        Deferring optional font-stack discovery keeps startup work lightweight
+        while preserving deterministic report font fallback behavior.
+    Inputs:
+        None.
+    Outputs:
+        Tuple of preferred fallback font family names.
+    Side Effects:
+        Caches the resolved font tuple in `_FINAL_REPORT_FONT_FAMILY`.
+    Exceptions:
+        Best-effort guards return an empty tuple on unexpected failures.
+    """
+    global _FINAL_REPORT_FONT_FAMILY
+    if isinstance(_FINAL_REPORT_FONT_FAMILY, tuple):
+        return _FINAL_REPORT_FONT_FAMILY
+    try:
+        _FINAL_REPORT_FONT_FAMILY = tuple(_preferred_plot_font_stack())
+    except Exception:
+        _FINAL_REPORT_FONT_FAMILY = tuple()
+    return _FINAL_REPORT_FONT_FAMILY
+
+
 _FINAL_REPORT_SUBSCRIPT_MAP = {
     "\u2080": "0",
     "\u2081": "1",
@@ -22395,6 +22531,68 @@ def _fallback_find_peaks(
 _FALLBACK_FIND_PEAKS = None if find_peaks is not None else _fallback_find_peaks
 
 
+def _great_tables_missing_message(feature: str) -> str:
+    """Return a user-facing message for unavailable great_tables support.
+
+    Purpose:
+        Centralize optional dependency guidance for timeline-table export paths.
+    Why:
+        Startup now lazily imports `great_tables`, so failures need one consistent
+        remediation message when the feature is used.
+    Inputs:
+        feature: Workflow label that requires `great_tables`.
+    Outputs:
+        Human-readable error text with install guidance.
+    Side Effects:
+        None.
+    Exceptions:
+        None.
+    """
+    msg = (
+        f"great_tables is required for {feature}, but it could not be imported.\n"
+        "Install it with 'pip install great-tables' and restart the application."
+    )
+    if _GREAT_TABLES_IMPORT_ERROR is not None:
+        msg += f"\n\nImport error: {_GREAT_TABLES_IMPORT_ERROR}"
+    return msg
+
+
+def _get_great_tables_module():
+    """Lazily import and cache the optional `great_tables` module.
+
+    Purpose:
+        Resolve `great_tables` only when timeline table export workflows need it.
+    Why:
+        Deferring this optional import reduces startup overhead while preserving
+        feature availability when invoked later in the session.
+    Inputs:
+        None.
+    Outputs:
+        Imported `great_tables` module object, or `None` when unavailable.
+    Side Effects:
+        Caches the imported module/import failure and updates shared GIL-import
+        diagnostics when import succeeds.
+    Exceptions:
+        Import failures are captured and converted to `None`.
+    """
+    global _GREAT_TABLES_MODULE, _GREAT_TABLES_IMPORT_ERROR, _GIL_IMPORT_STATUS
+    if _GREAT_TABLES_MODULE is not None:
+        return _GREAT_TABLES_MODULE
+    if _GREAT_TABLES_IMPORT_ERROR is not None:
+        return None
+    _gil_before_great_tables = _current_gil_status()
+    try:
+        import great_tables as great_tables_module  # type: ignore
+    except Exception as exc:
+        _GREAT_TABLES_IMPORT_ERROR = exc
+        return None
+    _GIL_IMPORT_STATUS = _note_gil_reenable(
+        "great_tables", _gil_before_great_tables
+    )
+    _GREAT_TABLES_MODULE = great_tables_module
+    return _GREAT_TABLES_MODULE
+
+
 def _scipy_missing_message(feature: str) -> str:
     """Perform scipy missing message.
     Used to keep the workflow logic localized and testable."""
@@ -25967,6 +26165,90 @@ def _suggest_max_workers(task_count: int, *, hard_cap: int = 32) -> int:
     return max(1, min(count, cpu_total, int(hard_cap)))
 
 
+def _resolve_cycle_parallel_controls(
+    *, requested_workers: Optional[int], parallel_enabled: Optional[bool]
+) -> Tuple[int, bool]:
+    """Resolve cycle-compute parallel controls with settings fallback.
+
+    Purpose:
+        Normalize cycle worker-count controls from caller inputs or persisted
+        developer settings.
+    Why:
+        Cycle metrics paths are called from multiple workflows, and each path
+        needs one consistent fallback policy when explicit controls are absent.
+    Inputs:
+        requested_workers: Optional requested worker count from a caller/snapshot.
+        parallel_enabled: Optional explicit parallel-mode flag.
+    Outputs:
+        Tuple of `(normalized_requested_workers, normalized_parallel_enabled)`.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid values are normalized to safe defaults.
+    """
+    settings_requested = settings.get("dev_worker_threads", 1)
+    settings_parallel = bool(settings.get("dev_enable_parallel_compute", False))
+    try:
+        requested_value = (
+            int(settings_requested)
+            if requested_workers is None
+            else int(requested_workers)
+        )
+    except Exception:
+        requested_value = int(settings_requested) if settings_requested is not None else 1
+    requested_value = max(1, requested_value)
+    if parallel_enabled is None:
+        parallel_value = settings_parallel
+    else:
+        parallel_value = bool(parallel_enabled)
+    return requested_value, parallel_value
+
+
+def _resolve_cycle_worker_count(
+    task_count: int,
+    *,
+    requested_workers: Optional[int],
+    parallel_enabled: Optional[bool],
+    hard_cap: int = 32,
+) -> int:
+    """Resolve cycle-metrics worker count using exact-target semantics.
+
+    Purpose:
+        Convert requested cycle worker settings into the effective pool size for
+        cycle metrics execution.
+    Why:
+        Developer concurrency controls must deterministically control worker
+        fan-out so 2-vs-4 thread tests reflect the configured value.
+    Inputs:
+        task_count: Number of cycle tasks available for fan-out.
+        requested_workers: Optional requested worker count from UI/snapshot.
+        parallel_enabled: Optional explicit parallel-mode flag.
+        hard_cap: Absolute upper bound for worker count.
+    Outputs:
+        Effective worker count clamped to task count, CPU count, and hard cap.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid numeric inputs are normalized to safe defaults.
+    """
+    try:
+        count = max(1, int(task_count))
+    except Exception:
+        count = 1
+    requested_value, parallel_value = _resolve_cycle_parallel_controls(
+        requested_workers=requested_workers,
+        parallel_enabled=parallel_enabled,
+    )
+    if not parallel_value:
+        return 1
+    try:
+        cap = max(1, int(hard_cap))
+    except Exception:
+        cap = 32
+    cpu_total = max(1, int(os.cpu_count() or 1))
+    return max(1, min(count, requested_value, cpu_total, cap))
+
+
 def _resolve_render_worker_count(
     *,
     requested_workers: Optional[int],
@@ -26115,6 +26397,9 @@ def _compute_cycle_statistics(
     b_const,
     *,
     allow_threads: bool = True,
+    requested_workers: Optional[int] = None,
+    parallel_enabled: Optional[bool] = None,
+    runtime_no_gil: Optional[bool] = None,
     force_vdw: bool = False,
 ):
     """Compute per-cycle and aggregate gas metrics for cycle analysis workflows.
@@ -26131,6 +26416,9 @@ def _compute_cycle_statistics(
         a_const: Van der Waals `a` constant.
         b_const: Van der Waals `b` constant.
         allow_threads: Enables worker parallelism when True.
+        requested_workers: Optional exact worker target for cycle metrics.
+        parallel_enabled: Optional explicit parallel-mode toggle.
+        runtime_no_gil: Optional runtime no-GIL flag override.
         force_vdw: Forces VDW calculation even when SciPy availability is unknown.
     Outputs:
         Tuple `(per_cycle_rows, total_moles_ideal, total_moles_vdw, scipy_available, vdw_used)`.
@@ -26203,8 +26491,17 @@ def _compute_cycle_statistics(
 
     per_cycle = []
 
-    worker_count = _suggest_max_workers(len(cycles)) if allow_threads else 1
-    runtime_no_gil = _is_runtime_gil_disabled()
+    if allow_threads:
+        worker_count = _resolve_cycle_worker_count(
+            len(cycles),
+            requested_workers=requested_workers,
+            parallel_enabled=parallel_enabled,
+        )
+    else:
+        worker_count = 1
+    if runtime_no_gil is None:
+        runtime_no_gil = _is_runtime_gil_disabled()
+    runtime_no_gil = bool(runtime_no_gil)
     execution_profile = "legacy"
     chunk_size = 1
 
@@ -26298,10 +26595,13 @@ def _compute_cycle_statistics(
     if _GL260_LOGGER.isEnabledFor(logging.DEBUG):
         _GL260_LOGGER.debug(
             "cycle.stats profile=%s runtime_no_gil=%s allow_threads=%s "
-            "workers=%s chunk_size=%s cycles=%s compute_vdw=%s",
+            "parallel_enabled=%s requested_workers=%s workers=%s chunk_size=%s "
+            "cycles=%s compute_vdw=%s",
             execution_profile,
             runtime_no_gil,
             allow_threads,
+            parallel_enabled,
+            requested_workers,
             worker_count,
             chunk_size,
             len(cycles),
@@ -26926,6 +27226,7 @@ def analyze_pressure_cycles(
     peak_distance=1,
     peak_width=1,
     fig_size=None,
+    precomputed_cycle_payload: Optional[Dict[str, Any]] = None,
 ):
     """Analyze pressure cycles and optionally build a peak/trough figure.
 
@@ -26953,6 +27254,8 @@ def analyze_pressure_cycles(
         suptitle_text: Optional suptitle for the cycle figure.
         peak_prominence/peak_distance/peak_width: Peak detector parameters.
         fig_size: Optional figure size override.
+        precomputed_cycle_payload: Optional precomputed cycle-analysis payload
+            generated by a worker path to avoid duplicate cycle recomputation.
     Outputs:
         Tuple of (figure_or_none, summary_text).
     Side Effects:
@@ -26990,45 +27293,78 @@ def analyze_pressure_cycles(
 
         print(msg)
 
-    # Detect cycles on PSI series
-
-    try:
-
-        cycles, total_drop = detect_valid_cycles(
-            pressure_series,
-            min_cycle_drop=min_cycle_drop,
-            prominence=peak_prominence,
-            distance=peak_distance,
-            width=peak_width,
+    cycles: List[Dict[str, Any]]
+    total_drop = 0.0
+    per_cycle_rows: List[Dict[str, Any]]
+    total_moles_ideal = 0.0
+    total_moles_vdw = 0.0
+    scipy_available = bool(fsolve is not None)
+    vdw_used = False
+    summary = ""
+    if isinstance(precomputed_cycle_payload, dict):
+        # Reuse worker-prepared cycle payload to avoid duplicate segmentation and
+        # per-cycle moles computation on the UI thread.
+        cycles = list(precomputed_cycle_payload.get("cycles") or [])
+        try:
+            total_drop = float(precomputed_cycle_payload.get("total_drop", 0.0) or 0.0)
+        except Exception:
+            total_drop = 0.0
+        per_cycle_rows = list(precomputed_cycle_payload.get("per_cycle") or [])
+        try:
+            total_moles_ideal = float(
+                precomputed_cycle_payload.get("total_moles_ideal", 0.0) or 0.0
+            )
+        except Exception:
+            total_moles_ideal = 0.0
+        try:
+            total_moles_vdw = float(
+                precomputed_cycle_payload.get("total_moles_vdw", 0.0) or 0.0
+            )
+        except Exception:
+            total_moles_vdw = 0.0
+        scipy_available = bool(
+            precomputed_cycle_payload.get("scipy_available", fsolve is not None)
         )
+        vdw_used = bool(precomputed_cycle_payload.get("vdw_used", False))
+        summary = str(precomputed_cycle_payload.get("summary") or "")
+    else:
+        # Detect cycles on PSI series when no precomputed payload is available.
+        try:
+            cycles, total_drop = detect_valid_cycles(
+                pressure_series,
+                min_cycle_drop=min_cycle_drop,
+                prominence=peak_prominence,
+                distance=peak_distance,
+                width=peak_width,
+            )
+        except ModuleNotFoundError as exc:
+            msg = _scipy_missing_message("automatic cycle detection")
+            log(msg)
+            log(str(exc))
+            return (None, msg)
 
-    except ModuleNotFoundError as exc:
-
-        msg = _scipy_missing_message("automatic cycle detection")
-
-        log(msg)
-
-        log(str(exc))
-
-        return (None, msg)
-
-    tvals = np.asarray(temp_series, dtype=float) if temp_series is not None else None
-
-    (
-        per_cycle_rows,
-        total_moles_ideal,
-        total_moles_vdw,
-        scipy_available,
-        vdw_used,
-    ) = _compute_cycle_statistics(
-        cycles,
-        tvals,
-        volume,
-        a_const,
-        b_const,
-        allow_threads=True,
-        force_vdw=False,
-    )
+        tvals = np.asarray(temp_series, dtype=float) if temp_series is not None else None
+        requested_workers, parallel_enabled = _resolve_cycle_parallel_controls(
+            requested_workers=None,
+            parallel_enabled=None,
+        )
+        (
+            per_cycle_rows,
+            total_moles_ideal,
+            total_moles_vdw,
+            scipy_available,
+            vdw_used,
+        ) = _compute_cycle_statistics(
+            cycles,
+            tvals,
+            volume,
+            a_const,
+            b_const,
+            allow_threads=True,
+            requested_workers=requested_workers,
+            parallel_enabled=parallel_enabled,
+            force_vdw=False,
+        )
 
     gas_molar_mass = globals().get(
         "gas_molar_mass",
@@ -27064,17 +27400,18 @@ def analyze_pressure_cycles(
         settings, globals_fallback=globals(), context=summary_context
     )
     options = resolve_cycle_summary_options(settings)
-    summary = build_cycle_analysis_summary(
-        cycles,
-        per_cycle_rows,
-        total_drop,
-        total_moles_ideal,
-        total_moles_vdw,
-        vdw_used=vdw_used,
-        scipy_available=scipy_available,
-        resolved_inputs=resolved_inputs,
-        options=options,
-    )
+    if not summary:
+        summary = build_cycle_analysis_summary(
+            cycles,
+            per_cycle_rows,
+            total_drop,
+            total_moles_ideal,
+            total_moles_vdw,
+            vdw_used=vdw_used,
+            scipy_available=scipy_available,
+            resolved_inputs=resolved_inputs,
+            options=options,
+        )
 
     # Iterate over summary.splitlines() to apply the per-item logic.
     for line in summary.splitlines():
@@ -27634,6 +27971,11 @@ def main_plotting_function(
     xcol = selected_columns.get("x") or "Elapsed Time (days)"
 
     x_label_for_cycles = fmt(xcol)
+    precomputed_cycle_payload = None
+    if isinstance(overlay_ctx, dict):
+        cycle_overlay_payload = overlay_ctx.get("cycle_overlay")
+        if isinstance(cycle_overlay_payload, dict):
+            precomputed_cycle_payload = cycle_overlay_payload.get("analysis_payload")
 
     cycle_dependency_requested = bool(
         show_cycle_markers_on_core_plots
@@ -27722,6 +28064,7 @@ def main_plotting_function(
                 peak_distance=peak_distance,
                 peak_width=peak_width,
                 fig_size=target_figsize,
+                precomputed_cycle_payload=precomputed_cycle_payload,
             )
 
             # Push the summary through the shared callback
@@ -34227,7 +34570,7 @@ class UnifiedApp(tk.Tk):
             parallel_enabled=dev_parallel_enabled,
         )
         self._task_runner = TkTaskRunner(self, max_workers=task_workers)
-        self._combined_render_runner = TkTaskRunner(self, max_workers=1)
+        self._combined_render_runner = TkTaskRunner(self, max_workers=task_workers)
         self._core_render_task_id: Optional[int] = None
         self._combined_render_task_id: Optional[int] = None
         self._combined_render_busy = False
@@ -40610,8 +40953,22 @@ class UnifiedApp(tk.Tk):
         self._open_developer_tools_dialog(initial_tab="performance")
 
     def _refresh_performance_diagnostics(self) -> None:
-        """Refresh performance diagnostics.
-        Used to sync performance diagnostics display with current state."""
+        """Refresh the Developer Tools performance/diagnostics text output.
+
+        Purpose:
+            Rebuild the performance panel content from current runtime state.
+        Why:
+            Users need both latest timing snapshots and live concurrency details
+            when tuning worker settings.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Rewrites the diagnostics text widget content.
+        Exceptions:
+            Missing/destroyed widgets short-circuit safely.
+        """
         output = getattr(self, "_perf_diag_output", None)
         if output is None or not output.winfo_exists():
             return
@@ -40623,14 +40980,31 @@ class UnifiedApp(tk.Tk):
             body = "No diagnostics captured yet."
         else:
             body = self._format_performance_report(report)
+        runtime_diag = self._format_runtime_concurrency_diagnostics()
+        if runtime_diag:
+            body = f"{body}\n\n{runtime_diag}"
         output.configure(state="normal")
         output.delete("1.0", tk.END)
         output.insert("end", body + "\n")
         output.configure(state="disabled")
 
     def _format_performance_report(self, report: Dict[str, Any]) -> str:
-        """Format performance report.
-        Used to format performance diagnostics for display."""
+        """Format one captured performance report for display.
+
+        Purpose:
+            Convert a structured render performance payload into readable text.
+        Why:
+            The diagnostics UI requires a compact, stable format for stage-level
+            timing and cache-path interpretation.
+        Inputs:
+            report: Captured performance payload from render workflows.
+        Outputs:
+            Multi-line report text.
+        Side Effects:
+            None.
+        Exceptions:
+            Missing fields are handled with safe defaults.
+        """
         lines = []
         plot_kind = report.get("plot_kind") or "unknown"
         target = report.get("target") or "display"
@@ -40663,9 +41037,96 @@ class UnifiedApp(tk.Tk):
                 lines.append(f"layout: {entry['layout_ms']:.2f} ms")
         return "\n".join(lines)
 
+    def _format_runtime_concurrency_diagnostics(self) -> str:
+        """Build live concurrency diagnostics text for Developer Tools.
+
+        Purpose:
+            Surface task-runner worker/queue state alongside runtime no-GIL info.
+        Why:
+            Threading controls need immediate observability to confirm effective
+            worker counts during render/startup workflows.
+        Inputs:
+            None.
+        Outputs:
+            Multi-line diagnostics string.
+        Side Effects:
+            None.
+        Exceptions:
+            Best-effort guards return fallback text on diagnostic failures.
+        """
+        lines: List[str] = ["Runtime Concurrency Diagnostics"]
+        try:
+            configured_workers = max(1, int(settings.get("dev_worker_threads", 1)))
+        except Exception:
+            configured_workers = 1
+        configured_parallel = bool(settings.get("dev_enable_parallel_compute", False))
+        lines.append(f"Configured worker threads: {configured_workers}")
+        lines.append(f"Parallel compute enabled: {configured_parallel}")
+        lines.append(f"Runtime no-GIL active: {bool(_is_runtime_gil_disabled())}")
+        lines.append(f"CPU count: {int(os.cpu_count() or 1)}")
+
+        def _append_runner(name: str, runner: Any) -> None:
+            """Append one task-runner diagnostics block to the output list.
+
+            Purpose:
+                Keep diagnostics formatting consistent across multiple task runners.
+            Why:
+                The app uses separate runners for general tasks and combined render.
+            Inputs:
+                name: Display label for the task runner.
+                runner: Runner object exposing `get_diagnostics`.
+            Outputs:
+                None.
+            Side Effects:
+                Appends formatted lines to the outer `lines` list.
+            Exceptions:
+                Missing/invalid diagnostics are handled with fallback text.
+            """
+            if runner is None or not hasattr(runner, "get_diagnostics"):
+                lines.append(f"{name}: unavailable")
+                return
+            try:
+                diag = runner.get_diagnostics()
+            except Exception as exc:
+                lines.append(f"{name}: diagnostics unavailable ({exc})")
+                return
+            lines.append(
+                f"{name}: max_workers={diag.get('max_workers')} "
+                f"live_threads={diag.get('live_threads')} "
+                f"queue_depth={diag.get('queue_depth')}"
+            )
+            lines.append(
+                f"{name}: tracked={diag.get('tracked_tasks')} "
+                f"active={diag.get('active_tasks')} "
+                f"pending={diag.get('pending_tasks')} "
+                f"done={diag.get('done_tasks')}"
+            )
+            task_names = diag.get("task_names") or ()
+            if task_names:
+                lines.append(f"{name}: task_names={', '.join(str(v) for v in task_names)}")
+
+        _append_runner("Task runner", getattr(self, "_task_runner", None))
+        _append_runner(
+            "Combined runner", getattr(self, "_combined_render_runner", None)
+        )
+        return "\n".join(lines)
+
     def _record_performance_run(self, report: Dict[str, Any]) -> None:
-        """Record performance run.
-        Used to persist a performance diagnostics snapshot."""
+        """Store a captured performance run and refresh diagnostics UI.
+
+        Purpose:
+            Preserve the latest render diagnostics payload for inspection.
+        Why:
+            Developer Tools should always show the most recent captured timings.
+        Inputs:
+            report: Structured performance payload from render workflows.
+        Outputs:
+            None.
+        Side Effects:
+            Updates in-memory performance snapshot and refreshes diagnostics text.
+        Exceptions:
+            None.
+        """
         self._perf_diag_last_run = report
         self._refresh_performance_diagnostics()
 
@@ -41300,7 +41761,9 @@ class UnifiedApp(tk.Tk):
             None.
         Side Effects:
             Updates persisted concurrency settings and calls
-            `self._task_runner.set_max_workers(...)` with policy-resolved workers.
+            `self._task_runner.set_max_workers(...)` and
+            `self._combined_render_runner.set_max_workers(...)` with
+            policy-resolved workers.
         Exceptions:
             Invalid UI values are normalized to safe defaults without raising.
         """
@@ -41318,6 +41781,7 @@ class UnifiedApp(tk.Tk):
             parallel_enabled=enabled,
         )
         self._task_runner.set_max_workers(worker_count)
+        self._combined_render_runner.set_max_workers(worker_count)
         self._schedule_save_settings()
 
     def _run_timeline_table_export_validation(self) -> None:
@@ -66755,6 +67219,26 @@ class UnifiedApp(tk.Tk):
             rm_peaks=set(getattr(self, "_rm_peaks", set())),
             rm_troughs=set(getattr(self, "_rm_troughs", set())),
         )
+        requested_workers_raw = None
+        parallel_enabled_raw = None
+        if hasattr(self, "_dev_worker_threads_var"):
+            try:
+                requested_workers_raw = int(self._dev_worker_threads_var.get())
+            except Exception:
+                requested_workers_raw = None
+        if hasattr(self, "_dev_parallel_compute_var"):
+            try:
+                parallel_enabled_raw = bool(self._dev_parallel_compute_var.get())
+            except Exception:
+                parallel_enabled_raw = None
+        requested_workers_value, parallel_enabled_value = _resolve_cycle_parallel_controls(
+            requested_workers=requested_workers_raw,
+            parallel_enabled=parallel_enabled_raw,
+        )
+        runtime_no_gil_value = bool(_is_runtime_gil_disabled())
+        snapshot["requested_workers"] = requested_workers_value
+        snapshot["parallel_enabled"] = parallel_enabled_value
+        snapshot["runtime_no_gil"] = runtime_no_gil_value
 
         prom = float(self.pk_prominence.get())
 
@@ -66795,6 +67279,9 @@ class UnifiedApp(tk.Tk):
                 peak_finder,
                 snapshot,
                 manual_only=manual_only,
+                requested_workers=requested_workers_value,
+                parallel_enabled=parallel_enabled_value,
+                runtime_no_gil=runtime_no_gil_value,
             )
 
         def _on_ok(result):
@@ -67049,6 +67536,9 @@ class UnifiedApp(tk.Tk):
         ignore_min_drop,
         *,
         data_ctx: Optional[Dict[str, Any]] = None,
+        requested_workers: Optional[int] = None,
+        parallel_enabled: Optional[bool] = None,
+        runtime_no_gil: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Compute cycle metrics and transfer payload from segmentation output.
 
@@ -67069,6 +67559,9 @@ class UnifiedApp(tk.Tk):
             min_cycle_drop: Minimum pressure drop threshold in PSI.
             ignore_min_drop: Whether the minimum drop threshold is ignored.
             data_ctx: Optional prepared data context for constants/labels.
+            requested_workers: Optional cycle worker target from settings/snapshot.
+            parallel_enabled: Optional explicit parallel-mode toggle.
+            runtime_no_gil: Optional runtime no-GIL override.
         Returns:
             Dict with per-cycle rows, totals, summary text, and transfer payload.
         Side Effects:
@@ -67113,6 +67606,19 @@ class UnifiedApp(tk.Tk):
             x_all = np.asarray(xv, dtype=float)
         except Exception:
             x_all = None
+        requested_workers_value, parallel_enabled_value = _resolve_cycle_parallel_controls(
+            requested_workers=requested_workers,
+            parallel_enabled=parallel_enabled,
+        )
+        if runtime_no_gil is None:
+            runtime_no_gil_value = bool(_is_runtime_gil_disabled())
+        else:
+            runtime_no_gil_value = bool(runtime_no_gil)
+        effective_workers_value = _resolve_cycle_worker_count(
+            len(cycles),
+            requested_workers=requested_workers_value,
+            parallel_enabled=parallel_enabled_value,
+        )
 
         scipy_available = fsolve is not None
         rust_metrics = _rust_cycle_metrics_core(
@@ -67147,6 +67653,9 @@ class UnifiedApp(tk.Tk):
                 a_c,
                 b_c,
                 allow_threads=True,
+                requested_workers=requested_workers_value,
+                parallel_enabled=parallel_enabled_value,
+                runtime_no_gil=runtime_no_gil_value,
                 force_vdw=False,
             )
 
@@ -67298,6 +67807,12 @@ class UnifiedApp(tk.Tk):
             "cycle_transfer": cycle_transfer_rows,
             "cycle_context": cycle_context,
             "summary": summary,
+            "worker_policy": {
+                "requested_workers": requested_workers_value,
+                "parallel_enabled": parallel_enabled_value,
+                "runtime_no_gil": runtime_no_gil_value,
+                "effective_workers": effective_workers_value,
+            },
         }
 
     def _compute_cycle_analysis_worker(
@@ -67317,6 +67832,9 @@ class UnifiedApp(tk.Tk):
         *,
         manual_only: bool = False,
         data_ctx: Optional[Dict[str, Any]] = None,
+        requested_workers: Optional[int] = None,
+        parallel_enabled: Optional[bool] = None,
+        runtime_no_gil: Optional[bool] = None,
     ):
         """Compute cycle analysis in a worker context.
 
@@ -67339,6 +67857,9 @@ class UnifiedApp(tk.Tk):
             snapshot: Snapshot dict of cycle state.
             manual_only: When True, only manual markers are used.
             data_ctx: Optional prepared data context.
+            requested_workers: Optional cycle worker target from developer controls.
+            parallel_enabled: Optional explicit parallel-mode toggle.
+            runtime_no_gil: Optional runtime no-GIL override.
         Returns:
             Dict of cycle analysis results and summaries.
         Side Effects:
@@ -67378,6 +67899,9 @@ class UnifiedApp(tk.Tk):
                 min_cycle_drop,
                 ignore_min_drop,
                 data_ctx=data_ctx,
+                requested_workers=requested_workers,
+                parallel_enabled=parallel_enabled,
+                runtime_no_gil=runtime_no_gil,
             )
 
         result = dict(
@@ -67397,6 +67921,7 @@ class UnifiedApp(tk.Tk):
             scipy_available=metrics.get("scipy_available"),
             cycle_transfer=metrics.get("cycle_transfer") or [],
             cycle_context=metrics.get("cycle_context") or {},
+            worker_policy=metrics.get("worker_policy") or {},
         )
         self._dbg(
             "cycle.analysis",
@@ -82302,7 +82827,12 @@ class UnifiedApp(tk.Tk):
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
 
-            timeline_table = gt.GT(df)
+            gt_module = _get_great_tables_module()
+            if gt_module is None:
+                raise ModuleNotFoundError(
+                    _great_tables_missing_message("timeline table export")
+                )
+            timeline_table = gt_module.GT(df)
             timeline_table = timeline_table.cols_label(label_map)
             numeric_columns = [col for col in numeric_specs if col in df.columns]
             if numeric_columns:
@@ -90742,14 +91272,25 @@ class UnifiedApp(tk.Tk):
         )
 
     def _final_report_font_family(self) -> List[str]:
-        """Perform final report font family.
-        Used to keep the workflow logic localized and testable."""
+        """Resolve the active Final Report font-family stack.
+
+        Purpose:
+            Build the ordered font-family fallback list used by report text.
+        Why:
+            Report rendering needs one stable fallback stack while still honoring
+            a user-selected font override when present.
+        Inputs:
+            None.
+        Outputs:
+            List of font-family names ordered by preference.
+        Side Effects:
+            None.
+        Exceptions:
+            None.
+        """
         stack: List[str] = []
         family_value = (settings.get("font_family") or "").strip()
-        if isinstance(_FINAL_REPORT_FONT_FAMILY, (list, tuple)):
-            stack = list(_FINAL_REPORT_FONT_FAMILY)
-        elif _FINAL_REPORT_FONT_FAMILY:
-            stack = [str(_FINAL_REPORT_FONT_FAMILY)]
+        stack = list(_get_final_report_font_family_defaults())
         if family_value:
             if family_value in stack:
                 stack.remove(family_value)
@@ -97427,6 +97968,11 @@ class UnifiedApp(tk.Tk):
                 "rm_peaks": set(getattr(self, "_rm_peaks", set())),
                 "rm_troughs": set(getattr(self, "_rm_troughs", set())),
                 "manual_revision": int(getattr(self, "_cycle_manual_revision", 0)),
+                "requested_workers": settings.get("dev_worker_threads", 1),
+                "parallel_enabled": bool(
+                    settings.get("dev_enable_parallel_compute", False)
+                ),
+                "runtime_no_gil": bool(_is_runtime_gil_disabled()),
             }
 
         # Cycle context is derived from prepared series plus manual overrides; any
@@ -97620,6 +98166,11 @@ class UnifiedApp(tk.Tk):
             self._render_cache.set_cycle_segments(seg_fingerprint, seg_cached)
             cache_state = "miss"
 
+        requested_workers_value = snapshot.get("requested_workers")
+        parallel_enabled_value = snapshot.get("parallel_enabled")
+        runtime_no_gil_value = snapshot.get("runtime_no_gil")
+        if runtime_no_gil_value is None:
+            runtime_no_gil_value = bool(_is_runtime_gil_disabled())
         if not isinstance(metrics_cached, dict):
             try:
                 z_series = data_ctx.get("cycle_temp_series")
@@ -97639,6 +98190,9 @@ class UnifiedApp(tk.Tk):
                 min_cycle_drop,
                 ignore_min_drop,
                 data_ctx=data_ctx,
+                requested_workers=requested_workers_value,
+                parallel_enabled=parallel_enabled_value,
+                runtime_no_gil=runtime_no_gil_value,
             )
             self._render_cache.set_cycle_metrics(metrics_fingerprint, metrics_cached)
 
@@ -97696,6 +98250,17 @@ class UnifiedApp(tk.Tk):
             "total_drop": float(seg_cached.get("total_drop", 0.0) or 0.0),
             "payload": payload,
             "moles_lines": moles_lines,
+            "analysis_payload": {
+                "cycles": self._coerce_to_list(seg_cached.get("cycles")),
+                "total_drop": float(seg_cached.get("total_drop", 0.0) or 0.0),
+                "per_cycle": self._coerce_to_list(metrics_cached.get("per_cycle")),
+                "total_moles_ideal": metrics_cached.get("total_moles_ideal"),
+                "total_moles_vdw": metrics_cached.get("total_moles_vdw"),
+                "vdw_used": metrics_cached.get("vdw_used"),
+                "scipy_available": metrics_cached.get("scipy_available"),
+                "summary": metrics_cached.get("summary"),
+                "worker_policy": metrics_cached.get("worker_policy"),
+            },
         }
         cycle_ctx = {
             "peaks_idx": list(peak_indices),
@@ -97704,6 +98269,7 @@ class UnifiedApp(tk.Tk):
             "total_drop": float(seg_cached.get("total_drop", 0.0) or 0.0),
             "auto_detection_used": bool(seg_cached.get("auto_detection_used")),
             "source_mode": source_mode,
+            "worker_policy": metrics_cached.get("worker_policy") or {},
         }
         overlay_ctx = {"cycle_overlay": cycle_overlay, "moles_summary": moles_lines}
 
@@ -98585,6 +99151,23 @@ class UnifiedApp(tk.Tk):
         resolved_cycle_mode = self._resolved_core_cycle_side_effects_mode(
             cycle_side_effects_mode
         )
+        requested_workers_raw = None
+        parallel_enabled_raw = None
+        if hasattr(self, "_dev_worker_threads_var"):
+            try:
+                requested_workers_raw = int(self._dev_worker_threads_var.get())
+            except Exception:
+                requested_workers_raw = None
+        if hasattr(self, "_dev_parallel_compute_var"):
+            try:
+                parallel_enabled_raw = bool(self._dev_parallel_compute_var.get())
+            except Exception:
+                parallel_enabled_raw = None
+        requested_workers_value, parallel_enabled_value = _resolve_cycle_parallel_controls(
+            requested_workers=requested_workers_raw,
+            parallel_enabled=parallel_enabled_raw,
+        )
+        runtime_no_gil_value = bool(_is_runtime_gil_disabled())
 
         snapshot = {
             "plot_id": plot_id,
@@ -98658,6 +99241,9 @@ class UnifiedApp(tk.Tk):
             ),
             "core_requested_plot_keys": normalized_requested_keys,
             "core_cycle_side_effects_mode": resolved_cycle_mode,
+            "requested_workers": requested_workers_value,
+            "parallel_enabled": parallel_enabled_value,
+            "runtime_no_gil": runtime_no_gil_value,
             "args": args,
             "perf_enabled": bool(self._perf_diag_enabled_var.get()),
         }

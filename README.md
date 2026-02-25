@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.4.8)
+# GL-260 Data Analysis and Plotter (v4.5.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.4.8`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.5.0`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.5.0 Threading Control Enforcement + Render/Startup Throughput](#v450-threading-control-enforcement--renderstartup-throughput)
   - [v4.4.8 Legacy/Contamination Tab De-Integration + Final Report Split Persistence](#v448-legacycontamination-tab-de-integration--final-report-split-persistence)
   - [v4.3.8 Final Report Timeline Reliability + Preview Splash Integration](#v438-final-report-timeline-reliability--preview-splash-integration)
   - [v4.3.7 Advanced Speciation Timeline Plot Preview + Consolidated Legend + Settings Parity](#v437-advanced-speciation-timeline-plot-preview--consolidated-legend--settings-parity)
@@ -989,6 +990,16 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.5.0 Threading Control Enforcement + Render/Startup Throughput
+- Enforced developer worker-thread controls across cycle metrics compute paths by introducing exact-target worker policy resolution and propagating `requested_workers` / `parallel_enabled` / runtime no-GIL context through render snapshots.
+- Updated cycle metrics execution plumbing so core, combined, and cycle-analysis worker flows use the same deterministic cycle worker policy instead of ad-hoc auto-worker fan-out.
+- Added worker-policy payload capture (`worker_policy`) and cycle analysis payload reuse (`analysis_payload`) so core render workflows can reuse precomputed cycle results and avoid duplicate cycle recomputation on the UI thread.
+- Extended `analyze_pressure_cycles(...)` with `precomputed_cycle_payload` support and updated core-plot generation to consume worker-prepared cycle payloads when available.
+- Added `TkTaskRunner.get_diagnostics()` and surfaced live runtime concurrency diagnostics (configured workers, no-GIL state, queue depth, active/pending tasks, live threads) in Developer Tools -> Performance Diagnostics, even when timing capture is disabled.
+- Applied conservative startup optimization by lazy-loading optional `great_tables` only when timeline-table export paths require it, with centralized missing-dependency messaging.
+- Deferred non-critical Final Report default font-stack resolution to first-use with cached lazy initialization to reduce eager startup work.
+- Updated application version metadata to `v4.5.0` in script header and `APP_VERSION`, and synchronized README top-level version references.
 
 ### v4.4.8 Legacy/Contamination Tab De-Integration + Final Report Split Persistence
 - Removed runtime notebook integration for Legacy Speciation and Contamination Calculator tabs; Advanced Speciation remains the only solubility/speciation runtime tab.
