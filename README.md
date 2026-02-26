@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.5.2)
+# GL-260 Data Analysis and Plotter (v4.5.3)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.5.2`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.5.3`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.5.3 Adaptive Refresh Layering + Draw-Gated Splash Release](#v453-adaptive-refresh-layering--draw-gated-splash-release)
   - [v4.5.2 No-GIL Rust Compatibility + Startup Enforcement](#v452-no-gil-rust-compatibility--startup-enforcement)
   - [v4.5.1 Combined Splash Gating + Cache Singleflight + Rust Overlay Points](#v451-combined-splash-gating--cache-singleflight--rust-overlay-points)
   - [v4.5.0 Threading Control Enforcement + Render/Startup Throughput](#v450-threading-control-enforcement--renderstartup-throughput)
@@ -1032,6 +1033,15 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.5.3 Adaptive Refresh Layering + Draw-Gated Splash Release
+- Added conservative adaptive refresh routing for generated plot tabs (`fig1`, `fig2`, `fig_combined`, `fig_peaks`) with three outcomes: `no_change_fast_reveal`, `in_place_display_apply` (non-combined layout/elements-only), and `full_async_refresh`.
+- Added deterministic per-plot refresh signature tracking (data fingerprint, layout/settings context, plot elements signature, and trace-style signature) to detect meaningful refresh changes before scheduling async rebuilds.
+- Added `dirty_trace` plot-flag support and wired Data Trace Settings apply paths to mark trace changes explicitly, so trace updates route through the full refresh pipeline.
+- Hardened refresh overlay sequencing so fast-path and in-place-path refreshes still run staged progress updates and deterministic final layout draw before any splash clear.
+- Kept combined splash release draw-gated for adaptive fast paths by arming draw-ack completion state and deferring overlay clear until post-draw completion guards resolve.
+- Added adaptive refresh regression coverage for decision routing and fast-path short-circuit behavior while preserving the existing combined overlay completion guard regression.
+- Updated application version metadata to `v4.5.3` in script header and `APP_VERSION`, and synchronized README top-level version references.
 
 ### v4.5.2 No-GIL Rust Compatibility + Startup Enforcement
 - Updated Rust extension module declaration to `#[pymodule(gil_used = false)]` so free-threaded imports can remain in no-GIL mode.
