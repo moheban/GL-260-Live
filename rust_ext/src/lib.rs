@@ -1254,7 +1254,7 @@ fn cycle_metrics_core(
     Ok(response.unbind())
 }
 
-#[pymodule]
+#[pymodule(gil_used = false)]
 fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(
         simulate_reaction_state_with_accounting,

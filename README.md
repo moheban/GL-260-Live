@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.5.1)
+# GL-260 Data Analysis and Plotter (v4.5.2)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.5.1`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.5.2`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.5.2 No-GIL Rust Compatibility + Startup Enforcement](#v452-no-gil-rust-compatibility--startup-enforcement)
   - [v4.5.1 Combined Splash Gating + Cache Singleflight + Rust Overlay Points](#v451-combined-splash-gating--cache-singleflight--rust-overlay-points)
   - [v4.5.0 Threading Control Enforcement + Render/Startup Throughput](#v450-threading-control-enforcement--renderstartup-throughput)
   - [v4.4.8 Legacy/Contamination Tab De-Integration + Final Report Split Persistence](#v448-legacycontamination-tab-de-integration--final-report-split-persistence)
@@ -198,7 +199,10 @@ python -m maturin develop --manifest-path rust_ext/Cargo.toml --target x86_64-pc
 rustup run stable rustc --version
 rustup run stable cargo --version
 python -c "import gl260_rust_ext; print('gl260_rust_ext import OK')"
+.\.venv-314t\Scripts\python.exe -c "import sys; print('before', sys._is_gil_enabled()); import gl260_rust_ext.gl260_rust_ext as m; print('after', sys._is_gil_enabled()); print(m.__file__)"
 ```
+Expected no-GIL verification output shape: `before False`, `after False`, and no RuntimeWarning.
+
 If you launch the app with a specific interpreter (for example `.\.venv-314t\Scripts\python.exe`), run manual Rust build commands with that same interpreter path so `gl260_rust_ext` installs into the matching environment.
 
 ### Running the Application
@@ -1028,6 +1032,14 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.5.2 No-GIL Rust Compatibility + Startup Enforcement
+- Updated Rust extension module declaration to `#[pymodule(gil_used = false)]` so free-threaded imports can remain in no-GIL mode.
+- Hardened `_load_rust_backend(...)` to detect `False -> True` GIL transitions during Rust import, mark the backend as no-GIL incompatible for the current process, and fail safely to Python fallback.
+- Added startup no-GIL enforcement for free-threaded builds: when startup detects GIL-enabled runtime on `cp314t`, the app re-execs once with `-X gil=0` and `PYTHON_GIL=0`.
+- Added prompt-first Rust repair flow when no-GIL incompatibility is detected; one in-environment rebuild attempt is offered, then workflows continue with Python fallback if compatibility is still unresolved.
+- Updated startup runtime diagnostics to avoid eager Rust imports and report Rust backend state without forcing import-time side effects.
+- Updated application version metadata to `v4.5.2` in script header and `APP_VERSION`, and synchronized README top-level version references.
 
 ### v4.5.1 Combined Splash Gating + Cache Singleflight + Rust Overlay Points
 - Fixed combined refresh overlay timing so splash teardown stays draw-gated until final legend/layer passes are complete, preventing early reveal before the last plot layer is applied.
