@@ -866,6 +866,55 @@ fn combined_decimation_indices(
 }
 
 #[pyfunction]
+#[pyo3(signature = (x_values, y_values, peak_indices, trough_indices))]
+fn cycle_overlay_points_core(
+    py: Python<'_>,
+    x_values: PyReadonlyArray1<'_, f64>,
+    y_values: PyReadonlyArray1<'_, f64>,
+    peak_indices: Vec<isize>,
+    trough_indices: Vec<isize>,
+) -> PyResult<Py<PyDict>> {
+    let x_view = x_values.as_array();
+    let y_view = y_values.as_array();
+    let data_len = x_view.len().min(y_view.len());
+    let sanitize = |values: &[isize]| -> Vec<usize> {
+        let mut out = BTreeSet::new();
+        for raw in values {
+            if *raw < 0 {
+                continue;
+            }
+            let Ok(idx) = usize::try_from(*raw) else {
+                continue;
+            };
+            if idx < data_len {
+                out.insert(idx);
+            }
+        }
+        out.into_iter().collect()
+    };
+    let build_points = |indices: &[usize]| -> Vec<(f64, f64)> {
+        let mut points = Vec::new();
+        for idx in indices {
+            if *idx >= data_len {
+                continue;
+            }
+            let x_val = x_view[*idx];
+            let y_val = y_view[*idx];
+            if x_val.is_finite() && y_val.is_finite() {
+                points.push((x_val, y_val));
+            }
+        }
+        points
+    };
+    let safe_peaks = sanitize(&peak_indices);
+    let safe_troughs = sanitize(&trough_indices);
+    let response = PyDict::new(py);
+    response.set_item("peak_points", build_points(&safe_peaks))?;
+    response.set_item("trough_points", build_points(&safe_troughs))?;
+    Ok(response.unbind())
+}
+
+#[pyfunction]
 #[pyo3(signature = (y_values, mask, auto_peaks, auto_troughs, add_peaks, add_troughs, rm_peaks, rm_troughs, min_cycle_drop, ignore_min_drop=false, manual_only=false))]
 fn cycle_segmentation_core(
     py: Python<'_>,
@@ -1213,6 +1262,7 @@ fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
     )?)?;
     module.add_function(wrap_pyfunction!(analyze_bicarbonate_core, module)?)?;
     module.add_function(wrap_pyfunction!(combined_decimation_indices, module)?)?;
+    module.add_function(wrap_pyfunction!(cycle_overlay_points_core, module)?)?;
     module.add_function(wrap_pyfunction!(cycle_segmentation_core, module)?)?;
     module.add_function(wrap_pyfunction!(cycle_metrics_core, module)?)?;
     Ok(())

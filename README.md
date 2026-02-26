@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.5.0)
+# GL-260 Data Analysis and Plotter (v4.5.1)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.5.0`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.5.1`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.5.1 Combined Splash Gating + Cache Singleflight + Rust Overlay Points](#v451-combined-splash-gating--cache-singleflight--rust-overlay-points)
   - [v4.5.0 Threading Control Enforcement + Render/Startup Throughput](#v450-threading-control-enforcement--renderstartup-throughput)
   - [v4.4.8 Legacy/Contamination Tab De-Integration + Final Report Split Persistence](#v448-legacycontamination-tab-de-integration--final-report-split-persistence)
   - [v4.3.8 Final Report Timeline Reliability + Preview Splash Integration](#v438-final-report-timeline-reliability--preview-splash-integration)
@@ -1027,6 +1028,14 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.5.1 Combined Splash Gating + Cache Singleflight + Rust Overlay Points
+- Fixed combined refresh overlay timing so splash teardown stays draw-gated until final legend/layer passes are complete, preventing early reveal before the last plot layer is applied.
+- Added extra combined auto-refresh completion guards to defer generic overlay clear when draw-ack, pending legend apply, or queued legend redraw work still targets the active combined figure.
+- Added in-memory render-cache singleflight coordination for prepared payloads, cycle segmentation, and cycle metrics so concurrent misses on the same fingerprint are deduplicated.
+- Added singleflight performance counters for wait, wait-hit, dedupe, and deduped waiter counts while retaining existing cache hit/miss counters.
+- Added Rust helper kernel `cycle_overlay_points_core(...)` and Python bridge `_rust_cycle_overlay_points_core(...)` for strict-validated peak/trough marker point extraction with Python fallback parity.
+- Updated application version metadata to `v4.5.1` in script header and `APP_VERSION`, and synchronized README top-level version references.
 
 ### v4.5.0 Threading Control Enforcement + Render/Startup Throughput
 - Enforced developer worker-thread controls across cycle metrics compute paths by introducing exact-target worker policy resolution and propagating `requested_workers` / `parallel_enabled` / runtime no-GIL context through render snapshots.
