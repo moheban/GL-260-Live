@@ -866,6 +866,39 @@ fn combined_decimation_indices(
 }
 
 #[pyfunction]
+#[pyo3(signature = (x_values, series_values))]
+fn combined_required_indices(
+    x_values: PyReadonlyArray1<'_, f64>,
+    series_values: &Bound<'_, PyList>,
+) -> PyResult<Vec<usize>> {
+    // Build the required-retention index set for combined preview decimation by
+    // tracking non-finite x/y values that must be preserved across downsampling.
+    let x_view = x_values.as_array();
+    let data_len = x_view.len();
+    let mut required = BTreeSet::new();
+    for (idx, value) in x_view.iter().enumerate() {
+        if !value.is_finite() {
+            required.insert(idx);
+        }
+    }
+    for item in series_values.iter() {
+        let Ok(arr) = item.extract::<PyReadonlyArray1<'_, f64>>() else {
+            continue;
+        };
+        let view = arr.as_array();
+        if view.len() != data_len {
+            continue;
+        }
+        for (idx, value) in view.iter().enumerate() {
+            if !value.is_finite() {
+                required.insert(idx);
+            }
+        }
+    }
+    Ok(required.into_iter().collect())
+}
+
+#[pyfunction]
 #[pyo3(signature = (x_values, y_values, peak_indices, trough_indices))]
 fn cycle_overlay_points_core(
     py: Python<'_>,
@@ -1262,6 +1295,7 @@ fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
     )?)?;
     module.add_function(wrap_pyfunction!(analyze_bicarbonate_core, module)?)?;
     module.add_function(wrap_pyfunction!(combined_decimation_indices, module)?)?;
+    module.add_function(wrap_pyfunction!(combined_required_indices, module)?)?;
     module.add_function(wrap_pyfunction!(cycle_overlay_points_core, module)?)?;
     module.add_function(wrap_pyfunction!(cycle_segmentation_core, module)?)?;
     module.add_function(wrap_pyfunction!(cycle_metrics_core, module)?)?;

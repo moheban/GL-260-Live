@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.5.3)
+# GL-260 Data Analysis and Plotter (v4.5.4)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.5.3`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.5.4`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.5.4 Rust Startup Preflight + Runtime Fingerprint Persistence](#v454-rust-startup-preflight--runtime-fingerprint-persistence)
   - [v4.5.3 Adaptive Refresh Layering + Draw-Gated Splash Release](#v453-adaptive-refresh-layering--draw-gated-splash-release)
   - [v4.5.2 No-GIL Rust Compatibility + Startup Enforcement](#v452-no-gil-rust-compatibility--startup-enforcement)
   - [v4.5.1 Combined Splash Gating + Cache Singleflight + Rust Overlay Points](#v451-combined-splash-gating--cache-singleflight--rust-overlay-points)
@@ -147,7 +148,13 @@ These modules are imported unconditionally at startup:
 - The app can offload heavy bicarbonate/speciation timeline math to `gl260_rust_ext` when available.
 - `v4.1.0` expands Rust acceleration into combined triple-axis numeric precompute paths (decimation index selection, cycle segmentation merge logic, and cycle metrics/transfer payload assembly).
 - If Rust is unavailable, calculations continue on the existing Python path (authoritative fallback).
-- On first use of Rust-relevant solubility actions, the app prompts to install/build prerequisites:
+- `v4.5.4` adds startup Rust preflight. After startup splash teardown, the app checks Rust readiness and prompts before workflow interaction:
+  - `Install now`
+  - `Not now` (continues with Python fallback for the session)
+  - `Disable startup Rust checks` (persists `rust_startup_preflight_enabled=False`)
+- Rust readiness is persisted per interpreter fingerprint (`sys.executable` + ABI/runtime fields), so a successful install in one runtime is reused across restarts of that same runtime.
+- If startup preflight is skipped/declined, existing workflow-time fallback logic remains available.
+- When setup is required, the install/build flow can prompt to install prerequisites:
   - `rustup` / `rustc` / `cargo`
   - `maturin`
   - preferred linker path: Windows C++ linker (`link.exe`) via Visual Studio Build Tools (Desktop development with C++)
@@ -1033,6 +1040,20 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.5.4 Rust Startup Preflight + Runtime Fingerprint Persistence
+- Added persisted Rust runtime install fingerprint tracking keyed by interpreter identity (`sys.executable`, Python version, SOABI/ABI tag, platform, machine) to avoid repeated reinstall prompts on restart when the runtime is unchanged.
+- Added startup Rust backend preflight after splash teardown with a three-way prompt:
+  - `Install now`
+  - `Not now` (Python fallback for current run)
+  - `Disable startup Rust checks` (persists `rust_startup_preflight_enabled=False`)
+- Added interpreter-aware startup prompt context when a prior Rust-ready record exists for a different runtime/ABI.
+- Hardened install verification by running interpreter-pinned import validation (`sys.executable -c "import gl260_rust_ext as m; print(m.__file__)"`) after successful build; failures now emit explicit runtime/ABI diagnostics and fall back safely.
+- Added Rust helper `combined_required_indices(...)` and Python wrapper `_rust_combined_required_indices(...)` for non-finite retention index extraction in combined preview decimation, with strict payload validation and Python fallback parity.
+- Reduced combined scatter refresh allocation churn by reusing per-trace offset buffers instead of rebuilding `np.column_stack(...)` arrays on each refresh cycle.
+- Added Final Report preview render-byte caching keyed by page/zoom/DPI/figure identity and adjacent-page no-GIL-friendly prefetch with token-gated callback safety.
+- Added regression coverage for Rust required-index wrapper sanitization/fallback and Final Report preview cache invalidation behavior.
+- Updated application version metadata to `v4.5.4` in script header and `APP_VERSION`, and synchronized README top-level version references.
 
 ### v4.5.3 Adaptive Refresh Layering + Draw-Gated Splash Release
 - Added conservative adaptive refresh routing for generated plot tabs (`fig1`, `fig2`, `fig_combined`, `fig_peaks`) with three outcomes: `no_change_fast_reveal`, `in_place_display_apply` (non-combined layout/elements-only), and `full_async_refresh`.
