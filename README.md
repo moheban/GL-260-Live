@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.5.4)
+# GL-260 Data Analysis and Plotter (v4.5.5)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.5.4`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.5.5`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.5.5 First-Pass Combined Layout Fix + Manual Refresh Full Rebuild + Startup Rust Ready Status](#v455-first-pass-combined-layout-fix--manual-refresh-full-rebuild--startup-rust-ready-status)
   - [v4.5.4 Rust Startup Preflight + Runtime Fingerprint Persistence](#v454-rust-startup-preflight--runtime-fingerprint-persistence)
   - [v4.5.3 Adaptive Refresh Layering + Draw-Gated Splash Release](#v453-adaptive-refresh-layering--draw-gated-splash-release)
   - [v4.5.2 No-GIL Rust Compatibility + Startup Enforcement](#v452-no-gil-rust-compatibility--startup-enforcement)
@@ -148,7 +149,9 @@ These modules are imported unconditionally at startup:
 - The app can offload heavy bicarbonate/speciation timeline math to `gl260_rust_ext` when available.
 - `v4.1.0` expands Rust acceleration into combined triple-axis numeric precompute paths (decimation index selection, cycle segmentation merge logic, and cycle metrics/transfer payload assembly).
 - If Rust is unavailable, calculations continue on the existing Python path (authoritative fallback).
-- `v4.5.4` adds startup Rust preflight. After startup splash teardown, the app checks Rust readiness and prompts before workflow interaction:
+- `v4.5.4` adds startup Rust preflight. After startup splash teardown, the app checks Rust readiness and prompts before workflow interaction.
+- `v4.5.5` extends startup preflight with an always-visible startup Rust status dialog for Rust-ready runtimes:
+  - `Rust backend ready` (shows executable/ABI/module path for the active runtime)
   - `Install now`
   - `Not now` (continues with Python fallback for the session)
   - `Disable startup Rust checks` (persists `rust_startup_preflight_enabled=False`)
@@ -1040,6 +1043,15 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.5.5 First-Pass Combined Layout Fix + Manual Refresh Full Rebuild + Startup Rust Ready Status
+- Fixed combined-tab first-pass generation layout drift by invalidating reusable combined plot/layout cache state whenever a combined tab is removed or cleared before rebuild.
+- Preserved combined cycle-legend persistence behavior while ensuring cache invalidation runs after legend-anchor capture and before tab/canvas teardown.
+- Updated manual plot-tab `Refresh` button behavior to always route through full rebuild (`force_full_rebuild=True`) with explicit splash/progress messaging.
+- Kept internal auto-refresh/adaptive orchestration path unchanged so internal optimization behavior remains available outside manual refresh invocations.
+- Updated startup Rust preflight ready path to always show a status dialog when Rust is already ready, including executable, ABI/SOABI, and loaded module path context.
+- Added regression coverage for combined tab-removal cache invalidation, forced-refresh fast-path bypass behavior, and startup Rust ready-status prompt behavior.
+- Updated application version metadata to `v4.5.5` in script header and `APP_VERSION`, and synchronized README top-level version references.
 
 ### v4.5.4 Rust Startup Preflight + Runtime Fingerprint Persistence
 - Added persisted Rust runtime install fingerprint tracking keyed by interpreter identity (`sys.executable`, Python version, SOABI/ABI tag, platform, machine) to avoid repeated reinstall prompts on restart when the runtime is unchanged.
