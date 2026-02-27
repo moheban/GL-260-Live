@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.5.5)
+# GL-260 Data Analysis and Plotter (v4.5.6)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.5.5`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.5.6`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.5.6 Rust Kernel Expansion + Layer-Aware Refresh Routing + Final Report Loader Upgrade](#v456-rust-kernel-expansion--layer-aware-refresh-routing--final-report-loader-upgrade)
   - [v4.5.5 First-Pass Combined Layout Fix + Manual Refresh Full Rebuild + Startup Rust Ready Status](#v455-first-pass-combined-layout-fix--manual-refresh-full-rebuild--startup-rust-ready-status)
   - [v4.5.4 Rust Startup Preflight + Runtime Fingerprint Persistence](#v454-rust-startup-preflight--runtime-fingerprint-persistence)
   - [v4.5.3 Adaptive Refresh Layering + Draw-Gated Splash Release](#v453-adaptive-refresh-layering--draw-gated-splash-release)
@@ -1043,6 +1044,26 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.5.6 Rust Kernel Expansion + Layer-Aware Refresh Routing + Final Report Loader Upgrade
+- Expanded optional Rust acceleration with new kernels and Python fallback wrappers for:
+  - array signature hashing used by adaptive refresh signatures (`array_signature_core`)
+  - Final Report cycle statistics row formatting (`final_report_cycle_stats_rows_core`)
+  - Final Report cycle timeline row formatting (`final_report_cycle_timeline_rows_core`)
+- Added per-kernel `auto` runtime gate persistence (`rust_kernel_auto_policy`) keyed by interpreter fingerprint, with parity and timing checks before enabling Rust.
+- Upgraded manual plot Refresh behavior to adaptive layer routing after initial Generate:
+  - data-layer changes route to full async refresh
+  - non-data layer changes (`trace`, `layout`, `elements`) use selective in-place layer apply when safe
+  - no-change refresh requests use fast reveal/finalize path
+- Added hybrid layer-refresh state tracking:
+  - in-memory full state (`_plot_layer_refresh_state`)
+  - lightweight persisted metadata (`plot_layer_refresh_meta`)
+  - per-tab toolbar indicator text showing current layer route/state
+- Upgraded Final Report preview splash workflow for both full preview and selected-page preview:
+  - determinate staged progress updates
+  - elapsed-time heartbeat detail text
+  - robust timer cleanup and modal grab release on all return paths
+- Updated application version metadata to `v4.5.6` in script header and `APP_VERSION`, and synchronized README top-level version references.
 
 ### v4.5.5 First-Pass Combined Layout Fix + Manual Refresh Full Rebuild + Startup Rust Ready Status
 - Fixed combined-tab first-pass generation layout drift by invalidating reusable combined plot/layout cache state whenever a combined tab is removed or cleared before rebuild.

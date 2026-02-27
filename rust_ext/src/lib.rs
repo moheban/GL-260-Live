@@ -495,6 +495,137 @@ fn dict_float_value(dict: &Bound<'_, PyDict>, key: &str) -> f64 {
         .unwrap_or(0.0)
 }
 
+fn dict_optional_float_value(dict: &Bound<'_, PyDict>, key: &str) -> Option<f64> {
+    let value = dict.get_item(key).ok().flatten()?;
+    let parsed = value.extract::<f64>().ok()?;
+    if parsed.is_finite() {
+        Some(parsed)
+    } else {
+        None
+    }
+}
+
+fn dict_truthy_or_empty_pyobject(py: Python<'_>, dict: &Bound<'_, PyDict>, key: &str) -> PyObject {
+    let Some(value) = dict.get_item(key).ok().flatten() else {
+        return "".into_py(py);
+    };
+    if value.is_truthy().unwrap_or(false) {
+        value.into_py(py)
+    } else {
+        "".into_py(py)
+    }
+}
+
+fn format_optional_decimal(value: Option<f64>, precision: usize) -> String {
+    if let Some(parsed) = value {
+        format!("{parsed:.precision$}")
+    } else {
+        String::new()
+    }
+}
+
+fn normalize_fraction_value(value: Option<f64>) -> f64 {
+    let mut normalized = value.unwrap_or(0.0);
+    if normalized > 1.0 {
+        normalized /= 100.0;
+    }
+    if !normalized.is_finite() {
+        return 0.0;
+    }
+    normalized.max(0.0)
+}
+
+fn extract_fraction_field(dict: &Bound<'_, PyDict>, key: &str) -> Option<f64> {
+    let fractions_any = dict.get_item("fractions").ok().flatten()?;
+    let fractions = fractions_any.downcast::<PyDict>().ok()?;
+    dict_optional_float_value(fractions, key)
+}
+
+#[pyfunction]
+#[pyo3(signature = (x_values))]
+fn array_signature_core(x_values: PyReadonlyArray1<'_, f64>) -> PyResult<(usize, String, i64)> {
+    // Compute deterministic signed 64-bit FNV-1a hash for contiguous float bytes
+    // so Python/Rust parity checks remain stable across process restarts.
+    let view = x_values.as_array();
+    let mut hash_value: u64 = 0xCBF29CE484222325;
+    for value in view.iter() {
+        let bytes = value.to_le_bytes();
+        for byte_value in bytes {
+            hash_value ^= u64::from(byte_value);
+            hash_value = hash_value.wrapping_mul(0x100000001B3);
+        }
+    }
+    let hash_i64 = i64::from_ne_bytes(hash_value.to_ne_bytes());
+    Ok((view.len(), "float64".to_string(), hash_i64))
+}
+
+#[pyfunction]
+#[pyo3(signature = (cycle_transfer_rows, duration_header))]
+fn final_report_cycle_stats_rows_core(
+    py: Python<'_>,
+    cycle_transfer_rows: &Bound<'_, PyList>,
+    duration_header: &str,
+) -> PyResult<Py<PyList>> {
+    // Format cycle-stat rows with the same schema expected by Python report
+    // builders while keeping Rust wrappers strictly fallback-safe.
+    let rows = PyList::empty(py);
+    for item in cycle_transfer_rows.iter() {
+        let Ok(entry) = item.downcast::<PyDict>() else {
+            continue;
+        };
+        let delta = dict_optional_float_value(entry, "delta_pressure_psi");
+        let duration = dict_optional_float_value(entry, "duration_x")
+            .or_else(|| dict_optional_float_value(entry, "duration"));
+        let peak_psi = dict_optional_float_value(entry, "peak_pressure_psi");
+        let trough_psi = dict_optional_float_value(entry, "trough_pressure_psi");
+        let mean_temp = dict_optional_float_value(entry, "mean_temperature_c");
+        let co2_mass = dict_optional_float_value(entry, "cumulative_co2_mass_g");
+        let row = PyDict::new(py);
+        row.set_item("Cycle", dict_truthy_or_empty_pyobject(py, entry, "cycle_id"))?;
+        row.set_item("\u{0394}P (PSI)", format_optional_decimal(delta, 2))?;
+        row.set_item(duration_header, format_optional_decimal(duration, 3))?;
+        row.set_item("Peak PSI", format_optional_decimal(peak_psi, 2))?;
+        row.set_item("Trough PSI", format_optional_decimal(trough_psi, 2))?;
+        row.set_item("Mean T (\u{00B0}C)", format_optional_decimal(mean_temp, 2))?;
+        row.set_item("CO\u{2082} (g)", format_optional_decimal(co2_mass, 2))?;
+        rows.append(row)?;
+    }
+    Ok(rows.unbind())
+}
+
+#[pyfunction]
+#[pyo3(signature = (timeline_rows))]
+fn final_report_cycle_timeline_rows_core(
+    py: Python<'_>,
+    timeline_rows: &Bound<'_, PyList>,
+) -> PyResult<Py<PyList>> {
+    // Format timeline rows for Final Report preview/export table builders.
+    let rows = PyList::empty(py);
+    for item in timeline_rows.iter() {
+        let Ok(entry) = item.downcast::<PyDict>() else {
+            continue;
+        };
+        let co2_total = dict_optional_float_value(entry, "co2_g")
+            .or_else(|| dict_optional_float_value(entry, "co2_mass_g"))
+            .or_else(|| dict_optional_float_value(entry, "cumulative_co2_added_mass_g"))
+            .unwrap_or(0.0);
+        let h2co3_fraction = normalize_fraction_value(extract_fraction_field(entry, "H2CO3"));
+        let hco3_fraction = normalize_fraction_value(extract_fraction_field(entry, "HCO3-"));
+        let co3_fraction = normalize_fraction_value(extract_fraction_field(entry, "CO3^2-"));
+        let ph_value = dict_optional_float_value(entry, "solution_ph")
+            .or_else(|| dict_optional_float_value(entry, "speciation_ph"));
+        let row = PyDict::new(py);
+        row.set_item("Cycle", dict_truthy_or_empty_pyobject(py, entry, "cycle_id"))?;
+        row.set_item("CO\u{2082} total (g)", format!("{co2_total:.2}"))?;
+        row.set_item("pH", format_optional_decimal(ph_value, 2))?;
+        row.set_item("H\u{2082}CO\u{2083} (%)", format!("{:.1}", h2co3_fraction * 100.0))?;
+        row.set_item("HCO\u{2083}\u{207B} (%)", format!("{:.1}", hco3_fraction * 100.0))?;
+        row.set_item("CO\u{2083}\u{00B2}\u{207B} (%)", format!("{:.1}", co3_fraction * 100.0))?;
+        rows.append(row)?;
+    }
+    Ok(rows.unbind())
+}
+
 #[pyfunction]
 #[pyo3(signature = (ledger, delta_mol, pka2_value, solution_volume_l=None, temperature_c=None, ionic_strength_cap=None, use_temp_adjusted_constants=false, initial_ph_guess=None, constants=None, planning_mode=false))]
 fn simulate_reaction_state_with_accounting(
@@ -1299,5 +1430,14 @@ fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
     module.add_function(wrap_pyfunction!(cycle_overlay_points_core, module)?)?;
     module.add_function(wrap_pyfunction!(cycle_segmentation_core, module)?)?;
     module.add_function(wrap_pyfunction!(cycle_metrics_core, module)?)?;
+    module.add_function(wrap_pyfunction!(array_signature_core, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        final_report_cycle_stats_rows_core,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        final_report_cycle_timeline_rows_core,
+        module
+    )?)?;
     Ok(())
 }
