@@ -1,9 +1,14 @@
-# Scoped patch validation for GL-260 unicode + toolbar compactness patch.
+"""Scoped patch validation for mojibake sanitization and regressions."""
 
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Tuple
+
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
+from matplotlib.transforms import Bbox
 
 try:
     import tkinter as tk
@@ -12,11 +17,6 @@ except Exception:  # pragma: no cover - optional in validation contexts
     tk = None  # type: ignore
     ttk = None  # type: ignore
 
-try:
-    import customtkinter as ctk  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
-    ctk = None
-
 
 _MOJIBAKE_TRIGGER_CHARS = ("\u00c2", "\u00c3", "\u00ce", "\u00e2", "\u0081")
 _MOJIBAKE_FALLBACK_REPLACEMENTS = {
@@ -24,6 +24,7 @@ _MOJIBAKE_FALLBACK_REPLACEMENTS = {
     "\u00c2\u00b2": "\u00b2",
     "\u00c2\u00b3": "\u00b3",
     "\u00c3\u201a\u00c2\u00b0": "\u00b0",
+    "\u00c3\u00bc": "\u00fc",
     "\u00ce\u201d": "\u0394",
     "\u00e2\u20ac\u00a6": "\u2026",
     "\u00e2\u20ac\u00a2": "\u2022",
@@ -35,29 +36,70 @@ _MOJIBAKE_FALLBACK_REPLACEMENTS = {
     "\u00e2\u201a\u201a": "\u2082",
     "\u00e2\u201a\u0192": "\u2083",
     "\u00e2\u0081\u00bb": "\u207b",
+    "\u00e2\u0081\u00ba": "\u207a",
+    "\u00e2\u0082\u0081": "\u2081",
+    "\u00e2\u0082\u0082": "\u2082",
+    "\u00e2\u0082\u0083": "\u2083",
+    "\u00e2\u0082\u0084": "\u2084",
+    "\u00e2\u0082\u0085": "\u2085",
+    "\u00e2\u0082\u0086": "\u2086",
+    "\u00e2\u0082\u0087": "\u2087",
+    "\u00e2\u0082\u0088": "\u2088",
+    "\u00e2\u0082\u0089": "\u2089",
     "A\u00f8C": "\u00b0C",
+    "H\u00c3\u00bc": "H\u00fc",
+}
+
+_FINAL_REPORT_SUBSCRIPT_MAP = {
+    "\u2080": "0",
+    "\u2081": "1",
+    "\u2082": "2",
+    "\u2083": "3",
+    "\u2084": "4",
+    "\u2085": "5",
+    "\u2086": "6",
+    "\u2087": "7",
+    "\u2088": "8",
+    "\u2089": "9",
+}
+_FINAL_REPORT_SUPERSCRIPT_MAP = {
+    "\u2070": "0",
+    "\u00b9": "1",
+    "\u00b2": "2",
+    "\u00b3": "3",
+    "\u2074": "4",
+    "\u2075": "5",
+    "\u2076": "6",
+    "\u2077": "7",
+    "\u2078": "8",
+    "\u2079": "9",
+    "\u207a": "+",
+    "\u207b": "-",
+}
+_FINAL_REPORT_SUBSCRIPT_RE = re.compile(r"[\u2080-\u2089]+")
+_FINAL_REPORT_SUPERSCRIPT_RE = re.compile(
+    r"[\u2070\u00b9\u00b2\u00b3\u2074-\u2079\u207a\u207b]+"
+)
+
+SOL_DEFAULT_SIM_MODE = "default"
+SOL_MODE_INPUT_GUIDE: Dict[str, List[Dict[str, Any]]] = {
+    "default": [{"label": "Basis inputs", "optional": False}],
+    "naoh_reaction": [{"label": "Reaction charge", "optional": False}],
+}
+SOL_WORKFLOW_TEMPLATES: Dict[str, Dict[str, Any]] = {
+    "Analysis": {
+        "guide_mode": "naoh_reaction",
+        "mode_key": "naoh_reaction",
+        "label": "Analysis",
+    }
+}
+SOL_SIMULATION_MODES: Dict[str, Dict[str, Any]] = {
+    "naoh_reaction": {"label": "Advanced Solubility"}
 }
 
 
 def _mojibake_marker_count(text: str) -> int:
-    """Count likely mojibake markers in one text payload.
-
-    Purpose:
-        Provide a lightweight quality metric to compare repaired text candidates.
-    Why:
-        UTF-8 text that was decoded with the wrong codec often contains a small
-        set of marker glyphs (`Â`, `Ã`, `Î`, `â`) and C1 control characters.
-        Counting these markers lets repair logic keep only conversions that
-        actually reduce corruption.
-    Inputs:
-        text: Candidate text to evaluate.
-    Outputs:
-        Integer count of suspicious marker glyphs/control code points.
-    Side Effects:
-        None.
-    Exceptions:
-        None.
-    """
+    """Count likely mojibake markers in one text payload."""
     count = 0
     for ch in text:
         if ch in _MOJIBAKE_TRIGGER_CHARS:
@@ -70,26 +112,7 @@ def _mojibake_marker_count(text: str) -> int:
 
 
 def _repair_mojibake_text(value: Any) -> str:
-    """Repair likely mojibake text using guarded legacy-codec round-trips.
-
-    Purpose:
-        Normalize UI/display strings that were accidentally persisted or authored
-        with broken unicode decoding.
-    Why:
-        The application renders scientific symbols (`Δ`, `°`, subscripts,
-        superscripts) across Tk/Matplotlib surfaces; mojibake (for example
-        `Î”P`, `Â°C`, `COâ‚‚`) makes labels unreadable.
-    Inputs:
-        value: Any display value to normalize; non-string values are stringified.
-    Outputs:
-        Repaired display string when corruption is detected; otherwise the
-        original text representation.
-    Side Effects:
-        None.
-    Exceptions:
-        Codec conversion attempts use strict error handling and fall back
-        silently when conversion is invalid for the input text.
-    """
+    """Repair likely mojibake text using guarded legacy-codec round-trips."""
     text = "" if value is None else str(value)
     if not text:
         return text
@@ -114,371 +137,355 @@ def _repair_mojibake_text(value: Any) -> str:
     return repaired
 
 
-def _compact_layer_status_text(value: Any, *, default_status: str = "clean") -> str:
-    """Normalize layer-status labels into a compact, deduplicated display form.
+def _set_stringvar_repaired(target_var: Any, value: Any) -> None:
+    """Set a Tk variable using mojibake-repaired display text."""
+    setter = getattr(target_var, "set", None)
+    if not callable(setter):
+        return
+    setter(_repair_mojibake_text(value))
 
-    Purpose:
-        Convert verbose or duplicated status text into a short toolbar-safe label.
-    Why:
-        Plot toolbar status text can be sourced from multiple refresh paths and
-        persisted metadata; some paths duplicate prefixes (for example
-        `Layer State: Layer State: clean`) and create long strings.
-    Inputs:
-        value: Raw status text payload from any caller.
-        default_status: Fallback status token when payload is empty after cleanup.
-    Outputs:
-        Compact status string in the canonical `State: ...` format.
-    Side Effects:
-        None.
-    Exceptions:
-        None.
-    """
-    raw_text = _repair_mojibake_text(value)
-    normalized = re.sub(r"\s+", " ", raw_text).strip()
-    if not normalized:
-        normalized = str(default_status or "clean").strip() or "clean"
-    normalized = re.sub(
-        r"^(?:Layer\s*State\s*:\s*)+",
-        "",
-        normalized,
-        flags=re.IGNORECASE,
-    ).strip()
-    if not normalized:
-        normalized = str(default_status or "clean").strip() or "clean"
-    if normalized.lower().startswith("state:"):
-        normalized = normalized.split(":", 1)[1].strip() or (
-            str(default_status or "clean").strip() or "clean"
+
+def _sanitize_widget_text_tree(root_widget: Any) -> None:
+    """Recursively repair widget text and Treeview item content."""
+
+    if ttk is None:
+        return
+
+    def _repair_widget_text(widget: Any) -> None:
+        try:
+            current_text = widget.cget("text")
+        except Exception:
+            return
+        repaired_text = _repair_mojibake_text(current_text)
+        if repaired_text != current_text:
+            try:
+                widget.configure(text=repaired_text)
+            except Exception:
+                return
+
+    def _repair_tree_item(tree: ttk.Treeview, item_id: str) -> None:
+        try:
+            row_data = tree.item(item_id)
+        except Exception:
+            return
+        text_value = row_data.get("text")
+        values = row_data.get("values", ())
+        repaired_text = _repair_mojibake_text(text_value)
+        repaired_values = tuple(_repair_mojibake_text(value) for value in values)
+        if repaired_text != text_value or repaired_values != tuple(values):
+            try:
+                tree.item(item_id, text=repaired_text, values=repaired_values)
+            except Exception:
+                return
+        for child_id in tree.get_children(item_id):
+            _repair_tree_item(tree, child_id)
+
+    queue: List[Any] = [root_widget]
+    while queue:
+        widget = queue.pop(0)
+        if widget is None:
+            continue
+        _repair_widget_text(widget)
+        if isinstance(widget, ttk.Treeview):
+            columns = ["#0", *list(widget["columns"])]
+            for column in columns:
+                heading = widget.heading(column)
+                repaired = _repair_mojibake_text(heading.get("text", ""))
+                widget.heading(column, text=repaired)
+            for item_id in widget.get_children(""):
+                _repair_tree_item(widget, item_id)
+        try:
+            queue.extend(list(widget.winfo_children()))
+        except Exception:
+            continue
+
+
+def _sanitize_figure_text_artists(fig: Any) -> None:
+    """Repair mojibake across text artists in one Matplotlib figure."""
+    if fig is None:
+        return
+
+    def _repair_text_artist(text_artist: Any) -> None:
+        getter = getattr(text_artist, "get_text", None)
+        setter = getattr(text_artist, "set_text", None)
+        if not callable(getter) or not callable(setter):
+            return
+        source_text = getter()
+        repaired_text = _repair_mojibake_text(source_text)
+        if repaired_text != source_text:
+            setter(repaired_text)
+
+    for figure_text in list(getattr(fig, "texts", []) or []):
+        _repair_text_artist(figure_text)
+    _repair_text_artist(getattr(fig, "_suptitle", None))
+    for figure_legend in list(getattr(fig, "legends", []) or []):
+        for legend_text in list(figure_legend.get_texts() or []):
+            _repair_text_artist(legend_text)
+    for axis in list(getattr(fig, "axes", []) or []):
+        _repair_text_artist(getattr(axis, "title", None))
+        _repair_text_artist(getattr(getattr(axis, "xaxis", None), "label", None))
+        _repair_text_artist(getattr(getattr(axis, "yaxis", None), "label", None))
+        for axis_text in list(getattr(axis, "texts", []) or []):
+            _repair_text_artist(axis_text)
+        legend = axis.get_legend()
+        if legend is not None:
+            for legend_text in list(legend.get_texts() or []):
+                _repair_text_artist(legend_text)
+            _repair_text_artist(legend.get_title())
+        for table in list(getattr(axis, "tables", []) or []):
+            cell_map = table.get_celld()
+            if not isinstance(cell_map, Mapping):
+                continue
+            for cell in cell_map.values():
+                _repair_text_artist(cell.get_text())
+
+
+def _export_text_summary_png_core(
+    text: str,
+    path: str,
+    metadata: Optional[List[str]] = None,
+) -> None:
+    """Validation core for text-summary export sanitization behavior."""
+    if metadata:
+        text = f"{text.rstrip()}\n\n---\n" + "\n".join(metadata)
+    text = _repair_mojibake_text(text)
+    lines = text.splitlines() or [""]
+    max_chars = max(len(line) for line in lines) or 1
+    fig_width = max(6.0, min(16.0, 0.12 * max_chars))
+    fig_height = max(2.5, min(20.0, 0.38 * len(lines) + 0.5))
+    fig = Figure(figsize=(fig_width, fig_height), dpi=150)
+    canvas = FigureCanvasAgg(fig)
+    ax = fig.add_subplot(111)
+    ax.axis("off")
+    ax.set_facecolor("white")
+    fig.patch.set_facecolor("white")
+    ax.set_position([0, 0, 1, 1])
+    text_artist = ax.text(
+        0.0,
+        1.0,
+        text,
+        ha="left",
+        va="top",
+        fontsize=12,
+        family="monospace",
+        linespacing=1.35,
+        transform=ax.transAxes,
+    )
+    canvas.draw()
+    renderer = canvas.get_renderer()
+    bbox = text_artist.get_window_extent(renderer=renderer)
+    if bbox.width <= 0 or bbox.height <= 0:
+        _sanitize_figure_text_artists(fig)
+        fig.savefig(
+            path,
+            dpi=150,
+            bbox_inches="tight",
+            pad_inches=0.0,
+            facecolor="white",
         )
-    return f"State: {normalized}"
-
-
-def _ui_button(parent, *args, **kwargs):
-    """Create a button using CTk when available, else ttk.
-
-    Purpose:
-        Provide one compatibility constructor for push-button controls.
-    Why:
-        Stage-wise CTk migration requires preserving existing callbacks and layout
-        code while avoiding repeated availability checks in each UI builder.
-    Inputs:
-        parent: Parent widget that owns the button.
-        *args: Positional arguments accepted by ttk/CTk constructors.
-        **kwargs: Keyword arguments such as text, command, width, and state.
-    Outputs:
-        Widget instance (`ctk.CTkButton` or `ttk.Button`).
-    Side Effects:
-        None beyond widget construction.
-    Exceptions:
-        Unsupported CTk-only/ttk-only kwargs are ignored on the CTk branch.
-    """
-    normalized_kwargs = dict(kwargs)
-    if "text" in normalized_kwargs:
-        normalized_kwargs["text"] = _repair_mojibake_text(normalized_kwargs.get("text"))
-    if ctk is None:
-        return ttk.Button(parent, *args, **normalized_kwargs)
-    ctk_kwargs = dict(normalized_kwargs)
-    ctk_kwargs.pop("style", None)
-    ctk_kwargs.pop("padding", None)
-    return ctk.CTkButton(parent, *args, **ctk_kwargs)
-
-
-def _ui_checkbutton(parent, *args, **kwargs):
-    """Create a checkbutton using CTk when available, else ttk.
-
-    Purpose:
-        Normalize checkbutton creation across ttk and CTk toolkits.
-    Why:
-        CTk migration should not force callback/business-logic rewrites.
-    Inputs:
-        parent: Parent widget that owns the checkbutton.
-        *args: Positional constructor args.
-        **kwargs: Keyword args including text, variable, command, and state.
-    Outputs:
-        Widget instance (`ctk.CTkCheckBox` or `ttk.Checkbutton`).
-    Side Effects:
-        None beyond widget construction.
-    Exceptions:
-        ttk-specific style kwargs are ignored on the CTk branch.
-    """
-    normalized_kwargs = dict(kwargs)
-    if "text" in normalized_kwargs:
-        normalized_kwargs["text"] = _repair_mojibake_text(normalized_kwargs.get("text"))
-    if ctk is None:
-        return ttk.Checkbutton(parent, *args, **normalized_kwargs)
-    ctk_kwargs = dict(normalized_kwargs)
-    ctk_kwargs.pop("style", None)
-    ctk_kwargs.pop("padding", None)
-    return ctk.CTkCheckBox(parent, *args, **ctk_kwargs)
-
-
-def _ui_radiobutton(parent, *args, **kwargs):
-    """Create a radio button using CTk when available, else ttk.
-
-    Purpose:
-        Provide one constructor for mutually-exclusive choice controls.
-    Why:
-        Reduces repetitive conditional widget creation in migrated dialogs/tabs.
-    Inputs:
-        parent: Parent widget for the radiobutton.
-        *args: Positional constructor args.
-        **kwargs: Keyword args such as text, value, variable, and command.
-    Outputs:
-        Widget instance (`ctk.CTkRadioButton` or `ttk.Radiobutton`).
-    Side Effects:
-        None beyond widget construction.
-    Exceptions:
-        ttk-only style kwargs are ignored on the CTk branch.
-    """
-    normalized_kwargs = dict(kwargs)
-    if "text" in normalized_kwargs:
-        normalized_kwargs["text"] = _repair_mojibake_text(normalized_kwargs.get("text"))
-    if ctk is None:
-        return ttk.Radiobutton(parent, *args, **normalized_kwargs)
-    ctk_kwargs = dict(normalized_kwargs)
-    ctk_kwargs.pop("style", None)
-    ctk_kwargs.pop("padding", None)
-    return ctk.CTkRadioButton(parent, *args, **ctk_kwargs)
-
-
-def _svg_safe_text(value: Any) -> str:
-    """Sanitize free-form labels for safe SVG/text rendering.
-
-    Purpose:
-        Convert arbitrary display text into a stable form for SVG export and
-        Matplotlib text artists.
-    Why:
-        Export paths receive mixed UI/data strings that may include mojibake and
-        reserved symbols.
-    Inputs:
-        value: Raw label payload from UI state, data labels, or generated text.
-    Outputs:
-        Sanitized text with reserved characters expanded/removed and whitespace
-        collapsed.
-    Side Effects:
-        None.
-    Exceptions:
-        None.
-    """
-    text = _repair_mojibake_text(value)
-    replacements = {
-        "&": "and",
-        "<": "less than",
-        ">": "greater than",
-        '"': "",
-        "'": "",
-    }
-    sanitized_parts: List[str] = []
-    for ch in text:
-        sanitized_parts.append(replacements.get(ch, ch))
-    sanitized = "".join(sanitized_parts)
-    sanitized = re.sub(r"\s+", " ", sanitized).strip()
-    return sanitized
-
-
-def _format_axis_label(label: Any) -> str:
-    """Format one axis label for on-screen display and export.
-
-    Purpose:
-        Produce a consistent, human-readable axis label from a raw source token.
-    Why:
-        Labels can arrive from workbook headers/settings with underscores and
-        occasional mojibake artifacts.
-    Inputs:
-        label: Raw axis label value.
-    Outputs:
-        Cleaned axis label string with repaired unicode and normalized spacing.
-    Side Effects:
-        None.
-    Exceptions:
-        None.
-    """
-    normalized = _repair_mojibake_text(label).replace("_", " ")
-    normalized = normalized.replace(" (\u00c3\u201a\u00c2\u00b0C)", "")
-    normalized = normalized.replace(" (\u00c2\u00b0C)", " (\u00b0C)")
-    return normalized
+        return
+    pad_x = max(3.0, 0.02 * bbox.width)
+    pad_y = max(3.0, 0.02 * bbox.height)
+    cropped_bbox = Bbox.from_extents(
+        bbox.x0 - pad_x,
+        bbox.y0 - pad_y,
+        bbox.x1 + pad_x,
+        bbox.y1 + pad_y,
+    )
+    bbox_inches = cropped_bbox.transformed(fig.dpi_scale_trans.inverted())
+    _sanitize_figure_text_artists(fig)
+    fig.savefig(
+        path,
+        dpi=150,
+        bbox_inches=bbox_inches,
+        pad_inches=0.0,
+        facecolor="white",
+    )
 
 
 class UnifiedApp:
-    """Minimal validation harness for patched status helpers."""
+    """Validation harness for methods changed in the production module."""
 
-    def _plot_tab_frame_for_plot_id(self, _plot_id: Optional[str]):
-        return getattr(self, "_frame", None)
-
-    def _ensure_plot_dirty_flags(self, _plot_id: Optional[str]) -> Dict[str, bool]:
-        return getattr(
-            self,
-            "_flags",
-            {
-                "dirty_data": False,
-                "dirty_layout": False,
-                "dirty_elements": False,
-                "dirty_trace": False,
-            },
-        )
-
-    def _layer_status_text_from_flags(
-        self,
-        *,
-        dirty_data: bool,
-        dirty_layout: bool,
-        dirty_elements: bool,
-        dirty_trace: bool,
-    ) -> str:
-        """Return a compact layer-status summary string from dirty flags."""
-        if dirty_data:
-            return _compact_layer_status_text("Data pending")
-        layers: List[str] = []
-        if dirty_trace:
-            layers.append("trace")
-        if dirty_layout:
-            layers.append("layout")
-        if dirty_elements:
-            layers.append("elements")
-        if not layers:
-            return _compact_layer_status_text("clean")
-        return _compact_layer_status_text("+".join(layers))
-
-    def _update_plot_layer_status_indicator(
-        self,
-        plot_id: Optional[str],
-        *,
-        route: Optional[str] = None,
-        changed_layers: Optional[Sequence[str]] = None,
-    ) -> None:
-        """Update one plot tab's layer-status indicator text."""
-        frame = self._plot_tab_frame_for_plot_id(plot_id)
-        if frame is None:
+    def _update_sol_helper_contents(self) -> None:
+        """Validation copy of helper-content refresh with repaired StringVar output."""
+        summary_var = getattr(self, "_sol_helper_summary_var", None)
+        steps_var = getattr(self, "_sol_helper_steps_var", None)
+        if summary_var is None or steps_var is None:
             return
-        status_var = getattr(frame, "_plot_layer_status_var", None)
-        if status_var is None:
-            return
-        flags = self._ensure_plot_dirty_flags(plot_id) or {}
-        text = self._layer_status_text_from_flags(
-            dirty_data=bool(flags.get("dirty_data", False)),
-            dirty_layout=bool(flags.get("dirty_layout", False)),
-            dirty_elements=bool(flags.get("dirty_elements", False)),
-            dirty_trace=bool(flags.get("dirty_trace", False)),
+        workflow_key = self._current_solubility_workflow()
+        workflow_meta = SOL_WORKFLOW_TEMPLATES.get(workflow_key, {})
+        guide_key = workflow_meta.get("guide_mode", SOL_DEFAULT_SIM_MODE)
+        guide = SOL_MODE_INPUT_GUIDE.get(guide_key, SOL_MODE_INPUT_GUIDE["default"])
+        meta_key = workflow_meta.get("mode_key", guide_key)
+        meta = SOL_SIMULATION_MODES.get(meta_key, {})
+        completed = 0
+        required = 0
+        lines: List[str] = []
+        next_spec: Optional[Dict[str, Any]] = None
+        for spec in guide:
+            label = spec.get("label", "Field")
+            if spec.get("optional"):
+                label = f"{label} (optional)"
+            spec_complete = self._helper_spec_complete(spec)
+            if spec_complete and not spec.get("optional"):
+                completed += 1
+            if not spec.get("optional"):
+                required += 1
+            prefix = "\u2713" if spec_complete else "\u2022"
+            lines.append(f"{prefix} {label}")
+            if not spec_complete and next_spec is None and not spec.get("optional"):
+                next_spec = spec
+        if required == 0:
+            required = len(guide)
+        workflow_label = workflow_meta.get("label") or meta.get(
+            "label", "Advanced Solubility"
         )
-        route_text = str(route or "").strip().lower()
-        if route_text in {
-            "full_async_refresh",
-            "in_place_layer_refresh",
-            "in_place_display_apply",
-        }:
-            changed = list(changed_layers or [])
-            if changed:
-                text = f"{route_text} ({'+'.join(changed)})"
-            else:
-                text = route_text
-        status_var.set(_compact_layer_status_text(text))
-
-
-def _build_topbar_button(
-    parent: Any,
-    *,
-    text: str,
-    command: Callable[[], None],
-    scale_length_cb: Callable[[int], int],
-    ctk_width: int = 130,
-    ttk_width: int = 12,
-) -> Any:
-    """Create one compact plot-tab toolbar button with deterministic sizing.
-
-    Purpose:
-        Build topbar action buttons that remain stable as plots refresh.
-    Why:
-        The plot tab keeps Matplotlib navigation tools and several action
-        buttons in one row; explicit button sizing prevents overlap/jitter.
-    Inputs:
-        parent: Container frame for the button.
-        text: Button label text.
-        command: Callback invoked on button press.
-        scale_length_cb: Scaling callback that converts logical lengths to pixels.
-        ctk_width: Width in pixels when CTk buttons are active.
-        ttk_width: Width in character units when ttk buttons are active.
-    Outputs:
-        Constructed button widget instance.
-    Side Effects:
-        Instantiates one Tk/CTk button widget.
-    Exceptions:
-        None; delegates widget-construction failures to caller context.
-    """
-    if ctk is None:
-        return _ui_button(
-            parent,
-            text=text,
-            command=command,
-            width=max(6, int(ttk_width)),
+        _set_stringvar_repaired(
+            summary_var,
+            f"{workflow_label}: {completed}/{required} required steps complete.",
         )
-    return _ui_button(
-        parent,
-        text=text,
-        command=command,
-        width=max(96, int(ctk_width)),
-        height=max(24, int(scale_length_cb(28))),
-    )
-
-
-def _regression_test_mojibake_text_repair_samples() -> None:
-    """Validate mojibake repair for representative scientific/UI symbol payloads."""
-    samples = [
-        ("Total \u00ce\u201dP", "Total \u0394P"),
-        ("Temperature (\u00c2\u00b0C)", "Temperature (\u00b0C)"),
-        ("CO\u00e2\u201a\u201a", "CO\u2082"),
-        ("CO\u00e2\u201a\u0192\u00c2\u00b2\u00e2\u0081\u00bb", "CO\u2083\u00b2\u207b"),
-        ("Loading\u00e2\u20ac\u00a6", "Loading\u2026"),
-        ("\u00e2\u20ac\u00a2 item", "\u2022 item"),
-        ("\u00e2\u0153\u201c done", "\u2713 done"),
-        ("x \u00e2\u2030\u02c6 y", "x \u2248 y"),
-        ("a \u00e2\u2020\u2019 b", "a \u2192 b"),
-    ]
-    for raw_value, expected in samples:
-        actual = _repair_mojibake_text(raw_value)
-        if actual != expected:
-            raise AssertionError(
-                "Mojibake repair mismatch for "
-                f"{raw_value!r}: got={actual!r}, expected={expected!r}"
+        _set_stringvar_repaired(
+            steps_var,
+            "\n".join(lines) if lines else "No guided steps available.",
+        )
+        self._sol_helper_next_spec = next_spec
+        extra_tips: List[str] = []
+        if workflow_key == "Analysis":
+            extra_tips.append(
+                "Import validated cycles or enter CO\u00e2\u201a\u201a totals so "
+                "the per-cycle speciation plot reflects real data."
             )
-    ascii_text = "Pressure (PSI)"
-    ascii_repaired = _repair_mojibake_text(ascii_text)
-    if ascii_repaired != ascii_text:
-        raise AssertionError("ASCII text should remain unchanged by repair helper.")
+        if extra_tips:
+            _set_stringvar_repaired(
+                steps_var,
+                steps_var.get()
+                + "\n"
+                + "\n".join(f"\u2022 {tip}" for tip in extra_tips),
+            )
+
+    def _final_report_sanitize_text(self, text: str) -> str:
+        """Validation copy of Final Report sanitize behavior."""
+        if not text:
+            return text
+
+        def _sub_replace(match: re.Match[str]) -> str:
+            digits = "".join(
+                _FINAL_REPORT_SUBSCRIPT_MAP.get(ch, "") for ch in match.group(0)
+            )
+            return f"$_{digits}$" if digits else match.group(0)
+
+        def _sup_replace(match: re.Match[str]) -> str:
+            digits = "".join(
+                _FINAL_REPORT_SUPERSCRIPT_MAP.get(ch, "") for ch in match.group(0)
+            )
+            return f"$^{digits}$" if digits else match.group(0)
+
+        repaired = _repair_mojibake_text(text)
+        value = _FINAL_REPORT_SUBSCRIPT_RE.sub(_sub_replace, repaired)
+        return _FINAL_REPORT_SUPERSCRIPT_RE.sub(_sup_replace, value)
 
 
-def _regression_test_layer_status_text_compaction() -> None:
-    """Validate compact layer-status formatting and duplicate-prefix cleanup."""
-    deduped = _compact_layer_status_text("Layer State: Layer State: clean")
-    if deduped != "State: clean":
-        raise AssertionError(f"Layer-status dedupe mismatch: {deduped!r}")
-    mojibake_status = _compact_layer_status_text(
-        "Layer State: CO\u00e2\u201a\u201a ready"
-    )
-    if mojibake_status != "State: CO\u2082 ready":
+def _regression_test_solubility_guidance_text_repair() -> None:
+    """Validate Advanced Speciation guidance text normalization in helper paths."""
+    if tk is None:
+        return
+
+    class _Harness(UnifiedApp):
+        """Minimal harness covering helper-guidance dependencies."""
+
+        def __init__(self) -> None:
+            tk_root = tk.Tcl()
+            self._sol_helper_summary_var = tk.StringVar(master=tk_root, value="")
+            self._sol_helper_steps_var = tk.StringVar(master=tk_root, value="")
+
+        @staticmethod
+        def _current_solubility_workflow() -> str:
+            """Return one workflow key that triggers Analysis helper hints."""
+            return "Analysis"
+
+        @staticmethod
+        def _helper_spec_complete(_spec: Dict[str, Any]) -> bool:
+            """Return deterministic incomplete state for helper checklist rows."""
+            return False
+
+    harness = _Harness()
+    UnifiedApp._update_sol_helper_contents(harness)
+    summary_text = harness._sol_helper_summary_var.get()
+    steps_text = harness._sol_helper_steps_var.get()
+    if "CO\u00e2\u201a\u201a" in steps_text:
         raise AssertionError(
-            f"Layer-status mojibake repair mismatch: {mojibake_status!r}"
+            "Advanced helper steps should not contain mojibake CO2 text."
+        )
+    if "CO\u2082" not in steps_text:
+        raise AssertionError("Advanced helper steps should include repaired CO2 text.")
+    if (
+        _mojibake_marker_count(summary_text) != 0
+        or _mojibake_marker_count(steps_text) != 0
+    ):
+        raise AssertionError("Advanced helper summary/steps should be mojibake-free.")
+
+
+def _regression_test_final_report_text_sanitization_path() -> None:
+    """Validate Final Report text sanitation applies mojibake repair first."""
+    harness = UnifiedApp()
+    raw = (
+        "GL-260 Final Report \u00e2\u20ac\u201c Page 3 | "
+        "CO\u00e2\u201a\u201a and CO\u00e2\u201a\u0192\u00c2\u00b2\u00e2\u0081\u00bb"
+    )
+    sanitized = UnifiedApp._final_report_sanitize_text(harness, raw)
+    if "\u00e2" in sanitized or "\u00c2" in sanitized:
+        raise AssertionError(
+            f"Final Report sanitize should remove mojibake markers: {sanitized!r}"
+        )
+    if "\u2013" not in sanitized:
+        raise AssertionError(
+            f"Final Report sanitize should preserve an en dash: {sanitized!r}"
+        )
+    if "CO$_2$" not in sanitized:
+        raise AssertionError(
+            "Final Report sanitize should preserve repaired/subscripted CO2 text: "
+            f"{sanitized!r}"
         )
 
-    clean_status = UnifiedApp()._layer_status_text_from_flags(
-        dirty_data=False,
-        dirty_layout=False,
-        dirty_elements=False,
-        dirty_trace=False,
-    )
-    if clean_status != "State: clean":
-        raise AssertionError(f"Clean status mismatch: {clean_status!r}")
-    dirty_status = UnifiedApp()._layer_status_text_from_flags(
-        dirty_data=False,
-        dirty_layout=True,
-        dirty_elements=True,
-        dirty_trace=False,
-    )
-    if dirty_status != "State: layout+elements":
-        raise AssertionError(f"Dirty-layer status mismatch: {dirty_status!r}")
-    data_pending_status = UnifiedApp()._layer_status_text_from_flags(
-        dirty_data=True,
-        dirty_layout=False,
-        dirty_elements=False,
-        dirty_trace=False,
-    )
-    if data_pending_status != "State: Data pending":
-        raise AssertionError(f"Data-pending status mismatch: {data_pending_status!r}")
+
+def _regression_test_figure_text_artist_export_sanitization() -> None:
+    """Validate figure-level text artist sanitization for export paths."""
+    fig = Figure(figsize=(4, 3), dpi=100)
+    ax = fig.add_subplot(111)
+    ax.plot([0, 1], [0, 1], label="\u00ce\u201dP")
+    ax.set_title("pH \u00e2\u2030\u02c6 8")
+    ax.set_xlabel("Temperature (\u00c2\u00b0C)")
+    ax.set_ylabel("CO\u00e2\u201a\u201a loading")
+    ax.text(0.5, 0.5, "NaHCO\u00e2\u201a\u0192", transform=ax.transAxes)
+    fig.text(0.5, 0.02, "State \u00e2\u20ac\u201d clean", ha="center")
+    legend = ax.legend(loc="upper left")
+    if legend is not None:
+        legend.set_title("Legend \u00e2\u20ac\u00a2 symbols")
+    _sanitize_figure_text_artists(fig)
+    if "\u00e2" in ax.get_title():
+        raise AssertionError("Axis title should be repaired by figure text sanitizer.")
+    if "\u00b0C" not in ax.get_xlabel():
+        raise AssertionError("Axis xlabel should contain repaired degree symbol.")
+    if "CO\u2082" not in ax.get_ylabel():
+        raise AssertionError("Axis ylabel should contain repaired CO2 symbol.")
+    if "NaHCO\u2083" not in ax.texts[0].get_text():
+        raise AssertionError("Axis annotation should contain repaired NaHCO3 symbol.")
+    if "State \u2014 clean" not in fig.texts[0].get_text():
+        raise AssertionError("Figure text should contain repaired em dash.")
+    legend_texts = [text.get_text() for text in (legend.get_texts() if legend else [])]
+    if not legend_texts or "\u0394P" not in legend_texts[0]:
+        raise AssertionError("Legend labels should contain repaired delta symbol.")
+    plt.close(fig)
+
+
+REGRESSION_TESTS: List[Tuple[str, Any]] = [
+    ("Advanced guidance text repair", _regression_test_solubility_guidance_text_repair),
+    (
+        "Final report text sanitization path",
+        _regression_test_final_report_text_sanitization_path,
+    ),
+    (
+        "Figure text export sanitization",
+        _regression_test_figure_text_artist_export_sanitization,
+    ),
+]
