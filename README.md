@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.5.6)
+# GL-260 Data Analysis and Plotter (v4.6.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.5.6`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.6.0`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.6.0 Compare + Ledger Tabs + Yield Comparison Workflow](#v460-compare--ledger-tabs--yield-comparison-workflow)
   - [v4.5.6 Rust Kernel Expansion + Layer-Aware Refresh Routing + Final Report Loader Upgrade](#v456-rust-kernel-expansion--layer-aware-refresh-routing--final-report-loader-upgrade)
   - [v4.5.5 First-Pass Combined Layout Fix + Manual Refresh Full Rebuild + Startup Rust Ready Status](#v455-first-pass-combined-layout-fix--manual-refresh-full-rebuild--startup-rust-ready-status)
   - [v4.5.4 Rust Startup Preflight + Runtime Fingerprint Persistence](#v454-rust-startup-preflight--runtime-fingerprint-persistence)
@@ -988,6 +989,22 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.6.0 Compare + Ledger Tabs + Yield Comparison Workflow
+- Added a new **Compare** tab with two-profile selection (A/B), profile swap, refresh, and side-by-side Combined Triple Axis rendering.
+- Compare-pane rendering reuses the existing combined preview/display rendering path (`_build_combined_triple_axis_from_state`) and canvas finalization resize pipeline (`_finalize_matplotlib_canvas_layout`) to preserve plot elements and avoid overlap regressions during pane resize.
+- Added Compare per-cycle uptake table with aligned cycle rows for A/B, per-cycle delta, cumulative delta, totals/stat rows, and CSV export.
+- Added Compare yield panel with:
+  - isolated mass input per run,
+  - auto basis mode (profile `reaction_basis` with app fallback),
+  - optional override basis mode,
+  - theoretical yield, actual yield %, and A-vs-B deltas.
+- Extended profile payload compatibility with optional `reaction_basis` serialization so yield basis remains portable between profiles/sessions.
+- Added a new **Ledger** tab for persistent QC tracking with sortable/filterable table and full CRUD:
+  - fields: profile, run date, final mass, final pH, cycles, total dP uptake, theoretical yield, actual yield %, notes, updated timestamp,
+  - actions: Add, Edit, Delete, Add From Profile, Export CSV.
+- Added Ledger persistence in settings via normalized `ledger_entries` schema and startup restore.
+- Updated application version metadata to `v4.6.0` in script header and `APP_VERSION`, and synchronized README top-level version references.
 
 ### v4.5.6 Rust Kernel Expansion + Layer-Aware Refresh Routing + Final Report Loader Upgrade
 - Expanded optional Rust acceleration with new kernels and Python fallback wrappers for:
