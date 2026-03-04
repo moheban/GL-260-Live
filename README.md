@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.6.1)
+# GL-260 Data Analysis and Plotter (v4.6.2)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.6.1`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.6.2`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -20,6 +20,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
   - [Combined Triple-Axis Plot Technical Documentation](#combined-triple-axis-plot-technical-documentation)
   - [Interactive Cycle Analysis - Scientific and Operational Guide](#interactive-cycle-analysis---scientific-and-operational-guide)
   - [Advanced Solubility and Equilibrium Engine](#advanced-solubility-and-equilibrium-engine)
+  - [Compare Tab Workflow and Reporting](#compare-tab-workflow-and-reporting)
   - [Final Report System - Export and PDF Assembly](#final-report-system---export-and-pdf-assembly)
   - [Preferences and Configuration System](#preferences-and-configuration-system)
   - [Performance and Developer Tools](#performance-and-developer-tools)
@@ -28,6 +29,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.6.2 Compare UX + Layout-Health Engine + Interactive HTML Report](#v462-compare-ux--layout-health-engine--interactive-html-report)
   - [v4.6.1 Compare Responsiveness + Marker Correction + Ledger Ordering Upgrade](#v461-compare-responsiveness--marker-correction--ledger-ordering-upgrade)
   - [v4.6.0 Compare + Ledger Tabs + Yield Comparison Workflow](#v460-compare--ledger-tabs--yield-comparison-workflow)
   - [v4.5.6 Rust Kernel Expansion + Layer-Aware Refresh Routing + Final Report Loader Upgrade](#v456-rust-kernel-expansion--layer-aware-refresh-routing--final-report-loader-upgrade)
@@ -762,6 +764,24 @@ The Advanced Solubility and Equilibrium Engine models CO2 dissolution, carbonate
 - Validate pH trajectory against expected equilibrium states.
 - Generate planning guidance for dosing or reaction completion targets.
 
+### Compare Tab Workflow and Reporting
+Use the Compare tab to load two profiles (A/B), render side-by-side Combined Triple Axis plots, and inspect cycle and yield deltas.
+
+Key behavior:
+- The full Compare tab is vertically scrollable (outer wrapper), so controls remain reachable on shorter windows.
+- The right-side Yield/Diagnostics panel retains its own inner scrollbar behavior.
+- Dragging the plot/table split sash persists `compare_tab.split_frac`; startup restore is clamped and retried during geometry settle.
+- Compare control buttons and Compare popup action buttons use readability-aware sizing/wrapping so labels remain readable under UI scaling.
+
+Report workflow:
+- Use `Generate Comparison Report...` to export compare artifacts.
+- Use `Report Options...` to toggle:
+  - cycle table CSV
+  - yield summary in PDF/CSV
+  - diagnostics TXT
+  - interactive HTML report
+- Interactive HTML export is controlled by persisted key `compare_tab.report_preferences.include_interactive_html`.
+
 ### Final Report System - Export and PDF Assembly
 The Final Report system assembles a multi-section report using exported plot artifacts and configured tables.
 
@@ -810,6 +830,8 @@ Key persisted categories:
 - Cycle analysis settings and manual marker edits.
 - Combined axis labels, offsets, layout spacing, and zero-line toggle (`combined_include_zero_line`).
 - Layout profiles (per-plot display/export margins, title/suptitle positions, legend anchors/loc, axis label padding).
+- Compare tab state including split position (`compare_tab.split_frac`) and report preferences (including `compare_tab.report_preferences.include_interactive_html`).
+- Layout-health policy controls (`layout_health_autofix_enabled`, `layout_health_strict_mode`, `layout_health_emit_debug_events`, `layout_health_max_passes`, `layout_health_min_gap_pts`, `layout_health_max_gap_pts`).
 - Output profiles, export DPI, and final report settings.
 - Plot elements and annotation UI state.
 - Advanced Speciation tab visibility, tab order, and Final Report split (`final_report_split_frac`).
@@ -885,6 +907,12 @@ Developer tools (Tools -> Developer Tools...) provide:
 - Dump Debug Settings, Clear Debug Once-Guards, and Dump Performance Stats actions.
 - Performance Diagnostics tab with stage-level timings (data prep, cycle context, combined render, embed).
 - Runtime / Advanced tab for concurrency controls and advanced tool launch buttons.
+- Runtime / Advanced tab now includes a **Layout Health** section:
+  - `Enable Layout Health Auto-Fix`
+  - `Enable Strict Mode`
+  - `Enable Layout Health Debug Events` (emits under `plotting.layout` when debug logging/category is enabled)
+  - numeric policy controls: `Max Passes`, `Min Legend-XLabel Gap (pt)`, `Max Legend-XLabel Gap (pt)`
+  - quick actions: `Reset Layout Health Defaults`, `Run Layout Health Check on Active Figure`
 - Runtime / Advanced now includes inline Rust backend install/repair progress (indeterminate loading bar + status text).
 - Rust install/repair failures always print a concise reason to terminal (`stderr`) and emit category-gated diagnostics under `rust.backend`.
 - Free-threading & GIL controls, dependency free-threading audit, regression checks, and timeline table export validation via dedicated dialogs/actions launched from the hub.
@@ -990,6 +1018,34 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.6.2 Compare UX + Layout-Health Engine + Interactive HTML Report
+- Added global `layout_health_autofix(fig, plot_id, mode, policy)` correction pass that runs after primary layout solving to detect/fix:
+  - excessive legend/x-label whitespace,
+  - legend/x-label overlap pressure,
+  - off-canvas legend/title/suptitle placement,
+  - over-compressed axes area.
+- Added persisted layout-health settings keys:
+  - `layout_health_autofix_enabled`
+  - `layout_health_strict_mode`
+  - `layout_health_emit_debug_events`
+  - `layout_health_max_passes`
+  - `layout_health_min_gap_pts`
+  - `layout_health_max_gap_pts`
+- Added Developer Tools -> Runtime / Advanced -> Layout Health controls and quick actions for runtime toggling/tuning and manual active-figure checks.
+- Compare tab is now fully vertically scrollable (whole tab wrapper), while preserving right-side panel scrolling.
+- Hardened Compare split persistence:
+  - sash release persistence,
+  - deferred settle persistence during geometry stabilization,
+  - retry-safe restore with clamped split fraction.
+- Added Compare-specific readability button helper and applied it across primary Compare controls and Compare popups to preserve full button-label readability under scaling.
+- Replaced Compare HTML scaffold with interactive HTML artifact generation:
+  - embedded plot images,
+  - KPI cards,
+  - client-side cycle-table filtering (all/positive/negative delta),
+  - yield table and diagnostics panel.
+- Added Compare report preference toggle `compare_tab.report_preferences.include_interactive_html` and `Report Options...` control in Compare tab.
+- Updated version metadata to `v4.6.2` in script header, `APP_VERSION`, and README.
 
 ### v4.6.1 Compare Responsiveness + Marker Correction + Ledger Ordering Upgrade
 - Compare load/apply workflows now use a full in-tab overlay (no popup splash), including async render preparation and stale-request guards to reduce UI freezes.
