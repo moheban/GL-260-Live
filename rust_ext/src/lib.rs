@@ -1,7 +1,7 @@
 use numpy::PyReadonlyArray1;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 const SOL_KA1: f64 = 4.45e-7;
 const SOL_KA2: f64 = 4.69e-11;
@@ -539,6 +539,181 @@ fn extract_fraction_field(dict: &Bound<'_, PyDict>, key: &str) -> Option<f64> {
     let fractions_any = dict.get_item("fractions").ok().flatten()?;
     let fractions = fractions_any.downcast::<PyDict>().ok()?;
     dict_optional_float_value(fractions, key)
+}
+
+fn dict_optional_finite_by_keys(dict: &Bound<'_, PyDict>, keys: &[&str]) -> Option<f64> {
+    for key in keys {
+        let Some(any_value) = dict.get_item(*key).ok().flatten() else {
+            continue;
+        };
+        let Ok(parsed) = any_value.extract::<f64>() else {
+            continue;
+        };
+        if parsed.is_finite() {
+            return Some(parsed);
+        }
+    }
+    None
+}
+
+fn compare_cycle_row_index(dict: &Bound<'_, PyDict>, fallback_index: usize) -> usize {
+    for key in ["cycle_id", "cycle", "cycle_number", "cycle_index", "index"] {
+        let Some(any_value) = dict.get_item(key).ok().flatten() else {
+            continue;
+        };
+        let Ok(parsed) = any_value.extract::<isize>() else {
+            continue;
+        };
+        if parsed >= 1 {
+            if let Ok(cycle_id) = usize::try_from(parsed) {
+                return cycle_id;
+            }
+        }
+    }
+    fallback_index.max(1)
+}
+
+#[pyfunction]
+#[pyo3(signature = (rows_a, rows_b))]
+fn compare_aligned_cycle_rows_core(
+    py: Python<'_>,
+    rows_a: &Bound<'_, PyList>,
+    rows_b: &Bound<'_, PyList>,
+) -> PyResult<Py<PyList>> {
+    // Keep Rust/Python parity for Compare cycle alignment and delta aggregation
+    // so table math remains identical across backend selection.
+    let uptake_keys = [
+        "selected_mass_g",
+        "selected_mass",
+        "co2_added_g",
+        "co2_added_mass_g",
+        "co2_mass_g",
+        "co2_g",
+        "cycle_mass_g",
+        "cycle_co2_mass_g",
+    ];
+    let cumulative_keys = [
+        "cumulative_co2_mass_g",
+        "cumulative_co2_added_mass_g",
+        "cumulative_co2_added_g",
+        "cumulative_co2_g",
+        "cumulative_added_g",
+        "cumulative_mass_g",
+    ];
+
+    let mut map_a: BTreeMap<usize, (Option<f64>, Option<f64>)> = BTreeMap::new();
+    let mut map_b: BTreeMap<usize, (Option<f64>, Option<f64>)> = BTreeMap::new();
+
+    for (idx, item) in rows_a.iter().enumerate() {
+        let Ok(entry) = item.downcast::<PyDict>() else {
+            continue;
+        };
+        let cycle_id = compare_cycle_row_index(&entry, idx + 1);
+        if map_a.contains_key(&cycle_id) {
+            continue;
+        }
+        let uptake = dict_optional_finite_by_keys(&entry, &uptake_keys);
+        let cumulative = dict_optional_finite_by_keys(&entry, &cumulative_keys);
+        map_a.insert(cycle_id, (uptake, cumulative));
+    }
+    for (idx, item) in rows_b.iter().enumerate() {
+        let Ok(entry) = item.downcast::<PyDict>() else {
+            continue;
+        };
+        let cycle_id = compare_cycle_row_index(&entry, idx + 1);
+        if map_b.contains_key(&cycle_id) {
+            continue;
+        }
+        let uptake = dict_optional_finite_by_keys(&entry, &uptake_keys);
+        let cumulative = dict_optional_finite_by_keys(&entry, &cumulative_keys);
+        map_b.insert(cycle_id, (uptake, cumulative));
+    }
+
+    let all_cycles: BTreeSet<usize> = map_a.keys().chain(map_b.keys()).copied().collect();
+    let rows = PyList::empty(py);
+    let mut last_cum_a = 0.0_f64;
+    let mut last_cum_b = 0.0_f64;
+    let mut valid_a = false;
+    let mut valid_b = false;
+
+    for cycle_id in all_cycles {
+        let (mut uptake_a, mut cum_a) = map_a.get(&cycle_id).copied().unwrap_or((None, None));
+        let (mut uptake_b, mut cum_b) = map_b.get(&cycle_id).copied().unwrap_or((None, None));
+        let prior_cum_a = if valid_a { last_cum_a } else { 0.0 };
+        let prior_cum_b = if valid_b { last_cum_b } else { 0.0 };
+
+        if uptake_a.is_none() {
+            if let Some(cum_val) = cum_a {
+                uptake_a = Some(cum_val - prior_cum_a);
+            }
+        }
+        if uptake_b.is_none() {
+            if let Some(cum_val) = cum_b {
+                uptake_b = Some(cum_val - prior_cum_b);
+            }
+        }
+        if cum_a.is_none() {
+            if let Some(uptake_val) = uptake_a {
+                cum_a = Some(last_cum_a + uptake_val);
+            }
+        }
+        if cum_b.is_none() {
+            if let Some(uptake_val) = uptake_b {
+                cum_b = Some(last_cum_b + uptake_val);
+            }
+        }
+        if let Some(cum_val) = cum_a {
+            last_cum_a = cum_val;
+            valid_a = true;
+        }
+        if let Some(cum_val) = cum_b {
+            last_cum_b = cum_val;
+            valid_b = true;
+        }
+        let delta_g = match (uptake_a, uptake_b) {
+            (Some(a), Some(b)) => Some(b - a),
+            _ => None,
+        };
+        let cum_delta_g = match (cum_a, cum_b) {
+            (Some(a), Some(b)) => Some(b - a),
+            _ => None,
+        };
+
+        let row = PyDict::new(py);
+        row.set_item("cycle", cycle_id)?;
+        if let Some(value) = uptake_a {
+            row.set_item("uptake_a_g", value)?;
+        } else {
+            row.set_item("uptake_a_g", py.None())?;
+        }
+        if let Some(value) = uptake_b {
+            row.set_item("uptake_b_g", value)?;
+        } else {
+            row.set_item("uptake_b_g", py.None())?;
+        }
+        if let Some(value) = delta_g {
+            row.set_item("delta_g", value)?;
+        } else {
+            row.set_item("delta_g", py.None())?;
+        }
+        if let Some(value) = cum_a {
+            row.set_item("cum_a_g", value)?;
+        } else {
+            row.set_item("cum_a_g", py.None())?;
+        }
+        if let Some(value) = cum_b {
+            row.set_item("cum_b_g", value)?;
+        } else {
+            row.set_item("cum_b_g", py.None())?;
+        }
+        if let Some(value) = cum_delta_g {
+            row.set_item("cum_delta_g", value)?;
+        } else {
+            row.set_item("cum_delta_g", py.None())?;
+        }
+        rows.append(row)?;
+    }
+    Ok(rows.unbind())
 }
 
 #[pyfunction]
@@ -1437,6 +1612,10 @@ fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
     )?)?;
     module.add_function(wrap_pyfunction!(
         final_report_cycle_timeline_rows_core,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        compare_aligned_cycle_rows_core,
         module
     )?)?;
     Ok(())

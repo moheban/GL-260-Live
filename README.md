@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.6.0)
+# GL-260 Data Analysis and Plotter (v4.6.1)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.6.0`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.6.1`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -28,6 +28,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.6.1 Compare Responsiveness + Marker Correction + Ledger Ordering Upgrade](#v461-compare-responsiveness--marker-correction--ledger-ordering-upgrade)
   - [v4.6.0 Compare + Ledger Tabs + Yield Comparison Workflow](#v460-compare--ledger-tabs--yield-comparison-workflow)
   - [v4.5.6 Rust Kernel Expansion + Layer-Aware Refresh Routing + Final Report Loader Upgrade](#v456-rust-kernel-expansion--layer-aware-refresh-routing--final-report-loader-upgrade)
   - [v4.5.5 First-Pass Combined Layout Fix + Manual Refresh Full Rebuild + Startup Rust Ready Status](#v455-first-pass-combined-layout-fix--manual-refresh-full-rebuild--startup-rust-ready-status)
@@ -989,6 +990,23 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.6.1 Compare Responsiveness + Marker Correction + Ledger Ordering Upgrade
+- Compare load/apply workflows now use a full in-tab overlay (no popup splash), including async render preparation and stale-request guards to reduce UI freezes.
+- Compare Layout Manager now applies deterministic Compare-local overrides for whitespace-sensitive controls (legend gap/margin, xlabel pad) and adds detached-axis spacing controls (`detached_spine_offset`, `detached_labelpad`).
+- Compare right-side Yield/Diagnostics region is vertically scrollable so lowering the pane sash no longer cuts off Yield Comparison content.
+- Added Compare marker-correction workflow with side-targeted popup actions:
+  - open the selected profile in Cycle Analysis for reassignment,
+  - pull current markers and apply to Compare,
+  - optionally persist manual markers back into the profile (`cycle_markers`).
+- Added Compare report generation artifacts (`PDF + CSV pack + HTML scaffold`) and status chips for backend path, marker source precedence, and report readiness.
+- Added Rust compare alignment kernel (`compare_aligned_cycle_rows_core`) with strict Python fallback parity for cycle-table aggregation.
+- Ledger schema/UI expanded with business identifiers and manual ordering:
+  - new columns: `Project #`, `Batch #`, `Item #`,
+  - persisted row order key: `display_order`,
+  - `Move Up` / `Move Down` actions operate in Manual Order mode and persist across restarts,
+  - sort mode now supports both `Manual Order` and `Column Sort` views.
+- Updated version metadata to `v4.6.1` in script header, `APP_VERSION`, and README.
 
 ### v4.6.0 Compare + Ledger Tabs + Yield Comparison Workflow
 - Added a new **Compare** tab with two-profile selection (A/B), profile swap, refresh, and side-by-side Combined Triple Axis rendering.
