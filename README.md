@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.6.3)
+# GL-260 Data Analysis and Plotter (v4.6.4)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.6.3`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.6.4`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -29,6 +29,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.6.4 Compare Rendering Whitespace + Pair Plot Elements + Side Cycle Windows](#v464-compare-rendering-whitespace--pair-plot-elements--side-cycle-windows)
   - [v4.6.3 Data Tab Profile Readout + Compare Column-Parity + Yield Visibility](#v463-data-tab-profile-readout--compare-column-parity--yield-visibility)
   - [v4.6.2 Compare UX + Layout-Health Engine + Interactive HTML Report](#v462-compare-ux--layout-health-engine--interactive-html-report)
   - [v4.6.1 Compare Responsiveness + Marker Correction + Ledger Ordering Upgrade](#v461-compare-responsiveness--marker-correction--ledger-ordering-upgrade)
@@ -1029,6 +1030,21 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.6.4 Compare Rendering Whitespace + Pair Plot Elements + Side Cycle Windows
+- Fixed persistent Compare pane whitespace by correcting compare-context legend/x-label gap auto-fix direction inside `layout_health_autofix(...)`, reducing excess vertical gap above the legend and below x-axis labeling in side-by-side panes.
+- Compare now builds per-profile render args from profile state/startup defaults (not live workspace UI), with profile-identity fallbacks when title fields are missing:
+  - `title_text` fallback: profile name
+  - `suptitle_text` fallback: dataset stem (or profile name)
+- Added Compare `Plot Elements...` dialog with pair-scoped A/B controls:
+  - Side A/B title and suptitle overrides
+  - `Retain saved profile plot elements` toggle
+  - `Hide text-family elements (keep spans/masks)` toggle (`text`, `callout`, `arrow`, `point` filtered only)
+  - `Reset to Loaded Profile`, `Apply`, and `Apply + Close` actions
+- Compare now retains and renders each loaded profile's own combined plot elements by default; suppression/filtering is controlled by the new pair-scoped dialog and persisted under `compare_tab.plot_elements_overrides_by_pair`.
+- Updated Compare marker-correction workflow so `Open In Cycle Analysis` opens/focuses a dedicated side-specific Cycle Analysis editor window (`A` or `B`) instead of replacing the current workspace profile.
+- `Pull Current Markers` in Compare marker editor now reads side-matched editor state only, then applies/saves through existing Compare override/profile save flows.
+- Updated version metadata to `v4.6.4` in script header, `APP_VERSION`, and README.
 
 ### v4.6.3 Data Tab Profile Readout + Compare Column-Parity + Yield Visibility
 - Added a Data tab `Current Workspace Profile` readout that always shows the active profile name and resolved profile path (`Not set` fallback when no profile is tracked).
