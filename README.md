@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.6.2)
+# GL-260 Data Analysis and Plotter (v4.6.3)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.6.2`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.6.3`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -29,6 +29,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.6.3 Data Tab Profile Readout + Compare Column-Parity + Yield Visibility](#v463-data-tab-profile-readout--compare-column-parity--yield-visibility)
   - [v4.6.2 Compare UX + Layout-Health Engine + Interactive HTML Report](#v462-compare-ux--layout-health-engine--interactive-html-report)
   - [v4.6.1 Compare Responsiveness + Marker Correction + Ledger Ordering Upgrade](#v461-compare-responsiveness--marker-correction--ledger-ordering-upgrade)
   - [v4.6.0 Compare + Ledger Tabs + Yield Comparison Workflow](#v460-compare--ledger-tabs--yield-comparison-workflow)
@@ -250,6 +251,7 @@ Purpose: load Excel workbooks and select one or multiple sheets.
 Key controls:
 - Excel file entry, Browse..., and Rescan File.
 - Mode: Single Sheet or Multiple Sheets.
+- Current Workspace Profile readout shows the tracked profile name and resolved profile path (`Not set` when no profile is active).
 - Single Sheet: select a sheet from a combo box, click Load Sheet Data, or click Import GL-260 CSV... to open the CSV import popup directly.
 - Multiple Sheets:
   - "Available Sheets" list and "Included Sheets (ordered)" list.
@@ -774,6 +776,12 @@ Key behavior:
 - Loading profiles does not auto-run comparison rendering.
 - Dragging the plot/table split sash persists `compare_tab.split_frac`; startup restore is clamped and retried during geometry settle.
 - Compare control buttons and Compare popup action buttons use readability-aware sizing/wrapping so labels remain readable under UI scaling.
+- Per-Cycle Uptake Comparison now mirrors Ledger-style column behavior:
+  - `View Mode` selector (`Standard`, `Tight`, `Fit to Content`)
+  - `Fit All Visible` action
+  - separator double-click single-column auto-fit
+  - manual column-width persistence and horizontal scrollbar support
+- Yield Comparison field/input spacing now uses responsive stacked layout with dynamic wraplength updates so input/output text stays visible without shrinking the uptake table area.
 
 Report workflow:
 - Run comparison first to generate fresh compare outputs.
@@ -1021,6 +1029,20 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.6.3 Data Tab Profile Readout + Compare Column-Parity + Yield Visibility
+- Added a Data tab `Current Workspace Profile` readout that always shows the active profile name and resolved profile path (`Not set` fallback when no profile is tracked).
+- Compare `Per-Cycle Uptake Comparison` now mirrors Ledger-style column workflow controls:
+  - `View Mode` selector (`Standard`, `Tight`, `Fit to Content`)
+  - `Fit All Visible` action
+  - separator double-click single-column auto-fit
+  - manual resize persistence and horizontal scrollbar support
+- Added Compare cycle-table persistence keys under `compare_tab`:
+  - `cycle_table_view_mode`
+  - `cycle_table_view_profiles`
+- Compare cycle-table manual CSV export now respects the current display-column order while keeping the canonical row payload schema for report compatibility.
+- Refactored Compare `Yield Comparison` input layout to responsive stacked fields and added dynamic wraplength updates for yield/diagnostics text, preventing right-pane clipping without shrinking the uptake table pane.
+- Updated version metadata to `v4.6.3` in script header, `APP_VERSION`, and README.
 
 ### v4.6.2 Compare UX + Layout-Health Engine + Interactive HTML Report
 - Added global `layout_health_autofix(fig, plot_id, mode, policy)` correction pass that runs after primary layout solving to detect/fix:
