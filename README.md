@@ -765,15 +765,18 @@ The Advanced Solubility and Equilibrium Engine models CO2 dissolution, carbonate
 - Generate planning guidance for dosing or reaction completion targets.
 
 ### Compare Tab Workflow and Reporting
-Use the Compare tab to load two profiles (A/B), render side-by-side Combined Triple Axis plots, and inspect cycle and yield deltas.
+Use the Compare tab to stage two profiles (A/B), then run side-by-side comparison renders for Combined Triple Axis plots and cycle/yield deltas.
 
 Key behavior:
 - The full Compare tab is vertically scrollable (outer wrapper), so controls remain reachable on shorter windows.
 - The right-side Yield/Diagnostics panel retains its own inner scrollbar behavior.
+- Compare execution is explicit: click `Load Profiles` to stage profile bundles, then click `Run Comparison` to render plots and rebuild the comparison table.
+- Loading profiles does not auto-run comparison rendering.
 - Dragging the plot/table split sash persists `compare_tab.split_frac`; startup restore is clamped and retried during geometry settle.
 - Compare control buttons and Compare popup action buttons use readability-aware sizing/wrapping so labels remain readable under UI scaling.
 
 Report workflow:
+- Run comparison first to generate fresh compare outputs.
 - Use `Generate Comparison Report...` to export compare artifacts.
 - Use `Report Options...` to toggle:
   - cycle table CSV
