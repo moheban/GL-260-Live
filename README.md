@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.6.4)
+# GL-260 Data Analysis and Plotter (v4.6.5)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.6.4`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.6.5`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -29,6 +29,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.6.5 Compare Debug Instrumentation + Side Cycle Parity](#v465-compare-debug-instrumentation--side-cycle-parity)
   - [v4.6.4 Compare Rendering Whitespace + Pair Plot Elements + Side Cycle Windows](#v464-compare-rendering-whitespace--pair-plot-elements--side-cycle-windows)
   - [v4.6.3 Data Tab Profile Readout + Compare Column-Parity + Yield Visibility](#v463-data-tab-profile-readout--compare-column-parity--yield-visibility)
   - [v4.6.2 Compare UX + Layout-Health Engine + Interactive HTML Report](#v462-compare-ux--layout-health-engine--interactive-html-report)
@@ -925,6 +926,13 @@ Developer tools (Tools -> Developer Tools...) provide:
   - `Enable Layout Health Debug Events` (emits under `plotting.layout` when debug logging/category is enabled)
   - numeric policy controls: `Max Passes`, `Min Legend-XLabel Gap (pt)`, `Max Legend-XLabel Gap (pt)`
   - quick actions: `Reset Layout Health Defaults`, `Run Layout Health Check on Active Figure`
+- Runtime / Advanced tab now includes a **Compare Debug** section:
+  - `Dump Compare Snapshot`
+  - `Dump Compare Whitespace`
+  - `Dump Side Editor State`
+- Compare `Load Diagnostics` panel now includes quick debug actions:
+  - `Debug Snapshot`
+  - `Debug Whitespace`
 - Runtime / Advanced now includes inline Rust backend install/repair progress (indeterminate loading bar + status text).
 - Rust install/repair failures always print a concise reason to terminal (`stderr`) and emit category-gated diagnostics under `rust.backend`.
 - Free-threading & GIL controls, dependency free-threading audit, regression checks, and timeline table export validation via dedicated dialogs/actions launched from the hub.
@@ -977,6 +985,7 @@ The debug/logging framework is centralized and off by default. Use the following
 Initial debug categories:
 - Core/Infrastructure: `ui.events`, `cache.render`, `perf.timing`
 - Plotting: `plotting.render`, `plotting.layout`, `plotting.legends`
+- Compare: `compare.render`, `compare.whitespace`, `compare.cycle_editor`
 - Cycle Analysis: `cycle.analysis`, `cycle.interaction`
 - Final Report: `report.build`, `report.figures`, `report.export`
 - Rust Backend: `rust.backend`
@@ -1030,6 +1039,28 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.6.5 Compare Debug Instrumentation + Side Cycle Parity
+- Added Compare-focused debug categories to Developer Tools Logging & Debug:
+  - `compare.render`
+  - `compare.whitespace`
+  - `compare.cycle_editor`
+- Added Compare debug quick actions in Developer Tools -> Runtime / Advanced:
+  - `Dump Compare Snapshot`
+  - `Dump Compare Whitespace`
+  - `Dump Side Editor State`
+- Added Compare-tab `Load Diagnostics` quick actions for rapid iteration:
+  - `Debug Snapshot`
+  - `Debug Whitespace`
+- Added unified Compare debug report emitters that always print structured payloads to terminal (`stderr`) and also emit category-gated `_dbg(...)` entries.
+- Added focused Compare diagnostics events at key boundaries:
+  - per-side profile load result,
+  - per-side render-context cycle extraction output,
+  - per-side render completion/error with whitespace metrics,
+  - side marker-editor recompute/pull/apply events.
+- Updated side Compare marker-assignment window (`Open In Cycle Analysis`) to include a Matplotlib toolbar for manual marker workflow parity.
+- Updated side Compare marker-assignment trace rendering to preserve NaN/non-finite separator breaks (no artificial line bridges across discontinuous profile segments).
+- Updated version metadata to `v4.6.5` in script header, `APP_VERSION`, and README.
 
 ### v4.6.4 Compare Rendering Whitespace + Pair Plot Elements + Side Cycle Windows
 - Fixed persistent Compare pane whitespace by correcting compare-context legend/x-label gap auto-fix direction inside `layout_health_autofix(...)`, reducing excess vertical gap above the legend and below x-axis labeling in side-by-side panes.
