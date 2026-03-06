@@ -29,6 +29,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.6.6 Compare Whitespace Finalization + Hybrid Auto/Manual Cycle Marker Mode](#v466-compare-whitespace-finalization--hybrid-automanual-cycle-marker-mode)
   - [v4.6.5 Compare Debug Instrumentation + Side Cycle Parity](#v465-compare-debug-instrumentation--side-cycle-parity)
   - [v4.6.4 Compare Rendering Whitespace + Pair Plot Elements + Side Cycle Windows](#v464-compare-rendering-whitespace--pair-plot-elements--side-cycle-windows)
   - [v4.6.3 Data Tab Profile Readout + Compare Column-Parity + Yield Visibility](#v463-data-tab-profile-readout--compare-column-parity--yield-visibility)
@@ -1039,6 +1040,22 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.6.6 Compare Whitespace Finalization + Hybrid Auto/Manual Cycle Marker Mode
+- Finalized Compare-pane layout-health context handling so post-build/finalize passes keep Compare-specific legend/x-label gap behavior active.
+- Prevented main-tab persisted combined legend anchor/loc state from leaking into Compare pane combined renders.
+- Added a new Cycle Analysis hybrid mode toggle under auto-detect:
+  - `Use automatic peak/troughs in manual edit mode`
+  - Visible only when `Enable automatic peak/trough detection` is enabled.
+  - Default is enabled.
+- Added new app setting key:
+  - `cycle_use_auto_markers_in_manual_edit_mode` (default `true`).
+- Extended cycle marker payload schema (`cycle_markers` and Compare-side marker overrides) with:
+  - `use_auto_markers_in_manual_mode` (defaults to `true` when missing for backward compatibility).
+- Updated main and Compare-side marker recompute flows so manual edits no longer implicitly collapse to empty marker sets when hybrid mode is enabled.
+- Preserved explicit manual-only workflows:
+  - `Clear All Markers` still keeps the plot empty until manual markers are added or auto-detect is re-run.
+- Updated Compare marker editor diagnostics/summaries to include hybrid marker-mode state.
 
 ### v4.6.5 Compare Debug Instrumentation + Side Cycle Parity
 - Added Compare-focused debug categories to Developer Tools Logging & Debug:
