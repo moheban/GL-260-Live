@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.6.5)
+# GL-260 Data Analysis and Plotter (v4.6.6)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.6.5`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.6.6`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -29,7 +29,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
-  - [v4.6.6 Compare Whitespace Finalization + Hybrid Auto/Manual Cycle Marker Mode](#v466-compare-whitespace-finalization--hybrid-automanual-cycle-marker-mode)
+  - [v4.6.6 Compare Rendering + Interactive HTML Unification](#v466-compare-rendering--interactive-html-unification)
   - [v4.6.5 Compare Debug Instrumentation + Side Cycle Parity](#v465-compare-debug-instrumentation--side-cycle-parity)
   - [v4.6.4 Compare Rendering Whitespace + Pair Plot Elements + Side Cycle Windows](#v464-compare-rendering-whitespace--pair-plot-elements--side-cycle-windows)
   - [v4.6.3 Data Tab Profile Readout + Compare Column-Parity + Yield Visibility](#v463-data-tab-profile-readout--compare-column-parity--yield-visibility)
@@ -789,11 +789,13 @@ Key behavior:
 Report workflow:
 - Run comparison first to generate fresh compare outputs.
 - Use `Generate Comparison Report...` to export compare artifacts.
+- Comparison report output source is the side-by-side Compare panes (not the detached Edit Plot window).
 - Use `Report Options...` to toggle:
   - cycle table CSV
   - yield summary in PDF/CSV
   - diagnostics TXT
   - interactive HTML report
+- Use `Plot Settings A...` / `Plot Settings B...` next to each side's `Edit Plot ...` button to open full side-local Plot Settings quickly.
 - Interactive HTML export is controlled by persisted key `compare_tab.report_preferences.include_interactive_html`.
 
 ### Final Report System - Export and PDF Assembly
@@ -804,6 +806,7 @@ Report pipeline:
 - Stitches PDF artifacts per section in the selected order.
 - Reuses the combined plot export when Preserve Export Layout is selected.
 - Live Final Report preview uses preview-only DPI scaling and opens at a page-sized, screen-clamped centered window for faster visual review.
+- Final Report tab includes `Interactive HTML Preview`, and Generate supports `HTML`, `PDF + HTML`, `PNG + HTML`, and `PDF + PNG + HTML`.
 
 Section ordering and inclusion:
 - Section selection and ordering are state-driven and persisted in settings.
@@ -1041,21 +1044,25 @@ Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
 
-### v4.6.6 Compare Whitespace Finalization + Hybrid Auto/Manual Cycle Marker Mode
-- Finalized Compare-pane layout-health context handling so post-build/finalize passes keep Compare-specific legend/x-label gap behavior active.
-- Prevented main-tab persisted combined legend anchor/loc state from leaking into Compare pane combined renders.
-- Added a new Cycle Analysis hybrid mode toggle under auto-detect:
-  - `Use automatic peak/troughs in manual edit mode`
-  - Visible only when `Enable automatic peak/trough detection` is enabled.
-  - Default is enabled.
-- Added new app setting key:
-  - `cycle_use_auto_markers_in_manual_edit_mode` (default `true`).
-- Extended cycle marker payload schema (`cycle_markers` and Compare-side marker overrides) with:
-  - `use_auto_markers_in_manual_mode` (defaults to `true` when missing for backward compatibility).
-- Updated main and Compare-side marker recompute flows so manual edits no longer implicitly collapse to empty marker sets when hybrid mode is enabled.
-- Preserved explicit manual-only workflows:
-  - `Clear All Markers` still keeps the plot empty until manual markers are added or auto-detect is re-run.
-- Updated Compare marker editor diagnostics/summaries to include hybrid marker-mode state.
+### v4.6.6 Compare Rendering + Interactive HTML Unification
+- Fixed Compare combined render drift where x-axis labels could be pushed into the plot area under side-by-side/layout-manager edge cases.
+- Added compare post-solve legend visibility recovery so off-canvas main legends are re-anchored and remain visible in Compare render contexts.
+- Replaced Edit Plot A/B popup preview cloning with deterministic side render rebuilds, resolving detached third-axis offset drift, label-size mismatch, and clipping/cutoff behavior.
+- Added side-local quick buttons in Compare:
+  - `Plot Settings A...`
+  - `Plot Settings B...`
+  These open the full Plot Settings surface in compare-only pair+side scope (no profile-global writes).
+- Added persisted Compare-side quick settings maps under `compare_tab`:
+  - `side_plot_settings_overrides_by_pair`
+  - `side_layout_overrides_by_pair`
+- Clarified report authority in Compare UI/editor/docs:
+  - Comparison report uses the side-by-side Compare panes as the output source.
+- Upgraded interactive HTML generation into a shared renderer and applied it to:
+  - Compare interactive report output
+  - Final Report interactive HTML preview/export
+- Final Report generation dialog now supports:
+  - `PDF`, `PNG`, `HTML`, `PDF + PNG`, `PDF + HTML`, `PNG + HTML`, `PDF + PNG + HTML`
+- Updated version metadata to `v4.6.6` in script header, `APP_VERSION`, and README.
 
 ### v4.6.5 Compare Debug Instrumentation + Side Cycle Parity
 - Added Compare-focused debug categories to Developer Tools Logging & Debug:
