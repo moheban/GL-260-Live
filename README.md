@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.6.6)
+# GL-260 Data Analysis and Plotter (v4.6.7)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.6.6`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.6.7`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -29,6 +29,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.6.7 Startup Interactivity + Profile-Exact Compare Rendering](#v467-startup-interactivity--profile-exact-compare-rendering)
   - [v4.6.6 Compare Rendering + Interactive HTML Unification](#v466-compare-rendering--interactive-html-unification)
   - [v4.6.5 Compare Debug Instrumentation + Side Cycle Parity](#v465-compare-debug-instrumentation--side-cycle-parity)
   - [v4.6.4 Compare Rendering Whitespace + Pair Plot Elements + Side Cycle Windows](#v464-compare-rendering-whitespace--pair-plot-elements--side-cycle-windows)
@@ -1043,6 +1044,21 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.6.7 Startup Interactivity + Profile-Exact Compare Rendering
+- Startup restore policy now supports interactive-first reveal with deferred background restore (`startup_autorestore_mode="background"`), so startup interactivity no longer waits on autosave/workbook restore completion.
+- Compare side-by-side rendering is now profile-exact by default:
+  - each side uses only that profile's own `plot_settings`, `layout_profiles`, `plot_elements`, title, and suptitle,
+  - Compare preset/layout/side override layers are no longer applied at render time.
+- Compare controls that imply render-time side/style overrides now show Profile-Exact mode messaging.
+- Added Compare-local main legend toggle:
+  - persisted as `compare_tab.show_main_legend` (default `True`),
+  - wired to side-by-side render context without mutating profile files.
+- Fixed Compare legend/xlabel rendering stability:
+  - strengthened main-legend visibility guard to recover clipped/off-canvas legends,
+  - added compare xlabel placement guard so the x-label remains below the primary axis band.
+- Compare button text uses white foreground in `_compare_make_button` for improved readability.
+- Updated version metadata to `v4.6.7` in script header, `APP_VERSION`, and README.
 
 ### v4.6.6 Compare Rendering + Interactive HTML Unification
 - Fixed Compare combined render drift where x-axis labels could be pushed into the plot area under side-by-side/layout-manager edge cases.
