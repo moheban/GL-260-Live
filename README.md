@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.6.7)
+# GL-260 Data Analysis and Plotter (v4.6.8)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.6.7`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.6.8`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -29,6 +29,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.6.8 Compare Auto-Title Parity](#v468-compare-auto-title-parity)
   - [v4.6.7 Startup Interactivity + Profile-Exact Compare Rendering](#v467-startup-interactivity--profile-exact-compare-rendering)
   - [v4.6.6 Compare Rendering + Interactive HTML Unification](#v466-compare-rendering--interactive-html-unification)
   - [v4.6.5 Compare Debug Instrumentation + Side Cycle Parity](#v465-compare-debug-instrumentation--side-cycle-parity)
@@ -1044,6 +1045,16 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.6.8 Compare Auto-Title Parity
+- Compare now resolves each loaded profile title through the same auto-title pipeline used by Plot Settings (`_resolve_effective_title(..., preview=True)`), so side labels/report title metadata match profile auto-generated title output.
+- Compare bundle build now persists `effective_compare_title` and seeds compare render args/default title fallback from that resolved value.
+- Compare-side title fallback resolution now prefers `effective_compare_title` before raw `args[12]` fallback paths.
+- Added regression coverage for side-B auto-title parity across:
+  - compare bundle metadata,
+  - compare title defaults,
+  - compare side render title metadata.
+- Updated version metadata to `v4.6.8` in script header, `APP_VERSION`, and README.
 
 ### v4.6.7 Startup Interactivity + Profile-Exact Compare Rendering
 - Startup restore policy now supports interactive-first reveal with deferred background restore (`startup_autorestore_mode="background"`), so startup interactivity no longer waits on autosave/workbook restore completion.
