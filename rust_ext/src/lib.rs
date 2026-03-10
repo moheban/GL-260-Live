@@ -1,6 +1,7 @@
 use numpy::PyReadonlyArray1;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyAny, PyDict, PyList};
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 const SOL_KA1: f64 = 4.45e-7;
@@ -524,6 +525,154 @@ fn format_optional_decimal(value: Option<f64>, precision: usize) -> String {
     }
 }
 
+fn py_any_to_trimmed_string(value: &Bound<'_, PyAny>) -> String {
+    if let Ok(text) = value.extract::<String>() {
+        return text.trim().to_string();
+    }
+    value
+        .str()
+        .ok()
+        .and_then(|text| text.to_str().ok())
+        .map(|text| text.trim().to_string())
+        .unwrap_or_default()
+}
+
+fn dict_string_value(dict: &Bound<'_, PyDict>, key: &str) -> String {
+    let Some(value) = dict.get_item(key).ok().flatten() else {
+        return String::new();
+    };
+    py_any_to_trimmed_string(&value)
+}
+
+fn dict_custom_map(dict: &Bound<'_, PyDict>) -> Option<Bound<'_, PyDict>> {
+    let custom_any = dict.get_item("custom_values").ok().flatten()?;
+    custom_any.downcast::<PyDict>().ok()
+}
+
+fn dict_custom_optional_float_value(dict: &Bound<'_, PyDict>, key: &str) -> Option<f64> {
+    let custom_map = dict_custom_map(dict)?;
+    let value = custom_map.get_item(key).ok().flatten()?;
+    let parsed = value.extract::<f64>().ok()?;
+    if parsed.is_finite() {
+        Some(parsed)
+    } else {
+        None
+    }
+}
+
+fn dict_custom_string_value(dict: &Bound<'_, PyDict>, key: &str) -> String {
+    let Some(custom_map) = dict_custom_map(dict) else {
+        return String::new();
+    };
+    let Some(value) = custom_map.get_item(key).ok().flatten() else {
+        return String::new();
+    };
+    py_any_to_trimmed_string(&value)
+}
+
+fn is_ledger_builtin_numeric_key(key: &str) -> bool {
+    matches!(
+        key,
+        "final_mass_g"
+            | "final_pH"
+            | "cycles"
+            | "total_dp_uptake"
+            | "theoretical_yield_g"
+            | "actual_yield_pct"
+    )
+}
+
+fn is_ledger_builtin_date_key(key: &str) -> bool {
+    matches!(key, "run_date" | "updated_at")
+}
+
+fn ledger_sort_numeric_value(dict: &Bound<'_, PyDict>, sort_key: &str) -> Option<f64> {
+    if is_ledger_builtin_numeric_key(sort_key) {
+        return dict_optional_float_value(dict, sort_key);
+    }
+    dict_custom_optional_float_value(dict, sort_key)
+}
+
+fn ledger_sort_text_value(dict: &Bound<'_, PyDict>, sort_key: &str) -> String {
+    if is_ledger_builtin_date_key(sort_key)
+        || is_ledger_builtin_numeric_key(sort_key)
+        || matches!(
+            sort_key,
+            "profile_name" | "project_number" | "batch_number" | "item_number" | "notes" | "id"
+        )
+    {
+        return dict_string_value(dict, sort_key);
+    }
+    let custom_value = dict_custom_string_value(dict, sort_key);
+    if !custom_value.is_empty() {
+        return custom_value;
+    }
+    dict_string_value(dict, sort_key)
+}
+
+fn parse_int_prefix(raw: &str) -> Option<i64> {
+    let digits: String = raw.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse::<i64>().ok()
+}
+
+fn parse_iso_datetime_sort_token(text: &str) -> Option<i64> {
+    let trimmed = text.trim();
+    let bytes = trimmed.as_bytes();
+    if bytes.len() < 10 {
+        return None;
+    }
+    if bytes.get(4).copied() != Some(b'-') || bytes.get(7).copied() != Some(b'-') {
+        return None;
+    }
+    let date_part = std::str::from_utf8(&bytes[0..10]).ok()?;
+    let mut date_tokens = date_part.split('-');
+    let year = date_tokens.next()?.parse::<i64>().ok()?;
+    let month = date_tokens.next()?.parse::<i64>().ok()?;
+    let day = date_tokens.next()?.parse::<i64>().ok()?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let mut hour = 0_i64;
+    let mut minute = 0_i64;
+    let mut second = 0_i64;
+    if bytes.len() > 10 {
+        let separator = bytes.get(10).copied()?;
+        if !matches!(separator, b'T' | b't' | b' ') {
+            return None;
+        }
+        let time_part = std::str::from_utf8(bytes.get(11..).unwrap_or_default()).ok()?;
+        let mut time_tokens = time_part.split(':');
+        if let Some(raw_hour) = time_tokens.next() {
+            hour = parse_int_prefix(raw_hour).unwrap_or(0);
+        }
+        if let Some(raw_minute) = time_tokens.next() {
+            minute = parse_int_prefix(raw_minute).unwrap_or(0);
+        }
+        if let Some(raw_second) = time_tokens.next() {
+            second = parse_int_prefix(raw_second).unwrap_or(0);
+        }
+        hour = hour.clamp(0, 23);
+        minute = minute.clamp(0, 59);
+        second = second.clamp(0, 59);
+    }
+    Some((((((year * 100) + month) * 100 + day) * 100 + hour) * 100 + minute) * 100 + second)
+}
+
+fn ledger_sort_date_value(dict: &Bound<'_, PyDict>, sort_key: &str) -> Option<i64> {
+    let raw_value = if is_ledger_builtin_date_key(sort_key) {
+        dict_string_value(dict, sort_key)
+    } else {
+        dict_custom_string_value(dict, sort_key)
+    };
+    if raw_value.is_empty() {
+        return None;
+    }
+    parse_iso_datetime_sort_token(&raw_value)
+}
+
 fn normalize_fraction_value(value: Option<f64>) -> f64 {
     let mut normalized = value.unwrap_or(0.0);
     if normalized > 1.0 {
@@ -714,6 +863,244 @@ fn compare_aligned_cycle_rows_core(
         rows.append(row)?;
     }
     Ok(rows.unbind())
+}
+
+#[pyfunction]
+#[pyo3(signature = (entries, filter_value, sort_mode, sort_key, sort_desc, sort_column_type))]
+fn ledger_sort_filter_indices_core(
+    entries: &Bound<'_, PyList>,
+    filter_value: &str,
+    sort_mode: &str,
+    sort_key: &str,
+    sort_desc: bool,
+    sort_column_type: &str,
+) -> PyResult<Option<Vec<usize>>> {
+    // Prepare filtered/sorted row indices for Ledger table refresh while keeping
+    // schema handling deterministic and fallback-safe.
+    #[derive(Clone)]
+    struct RowSortData {
+        idx: usize,
+        display_order: i64,
+        updated_at: String,
+        row_id: String,
+        number_value: Option<f64>,
+        date_value: Option<i64>,
+        text_value: String,
+    }
+
+    let mode_token = match sort_mode.trim().to_ascii_lowercase().as_str() {
+        "column" | "column sort" => "column",
+        _ => "manual",
+    };
+    let column_type = sort_column_type.trim().to_ascii_lowercase();
+    if mode_token == "column" && column_type == "formula" {
+        return Ok(None);
+    }
+    let normalized_sort_key = {
+        let candidate = sort_key.trim();
+        if candidate.is_empty() {
+            "updated_at"
+        } else {
+            candidate
+        }
+    };
+    let filter_token = filter_value.trim().to_ascii_lowercase();
+    let apply_filter = !filter_token.is_empty() && filter_token != "all profiles";
+    let mut rows: Vec<RowSortData> = Vec::new();
+    for (idx, item) in entries.iter().enumerate() {
+        let Ok(entry) = item.downcast::<PyDict>() else {
+            continue;
+        };
+        let profile_lower = dict_string_value(&entry, "profile_name").to_ascii_lowercase();
+        if apply_filter && profile_lower != filter_token {
+            continue;
+        }
+        let display_order = entry
+            .get_item("display_order")
+            .ok()
+            .flatten()
+            .and_then(|value| value.extract::<i64>().ok())
+            .unwrap_or(0);
+        let updated_at = dict_string_value(&entry, "updated_at");
+        let row_id = dict_string_value(&entry, "id");
+        let number_value = if column_type == "number" {
+            ledger_sort_numeric_value(&entry, normalized_sort_key)
+        } else {
+            None
+        };
+        let date_value = if column_type == "date" {
+            ledger_sort_date_value(&entry, normalized_sort_key)
+        } else {
+            None
+        };
+        let text_value = if column_type == "text" {
+            ledger_sort_text_value(&entry, normalized_sort_key).to_ascii_lowercase()
+        } else {
+            String::new()
+        };
+        rows.push(RowSortData {
+            idx,
+            display_order,
+            updated_at,
+            row_id,
+            number_value,
+            date_value,
+            text_value,
+        });
+    }
+
+    if mode_token == "manual" {
+        rows.sort_by(|left, right| {
+            (
+                left.display_order,
+                left.updated_at.as_str(),
+                left.row_id.as_str(),
+            )
+                .cmp(&(
+                    right.display_order,
+                    right.updated_at.as_str(),
+                    right.row_id.as_str(),
+                ))
+        });
+        return Ok(Some(rows.into_iter().map(|row| row.idx).collect()));
+    }
+
+    match column_type.as_str() {
+        "number" => {
+            rows.sort_by(|left, right| {
+                let left_missing = left.number_value.is_none();
+                let right_missing = right.number_value.is_none();
+                if left_missing != right_missing {
+                    return if sort_desc {
+                        if left_missing {
+                            Ordering::Less
+                        } else {
+                            Ordering::Greater
+                        }
+                    } else if left_missing {
+                        Ordering::Greater
+                    } else {
+                        Ordering::Less
+                    };
+                }
+                match (left.number_value, right.number_value) {
+                    (Some(a), Some(b)) => {
+                        if sort_desc {
+                            b.partial_cmp(&a).unwrap_or(Ordering::Equal)
+                        } else {
+                            a.partial_cmp(&b).unwrap_or(Ordering::Equal)
+                        }
+                    }
+                    _ => Ordering::Equal,
+                }
+            });
+        }
+        "date" => {
+            rows.sort_by(|left, right| {
+                let left_missing = left.date_value.is_none();
+                let right_missing = right.date_value.is_none();
+                if left_missing != right_missing {
+                    return if sort_desc {
+                        if left_missing {
+                            Ordering::Less
+                        } else {
+                            Ordering::Greater
+                        }
+                    } else if left_missing {
+                        Ordering::Greater
+                    } else {
+                        Ordering::Less
+                    };
+                }
+                match (left.date_value, right.date_value) {
+                    (Some(a), Some(b)) => {
+                        if sort_desc {
+                            b.cmp(&a)
+                        } else {
+                            a.cmp(&b)
+                        }
+                    }
+                    _ => Ordering::Equal,
+                }
+            });
+        }
+        _ => {
+            rows.sort_by(|left, right| {
+                if sort_desc {
+                    right.text_value.cmp(&left.text_value)
+                } else {
+                    left.text_value.cmp(&right.text_value)
+                }
+            });
+        }
+    }
+    Ok(Some(rows.into_iter().map(|row| row.idx).collect()))
+}
+
+#[pyfunction]
+#[pyo3(signature = (cycle_rows, total_drop_value=None, reaction_basis=None))]
+fn ledger_prefill_metrics_core(
+    py: Python<'_>,
+    cycle_rows: &Bound<'_, PyList>,
+    total_drop_value: Option<f64>,
+    reaction_basis: Option<Bound<'_, PyDict>>,
+) -> PyResult<Py<PyDict>> {
+    // Extract Ledger add-from-profile metrics in Rust while preserving Python
+    // fallback parity and schema expectations.
+    let cumulative_keys = [
+        "cumulative_co2_mass_g",
+        "cumulative_co2_added_mass_g",
+        "cumulative_co2_added_g",
+        "cumulative_co2_g",
+        "cumulative_added_g",
+        "cumulative_mass_g",
+    ];
+    let mut normalized_rows: Vec<Bound<'_, PyDict>> = Vec::new();
+    for item in cycle_rows.iter() {
+        let Ok(entry) = item.downcast::<PyDict>() else {
+            continue;
+        };
+        normalized_rows.push(entry);
+    }
+    let mut total_drop = total_drop_value.filter(|value| value.is_finite() && *value >= 0.0);
+    if total_drop.is_none() {
+        if let Some(last_row) = normalized_rows.last() {
+            total_drop = dict_optional_finite_by_keys(last_row, &cumulative_keys)
+                .filter(|value| value.is_finite() && *value >= 0.0);
+        }
+    }
+    let basis = reaction_basis.as_ref();
+    let start_mass = basis.and_then(|dict| dict_optional_float_value(dict, "starting_mass_g"));
+    let start_mw =
+        basis.and_then(|dict| dict_optional_float_value(dict, "starting_material_mw_g_mol"));
+    let stoich =
+        basis.and_then(|dict| dict_optional_float_value(dict, "stoich_mol_gas_per_mol_starting"));
+    let gas_mw = basis.and_then(|dict| dict_optional_float_value(dict, "gas_molar_mass"));
+    let theoretical = match (start_mass, start_mw, stoich, gas_mw) {
+        (Some(mass), Some(mw), Some(st), Some(gas))
+            if mw > 0.0 && st > 0.0 && gas > 0.0 && mass >= 0.0 =>
+        {
+            Some((mass / mw) * st * gas)
+        }
+        _ => None,
+    };
+    let out = PyDict::new(py);
+    if normalized_rows.is_empty() {
+        out.set_item("cycles", py.None())?;
+    } else {
+        out.set_item("cycles", normalized_rows.len())?;
+    }
+    if let Some(value) = total_drop {
+        out.set_item("total_dp_uptake", value)?;
+    } else {
+        out.set_item("total_dp_uptake", py.None())?;
+    }
+    if let Some(value) = theoretical {
+        out.set_item("theoretical_yield_g", value)?;
+    } else {
+        out.set_item("theoretical_yield_g", py.None())?;
+    }
+    Ok(out.unbind())
 }
 
 #[pyfunction]
@@ -1618,5 +2005,10 @@ fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
         compare_aligned_cycle_rows_core,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(
+        ledger_sort_filter_indices_core,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(ledger_prefill_metrics_core, module)?)?;
     Ok(())
 }
