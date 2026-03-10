@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.6.8)
+# GL-260 Data Analysis and Plotter (v4.6.9)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.6.8`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.6.9`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -29,6 +29,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.6.9 Compare Side Plot Settings Re-Enable + Compare-Scoped Persistence](#v469-compare-side-plot-settings-re-enable--compare-scoped-persistence)
   - [v4.6.8 Compare Auto-Title Parity](#v468-compare-auto-title-parity)
   - [v4.6.7 Startup Interactivity + Profile-Exact Compare Rendering](#v467-startup-interactivity--profile-exact-compare-rendering)
   - [v4.6.6 Compare Rendering + Interactive HTML Unification](#v466-compare-rendering--interactive-html-unification)
@@ -798,6 +799,8 @@ Report workflow:
   - diagnostics TXT
   - interactive HTML report
 - Use `Plot Settings A...` / `Plot Settings B...` next to each side's `Edit Plot ...` button to open full side-local Plot Settings quickly.
+- In Profile-Exact mode, `Plot Settings A/B...` remains available and applies compare-scoped side overrides only (no profile JSON writes).
+- Compare side Plot Settings edits persist in `settings.json` under `compare_tab.side_plot_settings_overrides_by_pair` and `compare_tab.side_layout_overrides_by_pair`.
 - Interactive HTML export is controlled by persisted key `compare_tab.report_preferences.include_interactive_html`.
 
 ### Final Report System - Export and PDF Assembly
@@ -1045,6 +1048,21 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.6.9 Compare Side Plot Settings Re-Enable + Compare-Scoped Persistence
+- Re-enabled Compare `Plot Settings A...` / `Plot Settings B...` in Profile-Exact mode so each side can open the full Combined Plot Settings popup directly from Compare.
+- Side popup defaults now stage profile-native settings plus the current compare-side override payload for that pair+side.
+- Compare-side Plot Settings applies now persist only to compare state (`settings.json` under `compare_tab`) and do not mutate profile JSON files.
+- Compare side bundles are now refreshed from base profile state + persisted pair+side overrides during both:
+  - `Load Profiles` staging, and
+  - side Plot Settings apply.
+  This keeps side-by-side render behavior bundle-driven while making compare-scoped edits immediately visible.
+- Updated Profile-Exact Compare messaging to clarify that `Plot Settings A/B...` is an explicit compare-scoped override surface.
+- Added regression coverage for:
+  - side-bundle override refresh payload merge,
+  - load-stage side override reapply,
+  - side Plot Settings apply finalize path (rerender + idle lock-x sync).
+- Updated version metadata to `v4.6.9` in script header, `APP_VERSION`, and README.
 
 ### v4.6.8 Compare Auto-Title Parity
 - Compare now resolves each loaded profile title through the same auto-title pipeline used by Plot Settings (`_resolve_effective_title(..., preview=True)`), so side labels/report title metadata match profile auto-generated title output.
