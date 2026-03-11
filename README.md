@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.7.0)
+# GL-260 Data Analysis and Plotter (v4.7.1)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.7.0`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.7.1`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -29,6 +29,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.7.1 Rust Acceleration Expansion for Advanced Speciation and Equilibrium](#v471-rust-acceleration-expansion-for-advanced-speciation-and-equilibrium)
   - [v4.7.0 Process Profile Multi-Window Launch + Analysis Forensics](#v470-process-profile-multi-window-launch--analysis-forensics)
   - [v4.6.9 Compare Side Plot Settings Re-Enable + Compare-Scoped Persistence](#v469-compare-side-plot-settings-re-enable--compare-scoped-persistence)
   - [v4.6.8 Compare Auto-Title Parity](#v468-compare-auto-title-parity)
@@ -105,7 +106,13 @@ These modules are imported unconditionally at startup:
 #### Optional Rust acceleration (`v4.0.0` introduced, `v4.1.0` expanded)
 - The app can offload heavy bicarbonate/speciation timeline math to `gl260_rust_ext` when available.
 - `v4.1.0` expands Rust acceleration into combined triple-axis numeric precompute paths (decimation index selection, cycle segmentation merge logic, and cycle metrics/transfer payload assembly).
+- `v4.7.1` extends Rust acceleration into advanced speciation/equilibrium cores across all supported model families:
+  - carbonate-state root solve (`closed_carbon` and `fixed_pCO2`),
+  - forced-pH distribution iterative core,
+  - Aqion closed-system speciation/root solve,
+  - NaOH-CO2 Pitzer total-carbon planning solve.
 - If Rust is unavailable, calculations continue on the existing Python path (authoritative fallback).
+- If Rust raises any runtime error or returns malformed payloads, Python fallback remains authoritative for chemistry outputs.
 - `v4.5.4` adds startup Rust preflight. After startup splash teardown, the app checks Rust readiness and prompts before workflow interaction.
 - `v4.5.5` extends startup preflight with an always-visible startup Rust status dialog for Rust-ready runtimes:
   - `Rust backend ready` (shows executable/ABI/module path for the active runtime)
@@ -757,6 +764,7 @@ The Advanced Solubility and Equilibrium Engine models CO2 dissolution, carbonate
 - Import cycle payloads or manually enter CO2/NaOH inputs.
 - Run the solver to generate speciation, pH, and saturation metrics.
 - As of `v2.12.3`, manual Analysis CO2 charged values are preserved, Planning NaOH inputs persist after runs, and heavy solver work is executed asynchronously.
+- As of `v4.7.1`, advanced-engine solver cores can run on Rust across Debye/Davies/Pitzer-lite, Aqion closed-system, and NaOH-CO2 Pitzer planning paths with per-kernel auto-policy gating; Python fallback remains the authoritative path on any Rust error.
 
 #### 4) Visualization Outputs
 - Species concentration plots and saturation summaries.
@@ -1049,6 +1057,26 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.7.1 Rust Acceleration Expansion for Advanced Speciation and Equilibrium
+- Expanded optional Rust acceleration into advanced speciation/equilibrium kernels:
+  - carbonate-state core solve for both `closed_carbon` and `fixed_pCO2` paths,
+  - forced-pH distribution iterative core,
+  - Aqion closed-system root/speciation core,
+  - NaOH-CO2 Pitzer planning total-carbon solve core.
+- Added new Python Rust-bridge wrappers with strict payload sanitization and fail-closed fallback behavior:
+  - `_rust_carbonate_state_core(...)`
+  - `_rust_forced_ph_distribution_core(...)`
+  - `_rust_aqion_closed_speciation_core(...)`
+  - `_rust_pitzer_solve_total_carbon_core(...)`
+- Wired advanced-engine call sites to Rust-first execution under existing runtime policy semantics, with authoritative Python fallback on any Rust import/runtime/payload error.
+- Added synthetic benchmark payload helpers and per-kernel auto-policy keys for the new chemistry kernels:
+  - `speciation_carbonate_state_core`
+  - `speciation_forced_ph_distribution_core`
+  - `aqion_closed_speciation_core`
+  - `pitzer_solve_total_carbon_core`
+- Added regression coverage for wrapper fallback/sanitization, representative Rust/Python chemistry parity checks (including NaOH-CO2 Pitzer low-carbon, equivalence, and ~900 g trajectory scenarios), and persisted auto-policy key coverage.
+- Updated version metadata to `v4.7.1` in script header, `APP_VERSION`, and README.
 
 ### v4.7.0 Process Profile Multi-Window Launch + Analysis Forensics
 - Added Process Profiles multi-window launch support with a new `Open Profile in New Program Copy` action that starts a child app process and auto-loads the selected profile via `--open-profile`.

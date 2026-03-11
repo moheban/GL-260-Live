@@ -1,4 +1,5 @@
 use numpy::PyReadonlyArray1;
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList};
 use std::cmp::Ordering;
@@ -20,6 +21,16 @@ const PLANNING_PLATEAU_CARBONATE_THRESHOLD: f64 = 1e-9;
 const PLANNING_PLATEAU_RELATIVE_THRESHOLD: f64 = 0.02;
 const PLANNING_PLATEAU_PH_MIN: f64 = 8.0;
 const PLANNING_PLATEAU_PH_MAX: f64 = 8.3;
+const SPEC_MODE_FIXED_PCO2: &str = "fixed_pco2";
+const SPEC_MODE_CLOSED: &str = "closed_carbon";
+const AQION_DEFAULT_PH_LOW: f64 = 2.0;
+const AQION_DEFAULT_PH_HIGH: f64 = 12.5;
+const PITZER_A_PHI_25C: f64 = 0.392;
+const PITZER_B_DH: f64 = 1.2;
+const PITZER_ALPHA_B1: f64 = 2.0;
+const PITZER_KA1: f64 = 4.5983285677e-7;
+const PITZER_KA2: f64 = 4.5782552279169414e-11;
+const PITZER_KW: f64 = 1e-14;
 
 #[derive(Clone, Copy)]
 struct LedgerState {
@@ -300,6 +311,493 @@ fn solve_carbonate_state(
         }
     }
     Err("Equilibrium solver did not converge".to_string())
+}
+
+fn normalize_speciation_mode(mode: &str) -> &str {
+    let token = mode.trim().to_ascii_lowercase();
+    if token == SPEC_MODE_FIXED_PCO2 {
+        SPEC_MODE_FIXED_PCO2
+    } else {
+        SPEC_MODE_CLOSED
+    }
+}
+
+fn solve_carbonate_state_open(
+    na_conc: f64,
+    ka1: f64,
+    ka2: f64,
+    kw: f64,
+    ionic_strength_cap: Option<f64>,
+    initial_ph_guess: f64,
+    fixed_h2co3: f64,
+) -> Result<(f64, f64, f64, f64, f64, [f64; 5], f64), String> {
+    let na_conc = na_conc.max(0.0);
+    let fixed_h2co3 = fixed_h2co3.max(1e-16);
+    let residuals = |log_vars: &[f64]| -> Vec<f64> {
+        let h = 10f64.powf(log_vars[0]);
+        let hco3 = 10f64.powf(log_vars[1]);
+        let co3 = 10f64.powf(log_vars[2]);
+        let (_, gammas, oh) = solubility_ionic_state(na_conc, h, hco3, co3, kw, ionic_strength_cap);
+        let ka1_actual = (gammas[1] * gammas[2] * h * hco3) / fixed_h2co3.max(1e-16);
+        let ka2_actual = (gammas[1] * gammas[3] * h * co3) / (gammas[2] * hco3.max(1e-16));
+        vec![
+            (ka1_actual / ka1.max(1e-30)).log10(),
+            (ka2_actual / ka2.max(1e-30)).log10(),
+            na_conc + h - hco3 - 2.0 * co3 - oh,
+        ]
+    };
+    let guess_ph_values = [initial_ph_guess, 8.2, 7.8, 9.0];
+    for ph_guess in guess_ph_values {
+        let h = 10f64.powf(-ph_guess);
+        let hco3_guess = ((ka1 * fixed_h2co3) / h.max(1e-16)).max(1e-16);
+        let co3_guess = ((ka2 * hco3_guess) / h.max(1e-16)).max(1e-16);
+        let guess = vec![h.log10(), hco3_guess.log10(), co3_guess.log10()];
+        if let Ok(sol) = newton_system_solve(&residuals, guess, 1e-12, 60) {
+            let h = 10f64.powf(sol[0]);
+            let hco3 = 10f64.powf(sol[1]);
+            let co3 = 10f64.powf(sol[2]);
+            let (ionic_strength, gammas, oh) =
+                solubility_ionic_state(na_conc, h, hco3, co3, kw, ionic_strength_cap);
+            return Ok((h, hco3, co3, fixed_h2co3, oh, gammas, ionic_strength));
+        }
+    }
+    Err("Fixed-pCO2 equilibrium solver did not converge".to_string())
+}
+
+fn solve_carbonate_state_with_mode(
+    total_carbon_m: f64,
+    na_conc: f64,
+    ka1: f64,
+    ka2: f64,
+    kw: f64,
+    ionic_strength_cap: Option<f64>,
+    initial_ph_guess: f64,
+    speciation_mode: &str,
+    fixed_h2co3: Option<f64>,
+) -> Result<(f64, f64, f64, f64, f64, [f64; 5], f64), String> {
+    let mode = normalize_speciation_mode(speciation_mode);
+    if mode == SPEC_MODE_FIXED_PCO2 {
+        return solve_carbonate_state_open(
+            na_conc,
+            ka1,
+            ka2,
+            kw,
+            ionic_strength_cap,
+            initial_ph_guess,
+            fixed_h2co3.unwrap_or(0.0),
+        );
+    }
+    solve_carbonate_state(
+        total_carbon_m,
+        na_conc,
+        ka1,
+        ka2,
+        kw,
+        ionic_strength_cap,
+        initial_ph_guess,
+    )
+}
+
+fn forced_ph_distribution_impl(
+    mut total_carbon_m: f64,
+    na_conc: f64,
+    forced_ph: f64,
+    ka1: f64,
+    ka2: f64,
+    kw: f64,
+    ionic_strength_cap: Option<f64>,
+    fixed_h2co3: Option<f64>,
+    max_iter: usize,
+) -> Result<(f64, f64, f64, f64, f64, f64, f64, [f64; 5], f64), String> {
+    if !(0.0..14.5).contains(&forced_ph) {
+        return Err("Forced pH must be between 0 and 14.5".to_string());
+    }
+    total_carbon_m = total_carbon_m.max(1e-16);
+    let na_conc = na_conc.max(0.0);
+    let fixed_h2co3_value = fixed_h2co3.map(|value| value.max(1e-16));
+    let h = 10f64.powf(-forced_ph);
+    let mut hco3 = (total_carbon_m * 0.9).max(1e-16);
+    let mut co3 = (total_carbon_m * 0.05).max(1e-16);
+    let mut h2co3 = (total_carbon_m - hco3 - co3).max(0.0);
+    let mut charge_residual = 0.0_f64;
+    let mut gammas = [1.0_f64; 5];
+    let mut ionic_strength = 0.0_f64;
+    let mut oh = 1e-7_f64;
+    for _ in 0..max_iter.max(1) {
+        let (next_i, next_gammas, next_oh) =
+            solubility_ionic_state(na_conc, h, hco3, co3, kw, ionic_strength_cap);
+        ionic_strength = next_i;
+        gammas = next_gammas;
+        oh = next_oh;
+        let coeff_co3 = (ka2 * gammas[2]) / (gammas[1] * gammas[3] * h.max(1e-18));
+        let coeff_h2co3 = (gammas[1] * gammas[2] * h) / ka1.max(1e-30);
+        let mut denominator = 1.0 + coeff_co3 + coeff_h2co3;
+        if !denominator.is_finite() || denominator <= 0.0 {
+            denominator = 1e-12;
+        }
+        let alpha_hco3 = 1.0 / denominator;
+        let alpha_co3 = coeff_co3 / denominator;
+        hco3 = (total_carbon_m * alpha_hco3).max(1e-16);
+        co3 = (total_carbon_m * alpha_co3).max(1e-16);
+        h2co3 = (total_carbon_m - hco3 - co3).max(fixed_h2co3_value.unwrap_or(0.0));
+        charge_residual = na_conc + h - hco3 - 2.0 * co3 - oh;
+        let denom_charge = (alpha_hco3 + 2.0 * alpha_co3).max(1e-12);
+        let mut next_total = ((na_conc + h - oh) / denom_charge).max(1e-16);
+        if let Some(boundary) = fixed_h2co3_value {
+            next_total = next_total.max(boundary + hco3 + co3);
+        }
+        let delta_ct = ((next_total - total_carbon_m) / total_carbon_m.max(1e-12)).abs();
+        total_carbon_m = next_total;
+        if delta_ct < 1e-8 && charge_residual.abs() < 1e-8 {
+            break;
+        }
+    }
+    let (final_i, final_gammas, final_oh) =
+        solubility_ionic_state(na_conc, h, hco3, co3, kw, ionic_strength_cap);
+    Ok((
+        total_carbon_m,
+        h,
+        hco3,
+        co3,
+        h2co3,
+        final_oh,
+        charge_residual,
+        final_gammas,
+        final_i,
+    ))
+}
+
+fn aqion_alpha_fractions(h_conc: f64, ka1: f64, ka2: f64) -> (f64, f64, f64) {
+    let mut denom = (h_conc * h_conc) + (ka1 * h_conc) + (ka1 * ka2);
+    if denom <= 0.0 || !denom.is_finite() {
+        denom = 1e-30;
+    }
+    let a0 = (h_conc * h_conc) / denom;
+    let a1 = (ka1 * h_conc) / denom;
+    let a2 = (ka1 * ka2) / denom;
+    (a0, a1, a2)
+}
+
+fn aqion_species_from_ph(
+    ct: f64,
+    ph: f64,
+    ka1: f64,
+    ka2: f64,
+    kw: f64,
+) -> (f64, f64, f64, f64, f64, f64, f64, f64, f64) {
+    let h = 10f64.powf(-ph);
+    let (a0, a1, a2) = aqion_alpha_fractions(h, ka1, ka2);
+    let h2co3 = ct * a0;
+    let hco3 = ct * a1;
+    let co3 = ct * a2;
+    let oh = kw / h.max(1e-30);
+    let ionic_strength = 0.5 * (h + hco3 + 4.0 * co3 + oh);
+    (h, h2co3, hco3, co3, oh, a0, a1, a2, ionic_strength)
+}
+
+fn aqion_charge_balance_residual(ct: f64, ph: f64, ka1: f64, ka2: f64, kw: f64) -> f64 {
+    let (h, _h2co3, hco3, co3, oh, _a0, _a1, _a2, _ionic_strength) =
+        aqion_species_from_ph(ct, ph, ka1, ka2, kw);
+    h - hco3 - 2.0 * co3 - oh
+}
+
+fn solve_aqion_closed_speciation(
+    total_inorganic_carbon_m: f64,
+    ka1: f64,
+    ka2: f64,
+    kw: f64,
+    ph_low: f64,
+    ph_high: f64,
+) -> Result<(f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, f64, String), String> {
+    let ct = total_inorganic_carbon_m.max(0.0);
+    let low = ph_low.min(ph_high);
+    let high = ph_low.max(ph_high);
+    let mut f_low = aqion_charge_balance_residual(ct, low, ka1, ka2, kw);
+    let mut f_high = aqion_charge_balance_residual(ct, high, ka1, ka2, kw);
+    let mut solver = "bisection-charge-balance".to_string();
+    let ph_root = if f_low.abs() < 1e-14 {
+        solver = "bracket-bound".to_string();
+        low
+    } else if f_high.abs() < 1e-14 {
+        solver = "bracket-bound".to_string();
+        high
+    } else if f_low * f_high > 0.0 {
+        // Fall back to a dense residual scan when the bracket does not straddle.
+        solver = "scan-min-residual".to_string();
+        let mut best_ph = low;
+        let mut best_residual = f_low.abs();
+        let scan_steps = 480usize;
+        for idx in 0..=scan_steps {
+            let ph = low + (high - low) * (idx as f64 / scan_steps as f64);
+            let residual = aqion_charge_balance_residual(ct, ph, ka1, ka2, kw).abs();
+            if residual < best_residual {
+                best_residual = residual;
+                best_ph = ph;
+            }
+        }
+        best_ph
+    } else {
+        let mut lo = low;
+        let mut hi = high;
+        let mut mid = 0.5 * (lo + hi);
+        for _ in 0..220 {
+            mid = 0.5 * (lo + hi);
+            let f_mid = aqion_charge_balance_residual(ct, mid, ka1, ka2, kw);
+            if f_mid.abs() < 1e-14 || (hi - lo).abs() < 1e-6 {
+                break;
+            }
+            if f_low * f_mid <= 0.0 {
+                hi = mid;
+                f_high = f_mid;
+            } else {
+                lo = mid;
+                f_low = f_mid;
+            }
+        }
+        mid
+    };
+    let (h, h2co3, hco3, co3, oh, a0, a1, a2, ionic_strength) =
+        aqion_species_from_ph(ct, ph_root, ka1, ka2, kw);
+    let residual = aqion_charge_balance_residual(ct, ph_root, ka1, ka2, kw);
+    Ok((
+        ph_root,
+        h,
+        oh,
+        h2co3,
+        hco3,
+        co3,
+        a0,
+        a1,
+        a2,
+        ionic_strength,
+        residual,
+        solver,
+    ))
+}
+
+#[derive(Clone, Copy)]
+struct PitzerParamsLite {
+    b0_na_oh: f64,
+    b1_na_oh: f64,
+    c0_na_oh: f64,
+    b0_na_hco3: f64,
+    b1_na_hco3: f64,
+    c0_na_hco3: f64,
+    b0_na_co3: f64,
+    b1_na_co3: f64,
+    c0_na_co3: f64,
+    theta_co3_oh: f64,
+    psi_co3_na_oh: f64,
+    psi_co3_hco3_na: f64,
+}
+
+fn pitzer_g(x: f64) -> f64 {
+    if x.abs() <= 1e-18 {
+        return 0.0;
+    }
+    2.0 * (1.0 - (1.0 + x) * (-x).exp()) / (x * x)
+}
+
+fn pitzer_g_prime(x: f64) -> f64 {
+    let h = 1e-6;
+    (pitzer_g(x + h) - pitzer_g(x - h)) / (2.0 * h)
+}
+
+fn pitzer_b(beta0: f64, beta1: f64, ionic_strength: f64) -> f64 {
+    beta0 + beta1 * pitzer_g(PITZER_ALPHA_B1 * ionic_strength.max(0.0).sqrt())
+}
+
+fn pitzer_b_prime(beta1: f64, ionic_strength: f64) -> f64 {
+    if ionic_strength <= 0.0 {
+        return 0.0;
+    }
+    let x = PITZER_ALPHA_B1 * ionic_strength.sqrt();
+    beta1 * pitzer_g_prime(x) * PITZER_ALPHA_B1 / (2.0 * ionic_strength.sqrt())
+}
+
+fn pitzer_gamma_set(
+    na: f64,
+    h: f64,
+    oh: f64,
+    hco3: f64,
+    co3: f64,
+    params: PitzerParamsLite,
+) -> ([f64; 5], f64) {
+    let ionic_strength = 0.5 * (na + h + oh + hco3 + 4.0 * co3);
+    if ionic_strength <= 1e-30 {
+        return ([1.0_f64; 5], 0.0);
+    }
+    let sqrt_i = ionic_strength.sqrt();
+    let f = -PITZER_A_PHI_25C
+        * (sqrt_i / (1.0 + PITZER_B_DH * sqrt_i)
+            + (2.0 / PITZER_B_DH) * (1.0 + PITZER_B_DH * sqrt_i).ln());
+    let z_sum = na + h + oh + hco3 + 2.0 * co3;
+    let mut f_term = f;
+    let bprime_na_oh = pitzer_b_prime(params.b1_na_oh, ionic_strength);
+    let bprime_na_hco3 = pitzer_b_prime(params.b1_na_hco3, ionic_strength);
+    let bprime_na_co3 = pitzer_b_prime(params.b1_na_co3, ionic_strength);
+    f_term += na * oh * bprime_na_oh;
+    f_term += na * hco3 * bprime_na_hco3;
+    f_term += na * co3 * bprime_na_co3;
+    let mut ln_gamma = [
+        f_term,      // Na+ charge^2
+        f_term,      // H+ charge^2
+        f_term,      // OH- charge^2
+        f_term,      // HCO3- charge^2
+        4.0 * f_term, // CO3^2- charge^2
+    ];
+
+    let b_na_oh = pitzer_b(params.b0_na_oh, params.b1_na_oh, ionic_strength);
+    let b_na_hco3 = pitzer_b(params.b0_na_hco3, params.b1_na_hco3, ionic_strength);
+    let b_na_co3 = pitzer_b(params.b0_na_co3, params.b1_na_co3, ionic_strength);
+
+    ln_gamma[0] += oh * (2.0 * b_na_oh + z_sum * params.c0_na_oh);
+    ln_gamma[2] += na * (2.0 * b_na_oh + z_sum * params.c0_na_oh);
+    ln_gamma[0] += hco3 * (2.0 * b_na_hco3 + z_sum * params.c0_na_hco3);
+    ln_gamma[3] += na * (2.0 * b_na_hco3 + z_sum * params.c0_na_hco3);
+    ln_gamma[0] += co3 * (2.0 * b_na_co3 + z_sum * params.c0_na_co3);
+    ln_gamma[4] += na * (2.0 * b_na_co3 + z_sum * params.c0_na_co3);
+
+    ln_gamma[4] += oh * (2.0 * params.theta_co3_oh);
+    ln_gamma[2] += co3 * (2.0 * params.theta_co3_oh);
+
+    if na > 0.0 && co3 > 0.0 && oh > 0.0 {
+        ln_gamma[0] += co3 * oh * params.psi_co3_na_oh;
+        ln_gamma[4] += na * oh * params.psi_co3_na_oh;
+        ln_gamma[2] += na * co3 * params.psi_co3_na_oh;
+    }
+    if na > 0.0 && co3 > 0.0 && hco3 > 0.0 {
+        ln_gamma[0] += co3 * hco3 * params.psi_co3_hco3_na;
+        ln_gamma[4] += na * hco3 * params.psi_co3_hco3_na;
+        ln_gamma[3] += na * co3 * params.psi_co3_hco3_na;
+    }
+
+    let mut gammas = [1.0_f64; 5];
+    for idx in 0..5 {
+        gammas[idx] = ln_gamma[idx].exp().max(1e-18);
+    }
+    (gammas, ionic_strength)
+}
+
+fn pitzer_find_root_bisect_on_log10<F>(
+    fun: F,
+    lo: f64,
+    hi: f64,
+    nscan: usize,
+) -> Result<f64, String>
+where
+    F: Fn(f64) -> f64,
+{
+    let points = nscan.max(32);
+    let mut x_prev = lo;
+    let mut f_prev = fun(x_prev);
+    if f_prev.abs() < 1e-16 {
+        return Ok(x_prev);
+    }
+    for idx in 1..points {
+        let x_curr = lo + (hi - lo) * (idx as f64 / (points - 1) as f64);
+        let f_curr = fun(x_curr);
+        if f_curr.abs() < 1e-16 {
+            return Ok(x_curr);
+        }
+        if f_prev * f_curr < 0.0 {
+            let mut a = x_prev;
+            let mut b = x_curr;
+            let mut fa = f_prev;
+            for _ in 0..100 {
+                let mid = 0.5 * (a + b);
+                let f_mid = fun(mid);
+                if fa * f_mid <= 0.0 {
+                    b = mid;
+                } else {
+                    a = mid;
+                    fa = f_mid;
+                }
+            }
+            return Ok(0.5 * (a + b));
+        }
+        x_prev = x_curr;
+        f_prev = f_curr;
+    }
+    Err("No sign change found while bracketing Pitzer root.".to_string())
+}
+
+fn solve_pitzer_total_carbon_impl(
+    total_carbon_m: f64,
+    total_sodium_m: f64,
+    params: PitzerParamsLite,
+    max_iter: usize,
+) -> Result<(f64, f64, f64, f64, f64, f64, f64), String> {
+    if total_sodium_m <= 0.0 {
+        return Err("Total sodium molality must be positive.".to_string());
+    }
+    let ct = total_carbon_m.min(total_sodium_m).max(0.0);
+    if ct <= 0.5 * total_sodium_m {
+        let m_oh = (total_sodium_m - 2.0 * ct).max(0.0);
+        let m_co3 = ct.max(0.0);
+        let (gammas, _ionic_strength) =
+            pitzer_gamma_set(total_sodium_m, 1e-16, m_oh, 0.0, m_co3, params);
+        let a_oh = if m_oh > 0.0 {
+            gammas[2] * m_oh
+        } else {
+            1e-30
+        };
+        let a_h = PITZER_KW / a_oh.max(1e-30);
+        let ph = -a_h.max(1e-30).log10();
+        let h = a_h / gammas[1].max(1e-30);
+        return Ok((ph, total_sodium_m, h, m_oh, 0.0, m_co3, 0.0));
+    }
+
+    let mut h = 1e-16_f64;
+    let mut oh = total_sodium_m.max(1e-12);
+    let mut hco3 = 0.0_f64;
+    let mut co3 = 0.0_f64;
+    let mut co2 = 0.0_f64;
+    let mut gammas = pitzer_gamma_set(total_sodium_m, h, oh, hco3, co3, params).0;
+    for _ in 0..max_iter.max(1) {
+        let root = pitzer_find_root_bisect_on_log10(
+            |log10_h| {
+                let m_h = 10f64.powf(log10_h);
+                let a_h = gammas[1] * m_h;
+                let m_oh = PITZER_KW / (a_h.max(1e-30) * gammas[2].max(1e-30));
+                let r1 = PITZER_KA1 / (gammas[1] * gammas[3] * m_h.max(1e-30));
+                let r23 = PITZER_KA2 * gammas[3] / (gammas[1] * gammas[4] * m_h.max(1e-30));
+                let r2 = r1 * r23;
+                let m_co2 = ct / (1.0 + r1 + r2);
+                let m_hco3 = r1 * m_co2;
+                let m_co3 = r2 * m_co2;
+                (total_sodium_m + m_h) - (m_oh + m_hco3 + 2.0 * m_co3)
+            },
+            -18.0,
+            0.0,
+            260,
+        )?;
+        h = 10f64.powf(root);
+        let a_h = gammas[1] * h;
+        oh = PITZER_KW / (a_h.max(1e-30) * gammas[2].max(1e-30));
+        let r1 = PITZER_KA1 / (gammas[1] * gammas[3] * h.max(1e-30));
+        let r23 = PITZER_KA2 * gammas[3] / (gammas[1] * gammas[4] * h.max(1e-30));
+        let r2 = r1 * r23;
+        co2 = ct / (1.0 + r1 + r2);
+        hco3 = r1 * co2;
+        co3 = r2 * co2;
+
+        let next_gammas = pitzer_gamma_set(total_sodium_m, h, oh, hco3, co3, params).0;
+        let mut max_delta = 0.0_f64;
+        for idx in 0..5 {
+            let delta = (next_gammas[idx] / gammas[idx].max(1e-30)).ln().abs();
+            if delta > max_delta {
+                max_delta = delta;
+            }
+        }
+        gammas = next_gammas;
+        if max_delta < 1e-6 {
+            break;
+        }
+    }
+
+    let ph = -(gammas[1] * h).max(1e-30).log10();
+    Ok((ph, total_sodium_m, h, oh, hco3, co3, co2))
 }
 
 fn estimate_ledger_ph(
@@ -1391,6 +1889,240 @@ fn analyze_bicarbonate_core(
     Ok(Some(out.unbind()))
 }
 
+#[pyfunction]
+#[pyo3(signature = (total_carbon_m, na_conc, ka1, ka2, kw, ionic_strength_cap=None, initial_ph_guess=8.35, speciation_mode="closed_carbon", fixed_h2co3=None))]
+fn carbonate_state_core(
+    py: Python<'_>,
+    total_carbon_m: f64,
+    na_conc: f64,
+    ka1: f64,
+    ka2: f64,
+    kw: f64,
+    ionic_strength_cap: Option<f64>,
+    initial_ph_guess: f64,
+    speciation_mode: &str,
+    fixed_h2co3: Option<f64>,
+) -> PyResult<Py<PyDict>> {
+    let (h, hco3, co3, h2co3, oh, gammas, ionic_strength) = solve_carbonate_state_with_mode(
+        total_carbon_m,
+        na_conc,
+        ka1,
+        ka2,
+        kw,
+        ionic_strength_cap,
+        initial_ph_guess,
+        speciation_mode,
+        fixed_h2co3,
+    )
+    .map_err(PyRuntimeError::new_err)?;
+    let out = PyDict::new(py);
+    let gamma_map = PyDict::new(py);
+    gamma_map.set_item("Na", gammas[0])?;
+    gamma_map.set_item("H", gammas[1])?;
+    gamma_map.set_item("HCO3", gammas[2])?;
+    gamma_map.set_item("CO3", gammas[3])?;
+    gamma_map.set_item("OH", gammas[4])?;
+    out.set_item("h", h)?;
+    out.set_item("hco3", hco3)?;
+    out.set_item("co3", co3)?;
+    out.set_item("h2co3", h2co3)?;
+    out.set_item("oh", oh)?;
+    out.set_item("ionic_strength", ionic_strength)?;
+    out.set_item("gammas", gamma_map)?;
+    out.set_item("speciation_mode", normalize_speciation_mode(speciation_mode))?;
+    Ok(out.unbind())
+}
+
+#[pyfunction]
+#[pyo3(signature = (total_carbon_m, na_conc, forced_ph, ka1, ka2, kw, ionic_strength_cap=None, fixed_h2co3=None, max_iter=80))]
+fn forced_ph_distribution_core(
+    py: Python<'_>,
+    total_carbon_m: f64,
+    na_conc: f64,
+    forced_ph: f64,
+    ka1: f64,
+    ka2: f64,
+    kw: f64,
+    ionic_strength_cap: Option<f64>,
+    fixed_h2co3: Option<f64>,
+    max_iter: usize,
+) -> PyResult<Py<PyDict>> {
+    let (total_carbon, h, hco3, co3, h2co3, oh, charge_residual, gammas, ionic_strength) =
+        forced_ph_distribution_impl(
+            total_carbon_m,
+            na_conc,
+            forced_ph,
+            ka1,
+            ka2,
+            kw,
+            ionic_strength_cap,
+            fixed_h2co3,
+            max_iter,
+        )
+        .map_err(PyRuntimeError::new_err)?;
+    let out = PyDict::new(py);
+    let gamma_map = PyDict::new(py);
+    gamma_map.set_item("Na", gammas[0])?;
+    gamma_map.set_item("H", gammas[1])?;
+    gamma_map.set_item("HCO3", gammas[2])?;
+    gamma_map.set_item("CO3", gammas[3])?;
+    gamma_map.set_item("OH", gammas[4])?;
+    out.set_item("total_carbon_m", total_carbon)?;
+    out.set_item("h", h)?;
+    out.set_item("hco3", hco3)?;
+    out.set_item("co3", co3)?;
+    out.set_item("h2co3", h2co3)?;
+    out.set_item("oh", oh)?;
+    out.set_item("charge_balance_residual", charge_residual)?;
+    out.set_item("ionic_strength", ionic_strength)?;
+    out.set_item("gammas", gamma_map)?;
+    Ok(out.unbind())
+}
+
+#[pyfunction]
+#[pyo3(signature = (total_inorganic_carbon_m, ka1=SOL_KA1, ka2=SOL_KA2, kw=SOL_KW, ph_low=AQION_DEFAULT_PH_LOW, ph_high=AQION_DEFAULT_PH_HIGH))]
+fn aqion_closed_speciation_core(
+    py: Python<'_>,
+    total_inorganic_carbon_m: f64,
+    ka1: f64,
+    ka2: f64,
+    kw: f64,
+    ph_low: f64,
+    ph_high: f64,
+) -> PyResult<Py<PyDict>> {
+    let (
+        ph,
+        h,
+        oh,
+        h2co3,
+        hco3,
+        co3,
+        a0,
+        a1,
+        a2,
+        ionic_strength,
+        residual,
+        solver_tag,
+    ) = solve_aqion_closed_speciation(total_inorganic_carbon_m, ka1, ka2, kw, ph_low, ph_high)
+        .map_err(PyRuntimeError::new_err)?;
+    let out = PyDict::new(py);
+    let species = PyDict::new(py);
+    species.set_item("H+", h)?;
+    species.set_item("H2CO3", h2co3)?;
+    species.set_item("HCO3-", hco3)?;
+    species.set_item("CO3^2-", co3)?;
+    species.set_item("OH-", oh)?;
+    let alpha = PyDict::new(py);
+    alpha.set_item("a0", a0)?;
+    alpha.set_item("a1", a1)?;
+    alpha.set_item("a2", a2)?;
+    out.set_item("ph", ph)?;
+    out.set_item("h_conc", h)?;
+    out.set_item("oh_conc", oh)?;
+    out.set_item("species_m", species)?;
+    out.set_item("alpha", alpha)?;
+    out.set_item("ionic_strength", ionic_strength)?;
+    out.set_item("charge_balance_residual", residual)?;
+    out.set_item("solver", solver_tag)?;
+    Ok(out.unbind())
+}
+
+#[pyfunction]
+#[pyo3(signature = (total_carbon_m, total_sodium_m, pitzer_params, max_iter=60))]
+fn pitzer_solve_total_carbon_core(
+    py: Python<'_>,
+    total_carbon_m: f64,
+    total_sodium_m: f64,
+    pitzer_params: &Bound<'_, PyDict>,
+    max_iter: usize,
+) -> PyResult<Option<Py<PyDict>>> {
+    if total_carbon_m < 0.0 || total_sodium_m <= 0.0 {
+        return Ok(None);
+    }
+    let parse = |key: &str| -> Option<f64> {
+        let value = pitzer_params.get_item(key).ok().flatten()?;
+        let parsed = value.extract::<f64>().ok()?;
+        if parsed.is_finite() {
+            Some(parsed)
+        } else {
+            None
+        }
+    };
+    let Some(b0_na_oh) = parse("b0_na_oh") else {
+        return Ok(None);
+    };
+    let Some(b1_na_oh) = parse("b1_na_oh") else {
+        return Ok(None);
+    };
+    let Some(c0_na_oh) = parse("c0_na_oh") else {
+        return Ok(None);
+    };
+    let Some(b0_na_hco3) = parse("b0_na_hco3") else {
+        return Ok(None);
+    };
+    let Some(b1_na_hco3) = parse("b1_na_hco3") else {
+        return Ok(None);
+    };
+    let Some(c0_na_hco3) = parse("c0_na_hco3") else {
+        return Ok(None);
+    };
+    let Some(b0_na_co3) = parse("b0_na_co3") else {
+        return Ok(None);
+    };
+    let Some(b1_na_co3) = parse("b1_na_co3") else {
+        return Ok(None);
+    };
+    let Some(c0_na_co3) = parse("c0_na_co3") else {
+        return Ok(None);
+    };
+    let Some(theta_co3_oh) = parse("theta_co3_oh") else {
+        return Ok(None);
+    };
+    let Some(psi_co3_na_oh) = parse("psi_co3_na_oh") else {
+        return Ok(None);
+    };
+    let Some(psi_co3_hco3_na) = parse("psi_co3_hco3_na") else {
+        return Ok(None);
+    };
+    let params = PitzerParamsLite {
+        b0_na_oh,
+        b1_na_oh,
+        c0_na_oh,
+        b0_na_hco3,
+        b1_na_hco3,
+        c0_na_hco3,
+        b0_na_co3,
+        b1_na_co3,
+        c0_na_co3,
+        theta_co3_oh,
+        psi_co3_na_oh,
+        psi_co3_hco3_na,
+    };
+    let solved = solve_pitzer_total_carbon_impl(total_carbon_m, total_sodium_m, params, max_iter);
+    let (ph, na, h, oh, hco3, co3, co2) = match solved {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    if !ph.is_finite() {
+        return Ok(None);
+    }
+    let out = PyDict::new(py);
+    out.set_item("ph", ph)?;
+    out.set_item("m_Na", na)?;
+    out.set_item("m_H", h)?;
+    out.set_item("m_OH", oh)?;
+    out.set_item("m_HCO3", hco3)?;
+    out.set_item("m_CO3", co3)?;
+    out.set_item("m_CO2", co2)?;
+    out.set_item("Na+", na)?;
+    out.set_item("H+", h)?;
+    out.set_item("OH-", oh)?;
+    out.set_item("HCO3-", hco3)?;
+    out.set_item("CO3-2", co3)?;
+    out.set_item("CO2", co2)?;
+    Ok(Some(out.unbind()))
+}
+
 fn dict_index_value(dict: &Bound<'_, PyDict>, key: &str) -> Option<usize> {
     let raw = dict
         .get_item(key)
@@ -1987,6 +2719,10 @@ fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
         module
     )?)?;
     module.add_function(wrap_pyfunction!(analyze_bicarbonate_core, module)?)?;
+    module.add_function(wrap_pyfunction!(carbonate_state_core, module)?)?;
+    module.add_function(wrap_pyfunction!(forced_ph_distribution_core, module)?)?;
+    module.add_function(wrap_pyfunction!(aqion_closed_speciation_core, module)?)?;
+    module.add_function(wrap_pyfunction!(pitzer_solve_total_carbon_core, module)?)?;
     module.add_function(wrap_pyfunction!(combined_decimation_indices, module)?)?;
     module.add_function(wrap_pyfunction!(combined_required_indices, module)?)?;
     module.add_function(wrap_pyfunction!(cycle_overlay_points_core, module)?)?;
