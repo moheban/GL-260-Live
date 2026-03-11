@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.6.9)
+# GL-260 Data Analysis and Plotter (v4.7.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.6.9`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.7.0`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -29,6 +29,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.7.0 Process Profile Multi-Window Launch + Analysis Forensics](#v470-process-profile-multi-window-launch--analysis-forensics)
   - [v4.6.9 Compare Side Plot Settings Re-Enable + Compare-Scoped Persistence](#v469-compare-side-plot-settings-re-enable--compare-scoped-persistence)
   - [v4.6.8 Compare Auto-Title Parity](#v468-compare-auto-title-parity)
   - [v4.6.7 Startup Interactivity + Profile-Exact Compare Rendering](#v467-startup-interactivity--profile-exact-compare-rendering)
@@ -1048,6 +1049,19 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.7.0 Process Profile Multi-Window Launch + Analysis Forensics
+- Added Process Profiles multi-window launch support with a new `Open Profile in New Program Copy` action that starts a child app process and auto-loads the selected profile via `--open-profile`.
+- Added a shared profile restore path (`_load_profile_by_name`) so interactive profile loads and CLI-triggered startup loads reuse one lifecycle for splash, restore, and current-profile tracking behavior.
+- Refreshed Advanced Speciation workflow input layout with grouped, compact sections for Planning, Analysis, and Reprocessing tabs.
+- Added Analysis forensic comparison extensions:
+  - new KPI panel (`Forensic Comparison KPIs`) in Analysis,
+  - timeline augmentation fields for cycle-aligned and CO2-aligned pH deltas, gas/species deltas, and alignment quality,
+  - timeline table/callout/export/plot overlays updated to show forensic fields and CO2-aligned planning traces.
+- Added pressure-context propagation and visualization updates so `peak_pressure_psi` / `trough_pressure_psi` flow from cycle timeline generation into Analysis timeline views and exports.
+- Fixed malformed CLI handling for `--open-profile` without a value so subsequent flags are preserved (for example `--benchmark` still runs).
+- Fixed Analysis forensic summary behavior for empty timelines so KPI deltas remain unavailable instead of reporting synthetic full-deficit values.
+- Updated version metadata to `v4.7.0` in script header, `APP_VERSION`, and README.
 
 ### v4.6.9 Compare Side Plot Settings Re-Enable + Compare-Scoped Persistence
 - Re-enabled Compare `Plot Settings A...` / `Plot Settings B...` in Profile-Exact mode so each side can open the full Combined Plot Settings popup directly from Compare.
