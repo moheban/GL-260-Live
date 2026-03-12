@@ -1220,6 +1220,468 @@ fn compare_cycle_row_index(dict: &Bound<'_, PyDict>, fallback_index: usize) -> u
     fallback_index.max(1)
 }
 
+fn py_any_optional_finite_float(value: &Bound<'_, PyAny>) -> Option<f64> {
+    if value.is_none() {
+        return None;
+    }
+    let parsed = value.extract::<f64>().ok()?;
+    if parsed.is_finite() {
+        Some(parsed)
+    } else {
+        None
+    }
+}
+
+fn interpolate_reference_series_impl(
+    x_value: Option<f64>,
+    x_series: &[f64],
+    y_series: &[Option<f64>],
+) -> (Option<f64>, &'static str) {
+    let Some(current_x) = x_value else {
+        return (None, "out_of_range");
+    };
+    if !current_x.is_finite() {
+        return (None, "out_of_range");
+    }
+    let mut pairs: Vec<(f64, Option<f64>)> = Vec::new();
+    for (x_raw, y_raw) in x_series.iter().zip(y_series.iter()) {
+        if !x_raw.is_finite() {
+            continue;
+        }
+        pairs.push((*x_raw, *y_raw));
+    }
+    if pairs.is_empty() {
+        return (None, "sparse_reference");
+    }
+    pairs.sort_by(|left, right| left.0.partial_cmp(&right.0).unwrap_or(Ordering::Equal));
+    if pairs.len() < 2 {
+        return (pairs[0].1, "sparse_reference");
+    }
+    if current_x < pairs[0].0 || current_x > pairs[pairs.len() - 1].0 {
+        return (None, "out_of_range");
+    }
+
+    let mut right_idx: usize = 0;
+    let mut found_right = false;
+    for (idx, (x_pair, _)) in pairs.iter().enumerate() {
+        if *x_pair >= current_x {
+            right_idx = idx;
+            found_right = true;
+            break;
+        }
+    }
+    if !found_right {
+        right_idx = pairs.len() - 1;
+    }
+    let left_idx = right_idx.saturating_sub(1);
+    let (x_left, y_left) = pairs[left_idx];
+    let (x_right, y_right) = pairs[right_idx];
+
+    if let (Some(left_val), Some(right_val)) = (y_left, y_right) {
+        if left_val.is_finite() && right_val.is_finite() && x_right != x_left {
+            let ratio = (current_x - x_left) / (x_right - x_left);
+            let mapped = left_val + ratio * (right_val - left_val);
+            if mapped.is_finite() {
+                return (Some(mapped), "ok");
+            }
+        }
+    }
+
+    let nearest_idx = if (current_x - x_right).abs() < (current_x - x_left).abs() {
+        right_idx
+    } else {
+        left_idx
+    };
+    let nearest = pairs[nearest_idx].1;
+    if nearest.is_some() {
+        (nearest, "ok")
+    } else {
+        (None, "sparse_reference")
+    }
+}
+
+#[pyfunction]
+#[pyo3(signature = (x_value, x_series, y_series))]
+fn analysis_interpolate_reference_series_core(
+    py: Python<'_>,
+    x_value: Option<f64>,
+    x_series: &Bound<'_, PyList>,
+    y_series: &Bound<'_, PyList>,
+) -> PyResult<Py<PyDict>> {
+    // Interpolate one reference series point with the same out-of-range/sparse
+    // flags used by the Python forensic/dashboard alignment path.
+    let mut safe_x: Vec<f64> = Vec::new();
+    let mut safe_y: Vec<Option<f64>> = Vec::new();
+    for (x_any, y_any) in x_series.iter().zip(y_series.iter()) {
+        let Some(x_val) = py_any_optional_finite_float(&x_any) else {
+            continue;
+        };
+        safe_x.push(x_val);
+        safe_y.push(py_any_optional_finite_float(&y_any));
+    }
+    let (mapped_value, flag) = interpolate_reference_series_impl(x_value, &safe_x, &safe_y);
+    let response = PyDict::new(py);
+    if let Some(value) = mapped_value {
+        response.set_item("value", value)?;
+    } else {
+        response.set_item("value", py.None())?;
+    }
+    response.set_item("flag", flag)?;
+    Ok(response.unbind())
+}
+
+#[pyfunction]
+#[pyo3(signature = (
+    actual_cycle_series,
+    reference_cycle_series,
+    target_ph,
+    reaction_naoh_mass,
+    initial_naoh_mol,
+    co2_mw,
+    naoh_mw
+))]
+fn analysis_dashboard_core(
+    py: Python<'_>,
+    actual_cycle_series: &Bound<'_, PyList>,
+    reference_cycle_series: &Bound<'_, PyList>,
+    target_ph: f64,
+    reaction_naoh_mass: Option<f64>,
+    initial_naoh_mol: Option<f64>,
+    co2_mw: f64,
+    naoh_mw: f64,
+) -> PyResult<Py<PyDict>> {
+    // Build comparison rows + summary metrics for the Analysis dashboard using
+    // the same deterministic interpolation and fail-closed value handling.
+    #[derive(Clone, Copy)]
+    struct ActualRow {
+        cycle_id: usize,
+        cumulative_co2_g: Option<f64>,
+        cumulative_co2_mol: Option<f64>,
+        ph: Option<f64>,
+        hco3_fraction: f64,
+        co3_fraction: f64,
+    }
+    #[derive(Clone, Copy)]
+    struct ReferenceRow {
+        cycle_id: usize,
+        cumulative_co2_g: Option<f64>,
+        ph: Option<f64>,
+        equivalence_reached: bool,
+    }
+    let mut actual_rows: Vec<ActualRow> = Vec::new();
+    let mut actual_alignment_override: Vec<String> = Vec::new();
+    for (idx, item) in actual_cycle_series.iter().enumerate() {
+        let Ok(entry) = item.downcast::<PyDict>() else {
+            continue;
+        };
+        let cycle_id = compare_cycle_row_index(&entry, idx + 1);
+        let cumulative_co2_g = dict_optional_finite_by_keys(
+            &entry,
+            &["cumulative_co2_g", "co2_g", "cumulative_co2_added_mass_g", "co2_mass_g"],
+        );
+        let cumulative_co2_mol = dict_optional_finite_by_keys(
+            &entry,
+            &[
+                "cumulative_co2_mol",
+                "cumulative_co2_added_moles",
+                "co2_moles",
+                "co2_added_moles",
+            ],
+        );
+        let ph = dict_optional_finite_by_keys(&entry, &["ph", "actual_ph", "solution_ph"]);
+        let mut hco3_fraction = 0.0_f64;
+        let mut co3_fraction = 0.0_f64;
+        if let Some(fractions_any) = entry.get_item("fractions").ok().flatten() {
+            if let Ok(fractions) = fractions_any.downcast::<PyDict>() {
+                hco3_fraction = dict_optional_float_value(&fractions, "HCO3-")
+                    .unwrap_or(0.0)
+                    .max(0.0);
+                co3_fraction = dict_optional_float_value(&fractions, "CO3^2-")
+                    .unwrap_or(0.0)
+                    .max(0.0);
+            }
+        }
+        actual_rows.push(ActualRow {
+            cycle_id,
+            cumulative_co2_g,
+            cumulative_co2_mol,
+            ph,
+            hco3_fraction,
+            co3_fraction,
+        });
+        actual_alignment_override.push(dict_string_value(&entry, "alignment_quality_flag"));
+    }
+
+    let mut reference_rows: Vec<ReferenceRow> = Vec::new();
+    let mut reference_x: Vec<f64> = Vec::new();
+    let mut reference_ph: Vec<Option<f64>> = Vec::new();
+    let mut reference_hco3: Vec<Option<f64>> = Vec::new();
+    let mut reference_co3: Vec<Option<f64>> = Vec::new();
+    for (idx, item) in reference_cycle_series.iter().enumerate() {
+        let Ok(entry) = item.downcast::<PyDict>() else {
+            continue;
+        };
+        let cycle_id = compare_cycle_row_index(&entry, idx + 1);
+        let cumulative_co2_g = dict_optional_finite_by_keys(
+            &entry,
+            &["cumulative_co2_g", "co2_g", "cumulative_co2_added_mass_g", "co2_mass_g"],
+        );
+        if let Some(x_value) = cumulative_co2_g {
+            if x_value.is_finite() {
+                reference_x.push(x_value);
+            }
+        }
+        let ph = dict_optional_finite_by_keys(&entry, &["ph", "reference_ph", "solution_ph"]);
+        let mut hco3_fraction = None;
+        let mut co3_fraction = None;
+        if let Some(fractions_any) = entry.get_item("fractions").ok().flatten() {
+            if let Ok(fractions) = fractions_any.downcast::<PyDict>() {
+                hco3_fraction = dict_optional_float_value(&fractions, "HCO3-");
+                co3_fraction = dict_optional_float_value(&fractions, "CO3^2-");
+            }
+        }
+        reference_ph.push(ph);
+        reference_hco3.push(hco3_fraction);
+        reference_co3.push(co3_fraction);
+        let equivalence_reached = entry
+            .get_item("equivalence_reached")
+            .ok()
+            .flatten()
+            .and_then(|value| value.is_truthy().ok())
+            .unwrap_or(false);
+        reference_rows.push(ReferenceRow {
+            cycle_id,
+            cumulative_co2_g,
+            ph,
+            equivalence_reached,
+        });
+    }
+
+    let comparison_series = PyList::empty(py);
+    for (idx, row) in actual_rows.iter().enumerate() {
+        let ref_cycle = reference_rows.get(idx).copied();
+        let reference_cycle_ph = ref_cycle.and_then(|item| item.ph);
+        let delta_cycle_ph = match (row.ph, reference_cycle_ph) {
+            (Some(actual), Some(reference)) => Some(actual - reference),
+            _ => None,
+        };
+        let (reference_co2_aligned_ph, ph_alignment) = interpolate_reference_series_impl(
+            row.cumulative_co2_g,
+            &reference_x,
+            &reference_ph,
+        );
+        let (co2_aligned_hco3, hco3_alignment) = interpolate_reference_series_impl(
+            row.cumulative_co2_g,
+            &reference_x,
+            &reference_hco3,
+        );
+        let (co2_aligned_co3, co3_alignment) = interpolate_reference_series_impl(
+            row.cumulative_co2_g,
+            &reference_x,
+            &reference_co3,
+        );
+        let delta_co2_ph = match (row.ph, reference_co2_aligned_ph) {
+            (Some(actual), Some(reference)) => Some(actual - reference),
+            _ => None,
+        };
+        let actual_hco3_pct = row.hco3_fraction.max(0.0) * 100.0;
+        let actual_co3_pct = row.co3_fraction.max(0.0) * 100.0;
+        let reference_hco3_pct = co2_aligned_hco3.map(|value| value * 100.0);
+        let reference_co3_pct = co2_aligned_co3.map(|value| value * 100.0);
+        let delta_hco3_pct = reference_hco3_pct.map(|reference| actual_hco3_pct - reference);
+        let delta_co3_pct = reference_co3_pct.map(|reference| actual_co3_pct - reference);
+        let mut alignment_quality = if [ph_alignment, hco3_alignment, co3_alignment]
+            .iter()
+            .any(|flag| *flag == "out_of_range")
+        {
+            "out_of_range".to_string()
+        } else if [ph_alignment, hco3_alignment, co3_alignment]
+            .iter()
+            .any(|flag| *flag == "sparse_reference")
+        {
+            "sparse_reference".to_string()
+        } else {
+            "ok".to_string()
+        };
+        if let Some(override_flag) = actual_alignment_override.get(idx) {
+            let trimmed = override_flag.trim();
+            if !trimmed.is_empty() {
+                alignment_quality = trimmed.to_string();
+            }
+        }
+
+        let comparison_row = PyDict::new(py);
+        comparison_row.set_item("cycle_id", row.cycle_id)?;
+        if let Some(value) = row.ph {
+            comparison_row.set_item("actual_ph", value)?;
+        } else {
+            comparison_row.set_item("actual_ph", py.None())?;
+        }
+        if let Some(value) = reference_cycle_ph {
+            comparison_row.set_item("reference_cycle_ph", value)?;
+        } else {
+            comparison_row.set_item("reference_cycle_ph", py.None())?;
+        }
+        if let Some(value) = reference_co2_aligned_ph {
+            comparison_row.set_item("reference_co2_aligned_ph", value)?;
+        } else {
+            comparison_row.set_item("reference_co2_aligned_ph", py.None())?;
+        }
+        if let Some(value) = delta_cycle_ph {
+            comparison_row.set_item("delta_cycle_ph", value)?;
+        } else {
+            comparison_row.set_item("delta_cycle_ph", py.None())?;
+        }
+        if let Some(value) = delta_co2_ph {
+            comparison_row.set_item("delta_co2_ph", value)?;
+        } else {
+            comparison_row.set_item("delta_co2_ph", py.None())?;
+        }
+        comparison_row.set_item("actual_hco3_pct", actual_hco3_pct)?;
+        comparison_row.set_item("actual_co3_pct", actual_co3_pct)?;
+        if let Some(value) = reference_hco3_pct {
+            comparison_row.set_item("reference_hco3_pct", value)?;
+        } else {
+            comparison_row.set_item("reference_hco3_pct", py.None())?;
+        }
+        if let Some(value) = reference_co3_pct {
+            comparison_row.set_item("reference_co3_pct", value)?;
+        } else {
+            comparison_row.set_item("reference_co3_pct", py.None())?;
+        }
+        if let Some(value) = delta_hco3_pct {
+            comparison_row.set_item("delta_hco3_pct", value)?;
+        } else {
+            comparison_row.set_item("delta_hco3_pct", py.None())?;
+        }
+        if let Some(value) = delta_co3_pct {
+            comparison_row.set_item("delta_co3_pct", value)?;
+        } else {
+            comparison_row.set_item("delta_co3_pct", py.None())?;
+        }
+        comparison_row.set_item("alignment_quality_flag", alignment_quality)?;
+        comparison_series.append(comparison_row)?;
+    }
+
+    let total_uptake_g = actual_rows.last().and_then(|row| row.cumulative_co2_g);
+    let total_uptake_mol = actual_rows.last().and_then(|row| row.cumulative_co2_mol);
+    let co2_mw_value = if co2_mw.is_finite() && co2_mw > 0.0 {
+        co2_mw
+    } else {
+        SOL_MW_CO2
+    };
+    let naoh_mw_value = if naoh_mw.is_finite() && naoh_mw > 0.0 {
+        naoh_mw
+    } else {
+        SOL_MW_NAOH
+    };
+    let theoretical_yield_g = if let Some(start_mass_g) = reaction_naoh_mass {
+        if start_mass_g.is_finite() && start_mass_g > 0.0 && naoh_mw_value > 0.0 {
+            Some((start_mass_g / naoh_mw_value) * co2_mw_value)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let actual_yield_pct = match (total_uptake_g, theoretical_yield_g) {
+        (Some(total), Some(theoretical)) if theoretical > 1e-12 => Some((total / theoretical) * 100.0),
+        _ => None,
+    };
+    let reference_final_g = reference_rows.last().and_then(|row| row.cumulative_co2_g);
+    let planning_completion_pct = match (reference_final_g, total_uptake_g) {
+        (Some(reference), Some(total)) if reference > 1e-12 => {
+            Some((total / reference).clamp(0.0, 1.0) * 100.0)
+        }
+        _ => None,
+    };
+    let equivalence_co2_g = match initial_naoh_mol {
+        Some(moles) if moles.is_finite() && moles > 0.0 => Some((moles / 2.0) * co2_mw_value),
+        _ => None,
+    };
+    let equivalence_completion_pct = match (equivalence_co2_g, total_uptake_g) {
+        (Some(reference), Some(total)) if reference > 1e-12 => {
+            Some((total / reference).clamp(0.0, 1.0) * 100.0)
+        }
+        _ => None,
+    };
+    let mut equivalence_cycle_actual: Option<usize> = None;
+    if let Some(eq_target_g) = equivalence_co2_g {
+        for row in &actual_rows {
+            if let Some(cumulative_g) = row.cumulative_co2_g {
+                if cumulative_g >= eq_target_g {
+                    equivalence_cycle_actual = Some(row.cycle_id);
+                    break;
+                }
+            }
+        }
+    }
+    let mut equivalence_cycle_reference: Option<usize> = None;
+    for row in &reference_rows {
+        if row.equivalence_reached {
+            equivalence_cycle_reference = Some(row.cycle_id);
+            break;
+        }
+    }
+    let warning_rows = PyList::empty(py);
+    if reference_rows.is_empty() && !actual_rows.is_empty() {
+        warning_rows.append(
+            "Reference simulation unavailable; verify per-cycle CO2 uptake fields.",
+        )?;
+    }
+
+    let summary = PyDict::new(py);
+    summary.set_item("detected_cycles", actual_rows.len())?;
+    summary.set_item("reference_cycles", reference_rows.len())?;
+    summary.set_item("target_ph", target_ph)?;
+    if let Some(value) = total_uptake_g {
+        summary.set_item("total_uptake_g", value)?;
+    } else {
+        summary.set_item("total_uptake_g", py.None())?;
+    }
+    if let Some(value) = total_uptake_mol {
+        summary.set_item("total_uptake_mol", value)?;
+    } else {
+        summary.set_item("total_uptake_mol", py.None())?;
+    }
+    if let Some(value) = theoretical_yield_g {
+        summary.set_item("theoretical_yield_g", value)?;
+    } else {
+        summary.set_item("theoretical_yield_g", py.None())?;
+    }
+    if let Some(value) = actual_yield_pct {
+        summary.set_item("actual_yield_pct", value)?;
+    } else {
+        summary.set_item("actual_yield_pct", py.None())?;
+    }
+    if let Some(value) = planning_completion_pct {
+        summary.set_item("planning_completion_pct", value)?;
+    } else {
+        summary.set_item("planning_completion_pct", py.None())?;
+    }
+    if let Some(value) = equivalence_completion_pct {
+        summary.set_item("equivalence_completion_pct", value)?;
+    } else {
+        summary.set_item("equivalence_completion_pct", py.None())?;
+    }
+    if let Some(value) = equivalence_cycle_actual {
+        summary.set_item("equivalence_cycle_actual", value)?;
+    } else {
+        summary.set_item("equivalence_cycle_actual", py.None())?;
+    }
+    if let Some(value) = equivalence_cycle_reference {
+        summary.set_item("equivalence_cycle_reference", value)?;
+    } else {
+        summary.set_item("equivalence_cycle_reference", py.None())?;
+    }
+    summary.set_item("warnings", warning_rows)?;
+
+    let response = PyDict::new(py);
+    response.set_item("comparison_series", comparison_series)?;
+    response.set_item("summary", summary)?;
+    Ok(response.unbind())
+}
+
 #[pyfunction]
 #[pyo3(signature = (rows_a, rows_b))]
 fn compare_aligned_cycle_rows_core(
@@ -2729,6 +3191,11 @@ fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
     module.add_function(wrap_pyfunction!(cycle_segmentation_core, module)?)?;
     module.add_function(wrap_pyfunction!(cycle_metrics_core, module)?)?;
     module.add_function(wrap_pyfunction!(array_signature_core, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        analysis_interpolate_reference_series_core,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(analysis_dashboard_core, module)?)?;
     module.add_function(wrap_pyfunction!(
         final_report_cycle_stats_rows_core,
         module
