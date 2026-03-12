@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.7.2)
+# GL-260 Data Analysis and Plotter (v4.7.3)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.7.2`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.7.3`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -29,6 +29,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.7.3 Analysis Dashboard for Advanced Speciation](#v473-analysis-dashboard-for-advanced-speciation)
   - [v4.7.2 Startup Splash Gating for Rust Backend Readiness](#v472-startup-splash-gating-for-rust-backend-readiness)
   - [v4.7.1 Rust Acceleration Expansion for Advanced Speciation and Equilibrium](#v471-rust-acceleration-expansion-for-advanced-speciation-and-equilibrium)
   - [v4.7.0 Process Profile Multi-Window Launch + Analysis Forensics](#v470-process-profile-multi-window-launch--analysis-forensics)
@@ -766,7 +767,7 @@ The Advanced Solubility and Equilibrium Engine models CO2 dissolution, carbonate
 - Import cycle payloads or manually enter CO2/NaOH inputs.
 - Run the solver to generate speciation, pH, and saturation metrics.
 - As of `v2.12.3`, manual Analysis CO2 charged values are preserved, Planning NaOH inputs persist after runs, and heavy solver work is executed asynchronously.
-- As of `v4.7.2`, advanced-engine solver cores can run on Rust across Debye/Davies/Pitzer-lite, Aqion closed-system, and NaOH-CO2 Pitzer planning paths with per-kernel auto-policy gating; Python fallback remains the authoritative path on any Rust error.
+- As of `v4.7.3`, advanced-engine solver cores can run on Rust across Debye/Davies/Pitzer-lite, Aqion closed-system, and NaOH-CO2 Pitzer planning paths with per-kernel auto-policy gating; Python fallback remains the authoritative path on any Rust error.
 
 #### 4) Visualization Outputs
 - Species concentration plots and saturation summaries.
@@ -1059,6 +1060,17 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.7.3 Analysis Dashboard for Advanced Speciation
+- Added a new Analysis Dashboard in the Advanced Speciation `Analysis` workflow with draggable/configurable tiles and persisted tile layout/visibility/pin state.
+- Added strict per-cycle dashboard payload generation so each detected cycle contributes one `actual_cycle_series` row with pH/speciation/uptake values.
+- Added complete reference-run generation (`reference_cycle_series`) that replays detected per-cycle CO2 doses and repeats the final detected dose until target pH stop.
+- Added dual comparison payloads (`comparison_series`) for cycle-aligned and CO2-aligned pH/species deltas with alignment quality flags.
+- Added dashboard tiles for completion meter (gauge style), current-cycle snapshot, simulation comparison, uptake/yield, species deltas, and warnings/flags.
+- Added quick dashboard actions: latest-cycle jump, equivalence-cycle jump, tile configuration dialog, tile layout reset, and drag-reorder behavior.
+- Added manual `Send Dashboard Stats to Ledger` action that prefills cycles, total uptake, theoretical yield, actual yield %, and selected-cycle summary notes into a new Ledger entry dialog.
+- Extended structured payload support with `analysis_dashboard` and synchronized runtime updates so dashboard data remains aligned with Analysis cycle simulations.
+- Updated version metadata to `v4.7.3` in script header, `APP_VERSION`, and README.
 
 ### v4.7.2 Startup Splash Gating for Rust Backend Readiness
 - Updated startup splash completion gating so Rust backend preflight is part of startup readiness; splash now stays visible until Rust preflight reaches a terminal completed state.
