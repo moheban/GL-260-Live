@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.7.4)
+# GL-260 Data Analysis and Plotter (v4.7.5)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.7.4`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.7.5`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -29,6 +29,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.7.5 Peak/Trough Detection Upgrade Stabilization](#v475-peaktrough-detection-upgrade-stabilization)
   - [v4.7.4 Rust-Accelerated Analysis Dashboard + Tile-Based Workflow Inputs](#v474-rust-accelerated-analysis-dashboard--tile-based-workflow-inputs)
   - [v4.7.3 Analysis Dashboard for Advanced Speciation](#v473-analysis-dashboard-for-advanced-speciation)
   - [v4.7.2 Startup Splash Gating for Rust Backend Readiness](#v472-startup-splash-gating-for-rust-backend-readiness)
@@ -117,6 +118,9 @@ These modules are imported unconditionally at startup:
 - `v4.7.4` extends Rust acceleration into Analysis dashboard cores:
   - reference interpolation core (`analysis_interpolate_reference_series_core`),
   - dashboard compare/summary core (`analysis_dashboard_core`).
+- `v4.7.5` extends optional Rust acceleration into cycle marker workflows:
+  - automatic peak/trough detection core (`cycle_detect_markers_core`),
+  - manual marker snap core (`cycle_manual_snap_core`).
 - If Rust is unavailable, calculations continue on the existing Python path (authoritative fallback).
 - If Rust raises any runtime error or returns malformed payloads, Python fallback remains authoritative for chemistry outputs.
 - `v4.5.4` adds startup Rust preflight for runtime-aware readiness prompts and setup decisions.
@@ -135,6 +139,7 @@ These modules are imported unconditionally at startup:
   - automatic fallback when `link.exe` is missing: MinGW linker path (`gcc.exe` + `ld.exe`) with GNU Rust host/target installation
   - extension build via `python -m maturin develop --manifest-path rust_ext/Cargo.toml` (MSVC) or `python -m maturin develop --manifest-path rust_ext/Cargo.toml --target x86_64-pc-windows-gnu` (GNU fallback)
 - If installation/build fails or is declined, workflows continue with Python fallback.
+- Repo-local Rust toolchain hardening now pins Rust via `rust-toolchain.toml`; use the validation helper below to rebuild the extension through the same free-threaded interpreter/runtime path the app expects.
 
 #### Setup (dual interpreter, recommended)
 ```powershell
@@ -170,22 +175,35 @@ Expected output shape: `False ...bezierTools.py`.
 ```powershell
 winget install --id Rustlang.Rustup --exact --scope user --interactive --accept-package-agreements --accept-source-agreements
 rustup default stable
-python -m pip install "maturin>=1.12,<2.0"
+.venv-314t\Scripts\python.exe -m pip install "maturin>=1.12,<2.0"
 # Preferred build path (MSVC): install VS Build Tools (Desktop development with C++) when `link.exe` is missing.
-python -m maturin develop --manifest-path rust_ext/Cargo.toml
+.venv-314t\Scripts\python.exe -m maturin develop --manifest-path rust_ext/Cargo.toml
 # GNU fallback path (when using MinGW):
 # 1) Ensure `gcc.exe` and `ld.exe` are available on PATH (or at C:\Users\mmoheban\mingw64\bin)
 rustup toolchain install stable-x86_64-pc-windows-gnu
 rustup target add x86_64-pc-windows-gnu --toolchain stable-x86_64-pc-windows-gnu
-python -m maturin develop --manifest-path rust_ext/Cargo.toml --target x86_64-pc-windows-gnu
+.venv-314t\Scripts\python.exe -m maturin develop --manifest-path rust_ext/Cargo.toml --target x86_64-pc-windows-gnu
 rustup run stable rustc --version
 rustup run stable cargo --version
-python -c "import gl260_rust_ext; print('gl260_rust_ext import OK')"
+.venv-314t\Scripts\python.exe -c "import gl260_rust_ext; print('gl260_rust_ext import OK')"
 .\.venv-314t\Scripts\python.exe -c "import sys; print('before', sys._is_gil_enabled()); import gl260_rust_ext.gl260_rust_ext as m; print('after', sys._is_gil_enabled()); print(m.__file__)"
 ```
 Expected no-GIL verification output shape: `before False`, `after False`, and no RuntimeWarning.
 
 If you launch the app with a specific interpreter (for example `.\.venv-314t\Scripts\python.exe`), run manual Rust build commands with that same interpreter path so `gl260_rust_ext` installs into the matching environment.
+
+Direct `cargo` troubleshooting should prefer `rustup run stable cargo ...` over bare `cargo ...` because some Windows Python installs expose incompatible `cargo.exe` shims earlier on PATH.
+
+#### Repo-local Rust backend validator
+Use the helper below to rebuild and smoke-test the Rust backend with the pinned free-threaded interpreter and rustup-managed tools:
+
+```powershell
+.\.venv-314t\Scripts\python.exe .\scripts\validate_rust_backend.py
+```
+
+The helper reports the active interpreter, rustup-resolved `rustc`/`cargo` versions, runs `maturin develop` for `x86_64-pc-windows-gnu`, and verifies that `gl260_rust_ext.gl260_rust_ext` imports from the same environment.
+
+The autogenerated workflow at `rust_ext/.github/workflows/CI.yml` currently validates standard CPython builds, not the local Windows free-threaded `3.14t` workflow used here.
 
 ### Running the Application
 From the repository root:
@@ -1064,6 +1082,13 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.7.5 Peak/Trough Detection Upgrade Stabilization
+- Added shared cycle marker detection/snap cores in Rust for automatic peak/trough discovery and manual marker placement, with Python fallback preserved as the authoritative safety path.
+- Manual marker snapping now uses one context-aware workflow across Cycle Analysis and compare-side editing so sharp peaks/troughs resolve to raw extrema more consistently.
+- Added cycle detection controls for smoothing, manual snap radius, and auto refine radius, and persisted them through settings/profile threshold payloads.
+- Cycle hover previews and cycle trace styling now share one normalization path, preventing preview-only styling drift and fixing the missing `_normalize_cycle_trace_settings` runtime error.
+- Synced the application version metadata to `v4.7.5`.
 
 ### v4.7.4 Rust-Accelerated Analysis Dashboard + Tile-Based Workflow Inputs
 - Extended Rust integration into the Analysis dashboard comparison path with new kernels:

@@ -1,7 +1,7 @@
 use numpy::PyReadonlyArray1;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PyList};
+use pyo3::types::{PyAny, PyDict, PyList, PyString};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1004,14 +1004,22 @@ fn dict_optional_float_value(dict: &Bound<'_, PyDict>, key: &str) -> Option<f64>
     }
 }
 
-fn dict_truthy_or_empty_pyobject(py: Python<'_>, dict: &Bound<'_, PyDict>, key: &str) -> PyObject {
+/// Return a truthy dictionary value or an empty Python string as an owned object.
+///
+/// This keeps report-table schema parity with the Python fallback while avoiding
+/// deprecated PyO3 conversion APIs that were removed from the current toolchain.
+fn dict_truthy_or_empty_pyobject(
+    py: Python<'_>,
+    dict: &Bound<'_, PyDict>,
+    key: &str,
+) -> Py<PyAny> {
     let Some(value) = dict.get_item(key).ok().flatten() else {
-        return "".into_py(py);
+        return PyString::new(py, "").into_any().unbind();
     };
     if value.is_truthy().unwrap_or(false) {
-        value.into_py(py)
+        value.unbind()
     } else {
-        "".into_py(py)
+        PyString::new(py, "").into_any().unbind()
     }
 }
 
@@ -1023,6 +1031,10 @@ fn format_optional_decimal(value: Option<f64>, precision: usize) -> String {
     }
 }
 
+/// Convert a Python object into a trimmed owned Rust string.
+///
+/// The helper materializes an owned `String` before trimming so no borrowed
+/// Python string data escapes temporary PyO3 bindings.
 fn py_any_to_trimmed_string(value: &Bound<'_, PyAny>) -> String {
     if let Ok(text) = value.extract::<String>() {
         return text.trim().to_string();
@@ -1030,7 +1042,7 @@ fn py_any_to_trimmed_string(value: &Bound<'_, PyAny>) -> String {
     value
         .str()
         .ok()
-        .and_then(|text| text.to_str().ok())
+        .and_then(|text| text.extract::<String>().ok())
         .map(|text| text.trim().to_string())
         .unwrap_or_default()
 }
@@ -1042,9 +1054,13 @@ fn dict_string_value(dict: &Bound<'_, PyDict>, key: &str) -> String {
     py_any_to_trimmed_string(&value)
 }
 
-fn dict_custom_map(dict: &Bound<'_, PyDict>) -> Option<Bound<'_, PyDict>> {
+/// Resolve the optional custom-values map attached to a ledger row.
+///
+/// The explicit lifetime keeps the returned dictionary bound to the same Python
+/// interpreter scope as the source row, which PyO3 0.27 requires.
+fn dict_custom_map<'py>(dict: &Bound<'py, PyDict>) -> Option<Bound<'py, PyDict>> {
     let custom_any = dict.get_item("custom_values").ok().flatten()?;
-    custom_any.downcast::<PyDict>().ok()
+    custom_any.cast_into::<PyDict>().ok()
 }
 
 fn dict_custom_optional_float_value(dict: &Bound<'_, PyDict>, key: &str) -> Option<f64> {
@@ -1182,10 +1198,14 @@ fn normalize_fraction_value(value: Option<f64>) -> f64 {
     normalized.max(0.0)
 }
 
+/// Extract a carbonate fraction value from a nested `fractions` mapping.
+///
+/// Missing nested dictionaries or non-finite values are treated as absent so
+/// Rust-side report builders match the Python fallback behavior.
 fn extract_fraction_field(dict: &Bound<'_, PyDict>, key: &str) -> Option<f64> {
     let fractions_any = dict.get_item("fractions").ok().flatten()?;
-    let fractions = fractions_any.downcast::<PyDict>().ok()?;
-    dict_optional_float_value(fractions, key)
+    let fractions = fractions_any.cast_into::<PyDict>().ok()?;
+    dict_optional_float_value(&fractions, key)
 }
 
 fn dict_optional_finite_by_keys(dict: &Bound<'_, PyDict>, keys: &[&str]) -> Option<f64> {
@@ -1340,6 +1360,10 @@ fn analysis_interpolate_reference_series_core(
     co2_mw,
     naoh_mw
 ))]
+/// Build the Rust-backed analysis dashboard payload from cycle series inputs.
+///
+/// The function mirrors the Python dashboard assembly path so backend switching
+/// does not change interpolation, fraction extraction, or summary table shape.
 fn analysis_dashboard_core(
     py: Python<'_>,
     actual_cycle_series: &Bound<'_, PyList>,
@@ -1371,7 +1395,7 @@ fn analysis_dashboard_core(
     let mut actual_rows: Vec<ActualRow> = Vec::new();
     let mut actual_alignment_override: Vec<String> = Vec::new();
     for (idx, item) in actual_cycle_series.iter().enumerate() {
-        let Ok(entry) = item.downcast::<PyDict>() else {
+        let Ok(entry) = item.cast_into::<PyDict>() else {
             continue;
         };
         let cycle_id = compare_cycle_row_index(&entry, idx + 1);
@@ -1392,7 +1416,7 @@ fn analysis_dashboard_core(
         let mut hco3_fraction = 0.0_f64;
         let mut co3_fraction = 0.0_f64;
         if let Some(fractions_any) = entry.get_item("fractions").ok().flatten() {
-            if let Ok(fractions) = fractions_any.downcast::<PyDict>() {
+            if let Ok(fractions) = fractions_any.cast_into::<PyDict>() {
                 hco3_fraction = dict_optional_float_value(&fractions, "HCO3-")
                     .unwrap_or(0.0)
                     .max(0.0);
@@ -1418,7 +1442,7 @@ fn analysis_dashboard_core(
     let mut reference_hco3: Vec<Option<f64>> = Vec::new();
     let mut reference_co3: Vec<Option<f64>> = Vec::new();
     for (idx, item) in reference_cycle_series.iter().enumerate() {
-        let Ok(entry) = item.downcast::<PyDict>() else {
+        let Ok(entry) = item.cast_into::<PyDict>() else {
             continue;
         };
         let cycle_id = compare_cycle_row_index(&entry, idx + 1);
@@ -1435,7 +1459,7 @@ fn analysis_dashboard_core(
         let mut hco3_fraction = None;
         let mut co3_fraction = None;
         if let Some(fractions_any) = entry.get_item("fractions").ok().flatten() {
-            if let Ok(fractions) = fractions_any.downcast::<PyDict>() {
+            if let Ok(fractions) = fractions_any.cast_into::<PyDict>() {
                 hco3_fraction = dict_optional_float_value(&fractions, "HCO3-");
                 co3_fraction = dict_optional_float_value(&fractions, "CO3^2-");
             }
@@ -1684,6 +1708,10 @@ fn analysis_dashboard_core(
 
 #[pyfunction]
 #[pyo3(signature = (rows_a, rows_b))]
+/// Compare aligned cycle rows from two datasets while preserving Python parity.
+///
+/// The output ordering and lookup rules intentionally mirror the Python
+/// implementation so Compare tables remain backend-agnostic.
 fn compare_aligned_cycle_rows_core(
     py: Python<'_>,
     rows_a: &Bound<'_, PyList>,
@@ -1714,7 +1742,7 @@ fn compare_aligned_cycle_rows_core(
     let mut map_b: BTreeMap<usize, (Option<f64>, Option<f64>)> = BTreeMap::new();
 
     for (idx, item) in rows_a.iter().enumerate() {
-        let Ok(entry) = item.downcast::<PyDict>() else {
+        let Ok(entry) = item.cast_into::<PyDict>() else {
             continue;
         };
         let cycle_id = compare_cycle_row_index(&entry, idx + 1);
@@ -1726,7 +1754,7 @@ fn compare_aligned_cycle_rows_core(
         map_a.insert(cycle_id, (uptake, cumulative));
     }
     for (idx, item) in rows_b.iter().enumerate() {
-        let Ok(entry) = item.downcast::<PyDict>() else {
+        let Ok(entry) = item.cast_into::<PyDict>() else {
             continue;
         };
         let cycle_id = compare_cycle_row_index(&entry, idx + 1);
@@ -1827,6 +1855,10 @@ fn compare_aligned_cycle_rows_core(
 
 #[pyfunction]
 #[pyo3(signature = (entries, filter_value, sort_mode, sort_key, sort_desc, sort_column_type))]
+/// Compute Ledger row indices after applying filter and sort rules.
+///
+/// Returning indices instead of rebuilt rows preserves the existing Python UI
+/// update flow while allowing Rust to accelerate the expensive comparisons.
 fn ledger_sort_filter_indices_core(
     entries: &Bound<'_, PyList>,
     filter_value: &str,
@@ -1868,7 +1900,7 @@ fn ledger_sort_filter_indices_core(
     let apply_filter = !filter_token.is_empty() && filter_token != "all profiles";
     let mut rows: Vec<RowSortData> = Vec::new();
     for (idx, item) in entries.iter().enumerate() {
-        let Ok(entry) = item.downcast::<PyDict>() else {
+        let Ok(entry) = item.cast_into::<PyDict>() else {
             continue;
         };
         let profile_lower = dict_string_value(&entry, "profile_name").to_ascii_lowercase();
@@ -1999,6 +2031,10 @@ fn ledger_sort_filter_indices_core(
 
 #[pyfunction]
 #[pyo3(signature = (cycle_rows, total_drop_value=None, reaction_basis=None))]
+/// Derive Ledger add-from-profile metrics from cycle rows and reaction inputs.
+///
+/// The function preserves the Python fallback schema while normalizing PyO3
+/// ownership so row dictionaries can be retained safely across the loop.
 fn ledger_prefill_metrics_core(
     py: Python<'_>,
     cycle_rows: &Bound<'_, PyList>,
@@ -2017,7 +2053,7 @@ fn ledger_prefill_metrics_core(
     ];
     let mut normalized_rows: Vec<Bound<'_, PyDict>> = Vec::new();
     for item in cycle_rows.iter() {
-        let Ok(entry) = item.downcast::<PyDict>() else {
+        let Ok(entry) = item.cast_into::<PyDict>() else {
             continue;
         };
         normalized_rows.push(entry);
@@ -2083,6 +2119,10 @@ fn array_signature_core(x_values: PyReadonlyArray1<'_, f64>) -> PyResult<(usize,
 
 #[pyfunction]
 #[pyo3(signature = (cycle_transfer_rows, duration_header))]
+/// Format Final Report cycle-stat rows using the shared table schema.
+///
+/// Rust keeps the same column values and empty-string behavior expected by the
+/// Python report builders, so exports remain identical across backends.
 fn final_report_cycle_stats_rows_core(
     py: Python<'_>,
     cycle_transfer_rows: &Bound<'_, PyList>,
@@ -2092,18 +2132,18 @@ fn final_report_cycle_stats_rows_core(
     // builders while keeping Rust wrappers strictly fallback-safe.
     let rows = PyList::empty(py);
     for item in cycle_transfer_rows.iter() {
-        let Ok(entry) = item.downcast::<PyDict>() else {
+        let Ok(entry) = item.cast_into::<PyDict>() else {
             continue;
         };
-        let delta = dict_optional_float_value(entry, "delta_pressure_psi");
-        let duration = dict_optional_float_value(entry, "duration_x")
-            .or_else(|| dict_optional_float_value(entry, "duration"));
-        let peak_psi = dict_optional_float_value(entry, "peak_pressure_psi");
-        let trough_psi = dict_optional_float_value(entry, "trough_pressure_psi");
-        let mean_temp = dict_optional_float_value(entry, "mean_temperature_c");
-        let co2_mass = dict_optional_float_value(entry, "cumulative_co2_mass_g");
+        let delta = dict_optional_float_value(&entry, "delta_pressure_psi");
+        let duration = dict_optional_float_value(&entry, "duration_x")
+            .or_else(|| dict_optional_float_value(&entry, "duration"));
+        let peak_psi = dict_optional_float_value(&entry, "peak_pressure_psi");
+        let trough_psi = dict_optional_float_value(&entry, "trough_pressure_psi");
+        let mean_temp = dict_optional_float_value(&entry, "mean_temperature_c");
+        let co2_mass = dict_optional_float_value(&entry, "cumulative_co2_mass_g");
         let row = PyDict::new(py);
-        row.set_item("Cycle", dict_truthy_or_empty_pyobject(py, entry, "cycle_id"))?;
+        row.set_item("Cycle", dict_truthy_or_empty_pyobject(py, &entry, "cycle_id"))?;
         row.set_item("\u{0394}P (PSI)", format_optional_decimal(delta, 2))?;
         row.set_item(duration_header, format_optional_decimal(duration, 3))?;
         row.set_item("Peak PSI", format_optional_decimal(peak_psi, 2))?;
@@ -2117,6 +2157,10 @@ fn final_report_cycle_stats_rows_core(
 
 #[pyfunction]
 #[pyo3(signature = (timeline_rows))]
+/// Format Final Report timeline rows using the Rust speciation outputs.
+///
+/// The formatter keeps the existing table contract intact while using owned
+/// PyO3 dictionary casts that are compatible with current PyO3 releases.
 fn final_report_cycle_timeline_rows_core(
     py: Python<'_>,
     timeline_rows: &Bound<'_, PyList>,
@@ -2124,20 +2168,20 @@ fn final_report_cycle_timeline_rows_core(
     // Format timeline rows for Final Report preview/export table builders.
     let rows = PyList::empty(py);
     for item in timeline_rows.iter() {
-        let Ok(entry) = item.downcast::<PyDict>() else {
+        let Ok(entry) = item.cast_into::<PyDict>() else {
             continue;
         };
-        let co2_total = dict_optional_float_value(entry, "co2_g")
-            .or_else(|| dict_optional_float_value(entry, "co2_mass_g"))
-            .or_else(|| dict_optional_float_value(entry, "cumulative_co2_added_mass_g"))
+        let co2_total = dict_optional_float_value(&entry, "co2_g")
+            .or_else(|| dict_optional_float_value(&entry, "co2_mass_g"))
+            .or_else(|| dict_optional_float_value(&entry, "cumulative_co2_added_mass_g"))
             .unwrap_or(0.0);
-        let h2co3_fraction = normalize_fraction_value(extract_fraction_field(entry, "H2CO3"));
-        let hco3_fraction = normalize_fraction_value(extract_fraction_field(entry, "HCO3-"));
-        let co3_fraction = normalize_fraction_value(extract_fraction_field(entry, "CO3^2-"));
-        let ph_value = dict_optional_float_value(entry, "solution_ph")
-            .or_else(|| dict_optional_float_value(entry, "speciation_ph"));
+        let h2co3_fraction = normalize_fraction_value(extract_fraction_field(&entry, "H2CO3"));
+        let hco3_fraction = normalize_fraction_value(extract_fraction_field(&entry, "HCO3-"));
+        let co3_fraction = normalize_fraction_value(extract_fraction_field(&entry, "CO3^2-"));
+        let ph_value = dict_optional_float_value(&entry, "solution_ph")
+            .or_else(|| dict_optional_float_value(&entry, "speciation_ph"));
         let row = PyDict::new(py);
-        row.set_item("Cycle", dict_truthy_or_empty_pyobject(py, entry, "cycle_id"))?;
+        row.set_item("Cycle", dict_truthy_or_empty_pyobject(py, &entry, "cycle_id"))?;
         row.set_item("CO\u{2082} total (g)", format!("{co2_total:.2}"))?;
         row.set_item("pH", format_optional_decimal(ph_value, 2))?;
         row.set_item("H\u{2082}CO\u{2083} (%)", format!("{:.1}", h2co3_fraction * 100.0))?;
@@ -2785,6 +2829,618 @@ fn combined_required_indices(
     Ok(required.into_iter().collect())
 }
 
+#[derive(Clone, Copy, Debug)]
+struct CycleMarkerCandidate {
+    compact_idx: usize,
+    global_idx: usize,
+    prominence: f64,
+    curvature: f64,
+    anchor_delta: usize,
+}
+
+fn normalize_window_size(window: usize) -> usize {
+    let base = window.max(1);
+    if base % 2 == 0 {
+        base.saturating_add(1)
+    } else {
+        base
+    }
+}
+
+fn transform_cycle_value(value: f64, prefer_peak: bool) -> f64 {
+    if prefer_peak {
+        value
+    } else {
+        -value
+    }
+}
+
+fn moving_average_centered(values: &[f64], window: usize) -> Vec<f64> {
+    let n = values.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let normalized = normalize_window_size(window);
+    if normalized <= 1 || n <= 2 {
+        return values.to_vec();
+    }
+    let half = normalized / 2;
+    let mut smoothed = vec![0.0; n];
+    for idx in 0..n {
+        let start = idx.saturating_sub(half);
+        let end = (idx + half + 1).min(n);
+        let mut total = 0.0;
+        let mut count = 0usize;
+        for value in &values[start..end] {
+            if value.is_finite() {
+                total += *value;
+                count += 1;
+            }
+        }
+        smoothed[idx] = if count > 0 {
+            total / count as f64
+        } else {
+            values[idx]
+        };
+    }
+    smoothed
+}
+
+fn is_local_maximum(values: &[f64], idx: usize) -> bool {
+    if values.is_empty() || idx >= values.len() {
+        return false;
+    }
+    let center = values[idx];
+    if !center.is_finite() {
+        return false;
+    }
+    let left_ok = if idx == 0 {
+        false
+    } else {
+        let left = values[idx - 1];
+        left.is_finite() && center >= left
+    };
+    let right_ok = if idx + 1 >= values.len() {
+        false
+    } else {
+        let right = values[idx + 1];
+        right.is_finite() && center >= right
+    };
+    let strictly_higher = (idx > 0 && center > values[idx - 1])
+        || (idx + 1 < values.len() && center > values[idx + 1]);
+    left_ok && right_ok && strictly_higher
+}
+
+fn local_maxima_positions(values: &[f64]) -> Vec<usize> {
+    let mut maxima = Vec::new();
+    if values.len() < 3 {
+        return maxima;
+    }
+    for idx in 1..(values.len() - 1) {
+        if is_local_maximum(values, idx) {
+            maxima.push(idx);
+        }
+    }
+    maxima
+}
+
+fn estimate_peak_prominence(values: &[f64], idx: usize) -> f64 {
+    if values.is_empty() || idx >= values.len() {
+        return 0.0;
+    }
+    let peak = values[idx];
+    if !peak.is_finite() {
+        return 0.0;
+    }
+    let mut left_min = peak;
+    let mut j = idx;
+    while j > 0 {
+        j -= 1;
+        let value = values[j];
+        if !value.is_finite() {
+            continue;
+        }
+        left_min = left_min.min(value);
+        if value > peak {
+            break;
+        }
+    }
+    let mut right_min = peak;
+    let mut k = idx;
+    while k + 1 < values.len() {
+        k += 1;
+        let value = values[k];
+        if !value.is_finite() {
+            continue;
+        }
+        right_min = right_min.min(value);
+        if value > peak {
+            break;
+        }
+    }
+    (peak - left_min.max(right_min)).max(0.0)
+}
+
+fn estimate_peak_width(values: &[f64], idx: usize, prominence: f64) -> usize {
+    if values.is_empty() || idx >= values.len() {
+        return 0;
+    }
+    let peak = values[idx];
+    if !peak.is_finite() || !prominence.is_finite() || prominence <= 0.0 {
+        return 0;
+    }
+    let threshold = peak - (prominence * 0.5);
+    let mut left = idx;
+    while left > 0 {
+        let value = values[left];
+        let prev = values[left - 1];
+        if !value.is_finite() || !prev.is_finite() || prev < threshold {
+            break;
+        }
+        left -= 1;
+    }
+    let mut right = idx;
+    while right + 1 < values.len() {
+        let value = values[right];
+        let next = values[right + 1];
+        if !value.is_finite() || !next.is_finite() || next < threshold {
+            break;
+        }
+        right += 1;
+    }
+    right.saturating_sub(left).saturating_add(1)
+}
+
+fn estimate_peak_curvature(values: &[f64], idx: usize) -> f64 {
+    if idx == 0 || idx + 1 >= values.len() {
+        return 0.0;
+    }
+    let prev = values[idx - 1];
+    let center = values[idx];
+    let next = values[idx + 1];
+    if !(prev.is_finite() && center.is_finite() && next.is_finite()) {
+        return 0.0;
+    }
+    (2.0 * center - prev - next).abs()
+}
+
+fn refine_peak_candidate(
+    transformed_raw: &[f64],
+    compact_idx: usize,
+    refine_radius: usize,
+) -> usize {
+    if transformed_raw.is_empty() {
+        return 0;
+    }
+    let start = compact_idx.saturating_sub(refine_radius);
+    let end = (compact_idx + refine_radius + 1).min(transformed_raw.len());
+    let mut best_idx = compact_idx.min(transformed_raw.len() - 1);
+    let mut best_value = transformed_raw[best_idx];
+    let mut best_delta = usize::MAX;
+    for idx in start..end {
+        let value = transformed_raw[idx];
+        if !value.is_finite() {
+            continue;
+        }
+        let local_ok = is_local_maximum(transformed_raw, idx);
+        let delta = idx.abs_diff(compact_idx);
+        if local_ok
+            && (
+                !best_value.is_finite()
+                    || value > best_value
+                    || (value == best_value && delta < best_delta)
+            )
+        {
+            best_idx = idx;
+            best_value = value;
+            best_delta = delta;
+        }
+    }
+    if is_local_maximum(transformed_raw, best_idx) {
+        return best_idx;
+    }
+    for idx in start..end {
+        let value = transformed_raw[idx];
+        if !value.is_finite() {
+            continue;
+        }
+        let delta = idx.abs_diff(compact_idx);
+        if !best_value.is_finite() || value > best_value || (value == best_value && delta < best_delta)
+        {
+            best_idx = idx;
+            best_value = value;
+            best_delta = delta;
+        }
+    }
+    best_idx
+}
+
+fn collapse_refined_candidates(
+    compact_to_global: &[usize],
+    transformed_raw: &[f64],
+    candidates: &[usize],
+    refine_radius: usize,
+) -> Vec<CycleMarkerCandidate> {
+    let mut refined_map: BTreeMap<usize, CycleMarkerCandidate> = BTreeMap::new();
+    for compact_idx in candidates {
+        if *compact_idx >= compact_to_global.len() {
+            continue;
+        }
+        let refined_idx = refine_peak_candidate(transformed_raw, *compact_idx, refine_radius);
+        if refined_idx >= compact_to_global.len() {
+            continue;
+        }
+        let global_idx = compact_to_global[refined_idx];
+        let prominence = estimate_peak_prominence(transformed_raw, refined_idx);
+        let curvature = estimate_peak_curvature(transformed_raw, refined_idx);
+        let candidate = CycleMarkerCandidate {
+            compact_idx: refined_idx,
+            global_idx,
+            prominence,
+            curvature,
+            anchor_delta: refined_idx.abs_diff(*compact_idx),
+        };
+        match refined_map.get(&global_idx) {
+            Some(existing)
+                if existing.prominence > candidate.prominence
+                    || (existing.prominence == candidate.prominence
+                        && existing.curvature >= candidate.curvature) => {}
+            _ => {
+                refined_map.insert(global_idx, candidate);
+            }
+        }
+    }
+    refined_map.into_values().collect()
+}
+
+fn select_distance_filtered_candidates(
+    candidates: &mut Vec<CycleMarkerCandidate>,
+    min_distance: usize,
+) -> Vec<CycleMarkerCandidate> {
+    candidates.sort_by(|left, right| {
+        right
+            .prominence
+            .partial_cmp(&left.prominence)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| {
+                right
+                    .curvature
+                    .partial_cmp(&left.curvature)
+                    .unwrap_or(Ordering::Equal)
+            })
+            .then_with(|| left.global_idx.cmp(&right.global_idx))
+    });
+    let mut selected: Vec<CycleMarkerCandidate> = Vec::new();
+    for candidate in candidates.iter().copied() {
+        if selected
+            .iter()
+            .any(|existing| existing.global_idx.abs_diff(candidate.global_idx) < min_distance)
+        {
+            continue;
+        }
+        selected.push(candidate);
+    }
+    selected.sort_by_key(|item| item.global_idx);
+    selected
+}
+
+fn build_cycle_candidates(
+    compact_to_global: &[usize],
+    raw_values: &[f64],
+    prefer_peak: bool,
+    prominence_threshold: f64,
+    min_distance: usize,
+    min_width: usize,
+    smoothing_window: usize,
+    refine_radius: usize,
+) -> Vec<CycleMarkerCandidate> {
+    if compact_to_global.len() < 3 || raw_values.len() < 3 {
+        return Vec::new();
+    }
+    let transformed_raw: Vec<f64> = raw_values
+        .iter()
+        .map(|value| transform_cycle_value(*value, prefer_peak))
+        .collect();
+    let transformed_smoothed = moving_average_centered(&transformed_raw, smoothing_window);
+    let maxima = local_maxima_positions(&transformed_smoothed);
+    let mut prefiltered: Vec<usize> = Vec::new();
+    for idx in maxima {
+        let prominence = estimate_peak_prominence(&transformed_smoothed, idx);
+        if prominence < prominence_threshold {
+            continue;
+        }
+        let width = estimate_peak_width(&transformed_smoothed, idx, prominence);
+        if width < min_width {
+            continue;
+        }
+        prefiltered.push(idx);
+    }
+    let mut refined = collapse_refined_candidates(
+        compact_to_global,
+        &transformed_raw,
+        &prefiltered,
+        refine_radius.max(1),
+    );
+    for item in &mut refined {
+        item.prominence = estimate_peak_prominence(&transformed_raw, item.compact_idx);
+        item.curvature = estimate_peak_curvature(&transformed_raw, item.compact_idx);
+    }
+    select_distance_filtered_candidates(&mut refined, min_distance.max(1))
+}
+
+fn auto_snap_window(selection_len: usize) -> usize {
+    if selection_len == 0 {
+        return 6;
+    }
+    let by_percent = ((selection_len as f64) * 0.01).round() as usize;
+    by_percent.max(6).min(80)
+}
+
+fn best_manual_candidate(
+    compact_x: &[f64],
+    compact_y: &[f64],
+    x_target: f64,
+    prefer_peak: bool,
+    snap_radius: usize,
+    smoothing_window: usize,
+) -> Option<(CycleMarkerCandidate, f64)> {
+    if compact_x.len() < 3 || compact_y.len() < 3 || !x_target.is_finite() {
+        return None;
+    }
+    let mut anchor_idx = 0usize;
+    let mut best_anchor_dx = f64::INFINITY;
+    for (idx, x_value) in compact_x.iter().enumerate() {
+        if !x_value.is_finite() {
+            continue;
+        }
+        let delta = (*x_value - x_target).abs();
+        if delta < best_anchor_dx {
+            best_anchor_dx = delta;
+            anchor_idx = idx;
+        }
+    }
+    let window_radius = if snap_radius == 0 {
+        auto_snap_window(compact_x.len())
+    } else {
+        snap_radius.max(1)
+    };
+    let window_start = anchor_idx.saturating_sub(window_radius);
+    let window_end = (anchor_idx + window_radius + 1).min(compact_x.len());
+    let local_to_global: Vec<usize> = (window_start..window_end).collect();
+    let local_y = &compact_y[window_start..window_end];
+    let transformed_local: Vec<f64> = local_y
+        .iter()
+        .map(|value| transform_cycle_value(*value, prefer_peak))
+        .collect();
+    let smoothed_local = moving_average_centered(&transformed_local, smoothing_window);
+    let maxima = local_maxima_positions(&smoothed_local);
+    let refine_radius = (normalize_window_size(smoothing_window) / 2).max(2);
+    let mut refined = collapse_refined_candidates(
+        &local_to_global,
+        &transformed_local,
+        &maxima,
+        refine_radius,
+    );
+    if refined.is_empty() {
+        let compact_candidate = refine_peak_candidate(
+            &transformed_local,
+            anchor_idx.saturating_sub(window_start).min(transformed_local.len() - 1),
+            refine_radius,
+        );
+        let global_idx = window_start + compact_candidate;
+        refined.push(CycleMarkerCandidate {
+            compact_idx: global_idx,
+            global_idx,
+            prominence: estimate_peak_prominence(
+                &compact_y
+                    .iter()
+                    .map(|value| transform_cycle_value(*value, prefer_peak))
+                    .collect::<Vec<f64>>(),
+                global_idx,
+            ),
+            curvature: estimate_peak_curvature(
+                &compact_y
+                    .iter()
+                    .map(|value| transform_cycle_value(*value, prefer_peak))
+                    .collect::<Vec<f64>>(),
+                global_idx,
+            ),
+            anchor_delta: global_idx.abs_diff(anchor_idx),
+        });
+    }
+    let transformed_full: Vec<f64> = compact_y
+        .iter()
+        .map(|value| transform_cycle_value(*value, prefer_peak))
+        .collect();
+    let mut best: Option<(CycleMarkerCandidate, f64, f64, usize)> = None;
+    for mut candidate in refined {
+        candidate.prominence = estimate_peak_prominence(&transformed_full, candidate.global_idx);
+        candidate.curvature = estimate_peak_curvature(&transformed_full, candidate.global_idx);
+        let x_distance = (compact_x[candidate.global_idx] - x_target).abs();
+        let metric = (candidate.prominence, -x_distance, candidate.curvature, -(candidate.anchor_delta as f64));
+        let score =
+            candidate.prominence * 1000.0 + candidate.curvature * 50.0 - x_distance - candidate.anchor_delta as f64 * 0.01;
+        match best {
+            Some((existing, existing_dx, existing_score, existing_delta))
+                if existing.prominence > metric.0
+                    || (existing.prominence == metric.0 && existing_dx < x_distance)
+                    || (existing.prominence == metric.0
+                        && existing_dx == x_distance
+                        && existing.curvature > metric.2)
+                    || (existing.prominence == metric.0
+                        && existing_dx == x_distance
+                        && existing.curvature == metric.2
+                        && existing_delta <= candidate.anchor_delta) =>
+            {
+                let _ = existing_score;
+            }
+            _ => {
+                best = Some((candidate, x_distance, score, candidate.anchor_delta));
+            }
+        }
+    }
+    best.map(|(candidate, _dx, score, _delta)| (candidate, score))
+}
+
+#[pyfunction]
+#[pyo3(signature = (x_values, y_values, mask, prominence, distance, width, smoothing_window=1, refine_radius=6))]
+fn cycle_detect_markers_core(
+    py: Python<'_>,
+    x_values: PyReadonlyArray1<'_, f64>,
+    y_values: PyReadonlyArray1<'_, f64>,
+    mask: PyReadonlyArray1<'_, bool>,
+    prominence: f64,
+    distance: usize,
+    width: usize,
+    smoothing_window: usize,
+    refine_radius: usize,
+) -> PyResult<Py<PyDict>> {
+    let x_view = x_values.as_array();
+    let y_view = y_values.as_array();
+    let mask_view = mask.as_array();
+    let data_len = x_view.len().min(y_view.len()).min(mask_view.len());
+    let response = PyDict::new(py);
+    if data_len < 3 {
+        response.set_item("auto_peaks", Vec::<usize>::new())?;
+        response.set_item("auto_troughs", Vec::<usize>::new())?;
+        response.set_item("debug", PyDict::new(py))?;
+        return Ok(response.unbind());
+    }
+    let mut compact_to_global: Vec<usize> = Vec::new();
+    let mut compact_x: Vec<f64> = Vec::new();
+    let mut compact_y: Vec<f64> = Vec::new();
+    for idx in 0..data_len {
+        let x_val = x_view[idx];
+        let y_val = y_view[idx];
+        if mask_view[idx] && x_val.is_finite() && y_val.is_finite() {
+            compact_to_global.push(idx);
+            compact_x.push(x_val);
+            compact_y.push(y_val);
+        }
+    }
+    if compact_to_global.len() < 3 {
+        response.set_item("auto_peaks", Vec::<usize>::new())?;
+        response.set_item("auto_troughs", Vec::<usize>::new())?;
+        response.set_item("debug", PyDict::new(py))?;
+        return Ok(response.unbind());
+    }
+    let peaks = build_cycle_candidates(
+        &compact_to_global,
+        &compact_y,
+        true,
+        if prominence.is_finite() { prominence.max(0.0) } else { 0.0 },
+        distance.max(1),
+        width.max(1),
+        smoothing_window.max(1),
+        refine_radius.max(1),
+    );
+    let troughs = build_cycle_candidates(
+        &compact_to_global,
+        &compact_y,
+        false,
+        if prominence.is_finite() { prominence.max(0.0) } else { 0.0 },
+        distance.max(1),
+        width.max(1),
+        smoothing_window.max(1),
+        refine_radius.max(1),
+    );
+    let debug = PyDict::new(py);
+    debug.set_item("selection_size", compact_to_global.len())?;
+    debug.set_item("smoothing_window", normalize_window_size(smoothing_window))?;
+    debug.set_item("refine_radius", refine_radius.max(1))?;
+    debug.set_item("peak_candidates", peaks.len())?;
+    debug.set_item("trough_candidates", troughs.len())?;
+    response.set_item(
+        "auto_peaks",
+        peaks.iter().map(|item| item.global_idx).collect::<Vec<usize>>(),
+    )?;
+    response.set_item(
+        "auto_troughs",
+        troughs.iter().map(|item| item.global_idx).collect::<Vec<usize>>(),
+    )?;
+    response.set_item("debug", debug)?;
+    Ok(response.unbind())
+}
+
+#[pyfunction]
+#[pyo3(signature = (x_values, y_values, mask, x_target, y_target=None, prefer_peak=true, snap_radius=0, smoothing_window=1))]
+fn cycle_manual_snap_core(
+    py: Python<'_>,
+    x_values: PyReadonlyArray1<'_, f64>,
+    y_values: PyReadonlyArray1<'_, f64>,
+    mask: PyReadonlyArray1<'_, bool>,
+    x_target: f64,
+    y_target: Option<f64>,
+    prefer_peak: bool,
+    snap_radius: usize,
+    smoothing_window: usize,
+) -> PyResult<Py<PyDict>> {
+    let x_view = x_values.as_array();
+    let y_view = y_values.as_array();
+    let mask_view = mask.as_array();
+    let data_len = x_view.len().min(y_view.len()).min(mask_view.len());
+    let response = PyDict::new(py);
+    if data_len < 3 || !x_target.is_finite() {
+        response.set_item("index", py.None())?;
+        response.set_item("x", py.None())?;
+        response.set_item("y", py.None())?;
+        response.set_item("prominence", py.None())?;
+        response.set_item("score", py.None())?;
+        return Ok(response.unbind());
+    }
+    let mut compact_x: Vec<f64> = Vec::new();
+    let mut compact_y: Vec<f64> = Vec::new();
+    let mut compact_to_global: Vec<usize> = Vec::new();
+    for idx in 0..data_len {
+        let x_val = x_view[idx];
+        let y_val = y_view[idx];
+        if mask_view[idx] && x_val.is_finite() && y_val.is_finite() {
+            compact_x.push(x_val);
+            compact_y.push(y_val);
+            compact_to_global.push(idx);
+        }
+    }
+    if compact_x.len() < 3 {
+        response.set_item("index", py.None())?;
+        response.set_item("x", py.None())?;
+        response.set_item("y", py.None())?;
+        response.set_item("prominence", py.None())?;
+        response.set_item("score", py.None())?;
+        return Ok(response.unbind());
+    }
+    if let Some((candidate, score)) = best_manual_candidate(
+        &compact_x,
+        &compact_y,
+        x_target,
+        prefer_peak,
+        snap_radius,
+        smoothing_window.max(1),
+    ) {
+        let global_idx = compact_to_global[candidate.global_idx];
+        response.set_item("index", global_idx)?;
+        response.set_item("x", compact_x[candidate.global_idx])?;
+        response.set_item("y", compact_y[candidate.global_idx])?;
+        response.set_item("prominence", candidate.prominence)?;
+        let y_bonus = if let Some(target) = y_target {
+            if target.is_finite() {
+                -(compact_y[candidate.global_idx] - target).abs() * 0.001
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+        response.set_item("score", score + y_bonus)?;
+    } else {
+        response.set_item("index", py.None())?;
+        response.set_item("x", py.None())?;
+        response.set_item("y", py.None())?;
+        response.set_item("prominence", py.None())?;
+        response.set_item("score", py.None())?;
+    }
+    Ok(response.unbind())
+}
+
 #[pyfunction]
 #[pyo3(signature = (x_values, y_values, peak_indices, trough_indices))]
 fn cycle_overlay_points_core(
@@ -2991,6 +3647,10 @@ fn cycle_segmentation_core(
 
 #[pyfunction]
 #[pyo3(signature = (cycles, temp_values=None, x_values=None, volume_l=1.0, a_const=1.39, b_const=0.0391, gas_molar_mass=44.0095, x_label="Elapsed Time (days)", compute_vdw=false, default_temp_c=25.0))]
+/// Compute per-cycle gas metrics for overlay tables and exported summaries.
+///
+/// The function consumes cycle dictionaries from Python and keeps the same field
+/// semantics as the Python backend while supporting free-threaded imports.
 fn cycle_metrics_core(
     py: Python<'_>,
     cycles: &Bound<'_, PyList>,
@@ -3028,18 +3688,18 @@ fn cycle_metrics_core(
     let mut cumulative_moles = 0.0_f64;
 
     for (cycle_idx, item) in cycles.iter().enumerate() {
-        let Ok(cycle_dict) = item.downcast::<PyDict>() else {
+        let Ok(cycle_dict) = item.cast_into::<PyDict>() else {
             continue;
         };
-        let Some(peak_idx) = dict_index_value(cycle_dict, "peak_idx") else {
+        let Some(peak_idx) = dict_index_value(&cycle_dict, "peak_idx") else {
             continue;
         };
-        let Some(trough_idx) = dict_index_value(cycle_dict, "trough_idx") else {
+        let Some(trough_idx) = dict_index_value(&cycle_dict, "trough_idx") else {
             continue;
         };
-        let peak_pressure = dict_float_value(cycle_dict, "peak");
-        let trough_pressure = dict_float_value(cycle_dict, "trough");
-        let mut delta_psi = dict_float_value(cycle_dict, "delta_P");
+        let peak_pressure = dict_float_value(&cycle_dict, "peak");
+        let trough_pressure = dict_float_value(&cycle_dict, "trough");
+        let mut delta_psi = dict_float_value(&cycle_dict, "delta_P");
         if !delta_psi.is_finite() {
             delta_psi = peak_pressure - trough_pressure;
         }
@@ -3187,6 +3847,8 @@ fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
     module.add_function(wrap_pyfunction!(pitzer_solve_total_carbon_core, module)?)?;
     module.add_function(wrap_pyfunction!(combined_decimation_indices, module)?)?;
     module.add_function(wrap_pyfunction!(combined_required_indices, module)?)?;
+    module.add_function(wrap_pyfunction!(cycle_detect_markers_core, module)?)?;
+    module.add_function(wrap_pyfunction!(cycle_manual_snap_core, module)?)?;
     module.add_function(wrap_pyfunction!(cycle_overlay_points_core, module)?)?;
     module.add_function(wrap_pyfunction!(cycle_segmentation_core, module)?)?;
     module.add_function(wrap_pyfunction!(cycle_metrics_core, module)?)?;
