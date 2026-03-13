@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.7.5)
+# GL-260 Data Analysis and Plotter (v4.7.6)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.7.5`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.7.6`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -29,6 +29,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.7.6 Mojibake Cleanup And Rust Backend Hardening Sync](#v476-mojibake-cleanup-and-rust-backend-hardening-sync)
   - [v4.7.5 Peak/Trough Detection Upgrade Stabilization](#v475-peaktrough-detection-upgrade-stabilization)
   - [v4.7.4 Rust-Accelerated Analysis Dashboard + Tile-Based Workflow Inputs](#v474-rust-accelerated-analysis-dashboard--tile-based-workflow-inputs)
   - [v4.7.3 Analysis Dashboard for Advanced Speciation](#v473-analysis-dashboard-for-advanced-speciation)
@@ -1082,6 +1083,13 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.7.6 Mojibake Cleanup And Rust Backend Hardening Sync
+- Replaced authored mojibake in user-facing UI, guidance, report, and export strings with correct Unicode chemistry/scientific symbols.
+- Preserved the existing mojibake repair helpers as runtime safety nets for dynamic text while adding curated regression coverage for authored source blocks.
+- Kept the Rust backend hardening work in the active release narrative, including the pinned `rust-toolchain.toml` workflow and the interpreter-pinned `scripts/validate_rust_backend.py` rebuild helper.
+- Updated README/manual build guidance to stay aligned with `.\.venv-314t\Scripts\python.exe`.
+- Synced the application version metadata to `v4.7.6`.
 
 ### v4.7.5 Peak/Trough Detection Upgrade Stabilization
 - Added shared cycle marker detection/snap cores in Rust for automatic peak/trough discovery and manual marker placement, with Python fallback preserved as the authoritative safety path.
