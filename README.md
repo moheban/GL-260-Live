@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.7.6)
+# GL-260 Data Analysis and Plotter (v4.7.7)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.7.6`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.7.7`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -29,6 +29,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.7.7 Advanced Speciation UX + Final Product Yield Overhaul](#v477-advanced-speciation-ux--final-product-yield-overhaul)
   - [v4.7.6 Mojibake Cleanup And Rust Backend Hardening Sync](#v476-mojibake-cleanup-and-rust-backend-hardening-sync)
   - [v4.7.5 Peak/Trough Detection Upgrade Stabilization](#v475-peaktrough-detection-upgrade-stabilization)
   - [v4.7.4 Rust-Accelerated Analysis Dashboard + Tile-Based Workflow Inputs](#v474-rust-accelerated-analysis-dashboard--tile-based-workflow-inputs)
@@ -777,6 +778,8 @@ Refresh and verification:
 #### 1) Purpose
 The Advanced Solubility and Equilibrium Engine models CO2 dissolution, carbonate/bicarbonate speciation, and pH evolution with cycle-aware inputs. It is designed to connect experimental uptake cycles to equilibrium outputs and planning scenarios.
 
+As of `v4.7.7`, the full tab follows the large-tile workflow pattern. The tab now separates all-cycles review from selected-cycle forensic review, and the reaction/yield basis is shared across Plot Settings, Analysis, Compare, Ledger, and Final Report.
+
 #### 2) Physical and Chemical Models
 - Ideal gas and Van der Waals models for uptake calculations.
 - Henry's law for CO2 dissolution into solution.
@@ -788,6 +791,7 @@ The Advanced Solubility and Equilibrium Engine models CO2 dissolution, carbonate
 - Choose a workflow tab: Planning, Analysis, or Reprocessing.
 - Provide solution inputs (mass, volume, temperature, pH targets, headspace conditions).
 - Import cycle payloads or manually enter CO2/NaOH inputs.
+- Select or save a reaction in Plot Settings `Final Product Settings` so yield estimates use the correct final-product molar mass and stoichiometry.
 - Run the solver to generate speciation, pH, and saturation metrics.
 - As of `v2.12.3`, manual Analysis CO2 charged values are preserved, Planning NaOH inputs persist after runs, and heavy solver work is executed asynchronously.
 - As of `v4.7.4`, advanced-engine solver cores and Analysis dashboard/interpolation cores can run on Rust with per-kernel auto-policy gating; Python fallback remains the authoritative path on any Rust error.
@@ -795,14 +799,23 @@ The Advanced Solubility and Equilibrium Engine models CO2 dissolution, carbonate
 #### 4) Visualization Outputs
 - Species concentration plots and saturation summaries.
 - pH sweep curves and speciation tables.
-- Cycle speciation timeline plots and tables.
+- Large-tile cycle explorers:
+  - `Cycle Speciation Timeline Explorer` for all-cycle review.
+  - `Cycle Comparison Explorer` for one-cycle forensic comparison.
+- Simplified on-screen cycle tables with the full schema preserved for expanded viewing and table export.
 - Planning workflow timeline plots include a draggable legend that retains its placement across redraws and exports.
 - Planning workflow inputs persist after each run; NaOH mass and related fields remain unchanged.
 - Analysis workflow preserves manual CO2 charged entries; cycle auto-fill occurs only when the field is blank.
 - Speciation solver runs asynchronously with a loading overlay so the tab remains responsive.
 - Headspace/solution partitioning summaries for CO2 uptake.
 
-#### 5) Experimental Use Cases
+#### 5) Final Product Settings
+- Built-in reaction catalog entries: `Custom`, `NaOH + CO2 -> NaHCO3`, and `2 NaOH + CO2 -> Na2CO3 + H2O`.
+- Custom reactions can be saved from Plot Settings and reused later from both Plot Settings and Final Report metadata.
+- Theoretical yield is computed from starting-material mass, starting-material MW, product stoichiometry, and final-product MW.
+- Estimated yield in Analysis mode now uses the selected final-product basis instead of treating raw uptake mass as product mass.
+
+#### 6) Experimental Use Cases
 - Compare cycle-derived uptake to predicted dissolved CO2 capacity.
 - Validate pH trajectory against expected equilibrium states.
 - Generate planning guidance for dosing or reaction completion targets.
@@ -1083,6 +1096,14 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.7.7 Advanced Speciation UX + Final Product Yield Overhaul
+- Reworked the Advanced Speciation tab around large tile layouts so the full tab, not just workflow inputs, now follows the tile-based UX model.
+- Replaced the Plot Settings starting-material-only surface with `Final Product Settings`, including a persistent reaction catalog, built-in carbonate reactions, and user-saveable custom reactions.
+- Added shared reaction metadata selection to Final Report and surfaced the selected reaction/final product on the report title page metadata block.
+- Moved theoretical yield and estimated product yield onto the shared reaction-basis contract so Analysis, Compare, Ledger handoff, profile persistence, and Final Report all use final-product stoichiometry and molar mass.
+- Fixed Analysis forensic KPI population by normalizing timeline pH fields around the canonical `ph` / `actual_ph` values and surfacing Planning pH plus delta-pH values directly in the cycle-comparison workflow.
+- Added a dedicated `Cycle Comparison Explorer` for selected-cycle review, simplified the on-screen cycle table to higher-signal columns, and preserved the wider schema for expanded viewing and export.
 
 ### v4.7.6 Mojibake Cleanup And Rust Backend Hardening Sync
 - Replaced authored mojibake in user-facing UI, guidance, report, and export strings with correct Unicode chemistry/scientific symbols.
