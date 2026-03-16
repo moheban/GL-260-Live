@@ -2193,6 +2193,165 @@ fn final_report_cycle_timeline_rows_core(
 }
 
 #[pyfunction]
+#[pyo3(signature = (timeline_rows))]
+/// Normalize cycle timeline rows for staged table/callout rendering paths.
+///
+/// The function preserves passthrough fields from each source row while
+/// coercing key numeric/fraction terms into a stable schema used by both
+/// Rust and Python render payload builders.
+fn cycle_timeline_normalize_core(
+    py: Python<'_>,
+    timeline_rows: &Bound<'_, PyList>,
+) -> PyResult<Py<PyList>> {
+    // Normalize mixed workflow timeline row payloads into one renderer-safe
+    // schema without dropping unknown passthrough fields.
+    let co2_total_keys = ["co2_g", "co2_mass_g", "cumulative_co2_added_mass_g"];
+    let co2_cycle_keys = ["co2_mass_g", "cycle_co2_mass_g", "selected_mass_g"];
+    let ph_keys = ["ph", "actual_ph", "solution_ph", "speciation_ph"];
+    let actual_ph_keys = ["actual_ph", "ph"];
+    let solution_ph_keys = ["solution_ph", "ph", "actual_ph"];
+    let normalized_rows = PyList::empty(py);
+    for (idx, item) in timeline_rows.iter().enumerate() {
+        let Ok(entry) = item.cast_into::<PyDict>() else {
+            continue;
+        };
+        let row = PyDict::new(py);
+        for (key, value) in entry.iter() {
+            row.set_item(key, value)?;
+        }
+        let cycle_id = compare_cycle_row_index(&entry, idx + 1);
+        let co2_total = dict_optional_finite_by_keys(&entry, &co2_total_keys).unwrap_or(0.0);
+        let co2_cycle = dict_optional_finite_by_keys(&entry, &co2_cycle_keys).unwrap_or(0.0);
+        let ph_value = dict_optional_finite_by_keys(&entry, &ph_keys);
+        let actual_ph = dict_optional_finite_by_keys(&entry, &actual_ph_keys);
+        let solution_ph = dict_optional_finite_by_keys(&entry, &solution_ph_keys);
+        let fractions = PyDict::new(py);
+        fractions.set_item(
+            "H2CO3",
+            normalize_fraction_value(extract_fraction_field(&entry, "H2CO3")),
+        )?;
+        fractions.set_item(
+            "HCO3-",
+            normalize_fraction_value(extract_fraction_field(&entry, "HCO3-")),
+        )?;
+        fractions.set_item(
+            "CO3^2-",
+            normalize_fraction_value(extract_fraction_field(&entry, "CO3^2-")),
+        )?;
+        let warnings = PyList::empty(py);
+        if let Some(warnings_any) = entry.get_item("warnings").ok().flatten() {
+            if let Ok(warnings_list) = warnings_any.cast_into::<PyList>() {
+                for warning in warnings_list.iter() {
+                    let text = py_any_to_trimmed_string(&warning);
+                    if !text.is_empty() {
+                        warnings.append(text)?;
+                    }
+                }
+            } else {
+                let warning_text = py_any_to_trimmed_string(&warnings_any);
+                if !warning_text.is_empty() {
+                    warnings.append(warning_text)?;
+                }
+            }
+        }
+        let analysis_prediction = PyDict::new(py);
+        let mut prediction_target_ph: Option<f64> = None;
+        let mut prediction_co2_to_target: Option<f64> = None;
+        if let Some(prediction_any) = entry.get_item("analysis_prediction").ok().flatten() {
+            if let Ok(prediction_map) = prediction_any.cast_into::<PyDict>() {
+                prediction_target_ph =
+                    dict_optional_finite_by_keys(&prediction_map, &["target_ph"]);
+                prediction_co2_to_target =
+                    dict_optional_finite_by_keys(&prediction_map, &["co2_to_target_g"]);
+            }
+        }
+        if let Some(value) = prediction_target_ph {
+            analysis_prediction.set_item("target_ph", value)?;
+        } else {
+            analysis_prediction.set_item("target_ph", py.None())?;
+        }
+        if let Some(value) = prediction_co2_to_target {
+            analysis_prediction.set_item("co2_to_target_g", value)?;
+        } else {
+            analysis_prediction.set_item("co2_to_target_g", py.None())?;
+        }
+        row.set_item("cycle_id", cycle_id)?;
+        row.set_item("co2_g", co2_total)?;
+        row.set_item("co2_mass_g", co2_cycle)?;
+        if let Some(value) = dict_optional_finite_by_keys(&entry, &["co2_to_target_g"]) {
+            row.set_item("co2_to_target_g", value)?;
+        } else {
+            row.set_item("co2_to_target_g", py.None())?;
+        }
+        if let Some(value) = ph_value {
+            row.set_item("ph", value)?;
+        } else {
+            row.set_item("ph", py.None())?;
+        }
+        if let Some(value) = actual_ph {
+            row.set_item("actual_ph", value)?;
+        } else {
+            row.set_item("actual_ph", py.None())?;
+        }
+        if let Some(value) = solution_ph {
+            row.set_item("solution_ph", value)?;
+        } else {
+            row.set_item("solution_ph", py.None())?;
+        }
+        for key in [
+            "forecast_ph",
+            "pco2_atm",
+            "planning_cycle_ph",
+            "planning_co2_aligned_ph",
+            "ph_delta_cycle",
+            "ph_delta_co2",
+            "actual_cycle_co2_mol",
+            "planning_cycle_co2_mol",
+            "co2_mol_delta",
+            "co2_mol_delta_pct",
+            "actual_hco3_pct",
+            "actual_co3_pct",
+            "planning_hco3_pct",
+            "planning_co3_pct",
+            "hco3_pct_delta",
+            "co3_pct_delta",
+            "delta_pressure_psi",
+            "co2_moles",
+            "peak_pressure_psi",
+            "trough_pressure_psi",
+            "headspace_pressure_psi",
+        ] {
+            if let Some(value) = dict_optional_finite_by_keys(&entry, &[key]) {
+                row.set_item(key, value)?;
+            } else {
+                row.set_item(key, py.None())?;
+            }
+        }
+        row.set_item(
+            "solid_na2co3_g",
+            dict_optional_finite_by_keys(&entry, &["solid_na2co3_g"]).unwrap_or(0.0),
+        )?;
+        row.set_item(
+            "solid_nahco3_g",
+            dict_optional_finite_by_keys(&entry, &["solid_nahco3_g"]).unwrap_or(0.0),
+        )?;
+        row.set_item("alignment_quality_flag", dict_string_value(&entry, "alignment_quality_flag"))?;
+        row.set_item("fractions", fractions)?;
+        row.set_item("warnings", warnings)?;
+        row.set_item("analysis_prediction", analysis_prediction)?;
+        let error_flag = entry
+            .get_item("error")
+            .ok()
+            .flatten()
+            .and_then(|value| value.is_truthy().ok())
+            .unwrap_or(false);
+        row.set_item("error", error_flag)?;
+        normalized_rows.append(row)?;
+    }
+    Ok(normalized_rows.unbind())
+}
+
+#[pyfunction]
 #[pyo3(signature = (ledger, delta_mol, pka2_value, solution_volume_l=None, temperature_c=None, ionic_strength_cap=None, use_temp_adjusted_constants=false, initial_ph_guess=None, constants=None, planning_mode=false))]
 fn simulate_reaction_state_with_accounting(
     py: Python<'_>,
@@ -3866,6 +4025,7 @@ fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
         final_report_cycle_timeline_rows_core,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(cycle_timeline_normalize_core, module)?)?;
     module.add_function(wrap_pyfunction!(
         compare_aligned_cycle_rows_core,
         module
