@@ -31,6 +31,34 @@ const PITZER_ALPHA_B1: f64 = 2.0;
 const PITZER_KA1: f64 = 4.5983285677e-7;
 const PITZER_KA2: f64 = 4.5782552279169414e-11;
 const PITZER_KW: f64 = 1e-14;
+const RUST_BACKEND_INTERFACE_ID: &str = "gl260_rust_backend";
+const RUST_BACKEND_INTERFACE_VERSION: &str = "1";
+const RUST_BACKEND_MODULE_NAME: &str = env!("CARGO_PKG_NAME");
+const RUST_BACKEND_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
+const RUST_EXPORTED_KERNELS: [&str; 22] = [
+    "simulate_reaction_state_with_accounting",
+    "analyze_bicarbonate_core",
+    "carbonate_state_core",
+    "forced_ph_distribution_core",
+    "aqion_closed_speciation_core",
+    "pitzer_solve_total_carbon_core",
+    "combined_decimation_indices",
+    "combined_required_indices",
+    "cycle_detect_markers_core",
+    "cycle_manual_snap_core",
+    "cycle_overlay_points_core",
+    "cycle_segmentation_core",
+    "cycle_metrics_core",
+    "array_signature_core",
+    "analysis_interpolate_reference_series_core",
+    "analysis_dashboard_core",
+    "final_report_cycle_stats_rows_core",
+    "final_report_cycle_timeline_rows_core",
+    "cycle_timeline_normalize_core",
+    "compare_aligned_cycle_rows_core",
+    "ledger_sort_filter_indices_core",
+    "ledger_prefill_metrics_core",
+];
 
 #[derive(Clone, Copy)]
 struct LedgerState {
@@ -2240,7 +2268,7 @@ fn cycle_timeline_normalize_core(
         )?;
         let warnings = PyList::empty(py);
         if let Some(warnings_any) = entry.get_item("warnings").ok().flatten() {
-            if let Ok(warnings_list) = warnings_any.cast_into::<PyList>() {
+            if let Ok(warnings_list) = warnings_any.clone().cast_into::<PyList>() {
                 for warning in warnings_list.iter() {
                     let text = py_any_to_trimmed_string(&warning);
                     if !text.is_empty() {
@@ -2349,6 +2377,22 @@ fn cycle_timeline_normalize_core(
         normalized_rows.append(row)?;
     }
     Ok(normalized_rows.unbind())
+}
+
+#[pyfunction]
+/// Return Rust backend interface metadata consumed by Python capability checks.
+fn rust_backend_manifest(py: Python<'_>) -> PyResult<Py<PyDict>> {
+    let payload = PyDict::new(py);
+    payload.set_item("interface_id", RUST_BACKEND_INTERFACE_ID)?;
+    payload.set_item("interface_version", RUST_BACKEND_INTERFACE_VERSION)?;
+    payload.set_item("crate_version", RUST_BACKEND_CRATE_VERSION)?;
+    payload.set_item("module_name", RUST_BACKEND_MODULE_NAME)?;
+    let exported_kernels = PyList::empty(py);
+    for kernel_name in RUST_EXPORTED_KERNELS {
+        exported_kernels.append(kernel_name)?;
+    }
+    payload.set_item("exported_kernels", exported_kernels)?;
+    Ok(payload.unbind())
 }
 
 #[pyfunction]
@@ -3995,6 +4039,7 @@ fn cycle_metrics_core(
 
 #[pymodule(gil_used = false)]
 fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(rust_backend_manifest, module)?)?;
     module.add_function(wrap_pyfunction!(
         simulate_reaction_state_with_accounting,
         module
