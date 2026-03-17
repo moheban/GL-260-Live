@@ -23,8 +23,5 @@ Prompt Template.md
 settings.json
 profiles/_autosave_last_workspace.json
 General Plotter Program/general_plotter_settings.json
-gl260_debug.log
-gl260_debug.log.1
-gl260_debug.log.2
-gl260_debug.log.3
+gl260_debug.log*
 Debug Results.litcoffee
