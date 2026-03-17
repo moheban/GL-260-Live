@@ -1,9 +1,9 @@
-# GL-260 Data Analysis and Plotter (v4.7.7)
+# GL-260 Data Analysis and Plotter (v4.7.8)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.7.7`.
+The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.7.8`.
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -29,6 +29,7 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
+  - [v4.7.8 Analysis Workflow Stabilization + Startup Overlay Handoff Hardening](#v478-analysis-workflow-stabilization--startup-overlay-handoff-hardening)
   - [v4.7.7 Advanced Speciation UX + Final Product Yield Overhaul](#v477-advanced-speciation-ux--final-product-yield-overhaul)
   - [v4.7.6 Mojibake Cleanup And Rust Backend Hardening Sync](#v476-mojibake-cleanup-and-rust-backend-hardening-sync)
   - [v4.7.5 Peak/Trough Detection Upgrade Stabilization](#v475-peaktrough-detection-upgrade-stabilization)
@@ -123,6 +124,7 @@ These modules are imported unconditionally at startup:
 - `v4.7.5` extends optional Rust acceleration into cycle marker workflows:
   - automatic peak/trough detection core (`cycle_detect_markers_core`),
   - manual marker snap core (`cycle_manual_snap_core`).
+- `v4.7.8` extends optional Rust acceleration into cycle timeline normalization with `cycle_timeline_normalize_core`, and adds backend contract manifest checks (`rust_backend_manifest`) for runtime-capability auditing.
 - If Rust is unavailable, calculations continue on the existing Python path (authoritative fallback).
 - If Rust raises any runtime error or returns malformed payloads, Python fallback remains authoritative for chemistry outputs.
 - `v4.5.4` adds startup Rust preflight for runtime-aware readiness prompts and setup decisions.
@@ -132,6 +134,7 @@ These modules are imported unconditionally at startup:
   - `Not now` (continues with Python fallback for the session)
   - `Disable startup Rust checks` (persists `rust_startup_preflight_enabled=False`)
 - `v4.7.2` moves startup Rust preflight into the final startup splash stage, so splash teardown now waits for Rust preflight completion.
+- `v4.7.8` hardens startup splash-to-overlay handoff so bootstrap clear waits for mapped geometry plus first paint, while a temporary `<Configure>` monitor re-raises the startup overlay during early layout churn.
 - Rust readiness is persisted per interpreter fingerprint (`sys.executable` + ABI/runtime fields), so a successful install in one runtime is reused across restarts of that same runtime.
 - If startup preflight is skipped/declined, existing workflow-time fallback logic remains available.
 - When setup is required, the install/build flow can prompt to install prerequisites:
@@ -1096,6 +1099,15 @@ py -3.14t -m venv .venv-314t
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.7.8 Analysis Workflow Stabilization + Startup Overlay Handoff Hardening
+- Hardened startup handoff flow so bootstrap splash clear waits for mapped startup overlay readiness, non-trivial root geometry, and first-paint completion before reveal.
+- Added a temporary startup `<Configure>` re-raise monitor so overlay stacking stays stable during notebook/layout geometry churn in early startup.
+- Added Rust backend capability/identity auditing around `rust_backend_manifest` and exported-kernel contracts so mismatched or deprecated backend states fail closed.
+- Added runtime-aware Rust kernel timeout/session-health guards to avoid repeated unstable kernel calls in a single session.
+- Added Rust cycle timeline normalization (`cycle_timeline_normalize_core`) with Python fallback parity checks and fail-closed wrapper behavior.
+- Expanded regression coverage for startup handoff gating, configure-monitor teardown, Rust capability mismatches, kernel timeout failover, and cycle timeline normalization parity.
+- Synced release metadata references to `v4.7.8`.
 
 ### v4.7.7 Advanced Speciation UX + Final Product Yield Overhaul
 - Reworked the Advanced Speciation tab around large tile layouts so the full tab, not just workflow inputs, now follows the tile-based UX model.
