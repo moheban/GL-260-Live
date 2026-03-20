@@ -1,9 +1,11 @@
 # GL-260 Data Analysis and Plotter (v4.7.9)
 
 ## Overview
-GL-260 Data Analysis and Plotter is a single-script Tkinter + Matplotlib application for loading Graphtec GL-260 data from Excel or direct CSV import (processed into new Excel sheets), mapping columns, generating multi-axis plots, performing cycle analysis with moles calculations, running advanced solubility/speciation workflows, and generating configurable final reports.
+GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and report metadata are driven by `APP_VERSION`, which reports `v4.7.9`.
+The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
+- `# Version: v4.7.9`
+- `APP_VERSION = "v4.7.9"`
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -29,1072 +31,383 @@ The main entry point is `GL-260 Data Analysis and Plotter.py`. The UI title and 
 - [Known Limitations and Tradeoffs](#known-limitations-and-tradeoffs)
 - [License](#license)
 - [Part II - Changelog / Ledger](#part-ii---changelog--ledger)
-  - [v4.7.9 Cycle Timeline Dual-Panel Export + Startup Splash Handoff Repair](#v479-cycle-timeline-dual-panel-export--startup-splash-handoff-repair)
-  - [v4.7.8 Analysis Workflow Stabilization + Startup Overlay Handoff Hardening](#v478-analysis-workflow-stabilization--startup-overlay-handoff-hardening)
-  - [v4.7.7 Advanced Speciation UX + Final Product Yield Overhaul](#v477-advanced-speciation-ux--final-product-yield-overhaul)
-  - [v4.7.6 Mojibake Cleanup And Rust Backend Hardening Sync](#v476-mojibake-cleanup-and-rust-backend-hardening-sync)
-  - [v4.7.5 Peak/Trough Detection Upgrade Stabilization](#v475-peaktrough-detection-upgrade-stabilization)
-  - [v4.7.4 Rust-Accelerated Analysis Dashboard + Tile-Based Workflow Inputs](#v474-rust-accelerated-analysis-dashboard--tile-based-workflow-inputs)
-  - [v4.7.3 Analysis Dashboard for Advanced Speciation](#v473-analysis-dashboard-for-advanced-speciation)
-  - [v4.7.2 Startup Splash Gating for Rust Backend Readiness](#v472-startup-splash-gating-for-rust-backend-readiness)
-  - [v4.7.1 Rust Acceleration Expansion for Advanced Speciation and Equilibrium](#v471-rust-acceleration-expansion-for-advanced-speciation-and-equilibrium)
-  - [v4.7.0 Process Profile Multi-Window Launch + Analysis Forensics](#v470-process-profile-multi-window-launch--analysis-forensics)
-  - [v4.6.9 Compare Side Plot Settings Re-Enable + Compare-Scoped Persistence](#v469-compare-side-plot-settings-re-enable--compare-scoped-persistence)
-  - [v4.6.8 Compare Auto-Title Parity](#v468-compare-auto-title-parity)
-  - [v4.6.7 Startup Interactivity + Profile-Exact Compare Rendering](#v467-startup-interactivity--profile-exact-compare-rendering)
-  - [v4.6.6 Compare Rendering + Interactive HTML Unification](#v466-compare-rendering--interactive-html-unification)
-  - [v4.6.5 Compare Debug Instrumentation + Side Cycle Parity](#v465-compare-debug-instrumentation--side-cycle-parity)
-  - [v4.6.4 Compare Rendering Whitespace + Pair Plot Elements + Side Cycle Windows](#v464-compare-rendering-whitespace--pair-plot-elements--side-cycle-windows)
-  - [v4.6.3 Data Tab Profile Readout + Compare Column-Parity + Yield Visibility](#v463-data-tab-profile-readout--compare-column-parity--yield-visibility)
-  - [v4.6.2 Compare UX + Layout-Health Engine + Interactive HTML Report](#v462-compare-ux--layout-health-engine--interactive-html-report)
-  - [v4.6.1 Compare Responsiveness + Marker Correction + Ledger Ordering Upgrade](#v461-compare-responsiveness--marker-correction--ledger-ordering-upgrade)
-  - [v4.6.0 Compare + Ledger Tabs + Yield Comparison Workflow](#v460-compare--ledger-tabs--yield-comparison-workflow)
-  - [v4.5.6 Rust Kernel Expansion + Layer-Aware Refresh Routing + Final Report Loader Upgrade](#v456-rust-kernel-expansion--layer-aware-refresh-routing--final-report-loader-upgrade)
-  - [v4.5.5 First-Pass Combined Layout Fix + Manual Refresh Full Rebuild + Startup Rust Ready Status](#v455-first-pass-combined-layout-fix--manual-refresh-full-rebuild--startup-rust-ready-status)
-  - [v4.5.4 Rust Startup Preflight + Runtime Fingerprint Persistence](#v454-rust-startup-preflight--runtime-fingerprint-persistence)
-  - [v4.5.3 Adaptive Refresh Layering + Draw-Gated Splash Release](#v453-adaptive-refresh-layering--draw-gated-splash-release)
-  - [v4.5.2 No-GIL Rust Compatibility + Startup Enforcement](#v452-no-gil-rust-compatibility--startup-enforcement)
-  - [v4.5.1 Combined Splash Gating + Cache Singleflight + Rust Overlay Points](#v451-combined-splash-gating--cache-singleflight--rust-overlay-points)
-  - [v4.5.0 Threading Control Enforcement + Render/Startup Throughput](#v450-threading-control-enforcement--renderstartup-throughput)
-  - [v4.4.8 Legacy/Contamination Tab De-Integration + Final Report Split Persistence](#v448-legacycontamination-tab-de-integration--final-report-split-persistence)
-  - [v4.3.8 Final Report Timeline Reliability + Preview Splash Integration](#v438-final-report-timeline-reliability--preview-splash-integration)
-  - [v4.3.7 Advanced Speciation Timeline Plot Preview + Consolidated Legend + Settings Parity](#v437-advanced-speciation-timeline-plot-preview--consolidated-legend--settings-parity)
-  - [v4.3.6 Close-Time Apply for Non-Trace Elements + Trace-Only Full Rebuild](#v436-close-time-apply-for-non-trace-elements--trace-only-full-rebuild)
-  - [v4.3.5 Circle Ring Element + Full-Rebuild Close Refresh + Real-Time Splash Timers](#v435-circle-ring-element--full-rebuild-close-refresh--real-time-splash-timers)
-  - [v4.3.4 General Plotter Launcher + Optional Data Handoff](#v434-general-plotter-launcher--optional-data-handoff)
-  - [v4.2.4 Immediate Startup Visibility + Bootstrap Splash Handoff](#v424-immediate-startup-visibility--bootstrap-splash-handoff)
-  - [v4.2.3 Combined Splash + Timeline Readiness](#v423-combined-splash--timeline-readiness)
-  - [v4.2.2 Dynamic Render Readiness + Selective Core Generation](#v422-dynamic-render-readiness--selective-core-generation)
-  - [v4.2.1 Free-Threaded Cycle Metrics Optimization + Version Sync](#v421-free-threaded-cycle-metrics-optimization--version-sync)
-  - [v4.1.0 Rust Combined Precompute Expansion + CSV Import Profiling](#v410-rust-combined-precompute-expansion--csv-import-profiling)
-  - [v4.0.0 Rust Acceleration + In-App Toolchain Setup](#v400-rust-acceleration--in-app-toolchain-setup)
-  - [Legacy Change Highlights (v3.x and earlier)](#legacy-change-highlights-v3x-and-earlier)
 
 ## Part I - Complete User Manual
 
 ### Program Overview and Philosophy
-GL-260 Data Analysis and Plotter is designed for reproducible, end-to-end analysis of GL-260 pressure and temperature datasets. The application emphasizes:
-- Explicit column mapping and deterministic series construction.
-- Transparent plot settings and auto-range controls to avoid hidden state.
-- Cycle-aware analysis so derived metrics are always traceable to peak/trough markers.
-- Consistent export and report pipelines so on-screen previews match final outputs.
-- Scientific workflows that connect experimental data to solubility and equilibrium models.
+The application is designed for deterministic, end-to-end GL-260 data analysis with traceable scientific outputs.
+
+Core design principles:
+- Explicit column mapping before analysis.
+- Repeatable cycle and moles calculations with visible assumptions.
+- Side-by-side comparison and ledger workflows for multi-run review.
+- Shared plot/export/report contracts so preview and export stay consistent.
+- Safe fallback behavior when optional dependencies (SciPy, Rust backend, optional chemistry modules) are unavailable.
 
 ### Intended Audience
-- Chemists, process engineers, and researchers analyzing GL-260 pressure/temperature datasets.
-- Advanced data analysts who need reproducible plotting and cycle-by-cycle gas uptake estimates.
-- Users who need carbonate speciation and solubility workflows tied to cycle data.
+- Process engineers and chemists working with GL-260 pressure and temperature datasets.
+- Analysts who need reproducible cycle segmentation, moles accounting, and exportable plots.
+- Users who need optional carbonate/speciation workflows tied to cycle data.
 
 ### Repository Layout
-- `GL-260 Data Analysis and Plotter.py`: Main application script and UI.
-- `General Plotter program/General Plotting Program v1.0.0.py`: Standalone general-purpose plotting tool that can now be launched from the main app.
-- `solubility_models/`: Local package providing speciation constants, models, and the closed-system solver.
-- `naoh_co2_pitzer_ph_model.py`: Optional NaOH-CO2 Pitzer/HMW model used by the advanced speciation engine.
-- `pitzer.dat`: PHREEQC Pitzer database file used by the optional NaOH-CO2 Pitzer model.
-- `settings.json`: Persistent user settings written at runtime (created/updated by the app).
-- `assets/`, `data/`, `docs/`, `scripts/`: Supporting project folders (content varies by workflow).
-- `requirements.txt` / `pyproject.toml`: Dependency and packaging metadata.
+Primary paths in this repository:
+- `GL-260 Data Analysis and Plotter.py`: Main application entry script.
+- `requirements.txt`: Runtime and tooling dependency list used by current project workflows.
+- `pyproject.toml`: Project metadata and lint configuration.
+- `settings.json`: Runtime settings persisted by the app.
+- `rust_ext/`: Rust extension crate and maturin package metadata.
+- `scripts/validate_rust_backend.py`: Windows-focused Rust backend rebuild/validation helper.
+- `solubility_models/`: Chemistry/speciation model package used by advanced solubility workflows.
+- `naoh_co2_pitzer_ph_model.py`: Optional NaOH-CO2 model.
+- `pitzer.dat`: Optional PHREEQC database file used by the NaOH-CO2 model path.
+- `profiles/`: Saved workspace and process profile files.
+- `Example Data/`: Sample input workbook.
+- `General Plotter program/`: Related standalone plotting utility.
 
 ### Installation and Requirements
-#### Python
-- Python 3.10 or newer.
+#### Python and runtime expectations
+- Minimum Python: `3.10+`.
+- Recommended for free-threaded workflows and current no-GIL tooling guidance: `3.14` / `3.14t`.
+- Run from repository root so local resources (for example `pitzer.dat`) are discoverable.
 
-#### Required runtime dependencies
-These modules are imported unconditionally at startup:
+#### Dependency classification
+Required baseline dependencies for normal startup and core workflows:
 - `matplotlib`
 - `numpy`
 - `pandas`
-- `openpyxl` (Excel reader for pandas)
-- `great_tables` (used for timeline table export rendering)
+- `openpyxl`
 
-#### Optional or feature-gated dependencies
-- `scipy`: Enables SciPy peak detection and Van der Waals moles calculations. The app falls back to a built-in peak finder and disables VDW if SciPy is missing.
-- `mplcursors`: The app attempts to import it; if missing, it continues without it.
+Optional or feature-gated dependencies:
+- `scipy`: Enables SciPy-based peak detection and Van der Waals solve paths.
+- `mplcursors`: Optional cursor interactivity.
+- `great_tables`: Required for timeline table export features that render with great_tables.
+- `customtkinter`: Optional enhanced widget styling; app falls back to ttk when unavailable.
+- `pypdf` / `PyPDF2`: PDF merge/export compatibility path.
+- `naoh_co2_pitzer_ph_model.py` + `pitzer.dat`: Optional NaOH-CO2 chemistry path.
+- `gl260_rust_ext` (built from `rust_ext/`): Optional acceleration backend with Python fallback.
 
-#### Optional Rust acceleration (`v4.0.0` introduced, `v4.1.0` expanded)
-- The app can offload heavy bicarbonate/speciation timeline math to `gl260_rust_ext` when available.
-- `v4.1.0` expands Rust acceleration into combined triple-axis numeric precompute paths (decimation index selection, cycle segmentation merge logic, and cycle metrics/transfer payload assembly).
-- `v4.7.1` extends Rust acceleration into advanced speciation/equilibrium cores across all supported model families:
-  - carbonate-state root solve (`closed_carbon` and `fixed_pCO2`),
-  - forced-pH distribution iterative core,
-  - Aqion closed-system speciation/root solve,
-  - NaOH-CO2 Pitzer total-carbon planning solve.
-- `v4.7.4` extends Rust acceleration into Analysis dashboard cores:
-  - reference interpolation core (`analysis_interpolate_reference_series_core`),
-  - dashboard compare/summary core (`analysis_dashboard_core`).
-- `v4.7.5` extends optional Rust acceleration into cycle marker workflows:
-  - automatic peak/trough detection core (`cycle_detect_markers_core`),
-  - manual marker snap core (`cycle_manual_snap_core`).
-- `v4.7.8` extends optional Rust acceleration into cycle timeline normalization with `cycle_timeline_normalize_core`, and adds backend contract manifest checks (`rust_backend_manifest`) for runtime-capability auditing.
-- If Rust is unavailable, calculations continue on the existing Python path (authoritative fallback).
-- If Rust raises any runtime error or returns malformed payloads, Python fallback remains authoritative for chemistry outputs.
-- `v4.5.4` adds startup Rust preflight for runtime-aware readiness prompts and setup decisions.
-- `v4.5.5` extends startup preflight with an always-visible startup Rust status dialog for Rust-ready runtimes:
-  - `Rust backend ready` (shows executable/ABI/module path for the active runtime)
-  - `Install now`
-  - `Not now` (continues with Python fallback for the session)
-  - `Disable startup Rust checks` (persists `rust_startup_preflight_enabled=False`)
-- `v4.7.2` moves startup Rust preflight into the final startup splash stage, so splash teardown now waits for Rust preflight completion.
-- `v4.7.8` hardens startup splash-to-overlay handoff so bootstrap clear waits for mapped geometry plus first paint, while a temporary `<Configure>` monitor re-raises the startup overlay during early layout churn.
-- Rust readiness is persisted per interpreter fingerprint (`sys.executable` + ABI/runtime fields), so a successful install in one runtime is reused across restarts of that same runtime.
-- If startup preflight is skipped/declined, existing workflow-time fallback logic remains available.
-- When setup is required, the install/build flow can prompt to install prerequisites:
-  - `rustup` / `rustc` / `cargo`
-  - `maturin`
-  - preferred linker path: Windows C++ linker (`link.exe`) via Visual Studio Build Tools (Desktop development with C++)
-  - automatic fallback when `link.exe` is missing: MinGW linker path (`gcc.exe` + `ld.exe`) with GNU Rust host/target installation
-  - extension build via `python -m maturin develop --manifest-path rust_ext/Cargo.toml` (MSVC) or `python -m maturin develop --manifest-path rust_ext/Cargo.toml --target x86_64-pc-windows-gnu` (GNU fallback)
-- If installation/build fails or is declined, workflows continue with Python fallback.
-- Repo-local Rust toolchain hardening now pins Rust via `rust-toolchain.toml`; use the validation helper below to rebuild the extension through the same free-threaded interpreter/runtime path the app expects.
-
-#### Setup (dual interpreter, recommended)
+Install dependencies from repo root:
 ```powershell
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+#### Windows native venv setup (standard + free-threaded)
+```powershell
+# Standard interpreter env
 py -3.14 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 
+# Free-threaded interpreter env
 py -3.14t -m venv .venv-314t
 .\.venv-314t\Scripts\python.exe -m pip install --upgrade pip
 .\.venv-314t\Scripts\python.exe -m pip install -r requirements.txt
 ```
-If `great_tables` is not installed by your requirements workflow, install it separately so the app can start.
-Do not rely on shared global `site-packages` when both standard and free-threaded Python runtimes are required; keep dependencies isolated per virtual environment.
-No-Activation PowerShell note: if `ExecutionPolicy` is `Restricted`, skip `Activate.ps1` and always invoke the virtual-environment `python.exe` directly as shown above.
 
-#### Free-threaded fontTools mode
-When running with `.\.venv-314t\Scripts\python.exe`, prefer pure-Python `fontTools` so compiled bezier extension imports are less likely to force GIL re-enable paths.
-
+Optional free-threaded fontTools hardening:
 ```powershell
-.\.venv-314t\Scripts\python.exe -m pip install --upgrade pip
-.\.venv-314t\Scripts\python.exe -m pip install -r requirements.txt
 $env:FONTTOOLS_WITH_CYTHON="0"
 .\.venv-314t\Scripts\python.exe -m pip install --force-reinstall --no-binary=fonttools fonttools
 ```
 
-Verification:
-```powershell
-.\.venv-314t\Scripts\python.exe -X gil=0 -c "import sys, fontTools.misc.bezierTools as b; print(sys._is_gil_enabled(), b.__file__)"
-```
-Expected output shape: `False ...bezierTools.py`.
+#### macOS native setup (interpreter-agnostic)
+Use explicit interpreter paths for your local installation source (python.org, pyenv, Homebrew, etc.).
 
-#### Manual Rust setup and verification (optional)
-```powershell
-winget install --id Rustlang.Rustup --exact --scope user --interactive --accept-package-agreements --accept-source-agreements
-rustup default stable
-.venv-314t\Scripts\python.exe -m pip install "maturin>=1.12,<2.0"
-# Preferred build path (MSVC): install VS Build Tools (Desktop development with C++) when `link.exe` is missing.
-.venv-314t\Scripts\python.exe -m maturin develop --manifest-path rust_ext/Cargo.toml
-# GNU fallback path (when using MinGW):
-# 1) Ensure `gcc.exe` and `ld.exe` are available on PATH (or at C:\Users\mmoheban\mingw64\bin)
-rustup toolchain install stable-x86_64-pc-windows-gnu
-rustup target add x86_64-pc-windows-gnu --toolchain stable-x86_64-pc-windows-gnu
-.venv-314t\Scripts\python.exe -m maturin develop --manifest-path rust_ext/Cargo.toml --target x86_64-pc-windows-gnu
-rustup run stable rustc --version
-rustup run stable cargo --version
-.venv-314t\Scripts\python.exe -c "import gl260_rust_ext; print('gl260_rust_ext import OK')"
-.\.venv-314t\Scripts\python.exe -c "import sys; print('before', sys._is_gil_enabled()); import gl260_rust_ext.gl260_rust_ext as m; print('after', sys._is_gil_enabled()); print(m.__file__)"
-```
-Expected no-GIL verification output shape: `before False`, `after False`, and no RuntimeWarning.
+```bash
+# Example variables; replace with your real interpreter paths
+PY_STD="/path/to/python3.14"
+PY_FT="/path/to/python3.14t"
 
-If you launch the app with a specific interpreter (for example `.\.venv-314t\Scripts\python.exe`), run manual Rust build commands with that same interpreter path so `gl260_rust_ext` installs into the matching environment.
+"$PY_STD" -m venv .venv
+./.venv/bin/python -m pip install --upgrade pip
+./.venv/bin/python -m pip install -r requirements.txt
 
-Direct `cargo` troubleshooting should prefer `rustup run stable cargo ...` over bare `cargo ...` because some Windows Python installs expose incompatible `cargo.exe` shims earlier on PATH.
-
-#### Repo-local Rust backend validator
-Use the helper below to rebuild and smoke-test the Rust backend with the pinned free-threaded interpreter and rustup-managed tools:
-
-```powershell
-.\.venv-314t\Scripts\python.exe .\scripts\validate_rust_backend.py
+"$PY_FT" -m venv .venv-314t
+./.venv-314t/bin/python -m pip install --upgrade pip
+./.venv-314t/bin/python -m pip install -r requirements.txt
 ```
 
-The helper reports the active interpreter, rustup-resolved `rustc`/`cargo` versions, runs `maturin develop` for `x86_64-pc-windows-gnu`, and verifies that `gl260_rust_ext.gl260_rust_ext` imports from the same environment.
+If your macOS environment does not provide a free-threaded interpreter, use the standard interpreter workflow and treat free-threaded as optional.
 
-The autogenerated workflow at `rust_ext/.github/workflows/CI.yml` currently validates standard CPython builds, not the local Windows free-threaded `3.14t` workflow used here.
+#### Windows Without Administrative Privileges
+This app can be installed and run without admin rights.
 
-### Running the Application
-From the repository root:
-```powershell
-.\.venv\Scripts\python.exe "GL-260 Data Analysis and Plotter.py"
-.\.venv-314t\Scripts\python.exe "GL-260 Data Analysis and Plotter.py"
-```
-The app reads and writes `settings.json` in the current working directory. Run from the repo root so the bundled `pitzer.dat` is discoverable by the NaOH-CO2 Pitzer model.
-Team run instruction: use direct venv executable paths in PowerShell sessions instead of activation scripts.
+No-admin rules:
+- Use a user-writable project folder.
+- Use per-user Python installs or existing user-level interpreter binaries.
+- Avoid global installs and shared `site-packages`.
+- Invoke venv `python.exe` directly instead of activation scripts.
 
-### Architecture and Data Flow
-The application is a single Tkinter process with background workers for long-running steps. Core data flow is:
-
-1. Load data on the Data tab (single sheet or stitched multi-sheet).
-2. Map columns on the Columns tab.
-3. Apply columns (build numeric series, compute auto ranges, prime cycle state).
-4. Generate plots (Figure 1, Figure 2, Figure 3 cycle analysis, combined triple-axis).
-5. Cycle analysis (detect peaks/troughs, compute moles, produce summary and figure).
-6. Solubility/speciation workflows (Advanced Speciation tab).
-7. Final report (compile selected figures, tables, and narratives into PDF/PNG).
-
-Internally, the app stores the active data in:
-- `self.df`: Active pandas DataFrame (single sheet or stitched).
-- `self.sheet_dfs`: Per-sheet DataFrames in multi-sheet mode.
-- Global series used by the plotting functions: `x`, `y1`, `y2`, `y3`, `z`, `z2`, plus `selected_columns`.
-
-### Quickstart Workflow (Linear)
-Required operational order (do not reorder):
-Apply Columns -> configure auto-range axis settings + advanced automatic plot titling + Plot Settings -> Cycle Analysis (auto detect OR manual peak/trough assignment) -> generate Combined Triple-Axis Plot -> add plot elements/overlays -> export -> final report.
-
-Follow this linear workflow from start to finish:
-
-1. Load an Excel workbook on the Data tab.
-2. Select the target sheet (single sheet) or build the included sheet order (multi-sheet).
-3. Map columns on the Columns tab for pressure, temperature, derivative, and optional auxiliary channels.
-4. Click Apply Column Selection and confirm the applied indicator is green.
-5. Optional for non-GL-260 workflows: open `General Plotter -> Open General Plotter...` and decide whether to transfer current data via the launcher checkbox.
-6. Configure Plot Settings before any heavy analysis:
-   - Open Axis Auto-Range Settings and choose which axes are allowed to update.
-   - Set Axis Span Padding percent to add vertical breathing room.
-   - Lock or auto-scale axes by updating min/max ranges as needed.
-   - Configure plot styling (fonts, scatter settings, legend defaults) and layout preferences.
-7. Configure advanced automatic plot titling:
-   - Enable Auto-generate Title and review the Auto Title Preview.
-   - Choose the Data Type and template placeholders.
-   - Decide whether to copy the auto title to the manual title for lock-in.
-8. Navigate to the Cycle Analysis tab:
-   - Run automatic peak/trough detection with tuned prominence/distance/width.
-   - OR use manual peak/trough assignment with the interactive markers.
-   - Iterate until the cycle markers match the physical experiment.
-9. Verify cycle metrics for consistency:
-   - Delta-P per cycle.
-   - Uptake moles (ideal and VDW when available).
-   - Mean temperature per cycle.
-   - Total uptake summary.
-10. Generate the Combined Triple-Axis Plot only after cycle analysis is finalized.
-11. Add plot elements and overlays (Plot Elements editor, cycle legend, annotations, spans).
-12. Export plots using the configured DPI and output size profiles.
-13. Generate the Final Report PDF so the report stitches exported figures in order.
-
-Why this order is mandatory:
-- Cycle markers feed directly into combined plot overlays and report content. If cycle analysis is not finalized, combined plot overlays and report summaries will be out of sync.
-
-Common mistakes:
-- Generating the combined plot before correcting cycle markers.
-- Leaving axis auto-range unchecked for a critical axis, which locks a stale range.
-- Skipping Apply Column Selection after changing column mappings.
-
-Visual success indicators:
-- The Apply Column Selection status indicator shows applied state.
-- Auto Title Preview displays a resolved title or a clear fallback reason.
-- Cycle markers appear on the cycle plot and update the summary text.
-- Combined plot overlays and legends match the cycle markers.
-
-Troubleshooting notes:
-- If the combined plot looks clipped, check the Axis Auto-Range Settings and axis padding percent.
-- If cycle metrics look inconsistent, rerun detection or manually adjust peak/trough placement.
-
-### UI and Navigation Guide
-
-#### Data Tab
-Purpose: load Excel workbooks and select one or multiple sheets.
-
-Key controls:
-- Excel file entry, Browse..., and Rescan File.
-- Mode: Single Sheet or Multiple Sheets.
-- Current Workspace Profile readout shows the tracked profile name and resolved profile path (`Not set` when no profile is active).
-- Single Sheet: select a sheet from a combo box, click Load Sheet Data, or click Import GL-260 CSV... to open the CSV import popup directly.
-- Multiple Sheets:
-  - "Available Sheets" list and "Included Sheets (ordered)" list.
-  - Add >>, << Remove, Move Up, Move Down to control the stitched sequence.
-  - Load Selected Sheets loads and stitches; Import GL-260 CSV... next to it opens the same CSV import popup.
-
-Runtime behavior:
-- Sheet names are read via `openpyxl` (read-only) with a pandas fallback.
-- The selected file path and last sheet are persisted to `settings.json`.
-
-#### General Plotter Launcher (Top Menu)
-Purpose: launch the standalone General Plotter from the main app, with optional Data/Columns handoff.
-
-Key controls:
-- `General Plotter -> Open General Plotter...` opens the launcher dialog.
-- Checkbox: `Transfer current Data + Columns to General Plotter`.
-- Buttons: `Launch` and `Cancel`.
-
-Runtime behavior:
-- Checkbox state is remembered via `settings.json` (`general_plotter_handoff_enabled`).
-- Launch uses a separate Python process (`subprocess.Popen`) to avoid multi-root Tk conflicts.
-- When handoff is enabled, GL-260 exports a temporary CSV + JSON payload and transfers `x` + `y1` mapping only.
-- When handoff is disabled, General Plotter opens with its normal blank startup workflow.
-
-#### GL-260 CSV Import (File menu or Data tab Import GL-260 CSV...)
-Purpose: convert raw Graphtec GL-260 CSV exports into a new Excel sheet that matches the app's expected schema.
-
-Workflow:
-- Choose a raw GL-260 CSV file and a target Excel workbook.
-- Provide a new sheet name and choose how to handle name conflicts (error, overwrite, or auto-suffix).
-- Preview detected columns and map the GL-260 channels to Reactor/Manifold pressure and Internal/External temperature.
-- Configure calculation settings:
-  - Derivative source (default: Reactor Pressure).
-  - Exponential smoothing dampening factor (default: 0.98).
-  - Moving average window (default: 100 points).
-- Import writes numeric values only (no Excel formulas) and freezes the header row.
-
-Dialog behavior (`v3.0.0`):
-- The settings area is now vertically scrollable to keep all sections reachable on shorter displays.
-- `Import` and `Close` stay fixed in the footer and remain visible while scrolling.
-- The Ignore columns selector uses a tighter listbox/scrollbar layout to reduce empty gray space and improve readability.
-- During import execution, an indeterminate progress bar appears in the footer so long-running CSV imports show active progress feedback.
-
-Output schema (fixed):
-- Date & Time
-- Elapsed Time (days / hours / minutes / seconds)
-- Reactor Pressure (PSI)
-- Manifold Pressure (PSI)
-- External Reactor Temperature
-- Internal Reactor Temperature
-- First Derivative (delta-PSI/hour)
-- Smoothed First Derivative
-- First Derivative Moving Average
-
-Settings persisted:
-- Last CSV path and workbook path.
-- Last sheet name and sheet conflict handling choice.
-- Channel mapping and calculation defaults.
-
-#### Multi-Sheet Stitching (Data + Columns)
-When multi-sheet mode is enabled:
-- A Date & Time column (selected on the Columns tab) is required.
-- Each sheet is loaded into a working DataFrame and gets:
-  - `__GL260_DATETIME__`: parsed datetime values.
-  - `__GL260_ELAPSED_DAYS_STITCHED__`: elapsed time from the earliest timestamp.
-  - `__GL260_ELAPSED_HMS__`: elapsed time formatted as `HH:MM:SS` (or `D HH:MM:SS`).
-- Sheets are concatenated with a NaN separator row between them.
-- The X column is automatically set to `__GL260_ELAPSED_DAYS_STITCHED__`.
-- If any sheet lacks the Date & Time column, a warning is shown and those rows are NaN.
-
-Elapsed time units (days/hours/minutes/seconds) are configurable in File -> Preferences -> Data & Columns....
-
-#### Columns Tab
-Purpose: map DataFrame columns to plotting and cycle-analysis roles.
-
-Required:
-- X-Axis (Elapsed Time, <unit>)
-- Primary Y (Reactor, PSI)
-
-Optional:
-- Primary Y (Manifold, PSI) (y3)
-- Secondary Y (Derivative) (y2)
-- Temperature Trace (Internal) (z)
-- Temperature Trace 2 (External) (z2)
-- Date & Time (dt) required only for multi-sheet stitching
-
-Per-series styling (for scatter/line plots):
-- Size, Line Width (pt), Color, and Line Style controls appear for series that support scatter overrides.
-
-Actions:
-- Apply Column Selection (Columns tab + bottom action bar) triggers background series building and auto-range updates.
-- Per-Sheet Column Mapping... opens a dialog to override the global column mapping per sheet (multi-sheet only).
-
-#### Plot Settings Tab
-Purpose: control plot ranges, axes, style, cycle detection parameters, and combined-plot settings.
-
-Titles
-- Suptitle (Job Information) (manual) and Title (manual) text fields.
-- Auto-generate Title toggle:
-  - When ON, manual Title is ignored during rendering; Suptitle (Job Information) remains manual.
-  - Use Copy Auto Title -> Manual Title to explicitly overwrite the manual Title.
-- Data Type combobox with Manage Types...:
-  - Add/rename/delete/reorder types; no empty names or duplicates (case-insensitive).
-  - At least one type is always preserved (fallback: "Reaction").
-- Template string (default: `{type} Day {day_start}-{day_end} {date_start}-{date_end}`) with Edit... dialog and validation.
-  - Supported placeholders: `{type}`, `{day_start}`, `{day_end}`, `{date_start}`, `{date_end}`, `{start_dt_iso}`, `{end_dt_iso}`, `{start_year}`, `{end_year}`.
-- Auto Title uses:
-  - Full dataset (Columns tab): uses the loaded dataset date range (NaT rows ignored in stitched data).
-  - Current view range: attempts to map the visible x-range to datetime; if mapping is not possible, it falls back to full-dataset tokens.
-- Day count mode:
-  - Date diff (end-start): 1/13 -> 1/19 yields Day 1-6.
-  - Inclusive (end-start+1): 1/13 -> 1/19 yields Day 1-7.
-- Auto Title Preview shows the computed title (and notes when a fallback is used).
-
-Ranges
-- Time min/max, Pressure Y min/max, Temp Y min/max, Derivative Y min/max.
-
-Axes
-- Enable Temperature Axis (right axis on Figure 1).
-- Enable Derivative Axis (right axis on Figure 2).
-- Combined derivative axis offset (moves the detached derivative spine to avoid label collisions).
-
-Axis Auto-Range Settings
-- Auto-Axis Settings... (next to Refresh Axis Ranges) opens this dialog without applying new ranges.
-- Open Axis Auto-Range Settings... to choose which axes auto-range tools update.
-- Unchecked axes keep manual min/max values, even when Refresh Axis Ranges is used.
-- Span Padding (%) expands Y ranges as a percentage of data span.
-
-Cycle Analysis Parameters
-- Automatic peak/trough detection toggle.
-- Prominence, minimum distance, width, and minimum delta-P controls.
-- Cycle temperature column selector (used to compute mean temperature between peak and trough).
-
-Combined Plot Layout
-- Combined Plot Layout Tuner controls margins, label padding, and combined axis spacing.
-- Layout profiles are saved for display vs export to keep previews consistent with exports.
-
-#### Data Trace Settings Dialog
-Purpose: configure per-trace styling overrides that apply to all core plots, combined previews, and exports.
-
-Where to find it:
-- Open any generated plot tab and click Data Trace Settings... next to Plot Settings....
-
-Controls (per trace):
-- Color (picker + Clear)
-- Marker style (combobox + Clear)
-- Marker size (pt^2) (entry + Clear)
-- Line style (combobox + Clear)
-- Line width (pt) (entry + Clear)
-- Z-order priority (Background / Normal / Foreground / Hero)
-- Z-order numeric override (optional; supersedes Priority)
-- Effective Z (read-only; live resolved z-order shown per row)
-
-Inheritance behavior:
-- Blank fields inherit existing defaults with no behavior change.
-- Priority set to Inherit leaves the trace at its existing z-order.
-- In the Combined Triple-Axis plot, cycle peak/trough markers are rendered on a dedicated overlay axis that is always above all data axes; Data Trace Settings z-order controls apply to traces only.
-
-#### Combined Triple-Axis Plot Tab
-Purpose: preview the combined plot, manage overlays, and export the triple-axis figure.
-
-Key controls:
-- Generate Plot and Refresh actions (from the bottom action bar).
-- Generated plot tabs switch immediately and show a loading overlay with a determinate progress bar while background computation runs; the UI-thread render finishes the stabilized layout.
-- Refresh operations now re-show the loading overlay and progress bar, and the refreshed plot is revealed only after refresh finalization completes.
-- Close Plot removes the generated figure tab and returns focus to Plot Settings.
-- Plot Elements editor for adding annotations and overlays.
-- Export controls (PNG/SVG/PDF) with output size profiles and DPI.
-
-Stabilization note:
-Combined plots use adaptive refresh stabilization. A second pass is run only when pass-1 signals show material data/layout/plot-element changes plus geometry drift, while ambiguous signals fail closed to a second pass. The loading overlay remains visible until required passes complete and stabilization is confirmed, and the splash progress bar advances by render milestones until completion.
-
-#### Cycle Analysis Tab
-Purpose: detect cycles, compute moles, and interactively edit peak/trough markers.
-
-Key actions:
-- Automatic detection with SciPy (if available) or built-in fallback.
-- Manual editing: Shift + left-click to add a peak, Shift + right-click to add a trough, right-click to remove nearest marker.
-- Undo/redo, marker import/export, summary copy, and per-cycle CSV export.
-
-Outputs:
-- Summary text (inputs used, gas model inputs, gas uptake totals, per-cycle metrics).
-- Cycle statistics table (per-cycle metrics).
-- Cycle plot (Figure 3: Cycle Analysis).
-
-#### Advanced Speciation and Equilibrium Engine
-Purpose: guided workflows for planning, analysis, and reprocessing with cycle integration.
-
-Workflow structure:
-- A notebook with Planning, Analysis, and Reprocessing tabs.
-- Each workflow has its own input form, guidance text, and output summary.
-- Workflow state (inputs and cycle payloads) is persisted per workflow.
-
-Cycle integration:
-- Cycle payloads can be imported from the Cycle Analysis tab.
-- Manual CO2 or NaOH inputs can be used if no cycle data exists.
-- Cycle payloads are stored per workflow so planning and analysis runs remain independent.
-
-Outputs:
-- Structured highlights, warnings, and assumptions.
-- Species tables, saturation tables, sensitivity analysis, and pH sweep plots.
-- Cycle speciation timeline (per-cycle pH and speciation results).
-- Timeline plot and timeline table with export options.
-- Timeline plot uses an always-on consolidated draggable legend rendered in a shadowbox.
-- Timeline plot settings include axis range controls plus pH/pCO2 right-side axis spacing controls.
-- Cycle timeline plot title is shared across Planning, Analysis, and Reprocessing workflow inputs.
-- Cycle timeline Plot Preview (11x8.5) supports interactive Plot Elements edits that sync to display when preview closes.
-- Timeline table/plot visibility is explicitly refreshed after scenario completion so no tab-switch is required to reveal cycle-speciation results.
-- Predicted pH callouts now insert all cycle entries and remain scrollable (mouse wheel + scrollbar) after bulk updates.
-
-Exports:
-- CSV and JSON outputs for species and timeline data.
-- Planner narrative, CO2 guidance, and math preview exported as PNG.
-- Timeline table export (PDF/PNG) with orientation and ACS-quality options.
-  - Uses `great_tables` for PDF/PNG rendering.
-  - Includes a fallback path when table rendering fails.
-
-#### Final Report Tab
-Purpose: assemble a multi-section report using plots, tables, and text outputs.
-
-Key controls:
-- Final report title.
-- Combined plot title override (report-only).
-- Template management (Save As Template, Update Template, Delete Template).
-- Generate Final Report... (always visible) prompts for PDF/PNG/Both and uses the existing report generators.
-- Layout mode:
-  - `single_page_portrait`
-  - `mixed_pages`
-  - `plots_landscape_pages`
-- Fit mode:
-  - Preserve Export Layout (default)
-  - Report Layout (legacy)
-- Safe margins preset: Normal / Extra-Safe.
-- Typography: font scale, margins, page numbers, section headers.
-- Table style preset: Compact / Normal / Large.
-- Per-section toggles: Include Section Header, Include Caption, Caption Placement (Same Page / Next Page).
-- Section selection and ordering.
-- Final Report split pane behavior: `Sections Included` defaults to 60% width on first load (`final_report_split_frac`), and sash adjustments are persisted across sessions.
-- Preview actions: Open Preview Window, Render Selected Page Preview, Update Layout Preview.
-
-Report sections (examples):
-- Figure 1 / Figure 2
-- Combined Triple-Axis Plot (Preserve Export Layout reuses export rendering; Report Layout uses report layout fit)
-- Cycle Analysis Summary
-- Cycle Statistics Table
-- Cycle Speciation Timeline Table
-- Predicted pH Callouts
-- CO2 Dosing Guidance
-- Planner Narrative
-- Key Metrics Summary
-- Solubility Summary
-- Math Details
-
-Combined Triple-Axis Plot is included by default; older settings are auto-migrated to include it in selected sections.
-Cycle Analysis plot and Cycle Speciation Timeline plot are interactive-only and excluded from Final Report exports.
-
-Export:
-- PDF/PNG with export DPI and output size profiles.
-- PDF output stitches exported PDF artifacts per section in the selected order (deterministic).
-- Fit Mode controls how complex plots are rendered:
-  - Preserve Export Layout embeds the export render into the report page.
-  - Report Layout uses the report layout solver and axes-fit placement.
-- Combined Triple-Axis Plot failures block generation unless you opt into a degraded report.
-- Final Report generation requires applied columns; pending column application blocks export.
-- Captions can render on the same page or a dedicated caption page; figure/table numbers are independent of page numbers.
-- Tables are centered, wrapped, and styled with presets to prevent overlap or clipping.
-
-Settings keys (settings.json):
-- `final_report.fit_mode`: "Preserve Export Layout" (default) or "Report Layout (legacy)".
-- `final_report.safe_margin_preset`: "Normal" (default) or "Extra-Safe".
-- `final_report.table_style_preset`: "Normal" (default), "Compact", or "Large".
-- `final_report.section_header_enabled`: per-section header toggle map.
-- `final_report.section_caption_enabled`: per-section caption toggle map.
-- `final_report.section_caption_placement`: per-section caption placement map ("Same Page" / "Next Page").
-
-#### Menus, Preferences, and Tools
-File
-- Open Excel, Rescan File, Import GL-260 CSV, Save Settings, Font Family..., Exit.
-
-File -> Preferences
-- Show/hide optional tabs.
-- Tab Layout (order and visibility).
-- Data & Columns (elapsed time unit).
-- Show solubility input helper.
-- Auto-jump to Plot tab after Apply.
-- Scatter Plot Settings (marker, size, color, alpha, edge color, line width).
-- Cycle Analysis Plot Settings (trace line color/style/width, peak/trough colors, marker shapes, marker size in pts^2).
-- Saved Output Options (export DPI and output size profiles).
-- Combined Axis Settings.
-- Axis Auto-Range Settings.
-- Optimize Layout for Current Display.
-- Run Solubility Regression.
-
-View
-- Zoom in/out/reset.
-- Zoom presets.
-
-Tools -> Developer Tools...
-- Unified dialog hub for debug logging/category controls and performance diagnostics.
-- Free-threading & GIL controls (separate dialog launched from hub).
-- Dependency free-threading audit (separate dialog launched from hub).
-- Concurrency controls for background tasks (inline in hub Runtime/Advanced tab).
-- Validate timeline table export and regression checks (launched from hub).
-
-### Plotting Architecture Details
-
-#### Figures
-- Figure 1: Pressure (y1/y3) vs time, optional temperature axis (z/z2) on the right.
-- Figure 2: Pressure (y1/y3) vs time, optional derivative axis (y2) on the right.
-- Figure 3: Cycle analysis plot with peaks/troughs.
-- Combined Triple-Axis: Single figure with three Y axes (inner left, inner right, outer right).
-
-#### Axis and title handling
-- Axis ranges are applied from Plot Settings or auto-refresh.
-- Tick locations can be automatic or manual per axis.
-- Titles and suptitles are centered on the union of visible axes so multi-axis plots stay aligned.
-- Axis labels are derived from the selected column names and normalized (underscores removed for display).
-- Plot fonts use a preferred Matplotlib serif stack (defaulting to `STIXGeneral` when available) with fallbacks; the optional Font Family... setting overrides the plot font family.
-
-#### Scatter vs line rendering
-- Global scatter settings live in the Scatter Plot Settings dialog.
-- Per-series overrides (size, line width, color, line style) are set on the Columns tab.
-- Scatter settings apply to Figures 1/2/3 and the combined plot.
-
-#### Legend handling
-- Legends are created per figure and are draggable when enabled in Plot Settings.
-- Legends omit datasets that are set to None in the Columns tab.
-- Cycle legends can be added to core plots when enabled.
-- Combined triple-axis cycle legend anchors persist across refresh/regeneration (when enabled) and are reused for export preview and final exports; main legends re-center on rebuild.
-- Center Plot Legend affects only the main legend; cycle legend placement is independent and is never captured by main-legend logic.
-- Manual main-legend drags (when enabled) are session-only and do not disable Center Plot Legend.
-- Plot Settings -> Cycle Legend (Combined Plot) provides Enable Dragging, Lock Position, Persist Position, Reset Position, and Clamp-on-capture controls.
-
-#### Combined cycle legend placement
-- The combined triple-axis cycle legend supports axis-relative placement with fixed pixel offsets.
-- A reference axis (main/right/deriv) and reference corner define where the offsets are measured from.
-- Placement is preserved across the main window, export preview, and final exports when persistence is enabled.
-- Anchor space (figure vs axes) is preserved when reapplying user-dragged cycle legend positions.
-- Workflow: Enable Cycle Legend Dragging -> drag the legend -> keep Persist Cycle Legend Position ON to retain placement across Refresh/Rebuild; Lock Cycle Legend Position disables dragging without hiding the legend; Reset Cycle Legend Position clears stored offsets and returns to defaults.
-- Clamp Cycle Legend Inside Axes on Capture keeps stored positions within the visible axes bounds.
-- Legacy combined cycle legend anchors are automatically migrated to the axis-offset model on first render.
-
-#### Combined cycle legend persistence debug verification
-Use the terminal debug output to confirm that drag-release capture and persistence are wired correctly:
-- Generate the Combined Triple-Axis plot and confirm:
-  - `DEBUG: legend tracking canvas type=FigureCanvasTkAgg id=...`
-  - `DEBUG: connect button_release_event cid=...`
-- Click anywhere in the plot and confirm:
-  - `DEBUG: button_release_event fired fig_id=... x=... y=... inaxes=...`
-- Drag the cycle legend and release; confirm:
-  - `DEBUG: button_release_event fired fig_id=...`
-  - `DEBUG: Combined cycle legend capture source=drag ...`
-- Click Refresh, then click in the plot again; confirm the canvas identity and cids are re-printed and the button-release debug line fires.
-- With Persist Cycle Legend Position enabled and stored offsets present, `source=auto` capture should not appear; only `source=drag` commits new offsets.
-
-### Plot Elements and Annotations System
-Plot annotations are stored per plot in `settings.json` and rendered on top of figures.
-
-Supported element types:
-- Text
-- Callout
-- Arrow
-- Point
-- X-span
-- Span + Label
-- Box Region (rectangle)
-- Reference Line (vertical or horizontal)
-- Ink (freehand line)
-
-Key behaviors:
-- Each element has an ID, name, visibility flag, lock flag, z-order, style, and geometry.
-- Elements can be attached to data coordinates (move with pan/zoom) or axes coordinates (fixed to plot frame).
-- Elements can target the primary, right, or third axis in multi-axis plots.
-- Axis-based legacy elements are automatically migrated into data coordinates.
-- Elements are applied both to on-screen figures and to exported PNG/PDF/SVG outputs.
-- Plot Elements controllers are rebound on figure swaps (Refresh, preview/export) so selection/dragging remains active.
-- Closing the Plot Elements window triggers a one-shot plot refresh through the shared Refresh pipeline, including the loading splash and determinate progress bar until refresh completion.
-- Persisted Plot Elements editor geometry is normalized on open so restored size/position stay on-screen after monitor or layout changes.
-- Plot Elements editor pane sizing defaults are hardened to keep controls visible and reduce cramped split-pane states on smaller displays.
-- Element placement uses a dedicated Plot Elements editor with:
-  - Add Element controls (type, axis, coordinate space) with explicit Place on Plot arming and status hints.
-  - Color, transparency, and label presets.
-  - Live update toggle for immediate redraw plus apply/revert/undo/redo for edits.
-
-Persistence:
-- `settings["plot_elements"]` stores element lists per plot ID.
-- `settings["annotations_ui"]` stores per-plot UI state (collapsed state, last mode, add defaults, live update).
-
-### Combined Triple-Axis Plot Technical Documentation
-
-#### 1) Conceptual Overview
-The combined triple-axis plot unifies pressure, temperature, and derivative or auxiliary traces in a single figure. It exists to show cycle context, pressure changes, temperature response, and derived behavior in one aligned timeline, enabling direct interpretation of cycle structure and thermal response without cross-plot alignment errors.
-
-Rendering Behavior:
-- Display renders for the combined plot defer until the canvas reports stable geometry so the first visible draw uses final DPI/size and persisted legend anchors.
-- Auto-refresh runs two forced refresh passes (using the Refresh path) before the loading overlay is cleared to fully settle margins and layout.
-- A loading cursor is shown and render controls are disabled while the combined plot finalizes.
-
-#### 2) Axis Architecture
-- X axis: elapsed time (stitched when multi-sheet mode is enabled).
-- Left Y axis: primary pressure (y1) and optional manifold pressure (y3).
-- Right Y axis (inner-right): user-selectable temperature or derivative role.
-- Detached right Y axis (outer-right): user-selectable temperature or derivative role with configurable offset.
-- Combined layering is enforced at the Axes level from active trace priorities: left/right/third axis z-order is resolved dynamically, a dedicated top overlay axis carries cycle markers, and the derivative `y=0` dashed line is rendered on the overlay layer so it stays above X-span elements.
-- Combined Triple-Axis role swaps are applied in both full-build and reuse refresh paths, so changing inner-right/outer-right dataset roles in Plot Settings is reflected immediately.
-- `Include y=0 line` in Combined Triple-Axis settings now explicitly controls dashed derivative reference-line rendering whenever a derivative axis is active (inner-right or outer-right).
-
-#### 3) Axis Range Control System
-- Auto-range tools pull min/max from current data only for the axes enabled in Axis Auto-Range Settings.
-- Unchecked axes keep the manual min/max you enter, which effectively locks that axis.
-- Span Padding (%) expands Y ranges around the data span to prevent clipping.
-- Refresh Axis Ranges applies the current auto-range settings without altering manual ranges for locked axes.
-
-#### 4) Interactive Plot Elements
-- Cycle markers and trough markers are drawn from the Cycle Analysis state.
-- Region shading and annotations are layered with configurable z-order so overlays do not hide data.
-- Legends (main and cycle) are draggable and persist across preview and export.
-- Plot Elements provide additional overlays (text, callouts, spans, reference lines, and freehand marks).
-
-#### 5) Automatic Title Generation System
-- Titles can be auto-generated at render time using the Auto Title system in Plot Settings.
-- Metadata inputs: Data Type, dataset date range (full dataset or current view range), and day-count mode.
-- Formatting rules: template placeholders are resolved to dates, day spans, and ISO strings.
-- Overrides: Copy Auto Title -> Manual Title captures the computed title for manual edits.
-- Example outputs:
-  - Reaction Day 1-6 2026-01-13 - 2026-01-19
-  - Reaction Day 3-5 2026-02-10 - 2026-02-12
-
-#### 6) Export and Layout Pipeline
-- Preview rendering favors responsiveness, while export rendering rebuilds figures for deterministic output.
-- Plot Preview supports drag edits for existing Plot Elements on the Combined plot; committed positions are synced back to the display plot when preview closes, while Combined legend drag behavior remains unchanged.
-- Output DPI and size profiles are applied uniformly across plot exports.
-- Combined plot exports are reused by the Final Report when Preserve Export Layout is selected.
-- Layout profiles ensure consistent margins and legend placement across preview and export.
-
-### Interactive Cycle Analysis - Scientific and Operational Guide
-
-#### 1) Physical Meaning of Cycles
-A cycle is defined as a pressure peak followed by a trough, representing a gas uptake event. Cycle metrics map directly to uptake and conversion estimates, so accurate peak/trough placement is required for valid downstream analysis and reporting.
-
-#### 2) Automatic Detection Algorithm
-- Peak/trough detection uses `scipy.signal.find_peaks` when SciPy is available.
-- A built-in peak finder is used when SciPy is missing.
-- Key parameters:
-  - Prominence: suppresses noise-driven peaks.
-  - Minimum distance: enforces spacing between cycles.
-  - Width: avoids narrow spikes.
-  - Minimum delta-P threshold: filters low-amplitude cycles.
-
-#### 3) Manual Editing System (Manual Peak/Trough Assignment)
-Manual editing is an integral workflow and is required when automatic detection is insufficient.
-
-Manual assignment workflow:
-- Shift + left-click: add a peak marker.
-- Shift + right-click: add a trough marker.
-- Right-click (no shift): remove the nearest marker.
-- Disable automatic detection to operate in manual-only mode.
-- Use undo/redo to step through marker edits.
-- Import/export marker sets to reuse curated cycles across sessions.
-
-Edge cases and guidance:
-- Overlapping cycles: delete extra markers and reassign peak/trough pairs in order.
-- Noisy derivatives: increase prominence or switch to manual-only placement.
-- Temperature drift segments: use manual placement to avoid false cycles.
-
-Refresh and verification:
-- After marker edits, refresh the Cycle Analysis summary to recompute metrics.
-- Confirm that delta-P and uptake totals match expected experimental trends.
-
-#### 4) Cycle Analytics Outputs
-- Delta-P per cycle (PSI to atm conversion is applied for moles calculations).
-- Uptake moles (ideal gas and Van der Waals when SciPy is available).
-- Mean temperature per cycle from the selected cycle temperature column.
-- Total uptake and optional conversion estimates when starting material inputs are configured.
-
-#### 5) Cycle Visualization (Figure 3)
-- The Cycle Analysis plot shows pressure with peak/trough markers and per-cycle overlays.
-- Marker and legend styling is configured in Cycle Analysis Plot Settings.
-- The Cycle Analysis plot is interactive-only and is excluded from Final Report exports.
-
-### Advanced Solubility and Equilibrium Engine
-
-#### 1) Purpose
-The Advanced Solubility and Equilibrium Engine models CO2 dissolution, carbonate/bicarbonate speciation, and pH evolution with cycle-aware inputs. It is designed to connect experimental uptake cycles to equilibrium outputs and planning scenarios.
-
-As of `v4.7.7`, the full tab follows the large-tile workflow pattern. The tab now separates all-cycles review from selected-cycle forensic review, and the reaction/yield basis is shared across Plot Settings, Analysis, Compare, Ledger, and Final Report.
-
-#### 2) Physical and Chemical Models
-- Ideal gas and Van der Waals models for uptake calculations.
-- Henry's law for CO2 dissolution into solution.
-- Carbonate and bicarbonate equilibria with charge balance.
-- Stoichiometric progression models for reaction planning and projection.
-- Optional NaOH-CO2 Pitzer (HMW/PHREEQC-style) model when `naoh_co2_pitzer_ph_model.py` and `pitzer.dat` are available.
-
-#### 3) Computational Workflow
-- Choose a workflow tab: Planning, Analysis, or Reprocessing.
-- Provide solution inputs (mass, volume, temperature, pH targets, headspace conditions).
-- Import cycle payloads or manually enter CO2/NaOH inputs.
-- Select or save a reaction in Plot Settings `Final Product Settings` so yield estimates use the correct final-product molar mass and stoichiometry.
-- Run the solver to generate speciation, pH, and saturation metrics.
-- As of `v2.12.3`, manual Analysis CO2 charged values are preserved, Planning NaOH inputs persist after runs, and heavy solver work is executed asynchronously.
-- As of `v4.7.4`, advanced-engine solver cores and Analysis dashboard/interpolation cores can run on Rust with per-kernel auto-policy gating; Python fallback remains the authoritative path on any Rust error.
-
-#### 4) Visualization Outputs
-- Species concentration plots and saturation summaries.
-- pH sweep curves and speciation tables.
-- Large-tile cycle explorers:
-  - `Cycle Speciation Timeline Explorer` for all-cycle review.
-  - `Cycle Comparison Explorer` for one-cycle forensic comparison.
-- Simplified on-screen cycle tables with the full schema preserved for expanded viewing and table export.
-- Planning workflow timeline plots include a draggable legend that retains its placement across redraws and exports.
-- Planning workflow inputs persist after each run; NaOH mass and related fields remain unchanged.
-- Analysis workflow preserves manual CO2 charged entries; cycle auto-fill occurs only when the field is blank.
-- Speciation solver runs asynchronously with a loading overlay so the tab remains responsive.
-- Headspace/solution partitioning summaries for CO2 uptake.
-
-#### 5) Final Product Settings
-- Built-in reaction catalog entries: `Custom`, `NaOH + CO2 -> NaHCO3`, and `2 NaOH + CO2 -> Na2CO3 + H2O`.
-- Custom reactions can be saved from Plot Settings and reused later from both Plot Settings and Final Report metadata.
-- Theoretical yield is computed from starting-material mass, starting-material MW, product stoichiometry, and final-product MW.
-- Estimated yield in Analysis mode now uses the selected final-product basis instead of treating raw uptake mass as product mass.
-
-#### 6) Experimental Use Cases
-- Compare cycle-derived uptake to predicted dissolved CO2 capacity.
-- Validate pH trajectory against expected equilibrium states.
-- Generate planning guidance for dosing or reaction completion targets.
-
-### Compare Tab Workflow and Reporting
-Use the Compare tab to stage two profiles (A/B), then run side-by-side comparison renders for Combined Triple Axis plots and cycle/yield deltas.
-
-Key behavior:
-- The full Compare tab is vertically scrollable (outer wrapper), so controls remain reachable on shorter windows.
-- The right-side Yield/Diagnostics panel retains its own inner scrollbar behavior.
-- Compare execution is explicit: click `Load Profiles` to stage profile bundles, then click `Run Comparison` to render plots and rebuild the comparison table.
-- Loading profiles does not auto-run comparison rendering.
-- Dragging the plot/table split sash persists `compare_tab.split_frac`; startup restore is clamped and retried during geometry settle.
-- Compare control buttons and Compare popup action buttons use readability-aware sizing/wrapping so labels remain readable under UI scaling.
-- Per-Cycle Uptake Comparison now mirrors Ledger-style column behavior:
-  - `View Mode` selector (`Standard`, `Tight`, `Fit to Content`)
-  - `Fit All Visible` action
-  - separator double-click single-column auto-fit
-  - manual column-width persistence and horizontal scrollbar support
-- Yield Comparison field/input spacing now uses responsive stacked layout with dynamic wraplength updates so input/output text stays visible without shrinking the uptake table area.
-
-Report workflow:
-- Run comparison first to generate fresh compare outputs.
-- Use `Generate Comparison Report...` to export compare artifacts.
-- Comparison report output source is the side-by-side Compare panes (not the detached Edit Plot window).
-- Use `Report Options...` to toggle:
-  - cycle table CSV
-  - yield summary in PDF/CSV
-  - diagnostics TXT
-  - interactive HTML report
-- Use `Plot Settings A...` / `Plot Settings B...` next to each side's `Edit Plot ...` button to open full side-local Plot Settings quickly.
-- In Profile-Exact mode, `Plot Settings A/B...` remains available and applies compare-scoped side overrides only (no profile JSON writes).
-- Compare side Plot Settings edits persist in `settings.json` under `compare_tab.side_plot_settings_overrides_by_pair` and `compare_tab.side_layout_overrides_by_pair`.
-- Interactive HTML export is controlled by persisted key `compare_tab.report_preferences.include_interactive_html`.
-
-### Final Report System - Export and PDF Assembly
-The Final Report system assembles a multi-section report using exported plot artifacts and configured tables.
-
-Report pipeline:
-- Uses export-grade plots and tables for deterministic output.
-- Stitches PDF artifacts per section in the selected order.
-- Reuses the combined plot export when Preserve Export Layout is selected.
-- Live Final Report preview uses preview-only DPI scaling and opens at a page-sized, screen-clamped centered window for faster visual review.
-- Final Report tab includes `Interactive HTML Preview`, and Generate supports `HTML`, `PDF + HTML`, `PNG + HTML`, and `PDF + PNG + HTML`.
-
-Section ordering and inclusion:
-- Section selection and ordering are state-driven and persisted in settings.
-- Each section can independently enable headers and captions, with Same Page or Next Page caption placement.
-- Combined Triple-Axis Plot is always appended when generation succeeds.
-
-PDF assembly behavior:
-- Layout mode controls page orientation and plot placement.
-- Fit mode chooses between Preserve Export Layout and legacy Report Layout.
-- Tables are centered and wrapped with style presets to prevent overlap.
-
-### Preferences and Configuration System
-
-#### Preferences
-Use File -> Preferences to configure:
-- Advanced Speciation tab visibility and notebook tab order.
-- Data and column defaults (elapsed time units).
-- Scatter plot styling and cycle plot marker styling.
-- Output DPI and size profiles for exports.
-- Combined axis settings, axis auto-range settings, and layout tuning.
-- UI scaling and Optimize Layout for Current Display.
-
-#### Settings Persistence and Restoration
-The app persists state to `settings.json` in the working directory.
-
-Load behavior:
-- If `settings.json` is missing, defaults are used.
-- If the file is corrupt, it is moved to `settings.json.corrupt-<timestamp>` and defaults are used.
-
-Save behavior:
-- Uses a temporary file and atomic replace for durability.
-
-Key persisted categories:
-- Data loading: `last_file_path`, `last_sheet_name`, multi-sheet selection.
-- Column mapping: global column map, per-sheet overrides.
-- Plot settings: ranges, ticks, axis toggles, titles.
-- Scatter settings and per-series overrides.
-- Cycle analysis settings and manual marker edits.
-- Combined axis labels, offsets, layout spacing, and zero-line toggle (`combined_include_zero_line`).
-- Layout profiles (per-plot display/export margins, title/suptitle positions, legend anchors/loc, axis label padding).
-- Compare tab state including split position (`compare_tab.split_frac`) and report preferences (including `compare_tab.report_preferences.include_interactive_html`).
-- Layout-health policy controls (`layout_health_autofix_enabled`, `layout_health_strict_mode`, `layout_health_emit_debug_events`, `layout_health_max_passes`, `layout_health_min_gap_pts`, `layout_health_max_gap_pts`).
-- Output profiles, export DPI, and final report settings.
-- Plot elements and annotation UI state.
-- Advanced Speciation tab visibility, tab order, and Final Report split (`final_report_split_frac`).
-- Window geometry and UI font scaling.
-
-#### Process Profiles
-Process Profiles store and restore full workspace snapshots, including dataset selection (optional), sheet selection, column mappings, plot settings/elements, layout tuning, and final report configuration. Access the manager via Profiles -> Manage Profiles....
-
-Profiles are stored in `profiles/` as `profiles/<profile_name>.json`. The manager supports Save, Save Current As..., Load, Overwrite, Rename, Delete, Export, and Import. Export writes the selected profile to a JSON file; Import brings a JSON profile into the `profiles/` folder.
-
-The manager includes a `Current Profile` section that shows the active workspace profile name and path. `Save` writes directly to this current profile (with overwrite confirmation). If no current profile is set, `Save` falls back to the Save Current As... flow. The current profile tracking is persisted in `settings.json` and restored on next launch when the tracked profile still exists.
-
-Use New Profile to start a clean workspace without inheriting prior dataset or plot state. New Profile clears the workspace to startup defaults, then opens a single configuration dialog that captures:
-- Profile name
-- Suptitle (Job Information)
-- Gas Model preset (VDW)
-- Vessel volume
-- VDW a and b
-- Gas molar mass
-- Starting material preset
-- Starting material molar mass
-- Starting material mass
-- Stoichiometric ratio
-
-New Profile also supports an optional `Keep plot settings for New Profile` flow (enabled by default in Process Profiles). When enabled, New Profile still resets to a clean workspace baseline, then reapplies retained plot settings and layout profiles.
-
-Retained scope for `Keep plot settings for New Profile`:
-- Plot settings
-- Layout profiles
-
-Not retained scope for `Keep plot settings for New Profile`:
-- Plot elements
-- Annotation UI state
-
-The Include dataset file path option determines whether the Excel path is saved with the profile. If a profile does not include a path (or the file is missing), the app prompts you to relink the dataset before loading. This option is independent from `Keep plot settings for New Profile`. New Profile saves a dataset-optional profile that loads without a relink prompt. The current workspace is auto-backed up to `profiles/_autosave_last_workspace.json` before a profile load.
-
-#### Startup Restore and Splash Gating
-- Startup restore now checks `profiles/_autosave_last_workspace.json` first.
-- Legacy workbook restore (`last_file_path` / `last_sheet_name`) is used only when autosave is unavailable.
-- Splash teardown is gated on restore terminal state (`success`, `failed`, or `skipped`) plus tab-readiness checks.
-- Splash detail text includes checklist-style stage state and heartbeat wait messaging so startup wait conditions are explicit.
-- Missing/corrupt autosave payloads fail or skip cleanly and startup continues without hanging.
-
-#### Saved Output Profiles and Export Sizes
-Export functions are unified by shared output size profiles and DPI settings.
-
-Output sizes are controlled by Preferences -> Saved Output Options.... Profiles support:
-- Auto sizing (inherit figure size).
-- Fixed sizes (inches or pixels).
-- Aspect-ratio constrained sizes.
-
-Default output profiles include (keys shown as stored in `settings.json`):
-- `plot_export`: General Plot Exports
-- `cycle_summary_png`: Cycle Analysis Summary PNG
-- `solubility_summary_png`: Advanced Solubility Summary PNG
-- `sol_planner_narrative_png`: Planner Narrative PNG
-- `sol_co2_guidance_png`: CO2 Guidance PNG
-- `sol_math_preview_png`: Math Preview PNG
-- `sol_math_detail_export`: Detailed Math Viewer Export
-- `final_report_png`: Final Report PNG
-- `contamination_summary_png`: Contamination Summary PNG
-
-### Performance and Developer Tools
-The app keeps the UI responsive with a dedicated task runner:
-
-- `TkTaskRunner` owns a thread pool and enforces "latest task wins" per task name.
-- Results and errors are marshaled back to the Tk event loop via `after`.
-- Used for column application, cycle analysis, solubility solver runs, and diagnostics.
-
-Developer tools (Tools -> Developer Tools...) provide:
-- Logging & Debug tab with global toggles and immediate-apply behavior.
-- Debug category search/filter plus bulk actions (`Enable All`, `Disable All`).
-- Dump Debug Settings, Clear Debug Once-Guards, and Dump Performance Stats actions.
-- Performance Diagnostics tab with stage-level timings (data prep, cycle context, combined render, embed).
-- Runtime / Advanced tab for concurrency controls and advanced tool launch buttons.
-- Runtime / Advanced tab now includes a **Layout Health** section:
-  - `Enable Layout Health Auto-Fix`
-  - `Enable Strict Mode`
-  - `Enable Layout Health Debug Events` (emits under `plotting.layout` when debug logging/category is enabled)
-  - numeric policy controls: `Max Passes`, `Min Legend-XLabel Gap (pt)`, `Max Legend-XLabel Gap (pt)`
-  - quick actions: `Reset Layout Health Defaults`, `Run Layout Health Check on Active Figure`
-- Runtime / Advanced tab now includes a **Compare Debug** section:
-  - `Dump Compare Snapshot`
-  - `Dump Compare Whitespace`
-  - `Dump Side Editor State`
-- Compare `Load Diagnostics` panel now includes quick debug actions:
-  - `Debug Snapshot`
-  - `Debug Whitespace`
-- Runtime / Advanced now includes inline Rust backend install/repair progress (indeterminate loading bar + status text).
-- Rust install/repair failures always print a concise reason to terminal (`stderr`) and emit category-gated diagnostics under `rust.backend`.
-- Free-threading & GIL controls, dependency free-threading audit, regression checks, and timeline table export validation via dedicated dialogs/actions launched from the hub.
-
-#### Runtime/Render Tuning Settings
-Combined render and startup responsiveness are now controlled by explicit runtime settings:
-
-- `combined_refresh_mode`:
-  - `single_pass` (default): skip post-first-draw combined auto-refresh.
-  - `adaptive`: only request pass 2 when baseline/current signatures are complete and indicate material instability.
-  - `two_pass`: force conservative two-pass behavior.
-- Backward compatibility for legacy key:
-  - `combined_disable_second_refresh=True` maps to `combined_refresh_mode=single_pass`.
-  - `combined_disable_second_refresh=False` maps to `combined_refresh_mode=adaptive` when no explicit `combined_refresh_mode` exists.
-- `startup_interactive_first` (default `True`):
-  - Splash teardown is gated by interactive essentials (Data/Columns/Plot) instead of heavy tab readiness.
-- `startup_background_tab_warmup` (default `True`):
-  - After reveal, heavy startup tabs (Cycle/Solubility/Final Report) continue warmup/readiness checks in the background.
-- `dev_disable_startup_tab_cycling` (default `True`):
-  - Keeps splash startup from tab-cycling unless explicitly overridden for legacy comparisons.
-
-Developer Tools -> Performance Diagnostics now includes quick actions:
-
-- `Set Single-Pass`
-- `Render Combined Once`
-- `Dump Timings`
-
-Combined performance diagnostics now expose structured fields for tuning:
-
-- `worker_ms`, `build_ms`, `layout_ms`, `install_ms`, `finalize_ms`
-- `auto_refresh_mode`, `auto_refresh_target`, `auto_refresh_passes`
-- runner snapshots (`runner_start` / `runner_end`) with `active`/`pending` counts for both task runners
-
-Recommended free-threaded profile (`.venv-314t`):
-
-1. `dev_worker_threads=4` (or CPU-appropriate value).
-2. `dev_enable_parallel_compute=True`.
-3. `combined_refresh_mode=single_pass` for first-latency optimization.
-4. Keep `startup_interactive_first=True` and `startup_background_tab_warmup=True` for fastest initial interaction.
-
-#### Debug Logging and Performance Stats
-The debug/logging framework is centralized and off by default. Use the following workflow:
-
-1) Open Tools -> Developer Tools..., then enable `Enable Debug Logging`.
-2) In Logging & Debug, use category filter and `Enable All`/`Disable All` or per-category toggles.
-3) Optional: Enable `Enable Debug File Logging` to capture logs in `gl260_debug.log`.
-4) Use Dump Debug Settings to verify active categories, and Clear Debug Once-Guards to re-emit one-shot logs.
-5) Use Dump Performance Stats to view aggregated timing/counter metrics.
-
-Initial debug categories:
-- Core/Infrastructure: `ui.events`, `cache.render`, `perf.timing`
-- Plotting: `plotting.render`, `plotting.layout`, `plotting.legends`
-- Compare: `compare.render`, `compare.whitespace`, `compare.cycle_editor`
-- Cycle Analysis: `cycle.analysis`, `cycle.interaction`
-- Final Report: `report.build`, `report.figures`, `report.export`
-- Rust Backend: `rust.backend`
-- Speciation Engine: `speciation.engine`, `speciation.solver`, `speciation.chemistry`, `speciation.results`
-- IO: `io.excel`, `io.files`
-
-Performance stats are aggregated (count/total/min/max/last) and gated behind `perf.timing` (or the relevant subsystem category). These include combined plot build/refresh, render cache hits/misses, cycle analysis compute, final report build/export, and speciation solver timing.
-
-Warnings:
-- Free-threading and concurrency tuning are expert tools. Changing defaults can impact stability or responsiveness and should be tested on representative datasets.
-
-### Troubleshooting and FAQ
-- Symptom: `No module named numpy._core._multiarray_umath` or `ImportError: you should not try to import numpy from its source directory`. Cause: NumPy/Matplotlib wheel ABI mismatch (`cp314` vs `cp314t`) for the interpreter currently launching the app. Fix: Rebuild both project environments and reinstall dependencies:
+If `py` launcher is available:
 ```powershell
 py -3.14 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe "GL-260 Data Analysis and Plotter.py"
+```
 
-py -3.14t -m venv .venv-314t
-.\.venv-314t\Scripts\python.exe -m pip install --upgrade pip
-.\.venv-314t\Scripts\python.exe -m pip install -r requirements.txt
+If `py` launcher is not available, use explicit interpreter path:
+```powershell
+# Example path; replace with your actual user-level python.exe
+$PY="C:\Users\<you>\AppData\Local\Programs\Python\Python314\python.exe"
+
+& $PY -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe "GL-260 Data Analysis and Plotter.py"
+```
+
+Restricted PowerShell execution policy:
+- You do not need `Activate.ps1`.
+- Use direct venv `python.exe` commands as shown above.
+
+#### Rust integration (optional) - Windows and macOS
+Rust backend is optional. If unavailable, the Python implementation remains authoritative.
+
+##### Windows Rust setup (general)
+1. Install rustup/rustc/cargo.
+2. Install maturin in the target venv.
+3. Build extension with the same interpreter used to run the app.
+
+```powershell
+.\.venv-314t\Scripts\python.exe -m pip install "maturin>=1.12,<2.0"
+.\.venv-314t\Scripts\python.exe -m maturin develop --manifest-path rust_ext/Cargo.toml
+```
+
+MSVC preferred path:
+- Requires `link.exe` (Visual Studio Build Tools C++ workload).
+
+GNU/MinGW fallback path:
+```powershell
+rustup toolchain install stable-x86_64-pc-windows-gnu
+rustup target add x86_64-pc-windows-gnu --toolchain stable-x86_64-pc-windows-gnu
+.\.venv-314t\Scripts\python.exe -m maturin develop --manifest-path rust_ext/Cargo.toml --target x86_64-pc-windows-gnu
+```
+
+Verify import in same env:
+```powershell
+.\.venv-314t\Scripts\python.exe -c "import gl260_rust_ext.gl260_rust_ext as m; print(m.__file__)"
+```
+
+##### macOS Rust setup (general)
+```bash
+xcode-select --install
+curl https://sh.rustup.rs -sSf | sh
+source "$HOME/.cargo/env"
+
+./.venv-314t/bin/python -m pip install "maturin>=1.12,<2.0"
+./.venv-314t/bin/python -m maturin develop --manifest-path rust_ext/Cargo.toml
+./.venv-314t/bin/python -c "import gl260_rust_ext.gl260_rust_ext as m; print(m.__file__)"
+```
+
+#### No-Admin Rust integration on Windows
+When admin rights are blocked:
+- Prefer user-scope rustup installation.
+- Keep all toolchains under user profile (`%USERPROFILE%\.cargo`, `%USERPROFILE%\.rustup`).
+- Build from project venv interpreter, not global Python.
+
+If `winget` is blocked by policy:
+- Use rustup-init installed/executed in user space.
+- Re-open shell and ensure `%USERPROFILE%\.cargo\bin` is on PATH.
+
+Session-local PATH setup example:
+```powershell
+$env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+rustup default stable
+```
+
+No-admin MinGW fallback pattern:
+- Install/extract MinGW in user space (for example `%USERPROFILE%\mingw64`).
+- Add `%USERPROFILE%\mingw64\bin` to current session PATH.
+- Run GNU-target maturin command with your venv interpreter.
+
+```powershell
+$env:PATH = "$env:USERPROFILE\mingw64\bin;$env:PATH"
+.\.venv-314t\Scripts\python.exe -m maturin develop --manifest-path rust_ext/Cargo.toml --target x86_64-pc-windows-gnu
+```
+
+#### Repo-local Rust validator script
+`scripts/validate_rust_backend.py` is currently pinned to this repository's Windows free-threaded configuration:
+- expected interpreter: `.venv-314t\Scripts\python.exe`
+- default target flow: `x86_64-pc-windows-gnu`
+
+Run:
+```powershell
+.\.venv-314t\Scripts\python.exe .\scripts\validate_rust_backend.py
+```
+
+### Running the Application
+From repository root:
+
+Windows:
+```powershell
+.\.venv\Scripts\python.exe "GL-260 Data Analysis and Plotter.py"
 .\.venv-314t\Scripts\python.exe "GL-260 Data Analysis and Plotter.py"
 ```
-- Symptom: Plots look clipped or axes do not update. Cause: Axis auto-range is disabled for that axis or padding is too small. Fix: Review Axis Auto-Range Settings and Span Padding (%) in Plot Settings.
-- Symptom: Combined plot is missing cycle overlays. Cause: Cycle analysis has not been finalized or automatic detection is disabled without manual markers. Fix: Run cycle detection or manually assign peaks/troughs, then regenerate the combined plot.
-- Symptom: Combined X-span highlight appears to cover reference guides. Cause: The derivative `y=0` dashed line now renders on the combined overlay layer by design. Fix: Adjust span opacity/color if visual contrast is needed; the `y=0` line should remain above spans.
-- Symptom: Cycle detection is noisy or misses cycles. Cause: Prominence/distance/width thresholds are too low or data is noisy. Fix: Adjust detection settings or switch to manual-only placement.
-- Symptom: Final Report generation fails. Cause: Combined plot export failed or columns are not applied. Fix: Apply columns, regenerate combined plot export, then rerun the report.
-- Symptom: VDW moles are not shown. Cause: SciPy is not installed. Fix: Install SciPy or rely on ideal gas metrics.
-- Symptom: Timeline table export fails. Cause: `great_tables` not installed or rendering error. Fix: Install `great_tables` and retry; use fallback output if prompted.
-- Symptom: Settings reset unexpectedly. Cause: `settings.json` is corrupt. Fix: Check for `settings.json.corrupt-*` and reconfigure settings.
+
+macOS:
+```bash
+./.venv/bin/python "GL-260 Data Analysis and Plotter.py"
+./.venv-314t/bin/python "GL-260 Data Analysis and Plotter.py"
+```
+
+#### CLI options
+Supported startup flags:
+- `--benchmark`
+- `--points=<int>`
+- `--cycles=<int>`
+- `--noise=<float>`
+- `--open-profile=<profile_name>` (also supports `--open-profile <profile_name>`)
+
+Example:
+```powershell
+.\.venv\Scripts\python.exe "GL-260 Data Analysis and Plotter.py" --benchmark --points=800000 --cycles=150 --noise=0.25
+```
+
+#### Environment-triggered test modes
+The script supports targeted environment-controlled test paths:
+- `RUN_SOLUBILITY_REGRESSION=1`
+- `RUN_PITZER_TESTS=1`
+- `RUN_TIMELINE_TABLE_EXPORT_TEST=1`
+
+Windows example:
+```powershell
+$env:RUN_SOLUBILITY_REGRESSION="1"
+.\.venv\Scripts\python.exe "GL-260 Data Analysis and Plotter.py"
+```
+
+### Architecture and Data Flow
+High-level pipeline:
+1. Import data (Excel or CSV workflow).
+2. Map columns and apply selection.
+3. Build plotting series and axis state.
+4. Run cycle analysis (auto and/or manual marker workflows).
+5. Generate combined plot and overlays.
+6. Execute optional advanced solubility/speciation analysis.
+7. Review compare/ledger workflows.
+8. Export final reports and artifacts.
+
+Core state is maintained in application-owned data frames, selected-column mappings, plot/cycle settings, and persisted settings/profile payloads.
+
+### Quickstart Workflow (Linear)
+Recommended order:
+1. Open workbook on Data tab.
+2. Choose sheet or multi-sheet workflow.
+3. Map required columns on Columns tab.
+4. Apply column selection.
+5. Configure Plot Settings and auto-range policy.
+6. Run cycle detection (auto and/or manual correction).
+7. Generate combined triple-axis plot.
+8. Add plot elements/annotations if needed.
+9. Run advanced solubility workflows if needed.
+10. Build/export final report.
+
+### UI and Navigation Guide
+Primary tabs and purpose:
+- Data: import source workbook/CSV workflow and sheet selection.
+- Columns: map pressure, temperature, derivative, and optional channels.
+- Plot: figure generation, axes settings, overlays, and combined view controls.
+- Cycle: cycle marker detection/editing and moles summary.
+- Compare: side-by-side run comparisons.
+- Ledger: sortable/filterable cross-run metrics.
+- Advanced Solubility: planning/analysis/reprocessing chemistry workflows.
+- Final Report: export assembly and report packaging.
+
+### Plotting Architecture Details
+- Uses Matplotlib for figure generation and Tk embedding.
+- Supports multi-axis and combined triple-axis layouts.
+- Maintains refresh controls and render profiles to balance responsiveness and reproducibility.
+- Overlay and legend behavior is persisted through settings/profile state where applicable.
+
+### Plot Elements and Annotations System
+- Supports add/edit/remove workflows for common annotation types.
+- Annotation state is normalized and persisted through app settings/profile payloads.
+- Placement and z-order controls are provided for readability and export parity.
+
+### Combined Triple-Axis Plot Technical Documentation
+- Combined view merges pressure, temperature, and derivative-oriented channels with cycle context.
+- Axis assignment and legend behavior are configurable.
+- Refresh behavior can use single-pass, adaptive, or two-pass policies via runtime settings.
+
+### Interactive Cycle Analysis - Scientific and Operational Guide
+- Cycle detection uses configurable thresholds for peaks/troughs.
+- Manual marker correction supports post-detection cleanup.
+- Cycle summaries include ideal-gas moles and optional Van der Waals paths when SciPy is available.
+- Results are surfaced in cycle summaries, compare workflows, ledger outputs, and reporting contexts.
+
+### Advanced Solubility and Equilibrium Engine
+- Provides multiple model pathways (including optional Rust-accelerated kernels with Python fallback).
+- Includes planning, analysis, and reprocessing modes.
+- Optional NaOH-CO2 model path depends on local model module and `pitzer.dat` availability.
+- Chemistry outputs are fail-closed to Python pathways when optional acceleration or optional model dependencies are unavailable.
+
+### Compare Tab Workflow and Reporting
+- Side-by-side comparison supports selected-cycle review and metric comparison.
+- Compare results feed into report workflows and ledger structures.
+- Plot/title and cycle context handling is designed for side-local consistency.
+
+### Final Report System - Export and PDF Assembly
+- Supports assembling selected plots, summaries, and generated tables into report outputs.
+- Uses configured output sizing/DPI options from settings.
+- PDF merge/export path uses available PDF library compatibility path (`pypdf` or `PyPDF2`).
+
+### Preferences and Configuration System
+- Settings are persisted in `settings.json`.
+- Process/workspace profiles are stored in `profiles/`.
+- Runtime behavior includes startup preferences, render mode policies, and developer/runtime toggles.
+- Export presets and sizing policies are configurable and reusable.
+
+### Performance and Developer Tools
+Developer tools include:
+- Logging/debug category control.
+- Runtime and render diagnostics.
+- Concurrency controls.
+- Free-threading diagnostics and dependency audit views.
+- Rust backend status/setup entrypoints.
+
+Performance notes:
+- Large datasets and heavy combined renders benefit from runtime tuning.
+- Free-threaded and Rust-accelerated paths are optional and should be validated in your environment.
+
+### Troubleshooting and FAQ
+- ABI mismatch errors (for example `cp314` vs `cp314t`): recreate environment with the intended interpreter and reinstall dependencies.
+- SciPy unavailable: cycle detection fallback remains available, but Van der Waals-specific calculations are limited.
+- `great_tables` missing: timeline-table-specific export/view paths that require it will fail until installed.
+- Rust build/import issues: build with the same interpreter used to run the app and verify import from that same environment.
+- Missing `link.exe` on Windows: use Build Tools C++ workload or GNU/MinGW fallback path.
+- Settings corruption: inspect/repair `settings.json` and recover from profile autosave where available.
 
 ### Power User and Advanced Workflows
-- Multi-sheet stitching for long experiments: ensure Date & Time is mapped consistently and use per-sheet column mapping when schemas vary.
-- Long-run analysis: use auto-range settings carefully and consider manual axis locks when comparing segments.
-- Batch export: configure output profiles and export DPI once, then export multiple plots in sequence.
-- Automated reporting: export plots first, then run Final Report generation to reuse export renders.
-- Cycle analysis curation: auto-detect, manually correct peaks/troughs, validate metrics, then lock in combined plot overlays.
-- Profile-based workflows: use Process Profiles to capture and reuse full analysis setups across datasets.
+#### Conda alternative (primary non-venv option)
+Standard env:
+```powershell
+conda create -n gl260-py314 python=3.14 -y
+conda activate gl260-py314
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python "GL-260 Data Analysis and Plotter.py"
+```
+
+Free-threaded env:
+- If your conda channel/runtime does not provide a free-threaded interpreter, use native `venv` with a free-threaded Python binary instead.
+
+#### VS Code workflow
+1. Open repository folder in VS Code.
+2. Select interpreter from `.venv` or `.venv-314t`.
+3. Run `GL-260 Data Analysis and Plotter.py` from the selected interpreter.
+4. Use terminal commands with explicit interpreter path when you need exact environment control.
+
+#### Docker (experimental / non-primary)
+- This app is a desktop Tkinter GUI application; Docker is not the recommended daily-run path.
+- Docker can be useful for controlled dependency experiments, CI-style checks, or non-interactive validation.
+- Full GUI use from Docker requires host GUI forwarding setup and container Tk/GUI libraries, which is environment-specific and outside normal support guidance.
 
 ### Known Limitations and Tradeoffs
-- Excel workbooks remain the canonical data source; raw Graphtec GL-260 CSV imports are supported via the dedicated import dialog only.
-- Multi-sheet stitching inserts NaN separator rows, which can affect downstream calculations if not accounted for.
-- Cycle detection quality depends on user-defined prominence/distance/width parameters.
-- Van der Waals moles require SciPy; without it, only ideal gas totals are computed.
-- The NaOH-CO2 Pitzer model is optional and requires a valid `pitzer.dat`.
-- Large datasets are loaded fully into memory.
+- Primary workflow remains desktop GUI driven; headless/container execution is limited.
+- Optional modules gate specific features (`scipy`, `great_tables`, optional chemistry model, optional Rust backend).
+- Large workbooks and high-resolution exports can be memory/CPU intensive.
+- Chemistry/model accuracy depends on quality of input mappings, units, and configured assumptions.
 
 ### License
 Apache-2.0. See `LICENSE`.
