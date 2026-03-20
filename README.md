@@ -1,11 +1,11 @@
-# GL-260 Data Analysis and Plotter (v4.8.0)
+# GL-260 Data Analysis and Plotter (v4.8.1)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.8.0`
-- `APP_VERSION = "v4.8.0"`
+- `# Version: v4.8.1`
+- `APP_VERSION = "v4.8.1"`
 
 ## Canonical User Manual Location
 The canonical, continuously updated user manual now lives in `docs/`:
@@ -50,7 +50,7 @@ python scripts/build_user_manual.py --check
 ### Program Overview and Philosophy
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib workflow for deterministic GL-260 analysis: data import, cycle detection, moles calculations, advanced solubility workflows, compare/ledger review, and final report generation.
 
-Part I for `v4.8.0` is installer-first by design:
+Part I for `v4.8.1` is installer-first by design:
 - Use `scripts/install_gl260.py` as the default bootstrap path on Windows, macOS, and Linux.
 - Keep runtime behavior deterministic by running through explicit virtual-environment interpreter paths.
 - Treat Rust acceleration as optional; Python paths remain authoritative fallback.
@@ -68,7 +68,7 @@ Primary paths in this repository:
 - `docs/user-manual.md` + `docs/user-manual.html`: Canonical detailed user manual source and generated wiki artifact.
 - `requirements.txt`: Runtime dependency set installed into local environments.
 - `settings.json`: Runtime preferences persisted by the application.
-- `scripts/install_gl260.py`: Cross-platform bootstrap installer (new primary setup workflow in `v4.8.0`).
+- `scripts/install_gl260.py`: Cross-platform bootstrap installer (new primary setup workflow in `v4.8.1`).
 - `scripts/validate_rust_backend.py`: Rust backend rebuild/import validator for pinned Windows free-threaded flow.
 - `rust_ext/`: Rust extension crate built via `maturin` when Rust backend is enabled.
 - `solubility_models/`: Chemistry/speciation package used by advanced solubility workflows.
@@ -256,7 +256,7 @@ $PY="C:\Users\<you>\AppData\Local\Programs\Python\Python314\python.exe"
 ```
 
 #### Rust integration (optional) - Windows and macOS
-Rust backend is optional. `v4.8.0` installer attempts Rust setup automatically in the selected primary environment.
+Rust backend is optional. `v4.8.1` installer attempts Rust setup automatically in the selected primary environment.
 
 Manual Rust workflow (only if needed):
 1. Install `rustup`, `rustc`, and `cargo`.
@@ -309,7 +309,7 @@ Run:
 ```
 
 ### Running the Application
-Primary launch flow for `v4.8.0`:
+Primary launch flow for `v4.8.1`:
 1. Run installer: `python scripts/install_gl260.py`
 2. Copy/paste printed `RUN COMMAND: ...`
 3. Keep using that same interpreter path for terminal runs and VS Code interpreter selection.
@@ -498,6 +498,17 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.8.1 Timeline Legend + Secondary Axis Layout Repair
+- Fixed Advanced Speciation Analysis workflow cycle timeline rendering so the consolidated main legend stays visible and recovers from stale cross-figure legend instances during in-tab refreshes.
+- Preserved valid user legend placement while adding best-effort on-canvas safety fallback in timeline display and export/preview paths.
+- Centralized cycle timeline lower-panel axis layout application so pH and detached pCO2 spacing use one normalized path in both display and export renderers.
+- Fixed detached pCO2 axis label placement so it no longer overlaps with detached-axis tick labels in the lower timeline panel.
+- Added targeted regressions for:
+  - Analysis export legend on-canvas visibility after layout/profile application,
+  - detached-axis label/tick non-overlap in display and export,
+  - stale cached timeline legend recovery in display refresh.
+- Synced release metadata references to `v4.8.1`.
 
 ### v4.8.0 Cross-Platform VS Code Bootstrap Installer
 - Added `scripts/install_gl260.py` as a single-command installer for Windows, macOS, and Linux repository bootstrapping.

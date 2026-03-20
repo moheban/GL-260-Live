@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="512555d6227b97dbc736af0f050231422ad2a305d087184851dceccf699cd9fe">
+  <meta name="manual-source-sha256" content="d935a40e4b26570553028fe991911330f2f65a1f37debb6e6903b822859c8640">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -243,7 +243,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>512555d6227b97db</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>d935a40e4b265705</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -982,6 +982,10 @@
 <li>Recovery: verify optional dependencies and fallback behavior; re-run in supported mode.</li>
 <li>Error: timeline export unavailable.</li>
 <li>Recovery: ensure timeline rows are populated and required optional table dependency is installed.</li>
+<li>Error: Analysis timeline main legend missing or off-canvas in preview/export.</li>
+<li>Recovery: update to <code>v4.8.1+</code>; timeline legend refresh now preserves valid user placement and auto-recovers to an on-canvas anchor when stale/off-canvas state is detected.</li>
+<li>Error: detached cycle CO2 axis label overlaps lower-panel detached-axis tick labels.</li>
+<li>Recovery: use Cycle Timeline Plot Settings for detached-axis spacing; <code>v4.8.1+</code> applies normalized detached-axis offset/label padding consistently across in-tab and preview/export timeline renders.</li>
 <li>Error: selected cycle mismatch.</li>
 <li>Recovery: re-sync cycle selection and refresh dashboard/timeline views.</li>
 </ul>

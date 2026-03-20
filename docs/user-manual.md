@@ -529,6 +529,10 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
   - Recovery: verify optional dependencies and fallback behavior; re-run in supported mode.
 - Error: timeline export unavailable.
   - Recovery: ensure timeline rows are populated and required optional table dependency is installed.
+- Error: Analysis timeline main legend missing or off-canvas in preview/export.
+  - Recovery: update to `v4.8.1+`; timeline legend refresh now preserves valid user placement and auto-recovers to an on-canvas anchor when stale/off-canvas state is detected.
+- Error: detached cycle CO2 axis label overlaps lower-panel detached-axis tick labels.
+  - Recovery: use Cycle Timeline Plot Settings for detached-axis spacing; `v4.8.1+` applies normalized detached-axis offset/label padding consistently across in-tab and preview/export timeline renders.
 - Error: selected cycle mismatch.
   - Recovery: re-sync cycle selection and refresh dashboard/timeline views.
 
