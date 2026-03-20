@@ -13,6 +13,7 @@ The canonical application version is defined in `GL-260 Data Analysis and Plotte
   - [Intended Audience](#intended-audience)
   - [Repository Layout](#repository-layout)
   - [Installation and Requirements](#installation-and-requirements)
+    - [Download Repo from GitHub into an Empty Folder](#download-repo-from-github-into-an-empty-folder)
     - [First-Time Setup with install_gl260.py (Recommended)](#first-time-setup-with-install_gl260py-recommended)
   - [Running the Application](#running-the-application)
   - [Architecture and Data Flow](#architecture-and-data-flow)
@@ -86,6 +87,32 @@ Optional or feature-gated dependencies:
 - `pypdf` / `PyPDF2`: PDF merge/export compatibility path.
 - `gl260_rust_ext` (built from `rust_ext/`): optional acceleration backend with Python fallback.
 - `naoh_co2_pitzer_ph_model.py` + `pitzer.dat`: optional NaOH-CO2 model path.
+
+#### Download Repo from GitHub into an Empty Folder
+Use this section when you are starting in a brand-new, empty folder where GL-260 will run.
+
+Workflow 1 (primary): Git clone into the current empty folder
+1. Create or open your target folder.
+2. Confirm it is empty.
+3. Run:
+```powershell
+git clone https://github.com/moheban/GL-260-Live .
+```
+4. Important: the trailing `.` clones directly into the current folder, and this command requires that folder to be empty.
+
+Workflow 2 (fallback): GitHub ZIP download
+1. Open `https://github.com/moheban/GL-260-Live` in your browser.
+2. Select **Code** > **Download ZIP**.
+3. Extract the ZIP into your intended app folder.
+4. Ensure files are at folder root (avoid an extra nested `GL-260-Live` directory level if your workflow expects flat root execution).
+
+Verification checklist (after clone/extract):
+- `README.md` is present in the folder root.
+- `GL-260 Data Analysis and Plotter.py` is present in the folder root.
+- `scripts/install_gl260.py` is present under the `scripts/` folder.
+
+With the repo now in the target folder, run the installer script: `python scripts/install_gl260.py`.
+For the full first-run workflow, see [First-Time Setup with install_gl260.py (Recommended)](#first-time-setup-with-install_gl260py-recommended).
 
 #### First-Time Setup with install_gl260.py (Recommended)
 Use this section for first launch on a new machine or fresh clone.
