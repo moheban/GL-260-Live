@@ -1,16 +1,8 @@
 {
-  "created_at": "2026-02-13 09:23:09",
+  "created_at": "2026-03-20 08:09:10",
   "description": "",
   "payload": {
-    "column_assignments": {
-      "dt": "Date & Time",
-      "x": "__GL260_ELAPSED_DAYS_STITCHED__",
-      "y1": "Reactor Pressure (PSI)",
-      "y2": "First Derivative Moving Average",
-      "y3": "Manifold Pressure (PSI)",
-      "z": "Internal Reactor Temperature",
-      "z2": "External Reactor Temperature"
-    },
+    "column_assignments": {},
     "cycle_markers": {
       "add_peaks": [
         5632,
@@ -71,10 +63,10 @@
         "pk_smoothing_window": 1,
         "pk_width": 1
       },
-      "updated_at": "2026-03-20T08:07:37",
+      "updated_at": "2026-03-20T08:09:10",
       "use_auto_markers_in_manual_mode": true
     },
-    "dataset_path": "C:/Users/mmoheban/Local Documents/Python/PR-24302 Sodium Bicarbonate MPT/PR-24302 Sodium Bicarbonate GL-260 Data for Analysis.xlsx",
+    "dataset_required": false,
     "final_report_settings": {
       "combined_plot_title_override": "",
       "fit_mode": "Preserve Export Layout",
@@ -121,11 +113,13 @@
         "sol_summary": false
       },
       "section_order": [
+        "cycle_plot",
         "fig1",
         "fig2",
         "combined_plot",
         "cycle_summary",
         "cycle_stats_table",
+        "cycle_timeline_plot",
         "cycle_timeline_table",
         "predicted_ph_callouts",
         "co2_dosing_guidance",
@@ -143,11 +137,13 @@
       },
       "selected_reaction_id": "custom",
       "selected_sections": [
+        "cycle_plot",
         "fig1",
         "fig2",
         "combined_plot",
         "cycle_summary",
         "cycle_stats_table",
+        "cycle_timeline_plot",
         "cycle_timeline_table",
         "predicted_ph_callouts",
         "co2_dosing_guidance",
@@ -376,282 +372,9 @@
         "mirror_detached_labelpad": false
       }
     },
-    "multi_sheet_enabled": true,
+    "multi_sheet_enabled": false,
     "per_sheet_mapping": {},
-    "plot_elements": {
-      "fig_combined_triple_axis": [
-        {
-          "axes_target": "primary",
-          "coord_space": "data",
-          "geometry": {
-            "trace_key": "y2",
-            "x0": 0.22812477697359887,
-            "x1": -0.007366324305947469
-          },
-          "id": "3b06b7ae-2333-4642-ac96-43eb2b81dd65",
-          "locked": false,
-          "name": "Trace Mask 1",
-          "style": {
-            "alpha": 0.9,
-            "color": "#cccccc",
-            "linestyle": "solid",
-            "linewidth": 1.5
-          },
-          "type": "trace_mask",
-          "visible": true,
-          "zorder": 12.0
-        },
-        {
-          "axes_target": "primary",
-          "coord_space": "data",
-          "geometry": {
-            "trace_key": "y1",
-            "x0": 1.027229931700894,
-            "x1": 1.0851161891765069
-          },
-          "id": "b372821f-f702-446e-9ece-4d017c6adfc6",
-          "locked": false,
-          "name": "Trace Mask 2",
-          "style": {
-            "alpha": 0.9,
-            "color": "#cccccc",
-            "linestyle": "solid",
-            "linewidth": 1.5
-          },
-          "type": "trace_mask",
-          "visible": true,
-          "zorder": 13.0
-        },
-        {
-          "axes_target": "primary",
-          "coord_space": "data",
-          "geometry": {
-            "trace_key": "y3",
-            "x0": 1.0233708478691863,
-            "x1": 1.0851161891765069
-          },
-          "id": "0e5c0437-5635-4dce-8257-33afe962b2a7",
-          "locked": false,
-          "name": "Trace Mask 3",
-          "style": {
-            "alpha": 0.9,
-            "color": "#cccccc",
-            "linestyle": "solid",
-            "linewidth": 1.5
-          },
-          "type": "trace_mask",
-          "visible": true,
-          "zorder": 14.0
-        },
-        {
-          "axes_target": "primary",
-          "coord_space": "data",
-          "geometry": {
-            "x0": 0.9288232939923518,
-            "x1": 1.0860809601344337
-          },
-          "id": "c33bd80d-3d28-40e8-b4b7-5d31960093ef",
-          "locked": false,
-          "name": "X-Span 4",
-          "style": {
-            "alpha": 0.9,
-            "color": "#000000",
-            "edgecolor": "#ffff00",
-            "facecolor": "#ffff00",
-            "linestyle": "solid",
-            "linewidth": 1.5,
-            "span_layer": "behind_data"
-          },
-          "type": "xspan",
-          "visible": true,
-          "zorder": 11.0
-        },
-        {
-          "axes_target": "primary",
-          "coord_space": "data",
-          "geometry": {
-            "text": "Reactor Blend",
-            "wrap_width_x": 0.5613195294568746,
-            "x": 0.7931777289393578,
-            "y": 529.3522366937214
-          },
-          "id": "b236a49c-e6dd-4d5b-bc1e-7ad60fe9ec24",
-          "locked": false,
-          "name": "Text 5",
-          "style": {
-            "alpha": 0.9,
-            "bbox_alpha": 0.85,
-            "bbox_boxstyle": "round",
-            "bbox_edgecolor": "#000000",
-            "bbox_facecolor": "#ffffff",
-            "bbox_linestyle": "solid",
-            "bbox_linewidth": 1.0,
-            "bbox_pad": 0.3,
-            "bbox_shadow": true,
-            "bbox_shadow_alpha": 0.35,
-            "bbox_shadow_color": "#000000",
-            "bbox_shadow_offset_x": 2.0,
-            "bbox_shadow_offset_y": -2.0,
-            "color": "#000000",
-            "fontfamily": "STIXGeneral",
-            "fontsize": 10.0,
-            "fontweight": "normal",
-            "linestyle": "solid",
-            "linewidth": 1.5,
-            "text_align": "center",
-            "text_valign": "center"
-          },
-          "type": "text",
-          "visible": true,
-          "zorder": 15.0
-        },
-        {
-          "axes_target": "primary",
-          "coord_space": "data",
-          "geometry": {
-            "text": "Logging stopped over the long weekend",
-            "wrap_width_x": 1.5060407499889183,
-            "x": 3.1454390118828943,
-            "y": 487.8110911303759
-          },
-          "id": "db4f796e-5a01-4260-b4db-743a3e209a05",
-          "locked": false,
-          "name": "Text 6",
-          "style": {
-            "alpha": 0.9,
-            "bbox_alpha": 0.85,
-            "bbox_boxstyle": "round",
-            "bbox_edgecolor": "#000000",
-            "bbox_facecolor": "#ffffff",
-            "bbox_linestyle": "solid",
-            "bbox_linewidth": 1.0,
-            "bbox_pad": 0.3,
-            "bbox_shadow": true,
-            "bbox_shadow_alpha": 0.35,
-            "bbox_shadow_color": "#000000",
-            "bbox_shadow_offset_x": 2.0,
-            "bbox_shadow_offset_y": -2.0,
-            "color": "#000000",
-            "fontfamily": "STIXGeneral",
-            "fontsize": 10.0,
-            "fontweight": "normal",
-            "linestyle": "solid",
-            "linewidth": 1.5,
-            "text_align": "center",
-            "text_valign": "bottom"
-          },
-          "type": "text",
-          "visible": true,
-          "zorder": 16.0
-        },
-        {
-          "axes_target": "primary",
-          "coord_space": "data",
-          "geometry": {
-            "trace_key": "y2",
-            "x0": 5.176173665436842,
-            "x1": 5.223019243428606
-          },
-          "id": "bfb75c85-7459-409c-adb5-a75f2f67b093",
-          "locked": false,
-          "name": "Trace Mask 7",
-          "style": {
-            "alpha": 0.9,
-            "color": "#000000",
-            "linestyle": "solid",
-            "linewidth": 1.5
-          },
-          "type": "trace_mask",
-          "visible": true,
-          "zorder": 17.0
-        },
-        {
-          "axes_target": "primary",
-          "coord_space": "data",
-          "geometry": {
-            "trace_key": "y2",
-            "x0": 4.9466303332772,
-            "x1": 4.862308292892026
-          },
-          "id": "98677e7c-bdca-4760-aa77-6ae1db88794a",
-          "locked": false,
-          "name": "Trace Mask 8",
-          "style": {
-            "alpha": 0.9,
-            "color": "#000000",
-            "linestyle": "solid",
-            "linewidth": 1.5
-          },
-          "type": "trace_mask",
-          "visible": true,
-          "zorder": 18.0
-        },
-        {
-          "axes_target": "primary",
-          "coord_space": "data",
-          "geometry": {
-            "trace_key": "y2",
-            "x0": 6.011972566249751,
-            "x1": 6.07856677025765
-          },
-          "id": "f6f67b1a-c048-4b61-8627-4a9d7ce34e9e",
-          "locked": false,
-          "name": "Trace Mask 9",
-          "style": {
-            "alpha": 0.9,
-            "color": "#000000",
-            "linestyle": "solid",
-            "linewidth": 1.5
-          },
-          "type": "trace_mask",
-          "visible": true,
-          "zorder": 19.0
-        },
-        {
-          "axes_target": "primary",
-          "coord_space": "data",
-          "geometry": {
-            "trace_key": "y2",
-            "x0": 6.984172624423996,
-            "x1": 7.034876073544494
-          },
-          "id": "df217f94-ad3c-460b-8551-f5b178a12a8f",
-          "locked": false,
-          "name": "Trace Mask 10",
-          "style": {
-            "alpha": 0.9,
-            "color": "#000000",
-            "linestyle": "solid",
-            "linewidth": 1.5
-          },
-          "type": "trace_mask",
-          "visible": true,
-          "zorder": 20.0
-        },
-        {
-          "axes_target": "primary",
-          "coord_space": "data",
-          "geometry": {
-            "trace_key": "y2",
-            "x0": 7.145933467032042,
-            "x1": 7.208776962998117
-          },
-          "id": "c22a34be-1d8a-4001-b277-18ad261662c4",
-          "locked": false,
-          "name": "Trace Mask 11",
-          "style": {
-            "alpha": 0.9,
-            "color": "#000000",
-            "linestyle": "solid",
-            "linewidth": 1.5
-          },
-          "type": "trace_mask",
-          "visible": true,
-          "zorder": 21.0
-        }
-      ],
-      "fig_cycle_timeline": []
-    },
+    "plot_elements": {},
     "plot_settings": {
       "auto_deriv_ticks": true,
       "auto_temp_ticks": true,
@@ -685,6 +408,8 @@
       "combined_cycle_legend_persist_position": true,
       "combined_cycle_legend_ref_axis": "main",
       "combined_cycle_legend_ref_corner": "center",
+      "combined_cycle_legend_ref_dx_px": null,
+      "combined_cycle_legend_ref_dy_px": null,
       "combined_deriv_axis_label": "First Derivative Moving Average (\u0394PSI/\u0394hour)",
       "combined_deriv_axis_offset": 1.08,
       "combined_deriv_labelpad": 15.0,
@@ -867,7 +592,7 @@
       "scatter_size": 20.0,
       "show_cycle_legend_on_core_plots": true,
       "show_cycle_markers_on_core_plots": true,
-      "suptitle_text": "PR-24302 CLM-441-MPT Sodium Bicarbonate Batch 2 of 2",
+      "suptitle_text": "PR-24303 CLM-441-MPT Sodium Bicarbonate Batch 1 of 2",
       "temp_major_tick": 5.0,
       "temp_minor_tick": 2.5,
       "title_text": "Reaction Day 1-6 1/13-1/19",
@@ -879,41 +604,32 @@
       "y_minor_tick": 5.0
     },
     "profile_identifiers": {
-      "batch_number": "",
-      "item_number": "",
-      "project_number": ""
+      "batch_number": "TBD",
+      "item_number": "CLM-441-MPT",
+      "project_number": "PR-24303"
     },
     "reaction_basis": {
       "builtin": true,
-      "final_product_formula": "",
-      "final_product_mw_g_mol": 0.0,
-      "final_product_name": "",
+      "final_product_formula": "NaHCO3",
+      "final_product_mw_g_mol": 84.0066,
+      "final_product_name": "Sodium bicarbonate",
       "gas_molar_mass": 45.002,
       "gas_stoich_mol_per_mol_starting": 1.0,
-      "product_stoich_mol_per_mol_starting": 0.0,
-      "reaction_id": "custom",
-      "reaction_label": "Custom",
-      "starting_mass_g": 700.92,
-      "starting_material_display_name": "CO2",
+      "product_stoich_mol_per_mol_starting": 1.0,
+      "reaction_id": "naoh_co2_to_nahco3",
+      "reaction_label": "NaOH + CO2 -> NaHCO3",
+      "starting_mass_g": 701.9,
+      "starting_material_display_name": "Sodium hydroxide",
       "starting_material_display_note": "",
-      "starting_material_formula": "13CO2",
-      "starting_material_mw_g_mol": 39.995,
-      "starting_material_preset": "custom",
+      "starting_material_formula": "NaOH",
+      "starting_material_mw_g_mol": 40.0,
+      "starting_material_preset": "naoh_co2_to_nahco3",
       "stoich_mol_gas_per_mol_starting": 1.0,
       "yield_mode": "final_product_mass"
     },
-    "selected_sheet": "Day 0 Pressure Test",
-    "selected_sheets": [
-      "Batch 2 Rxn Day 1",
-      "Batch 2 Rxn Day 1.1",
-      "Batch 2 Rxn Day 5",
-      "Batch 2 Rxn Day 5.1-6",
-      "Batch 2 Rxn Day 6-7",
-      "Batch 2 Rxn Day 7.1",
-      "Batch 2 Rxn Day 7.1-8",
-      "Batch 2 Rxn Day 8.1-8.2"
-    ]
+    "selected_sheet": "",
+    "selected_sheets": []
   },
   "profile_version": 1,
-  "updated_at": "2026-03-20 08:07:37"
+  "updated_at": "2026-03-20 08:09:10"
 }
