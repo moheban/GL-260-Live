@@ -13,6 +13,7 @@ The canonical application version is defined in `GL-260 Data Analysis and Plotte
   - [Intended Audience](#intended-audience)
   - [Repository Layout](#repository-layout)
   - [Installation and Requirements](#installation-and-requirements)
+    - [First-Time Setup with install_gl260.py (Recommended)](#first-time-setup-with-install_gl260py-recommended)
   - [Running the Application](#running-the-application)
   - [Architecture and Data Flow](#architecture-and-data-flow)
   - [Quickstart Workflow (Linear)](#quickstart-workflow-linear)
@@ -35,88 +36,123 @@ The canonical application version is defined in `GL-260 Data Analysis and Plotte
 ## Part I - Complete User Manual
 
 ### Program Overview and Philosophy
-The application is designed for deterministic, end-to-end GL-260 data analysis with traceable scientific outputs.
+GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib workflow for deterministic GL-260 analysis: data import, cycle detection, moles calculations, advanced solubility workflows, compare/ledger review, and final report generation.
 
-Core design principles:
-- Explicit column mapping before analysis.
-- Repeatable cycle and moles calculations with visible assumptions.
-- Side-by-side comparison and ledger workflows for multi-run review.
-- Shared plot/export/report contracts so preview and export stay consistent.
-- Safe fallback behavior when optional dependencies (SciPy, Rust backend, optional chemistry modules) are unavailable.
+Part I for `v4.8.0` is installer-first by design:
+- Use `scripts/install_gl260.py` as the default bootstrap path on Windows, macOS, and Linux.
+- Keep runtime behavior deterministic by running through explicit virtual-environment interpreter paths.
+- Treat Rust acceleration as optional; Python paths remain authoritative fallback.
+- Keep plotting/report outputs reproducible through shared settings/profile state.
 
 ### Intended Audience
-- Process engineers and chemists working with GL-260 pressure and temperature datasets.
+- Process engineers and chemists working with GL-260 pressure/temperature datasets.
 - Analysts who need reproducible cycle segmentation, moles accounting, and exportable plots.
-- Users who need optional carbonate/speciation workflows tied to cycle data.
+- Developers and power users who need controlled environment setup, diagnostics, and optional Rust acceleration.
 
 ### Repository Layout
 Primary paths in this repository:
 - `GL-260 Data Analysis and Plotter.py`: Main application entry script.
-- `requirements.txt`: Runtime and tooling dependency list used by current project workflows.
-- `pyproject.toml`: Project metadata and lint configuration.
-- `settings.json`: Runtime settings persisted by the app.
-- `rust_ext/`: Rust extension crate and maturin package metadata.
-- `scripts/validate_rust_backend.py`: Windows-focused Rust backend rebuild/validation helper.
-- `solubility_models/`: Chemistry/speciation model package used by advanced solubility workflows.
-- `naoh_co2_pitzer_ph_model.py`: Optional NaOH-CO2 model.
-- `pitzer.dat`: Optional PHREEQC database file used by the NaOH-CO2 model path.
+- `README.md`: User manual (Part I) and release ledger (Part II).
+- `requirements.txt`: Runtime dependency set installed into local environments.
+- `settings.json`: Runtime preferences persisted by the application.
+- `scripts/install_gl260.py`: Cross-platform bootstrap installer (new primary setup workflow in `v4.8.0`).
+- `scripts/validate_rust_backend.py`: Rust backend rebuild/import validator for pinned Windows free-threaded flow.
+- `rust_ext/`: Rust extension crate built via `maturin` when Rust backend is enabled.
+- `solubility_models/`: Chemistry/speciation package used by advanced solubility workflows.
 - `profiles/`: Saved workspace and process profile files.
-- `Example Data/`: Sample input workbook.
-- `General Plotter program/`: Related standalone plotting utility.
+- `Example Data/`: Sample workbook for quick validation.
 
 ### Installation and Requirements
 #### Python and runtime expectations
 - Minimum Python: `3.10+`.
-- Recommended for free-threaded workflows and current no-GIL tooling guidance: `3.14` / `3.14t`.
-- Run from repository root so local resources (for example `pitzer.dat`) are discoverable.
+- Recommended for current free-threaded workflows: `3.14` / `3.14t`.
+- Installer target environments:
+  - `.venv` (standard runtime)
+  - `.venv-314t` (free-threaded runtime, preferred when available)
+- Run commands from repository root so local resources are discovered reliably.
 
 #### Dependency classification
-Required baseline dependencies for normal startup and core workflows:
+Required baseline dependencies for startup and core workflows:
 - `matplotlib`
 - `numpy`
 - `pandas`
 - `openpyxl`
 
 Optional or feature-gated dependencies:
-- `scipy`: Enables SciPy-based peak detection and Van der Waals solve paths.
-- `mplcursors`: Optional cursor interactivity.
-- `great_tables`: Required for timeline table export features that render with great_tables.
-- `customtkinter`: Optional enhanced widget styling; app falls back to ttk when unavailable.
+- `scipy`: enables SciPy-based peak detection and Van der Waals solve paths.
+- `mplcursors`: optional cursor interactivity.
+- `great_tables`: required for timeline table export/view flows that depend on it.
+- `customtkinter`: optional enhanced styling; app falls back to ttk.
 - `pypdf` / `PyPDF2`: PDF merge/export compatibility path.
-- `naoh_co2_pitzer_ph_model.py` + `pitzer.dat`: Optional NaOH-CO2 chemistry path.
-- `gl260_rust_ext` (built from `rust_ext/`): Optional acceleration backend with Python fallback.
+- `gl260_rust_ext` (built from `rust_ext/`): optional acceleration backend with Python fallback.
+- `naoh_co2_pitzer_ph_model.py` + `pitzer.dat`: optional NaOH-CO2 model path.
 
-Install dependencies from repo root:
+#### First-Time Setup with install_gl260.py (Recommended)
+Use this section for first launch on a new machine or fresh clone.
+
+Prerequisites:
+1. Open a terminal in repository root.
+2. Ensure Python is available (`python --version` or `py --version` on Windows).
+3. Keep internet access available for dependency and optional Rust tooling installation.
+
+Step-by-step first run:
+1. Optional preview mode (no changes):
 ```powershell
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+python scripts/install_gl260.py --dry-run
 ```
+2. Run bootstrap installer:
+```powershell
+python scripts/install_gl260.py
+```
+3. Wait for setup summary and review these signals:
+   - `[ENV] standard: READY|NOT READY`
+   - `[ENV] free-threaded: READY|NOT READY`
+   - `[RUST] READY|FALLBACK TO PYTHON|SKIPPED`
+   - `RUN COMMAND: ...`
+4. Copy/paste the exact printed `RUN COMMAND: ...` line to start the app.
+
+Expected launch contract:
+```text
+RUN COMMAND: .\.venv-314t\Scripts\python.exe "GL-260 Data Analysis and Plotter.py"
+```
+(If free-threaded is not ready, installer prints the `.venv` launch command instead.)
+
+When to use installer flags:
+- `--python-std <path>`: set the exact interpreter used to create `.venv`.
+- `--python-ft <path>`: set the exact free-threaded interpreter used to create `.venv-314t`.
+- `--dry-run`: print the setup plan and command sequence without mutating repository environments.
+
+First-run recovery guidance:
+- Free-threaded interpreter not found:
+  - Installer continues with `.venv`; app remains runnable.
+  - Add a valid free-threaded interpreter later and re-run installer with `--python-ft`.
+- Rust setup/build/import fails:
+  - Installer reports fallback and prints repair commands.
+  - Continue running Python backend and remediate Rust later.
+- No runnable environment provisioned:
+  - Installer exits with an error after summary.
+  - Use printed `repair:` commands, then re-run installer.
+
+For manual, non-installer setup, see fallback sections below.
 
 #### One-command VS Code bootstrap installer (Windows/macOS/Linux)
-Use the repository-local installer to provision environments, dependencies, and Rust build tooling with user-scope/no-admin defaults:
+Primary bootstrap command:
 
 ```powershell
 python scripts/install_gl260.py
 ```
 
-Optional flags:
-- `--python-std <path>`: explicit interpreter used for `.venv`.
-- `--python-ft <path>`: explicit free-threaded interpreter used for `.venv-314t`.
-- `--dry-run`: print setup command plan without mutating the repo.
+Behavior summary:
+- Detects interpreter candidates automatically, with optional explicit overrides.
+- Creates/updates `.venv` and attempts `.venv-314t`.
+- Installs `requirements.txt` into each ready environment.
+- Attempts user-scope Rust setup/build in the selected primary runtime.
+- Preserves app readiness by falling back to Python when Rust is unavailable.
+- Prints deterministic copy/paste launcher output as `RUN COMMAND: ...`.
 
-Installer behavior:
-- Attempts `.venv` and `.venv-314t` setup, then prefers `.venv-314t` when available.
-- Installs `requirements.txt` into each created environment.
-- Attempts user-scope Rust setup/build (`rustup` + `maturin develop`) in the primary runtime.
-- Falls back safely to Python runtime if Rust build/import is unavailable.
-- Always prints a final `RUN COMMAND: ...` line for VS Code terminal launch.
+#### Windows native venv setup (standard + free-threaded fallback)
+Use when installer cannot be used or when manual control is required.
 
-Example output line:
-```text
-RUN COMMAND: .\.venv-314t\Scripts\python.exe "GL-260 Data Analysis and Plotter.py"
-```
-
-#### Windows native venv setup (standard + free-threaded)
 ```powershell
 # Standard interpreter env
 py -3.14 -m venv .venv
@@ -135,8 +171,8 @@ $env:FONTTOOLS_WITH_CYTHON="0"
 .\.venv-314t\Scripts\python.exe -m pip install --force-reinstall --no-binary=fonttools fonttools
 ```
 
-#### macOS native setup (interpreter-agnostic)
-Use explicit interpreter paths for your local installation source (python.org, pyenv, Homebrew, etc.).
+#### macOS native setup (interpreter-agnostic fallback)
+Use explicit interpreter paths from python.org, pyenv, Homebrew, or your internal distribution.
 
 ```bash
 # Example variables; replace with your real interpreter paths
@@ -152,16 +188,14 @@ PY_FT="/path/to/python3.14t"
 ./.venv-314t/bin/python -m pip install -r requirements.txt
 ```
 
-If your macOS environment does not provide a free-threaded interpreter, use the standard interpreter workflow and treat free-threaded as optional.
+If a free-threaded interpreter is unavailable on your macOS stack, use `.venv` only.
 
 #### Windows Without Administrative Privileges
-This app can be installed and run without admin rights.
-
-No-admin rules:
+The installer already targets no-admin, user-scope defaults. Manual equivalent rules:
 - Use a user-writable project folder.
-- Use per-user Python installs or existing user-level interpreter binaries.
-- Avoid global installs and shared `site-packages`.
-- Invoke venv `python.exe` directly instead of activation scripts.
+- Use per-user Python installs or explicit user-level interpreter paths.
+- Avoid global `site-packages` and activation-script dependency.
+- Launch with explicit venv `python.exe` paths.
 
 If `py` launcher is available:
 ```powershell
@@ -171,7 +205,7 @@ py -3.14 -m venv .venv
 .\.venv\Scripts\python.exe "GL-260 Data Analysis and Plotter.py"
 ```
 
-If `py` launcher is not available, use explicit interpreter path:
+If `py` launcher is not available:
 ```powershell
 # Example path; replace with your actual user-level python.exe
 $PY="C:\Users\<you>\AppData\Local\Programs\Python\Python314\python.exe"
@@ -182,39 +216,22 @@ $PY="C:\Users\<you>\AppData\Local\Programs\Python\Python314\python.exe"
 .\.venv\Scripts\python.exe "GL-260 Data Analysis and Plotter.py"
 ```
 
-Restricted PowerShell execution policy:
-- You do not need `Activate.ps1`.
-- Use direct venv `python.exe` commands as shown above.
-
 #### Rust integration (optional) - Windows and macOS
-Rust backend is optional. If unavailable, the Python implementation remains authoritative.
+Rust backend is optional. `v4.8.0` installer attempts Rust setup automatically in the selected primary environment.
 
-##### Windows Rust setup (general)
-1. Install rustup/rustc/cargo.
-2. Install maturin in the target venv.
-3. Build extension with the same interpreter used to run the app.
+Manual Rust workflow (only if needed):
+1. Install `rustup`, `rustc`, and `cargo`.
+2. Install `maturin` in the same venv used to run GL-260.
+3. Build and verify import from that same interpreter.
 
+Windows example:
 ```powershell
 .\.venv-314t\Scripts\python.exe -m pip install "maturin>=1.12,<2.0"
 .\.venv-314t\Scripts\python.exe -m maturin develop --manifest-path rust_ext/Cargo.toml
+.\.venv-314t\Scripts\python.exe -c "import gl260_rust_ext as m; print(m.__file__)"
 ```
 
-MSVC preferred path:
-- Requires `link.exe` (Visual Studio Build Tools C++ workload).
-
-GNU/MinGW fallback path:
-```powershell
-rustup toolchain install stable-x86_64-pc-windows-gnu
-rustup target add x86_64-pc-windows-gnu --toolchain stable-x86_64-pc-windows-gnu
-.\.venv-314t\Scripts\python.exe -m maturin develop --manifest-path rust_ext/Cargo.toml --target x86_64-pc-windows-gnu
-```
-
-Verify import in same env:
-```powershell
-.\.venv-314t\Scripts\python.exe -c "import gl260_rust_ext.gl260_rust_ext as m; print(m.__file__)"
-```
-
-##### macOS Rust setup (general)
+macOS example:
 ```bash
 xcode-select --install
 curl https://sh.rustup.rs -sSf | sh
@@ -222,39 +239,30 @@ source "$HOME/.cargo/env"
 
 ./.venv-314t/bin/python -m pip install "maturin>=1.12,<2.0"
 ./.venv-314t/bin/python -m maturin develop --manifest-path rust_ext/Cargo.toml
-./.venv-314t/bin/python -c "import gl260_rust_ext.gl260_rust_ext as m; print(m.__file__)"
+./.venv-314t/bin/python -c "import gl260_rust_ext as m; print(m.__file__)"
 ```
 
 #### No-Admin Rust integration on Windows
-When admin rights are blocked:
-- Prefer user-scope rustup installation.
-- Keep all toolchains under user profile (`%USERPROFILE%\.cargo`, `%USERPROFILE%\.rustup`).
-- Build from project venv interpreter, not global Python.
+If policy blocks machine-wide install:
+- Keep rustup and toolchains in user scope (`%USERPROFILE%\.cargo`, `%USERPROFILE%\.rustup`).
+- Ensure `%USERPROFILE%\.cargo\bin` is on PATH for current session.
+- Build with the exact venv interpreter used for app launch.
 
-If `winget` is blocked by policy:
-- Use rustup-init installed/executed in user space.
-- Re-open shell and ensure `%USERPROFILE%\.cargo\bin` is on PATH.
-
-Session-local PATH setup example:
+Session-local PATH example:
 ```powershell
 $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
 rustup default stable
 ```
 
-No-admin MinGW fallback pattern:
-- Install/extract MinGW in user space (for example `%USERPROFILE%\mingw64`).
-- Add `%USERPROFILE%\mingw64\bin` to current session PATH.
-- Run GNU-target maturin command with your venv interpreter.
-
+If MSVC tools are unavailable and GNU fallback is required:
 ```powershell
-$env:PATH = "$env:USERPROFILE\mingw64\bin;$env:PATH"
+rustup toolchain install stable-x86_64-pc-windows-gnu
+rustup target add x86_64-pc-windows-gnu --toolchain stable-x86_64-pc-windows-gnu
 .\.venv-314t\Scripts\python.exe -m maturin develop --manifest-path rust_ext/Cargo.toml --target x86_64-pc-windows-gnu
 ```
 
 #### Repo-local Rust validator script
-`scripts/validate_rust_backend.py` is currently pinned to this repository's Windows free-threaded configuration:
-- expected interpreter: `.venv-314t\Scripts\python.exe`
-- default target flow: `x86_64-pc-windows-gnu`
+`scripts/validate_rust_backend.py` remains pinned to this repository's Windows free-threaded flow.
 
 Run:
 ```powershell
@@ -262,15 +270,12 @@ Run:
 ```
 
 ### Running the Application
-Recommended flow:
+Primary launch flow for `v4.8.0`:
+1. Run installer: `python scripts/install_gl260.py`
+2. Copy/paste printed `RUN COMMAND: ...`
+3. Keep using that same interpreter path for terminal runs and VS Code interpreter selection.
 
-```powershell
-python scripts/install_gl260.py
-```
-
-Then copy/paste the installer's final `RUN COMMAND: ...` line.
-
-Manual run commands from repository root:
+Direct launch commands from repository root:
 
 Windows:
 ```powershell
@@ -278,11 +283,13 @@ Windows:
 .\.venv-314t\Scripts\python.exe "GL-260 Data Analysis and Plotter.py"
 ```
 
-macOS:
+macOS/Linux:
 ```bash
 ./.venv/bin/python "GL-260 Data Analysis and Plotter.py"
 ./.venv-314t/bin/python "GL-260 Data Analysis and Plotter.py"
 ```
+
+See [First-Time Setup with install_gl260.py (Recommended)](#first-time-setup-with-install_gl260py-recommended) for first-run procedure and recovery behavior.
 
 #### CLI options
 Supported startup flags:
@@ -298,7 +305,7 @@ Example:
 ```
 
 #### Environment-triggered test modes
-The script supports targeted environment-controlled test paths:
+Targeted environment-controlled test paths:
 - `RUN_SOLUBILITY_REGRESSION=1`
 - `RUN_PITZER_TESTS=1`
 - `RUN_TIMELINE_TABLE_EXPORT_TEST=1`
@@ -311,35 +318,35 @@ $env:RUN_SOLUBILITY_REGRESSION="1"
 
 ### Architecture and Data Flow
 High-level pipeline:
-1. Import data (Excel or CSV workflow).
+1. Import data (Excel or CSV).
 2. Map columns and apply selection.
-3. Build plotting series and axis state.
-4. Run cycle analysis (auto and/or manual marker workflows).
-5. Generate combined plot and overlays.
-6. Execute optional advanced solubility/speciation analysis.
-7. Review compare/ledger workflows.
+3. Build plot series and axis state.
+4. Run cycle analysis (automatic and/or manual marker workflow).
+5. Generate combined triple-axis plot and overlays.
+6. Run optional advanced solubility/speciation analysis.
+7. Review compare and ledger results.
 8. Export final reports and artifacts.
 
-Core state is maintained in application-owned data frames, selected-column mappings, plot/cycle settings, and persisted settings/profile payloads.
+Core state is held in application-owned data frames, selected-column mappings, plot/cycle settings, and persisted settings/profile payloads. Optional acceleration layers (SciPy/Rust) are additive and fail closed to baseline Python behavior.
 
 ### Quickstart Workflow (Linear)
 Recommended order:
-1. Open workbook on Data tab.
-2. Choose sheet or multi-sheet workflow.
-3. Map required columns on Columns tab.
-4. Apply column selection.
-5. Configure Plot Settings and auto-range policy.
-6. Run cycle detection (auto and/or manual correction).
-7. Generate combined triple-axis plot.
-8. Add plot elements/annotations if needed.
-9. Run advanced solubility workflows if needed.
-10. Build/export final report.
+1. Run installer and launch with printed `RUN COMMAND`.
+2. Open workbook on Data tab.
+3. Select sheet or multi-sheet workflow.
+4. Map required columns on Columns tab.
+5. Apply column selection.
+6. Configure Plot Settings and range policy.
+7. Run cycle detection and manual cleanup as needed.
+8. Generate combined plot and overlays.
+9. Run advanced solubility workflows when required.
+10. Build/export final report outputs.
 
 ### UI and Navigation Guide
 Primary tabs and purpose:
-- Data: import source workbook/CSV workflow and sheet selection.
+- Data: import workbook/CSV source and sheet selection.
 - Columns: map pressure, temperature, derivative, and optional channels.
-- Plot: figure generation, axes settings, overlays, and combined view controls.
+- Plot: figure generation, axes settings, overlays, and combined-view controls.
 - Cycle: cycle marker detection/editing and moles summary.
 - Compare: side-by-side run comparisons.
 - Ledger: sortable/filterable cross-run metrics.
@@ -347,68 +354,74 @@ Primary tabs and purpose:
 - Final Report: export assembly and report packaging.
 
 ### Plotting Architecture Details
-- Uses Matplotlib for figure generation and Tk embedding.
-- Supports multi-axis and combined triple-axis layouts.
-- Maintains refresh controls and render profiles to balance responsiveness and reproducibility.
-- Overlay and legend behavior is persisted through settings/profile state where applicable.
+- Matplotlib is used for figure generation and Tk embedding.
+- Multi-axis and combined triple-axis layouts are supported.
+- Refresh/render controls are designed to balance responsiveness and reproducibility.
+- Overlay and legend behavior persists through settings/profile state where applicable.
 
 ### Plot Elements and Annotations System
 - Supports add/edit/remove workflows for common annotation types.
-- Annotation state is normalized and persisted through app settings/profile payloads.
-- Placement and z-order controls are provided for readability and export parity.
+- Annotation state is normalized for persistence and export parity.
+- Placement and z-order controls are exposed for readability on dense plots.
 
 ### Combined Triple-Axis Plot Technical Documentation
-- Combined view merges pressure, temperature, and derivative-oriented channels with cycle context.
+- Combined view aligns pressure, temperature, and derivative-oriented channels with cycle context.
 - Axis assignment and legend behavior are configurable.
-- Refresh behavior can use single-pass, adaptive, or two-pass policies via runtime settings.
+- Refresh policy can run in single-pass, adaptive, or two-pass modes via runtime settings.
 
 ### Interactive Cycle Analysis - Scientific and Operational Guide
-- Cycle detection uses configurable thresholds for peaks/troughs.
+- Automatic cycle detection uses configurable peak/trough thresholds.
 - Manual marker correction supports post-detection cleanup.
-- Cycle summaries include ideal-gas moles and optional Van der Waals paths when SciPy is available.
-- Results are surfaced in cycle summaries, compare workflows, ledger outputs, and reporting contexts.
+- Cycle summaries include ideal-gas moles and optional Van der Waals paths when SciPy is present.
+- Results feed cycle summaries, compare workflows, ledger outputs, and report artifacts.
 
 ### Advanced Solubility and Equilibrium Engine
-- Provides multiple model pathways (including optional Rust-accelerated kernels with Python fallback).
-- Includes planning, analysis, and reprocessing modes.
-- Optional NaOH-CO2 model path depends on local model module and `pitzer.dat` availability.
-- Chemistry outputs are fail-closed to Python pathways when optional acceleration or optional model dependencies are unavailable.
+- Includes planning, analysis, and reprocessing pathways.
+- Supports optional Rust-accelerated kernels with Python fallback.
+- Optional NaOH-CO2 path depends on local model module and `pitzer.dat`.
+- Model outputs remain available through fallback paths when optional dependencies are missing.
 
 ### Compare Tab Workflow and Reporting
-- Side-by-side comparison supports selected-cycle review and metric comparison.
-- Compare results feed into report workflows and ledger structures.
-- Plot/title and cycle context handling is designed for side-local consistency.
+- Side-by-side comparison supports selected-cycle and metric-level review.
+- Compare outputs are consumable by report and ledger workflows.
+- Side-local plot/title/cycle context remains explicit for multi-run clarity.
 
 ### Final Report System - Export and PDF Assembly
-- Supports assembling selected plots, summaries, and generated tables into report outputs.
-- Uses configured output sizing/DPI options from settings.
-- PDF merge/export path uses available PDF library compatibility path (`pypdf` or `PyPDF2`).
+- Assembles selected plots, summaries, and generated tables into report outputs.
+- Uses output sizing and DPI policies from settings.
+- PDF merge/export routes through available compatibility backend (`pypdf` or `PyPDF2`).
 
 ### Preferences and Configuration System
-- Settings are persisted in `settings.json`.
-- Process/workspace profiles are stored in `profiles/`.
-- Runtime behavior includes startup preferences, render mode policies, and developer/runtime toggles.
-- Export presets and sizing policies are configurable and reusable.
+- Settings persist in `settings.json`.
+- Process/workspace profiles persist in `profiles/`.
+- Runtime configuration includes startup preferences, render policies, and developer toggles.
+- Export presets and sizing policies are reusable across sessions.
 
 ### Performance and Developer Tools
 Developer tools include:
-- Logging/debug category control.
-- Runtime and render diagnostics.
-- Concurrency controls.
-- Free-threading diagnostics and dependency audit views.
-- Rust backend status/setup entrypoints.
+- logging/debug category control
+- runtime/render diagnostics
+- concurrency controls
+- free-threading diagnostics and dependency audits
+- Rust backend status/setup entry points
 
 Performance notes:
-- Large datasets and heavy combined renders benefit from runtime tuning.
-- Free-threaded and Rust-accelerated paths are optional and should be validated in your environment.
+- Large datasets and high-resolution exports can be CPU/memory intensive.
+- Validate free-threaded and Rust acceleration behavior in your local environment before relying on them for production workflows.
 
 ### Troubleshooting and FAQ
-- ABI mismatch errors (for example `cp314` vs `cp314t`): recreate environment with the intended interpreter and reinstall dependencies.
-- SciPy unavailable: cycle detection fallback remains available, but Van der Waals-specific calculations are limited.
-- `great_tables` missing: timeline-table-specific export/view paths that require it will fail until installed.
-- Rust build/import issues: build with the same interpreter used to run the app and verify import from that same environment.
-- Missing `link.exe` on Windows: use Build Tools C++ workload or GNU/MinGW fallback path.
-- Settings corruption: inspect/repair `settings.json` and recover from profile autosave where available.
+Installer-first issues:
+- `RUN COMMAND` not produced as expected: re-run `python scripts/install_gl260.py` from repo root and verify setup summary appears before launch line.
+- Free-threaded env is `NOT READY`: continue with `.venv`, then install/provide `3.14t` and rerun installer.
+- `[RUST] FALLBACK TO PYTHON`: app remains runnable; follow installer `repair:` commands when you are ready.
+- Installer exits with no runnable environment: run printed `repair:` commands, then rerun installer.
+
+Runtime and feature issues:
+- ABI mismatch (for example `cp314` vs `cp314t`): recreate environment with intended interpreter and reinstall dependencies.
+- SciPy unavailable: fallback detection remains available, but Van der Waals paths are limited.
+- `great_tables` missing: timeline-table-specific export/view paths requiring it will fail until installed.
+- Rust import/build issues: run build and import verification from the same interpreter used to launch the app.
+- Settings corruption: inspect/repair `settings.json` and recover from profile autosaves where applicable.
 
 ### Power User and Advanced Workflows
 #### Conda alternative (primary non-venv option)
@@ -422,25 +435,25 @@ python "GL-260 Data Analysis and Plotter.py"
 ```
 
 Free-threaded env:
-- If your conda channel/runtime does not provide a free-threaded interpreter, use native `venv` with a free-threaded Python binary instead.
+- If your conda channel/runtime does not provide free-threaded Python, use native `venv` plus a free-threaded interpreter binary.
 
 #### VS Code workflow
 1. Open repository folder in VS Code.
-2. Run `python scripts/install_gl260.py` in the integrated terminal.
-3. Copy/paste the final `RUN COMMAND: ...` line printed by the installer.
-4. Select the same environment interpreter (`.venv` or `.venv-314t`) for editor/debug features.
-5. Use terminal commands with explicit interpreter path when you need exact environment control.
+2. Run `python scripts/install_gl260.py` in integrated terminal.
+3. Copy/paste the final `RUN COMMAND: ...` line.
+4. Select the same interpreter (`.venv` or `.venv-314t`) in VS Code.
+5. Keep terminal commands pinned to that interpreter path for reproducible runs.
 
 #### Docker (experimental / non-primary)
-- This app is a desktop Tkinter GUI application; Docker is not the recommended daily-run path.
-- Docker can be useful for controlled dependency experiments, CI-style checks, or non-interactive validation.
-- Full GUI use from Docker requires host GUI forwarding setup and container Tk/GUI libraries, which is environment-specific and outside normal support guidance.
+- GL-260 is primarily a desktop Tkinter GUI workflow.
+- Docker is useful for dependency experiments or CI-style non-interactive checks.
+- Full GUI use in Docker requires host GUI forwarding and container GUI libs, which is environment-specific and outside primary support scope.
 
 ### Known Limitations and Tradeoffs
-- Primary workflow remains desktop GUI driven; headless/container execution is limited.
-- Optional modules gate specific features (`scipy`, `great_tables`, optional chemistry model, optional Rust backend).
+- Primary workflow is desktop GUI-first; headless/container usage is limited.
+- Optional modules gate specific features (`scipy`, `great_tables`, optional chemistry modules, optional Rust backend).
 - Large workbooks and high-resolution exports can be memory/CPU intensive.
-- Chemistry/model accuracy depends on quality of input mappings, units, and configured assumptions.
+- Chemistry/model accuracy depends on correct mappings, units, and configured assumptions.
 
 ### License
 Apache-2.0. See `LICENSE`.
@@ -1330,3 +1343,4 @@ Additional internal change summaries:
   - Plot Elements opens a dedicated annotations Toplevel per plot.
   - Treeview selection recursion fix in annotations editor.
   - Layout fixes for the annotations Toplevel.
+
