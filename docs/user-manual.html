@@ -1,0 +1,1442 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="manual-source-sha256" content="512555d6227b97dbc736af0f050231422ad2a305d087184851dceccf699cd9fe">
+  <title>GL-260 User Manual</title>
+  <style>
+    :root {
+      --bg: #f5f7f8;
+      --card: #ffffff;
+      --ink: #0f1f28;
+      --muted: #4c6672;
+      --edge: #ccdae0;
+      --accent: #0f6f82;
+      --accent-soft: #e5f1f4;
+      --shadow: rgba(20, 44, 56, 0.10);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", Tahoma, Verdana, sans-serif;
+      background: linear-gradient(180deg, #eaf0f3 0%, var(--bg) 100%);
+      color: var(--ink);
+      line-height: 1.6;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 320px minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+      width: min(1800px, calc(100vw - 24px));
+      margin: 12px auto;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--edge);
+      border-radius: 14px;
+      box-shadow: 0 10px 24px var(--shadow);
+    }
+    .sidebar {
+      position: sticky;
+      top: 12px;
+      max-height: calc(100vh - 24px);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .side-head {
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid var(--edge);
+      background: linear-gradient(180deg, #f8fcfd 0%, #f3f9fb 100%);
+      border-radius: 14px 14px 0 0;
+    }
+    .side-head h1 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.3;
+    }
+    .side-head .meta {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .side-tools {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--edge);
+      background: #fcfeff;
+    }
+    .side-tools label {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+    .side-tools input {
+      width: 100%;
+      border: 1px solid var(--edge);
+      border-radius: 10px;
+      padding: 9px 10px;
+      font-size: 13px;
+    }
+    nav.toc {
+      overflow: auto;
+      padding: 10px 12px 14px;
+      font-size: 13px;
+    }
+    nav.toc ul { list-style: none; margin: 0; padding-left: 0; }
+    nav.toc ul ul { padding-left: 14px; border-left: 1px dashed var(--edge); margin-left: 6px; }
+    nav.toc li { margin: 5px 0; }
+    nav.toc a {
+      text-decoration: none;
+      color: var(--ink);
+      border-radius: 8px;
+      display: inline-block;
+      padding: 2px 6px;
+    }
+    nav.toc a:hover {
+      background: var(--accent-soft);
+      color: #0b4f5d;
+    }
+    .content {
+      min-width: 0;
+      padding: 20px 28px 28px;
+    }
+    .content h1, .content h2, .content h3, .content h4 {
+      line-height: 1.25;
+      scroll-margin-top: 16px;
+    }
+    .content h2 {
+      margin-top: 30px;
+      border-top: 1px solid var(--edge);
+      padding-top: 20px;
+    }
+    .content h2:first-of-type {
+      margin-top: 0;
+      border-top: none;
+      padding-top: 0;
+    }
+    .content p, .content li {
+      max-width: 95ch;
+    }
+    .content code {
+      background: #edf2f5;
+      border: 1px solid #dde6eb;
+      border-radius: 6px;
+      padding: 1px 5px;
+      font-size: 0.92em;
+    }
+    .content pre {
+      background: #0f202a;
+      color: #e4eef2;
+      border-radius: 10px;
+      padding: 14px 16px;
+      overflow: auto;
+      border: 1px solid #102a37;
+      max-width: min(120ch, 100%);
+    }
+    .content pre code {
+      background: transparent;
+      border: none;
+      color: inherit;
+      padding: 0;
+    }
+    .content table {
+      border-collapse: collapse;
+      width: min(120ch, 100%);
+      margin: 8px 0 16px;
+      font-size: 14px;
+    }
+    .content th, .content td {
+      border: 1px solid var(--edge);
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .content th {
+      background: #f2f8fa;
+    }
+    figure {
+      margin: 14px 0 18px;
+      width: min(120ch, 100%);
+    }
+    figure img {
+      max-width: 100%;
+      border: 1px solid var(--edge);
+      border-radius: 10px;
+      box-shadow: 0 6px 18px rgba(22, 51, 64, 0.12);
+      cursor: zoom-in;
+      background: #f9fcfd;
+    }
+    figure figcaption {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    details {
+      width: min(120ch, 100%);
+      border: 1px solid var(--edge);
+      border-radius: 10px;
+      background: #fbfefe;
+      padding: 8px 12px;
+      margin: 10px 0 14px;
+    }
+    details summary {
+      cursor: pointer;
+      font-weight: 600;
+      color: #163945;
+    }
+    #image-lightbox {
+      position: fixed;
+      inset: 0;
+      background: rgba(8, 18, 24, 0.85);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 14px;
+      z-index: 1000;
+    }
+    #image-lightbox.open {
+      display: flex;
+    }
+    #image-lightbox img {
+      max-width: min(96vw, 1800px);
+      max-height: 90vh;
+      border-radius: 10px;
+      border: 1px solid #8aa4af;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4);
+      background: #fff;
+    }
+    #image-lightbox button {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      border: 1px solid #7c97a3;
+      border-radius: 999px;
+      width: 36px;
+      height: 36px;
+      background: rgba(255, 255, 255, 0.95);
+      color: #143542;
+      font-size: 18px;
+      cursor: pointer;
+    }
+    @media (max-width: 1160px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+      .sidebar {
+        position: static;
+        max-height: none;
+      }
+      nav.toc {
+        max-height: 320px;
+      }
+      .content {
+        padding: 16px 16px 22px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar card" aria-label="Manual navigation">
+      <div class="side-head">
+        <h1>GL-260 User Manual</h1>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>512555d6227b97db</code></div>
+      </div>
+      <div class="side-tools">
+        <label for="toc-filter">Filter sections</label>
+        <input id="toc-filter" type="text" placeholder="Type to find workflows..." />
+      </div>
+      <nav class="toc" id="toc-nav">
+        <div class="toc">
+<ul>
+<li><a href="#table-of-contents">Table of Contents</a></li>
+<li><a href="#manual-scope-and-governance">Manual Scope and Governance</a><ul>
+<li><a href="#purpose">Purpose</a></li>
+<li><a href="#preconditions">Preconditions</a></li>
+<li><a href="#inputs">Inputs</a></li>
+<li><a href="#step-by-step-actions">Step-by-step actions</a></li>
+<li><a href="#expected-outputs">Expected outputs</a></li>
+<li><a href="#common-errors-and-recovery">Common errors and recovery</a></li>
+<li><a href="#related-exportsartifacts">Related exports/artifacts</a></li>
+</ul>
+</li>
+<li><a href="#application-navigation-map">Application Navigation Map</a><ul>
+<li><a href="#purpose_1">Purpose</a></li>
+<li><a href="#preconditions_1">Preconditions</a></li>
+<li><a href="#inputs_1">Inputs</a></li>
+<li><a href="#step-by-step-actions_1">Step-by-step actions</a></li>
+<li><a href="#expected-outputs_1">Expected outputs</a></li>
+<li><a href="#common-errors-and-recovery_1">Common errors and recovery</a></li>
+<li><a href="#related-exportsartifacts_1">Related exports/artifacts</a></li>
+</ul>
+</li>
+<li><a href="#quickstart-workflow">Quickstart Workflow</a><ul>
+<li><a href="#purpose_2">Purpose</a></li>
+<li><a href="#preconditions_2">Preconditions</a></li>
+<li><a href="#inputs_2">Inputs</a></li>
+<li><a href="#step-by-step-actions_2">Step-by-step actions</a></li>
+<li><a href="#expected-outputs_2">Expected outputs</a></li>
+<li><a href="#common-errors-and-recovery_2">Common errors and recovery</a></li>
+<li><a href="#related-exportsartifacts_2">Related exports/artifacts</a></li>
+</ul>
+</li>
+<li><a href="#data-import-and-sheet-selection-workflow">Data Import and Sheet Selection Workflow</a><ul>
+<li><a href="#purpose_3">Purpose</a></li>
+<li><a href="#preconditions_3">Preconditions</a></li>
+<li><a href="#inputs_3">Inputs</a></li>
+<li><a href="#step-by-step-actions_3">Step-by-step actions</a></li>
+<li><a href="#expected-outputs_3">Expected outputs</a></li>
+<li><a href="#common-errors-and-recovery_3">Common errors and recovery</a></li>
+<li><a href="#related-exportsartifacts_3">Related exports/artifacts</a></li>
+</ul>
+</li>
+<li><a href="#column-mapping-and-apply-workflow">Column Mapping and Apply Workflow</a><ul>
+<li><a href="#purpose_4">Purpose</a></li>
+<li><a href="#preconditions_4">Preconditions</a></li>
+<li><a href="#inputs_4">Inputs</a></li>
+<li><a href="#step-by-step-actions_4">Step-by-step actions</a></li>
+<li><a href="#expected-outputs_4">Expected outputs</a></li>
+<li><a href="#common-errors-and-recovery_4">Common errors and recovery</a></li>
+<li><a href="#related-exportsartifacts_4">Related exports/artifacts</a></li>
+</ul>
+</li>
+<li><a href="#plot-settings-workflow">Plot Settings Workflow</a><ul>
+<li><a href="#purpose_5">Purpose</a></li>
+<li><a href="#preconditions_5">Preconditions</a></li>
+<li><a href="#inputs_5">Inputs</a></li>
+<li><a href="#step-by-step-actions_5">Step-by-step actions</a></li>
+<li><a href="#expected-outputs_5">Expected outputs</a></li>
+<li><a href="#common-errors-and-recovery_5">Common errors and recovery</a></li>
+<li><a href="#related-exportsartifacts_5">Related exports/artifacts</a></li>
+</ul>
+</li>
+<li><a href="#combined-triple-axis-plot-workflow">Combined Triple-Axis Plot Workflow</a><ul>
+<li><a href="#purpose_6">Purpose</a></li>
+<li><a href="#preconditions_6">Preconditions</a></li>
+<li><a href="#inputs_6">Inputs</a></li>
+<li><a href="#step-by-step-actions_6">Step-by-step actions</a></li>
+<li><a href="#expected-outputs_6">Expected outputs</a></li>
+<li><a href="#common-errors-and-recovery_6">Common errors and recovery</a></li>
+<li><a href="#related-exportsartifacts_6">Related exports/artifacts</a></li>
+</ul>
+</li>
+<li><a href="#plot-elements-and-annotation-workflow">Plot Elements and Annotation Workflow</a><ul>
+<li><a href="#purpose_7">Purpose</a></li>
+<li><a href="#preconditions_7">Preconditions</a></li>
+<li><a href="#inputs_7">Inputs</a></li>
+<li><a href="#step-by-step-actions_7">Step-by-step actions</a></li>
+<li><a href="#expected-outputs_7">Expected outputs</a></li>
+<li><a href="#common-errors-and-recovery_7">Common errors and recovery</a></li>
+<li><a href="#related-exportsartifacts_7">Related exports/artifacts</a></li>
+</ul>
+</li>
+<li><a href="#cycle-analysis-workflow-automatic-and-manual">Cycle Analysis Workflow (Automatic and Manual)</a><ul>
+<li><a href="#purpose_8">Purpose</a></li>
+<li><a href="#preconditions_8">Preconditions</a></li>
+<li><a href="#inputs_8">Inputs</a></li>
+<li><a href="#step-by-step-actions_8">Step-by-step actions</a></li>
+<li><a href="#expected-outputs_8">Expected outputs</a></li>
+<li><a href="#common-errors-and-recovery_8">Common errors and recovery</a></li>
+<li><a href="#related-exportsartifacts_8">Related exports/artifacts</a></li>
+</ul>
+</li>
+<li><a href="#plot-and-cycle-export-workflows">Plot and Cycle Export Workflows</a><ul>
+<li><a href="#purpose_9">Purpose</a></li>
+<li><a href="#preconditions_9">Preconditions</a></li>
+<li><a href="#inputs_9">Inputs</a></li>
+<li><a href="#step-by-step-actions_9">Step-by-step actions</a></li>
+<li><a href="#expected-outputs_9">Expected outputs</a></li>
+<li><a href="#common-errors-and-recovery_9">Common errors and recovery</a></li>
+<li><a href="#related-exportsartifacts_9">Related exports/artifacts</a></li>
+</ul>
+</li>
+<li><a href="#advanced-speciation-and-equilibrium-workflows">Advanced Speciation and Equilibrium Workflows</a><ul>
+<li><a href="#purpose_10">Purpose</a></li>
+<li><a href="#preconditions_10">Preconditions</a></li>
+<li><a href="#inputs_10">Inputs</a></li>
+<li><a href="#step-by-step-actions_10">Step-by-step actions</a></li>
+<li><a href="#expected-outputs_10">Expected outputs</a></li>
+<li><a href="#common-errors-and-recovery_10">Common errors and recovery</a></li>
+<li><a href="#related-exportsartifacts_10">Related exports/artifacts</a></li>
+</ul>
+</li>
+<li><a href="#compare-profiles-workflow">Compare Profiles Workflow</a><ul>
+<li><a href="#purpose_11">Purpose</a></li>
+<li><a href="#preconditions_11">Preconditions</a></li>
+<li><a href="#inputs_11">Inputs</a></li>
+<li><a href="#step-by-step-actions_11">Step-by-step actions</a></li>
+<li><a href="#expected-outputs_11">Expected outputs</a></li>
+<li><a href="#common-errors-and-recovery_11">Common errors and recovery</a></li>
+<li><a href="#related-exportsartifacts_11">Related exports/artifacts</a></li>
+</ul>
+</li>
+<li><a href="#ledger-workflow">Ledger Workflow</a><ul>
+<li><a href="#purpose_12">Purpose</a></li>
+<li><a href="#preconditions_12">Preconditions</a></li>
+<li><a href="#inputs_12">Inputs</a></li>
+<li><a href="#step-by-step-actions_12">Step-by-step actions</a></li>
+<li><a href="#expected-outputs_12">Expected outputs</a></li>
+<li><a href="#common-errors-and-recovery_12">Common errors and recovery</a></li>
+<li><a href="#related-exportsartifacts_12">Related exports/artifacts</a></li>
+</ul>
+</li>
+<li><a href="#final-report-workflow">Final Report Workflow</a><ul>
+<li><a href="#purpose_13">Purpose</a></li>
+<li><a href="#preconditions_13">Preconditions</a></li>
+<li><a href="#inputs_13">Inputs</a></li>
+<li><a href="#step-by-step-actions_13">Step-by-step actions</a></li>
+<li><a href="#expected-outputs_13">Expected outputs</a></li>
+<li><a href="#common-errors-and-recovery_13">Common errors and recovery</a></li>
+<li><a href="#related-exportsartifacts_13">Related exports/artifacts</a></li>
+</ul>
+</li>
+<li><a href="#profiles-and-settings-persistence">Profiles and Settings Persistence</a><ul>
+<li><a href="#purpose_14">Purpose</a></li>
+<li><a href="#preconditions_14">Preconditions</a></li>
+<li><a href="#inputs_14">Inputs</a></li>
+<li><a href="#step-by-step-actions_14">Step-by-step actions</a></li>
+<li><a href="#expected-outputs_14">Expected outputs</a></li>
+<li><a href="#common-errors-and-recovery_14">Common errors and recovery</a></li>
+<li><a href="#related-exportsartifacts_14">Related exports/artifacts</a></li>
+</ul>
+</li>
+<li><a href="#troubleshooting-and-recovery-matrix">Troubleshooting and Recovery Matrix</a><ul>
+<li><a href="#purpose_15">Purpose</a></li>
+<li><a href="#related-exportsartifacts_15">Related exports/artifacts</a></li>
+</ul>
+</li>
+<li><a href="#advanced-power-user-appendix">Advanced / Power User Appendix</a><ul>
+<li><a href="#purpose_16">Purpose</a></li>
+<li><a href="#included-advanced-topics">Included advanced topics</a></li>
+<li><a href="#recommended-advanced-workflow">Recommended advanced workflow</a></li>
+</ul>
+</li>
+<li><a href="#screenshot-contract-and-asset-index">Screenshot Contract and Asset Index</a><ul>
+<li><a href="#purpose_17">Purpose</a></li>
+<li><a href="#contract">Contract</a></li>
+<li><a href="#asset-index">Asset index</a></li>
+<li><a href="#related-maintenance-rules">Related maintenance rules</a></li>
+</ul>
+</li>
+<li><a href="#versioning-note">Versioning Note</a></li>
+</ul>
+</div>
+
+      </nav>
+    </aside>
+    <main class="content card" id="manual-content">
+      <h1 id="gl-260-user-manual-canonical-source">GL-260 User Manual (Canonical Source)<a class="headerlink" href="#gl-260-user-manual-canonical-source" title="Permanent link">&para;</a></h1>
+<p>This file is the authoritative manual source for GL-260 user documentation.</p>
+<ul>
+<li>Source of truth: <code>docs/user-manual.md</code></li>
+<li>Generated artifact: <code>docs/user-manual.html</code></li>
+<li>Build command: <code>python scripts/build_user_manual.py</code></li>
+<li>Validation command: <code>python scripts/build_user_manual.py --check</code></li>
+</ul>
+<hr>
+<h2 id="table-of-contents">Table of Contents<a class="headerlink" href="#table-of-contents" title="Permanent link">&para;</a></h2>
+<ol>
+<li><a href="#manual-scope-and-governance">Manual Scope and Governance</a></li>
+<li><a href="#application-navigation-map">Application Navigation Map</a></li>
+<li><a href="#quickstart-workflow">Quickstart Workflow</a></li>
+<li><a href="#data-import-and-sheet-selection-workflow">Data Import and Sheet Selection Workflow</a></li>
+<li><a href="#column-mapping-and-apply-workflow">Column Mapping and Apply Workflow</a></li>
+<li><a href="#plot-settings-workflow">Plot Settings Workflow</a></li>
+<li><a href="#combined-triple-axis-plot-workflow">Combined Triple-Axis Plot Workflow</a></li>
+<li><a href="#plot-elements-and-annotation-workflow">Plot Elements and Annotation Workflow</a></li>
+<li><a href="#cycle-analysis-workflow-automatic-and-manual">Cycle Analysis Workflow (Automatic and Manual)</a></li>
+<li><a href="#plot-and-cycle-export-workflows">Plot and Cycle Export Workflows</a></li>
+<li><a href="#advanced-speciation-and-equilibrium-workflows">Advanced Speciation and Equilibrium Workflows</a></li>
+<li><a href="#compare-profiles-workflow">Compare Profiles Workflow</a></li>
+<li><a href="#ledger-workflow">Ledger Workflow</a></li>
+<li><a href="#final-report-workflow">Final Report Workflow</a></li>
+<li><a href="#profiles-and-settings-persistence">Profiles and Settings Persistence</a></li>
+<li><a href="#troubleshooting-and-recovery-matrix">Troubleshooting and Recovery Matrix</a></li>
+<li><a href="#advanced--power-user-appendix">Advanced / Power User Appendix</a></li>
+<li><a href="#screenshot-contract-and-asset-index">Screenshot Contract and Asset Index</a></li>
+</ol>
+<hr>
+<p><a id="manual-scope-and-governance"></a></p>
+<h2 id="manual-scope-and-governance">Manual Scope and Governance<a class="headerlink" href="#manual-scope-and-governance" title="Permanent link">&para;</a></h2>
+<h3 id="purpose">Purpose<a class="headerlink" href="#purpose" title="Permanent link">&para;</a></h3>
+<p>Define the operating contract for this manual so future updates remain complete and consistent.</p>
+<h3 id="preconditions">Preconditions<a class="headerlink" href="#preconditions" title="Permanent link">&para;</a></h3>
+<ul>
+<li>You are working in the GL-260 repository root.</li>
+<li>You can run Python from terminal.</li>
+</ul>
+<h3 id="inputs">Inputs<a class="headerlink" href="#inputs" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Current application behavior from <code>GL-260 Data Analysis and Plotter.py</code>.</li>
+<li>Release notes and UI changes from active development.</li>
+</ul>
+<h3 id="step-by-step-actions">Step-by-step actions<a class="headerlink" href="#step-by-step-actions" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Update this Markdown file when any user-facing behavior, workflow, or UI control changes.</li>
+<li>Run <code>python scripts/build_user_manual.py</code> to regenerate HTML.</li>
+<li>Run <code>python scripts/build_user_manual.py --check</code> to confirm generated HTML is current.</li>
+<li>Ensure screenshot references resolve and correspond to current UI behavior.</li>
+<li>Confirm <code>README.md</code> continues to point users to canonical docs in <code>docs/</code>.</li>
+</ol>
+<h3 id="expected-outputs">Expected outputs<a class="headerlink" href="#expected-outputs" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A synchronized pair: <code>docs/user-manual.md</code> and <code>docs/user-manual.html</code>.</li>
+<li>Accurate, searchable documentation for all major workflows.</li>
+</ul>
+<h3 id="common-errors-and-recovery">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Error: <code>docs/user-manual.html</code> missing or stale.</li>
+<li>Recovery: run the build command and re-run <code>--check</code>.</li>
+<li>Error: New feature exists in app but not documented.</li>
+<li>Recovery: add/expand the relevant section and update changelog/release checklist.</li>
+</ul>
+<h3 id="related-exportsartifacts">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>docs/user-manual.html</code></li>
+<li><code>RELEASE_CHECKLIST.md</code></li>
+</ul>
+<hr>
+<p><a id="application-navigation-map"></a></p>
+<h2 id="application-navigation-map">Application Navigation Map<a class="headerlink" href="#application-navigation-map" title="Permanent link">&para;</a></h2>
+<h3 id="purpose_1">Purpose<a class="headerlink" href="#purpose_1" title="Permanent link">&para;</a></h3>
+<p>Provide a high-level map of tabs, menus, and workflow order.</p>
+<h3 id="preconditions_1">Preconditions<a class="headerlink" href="#preconditions_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Application is launched and responsive.</li>
+<li>A dataset is available (Excel workbook or GL-260 CSV).</li>
+</ul>
+<h3 id="inputs_1">Inputs<a class="headerlink" href="#inputs_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Top menu: <code>File</code>, <code>View</code>, <code>Profiles</code>, <code>Tools</code>, <code>General Plotter</code>.</li>
+<li>Primary tabs: <code>Data</code>, <code>Columns</code>, <code>Plot Settings</code>, <code>Cycle Analysis</code>, <code>Compare</code>, <code>Ledger</code>, <code>Advanced Solubility</code>, <code>Final Report</code>.</li>
+</ul>
+<h3 id="step-by-step-actions_1">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_1" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Start in <strong>Data</strong> tab to load source files and choose sheet context.</li>
+<li>Move to <strong>Columns</strong> tab to map traces and required fields.</li>
+<li>Use <strong>Plot Settings</strong> to configure axes, ranges, legend behavior, and export defaults.</li>
+<li>Open <strong>Cycle Analysis</strong> for marker detection, manual marker editing, and cycle metrics.</li>
+<li>Use <strong>Advanced Solubility</strong> for speciation/equilibrium workflows and cycle timeline analysis.</li>
+<li>Use <strong>Compare</strong> to evaluate two profiles side-by-side.</li>
+<li>Use <strong>Ledger</strong> to consolidate run-level metrics and export business-facing tables.</li>
+<li>Use <strong>Final Report</strong> to compose and export PDF/PNG/HTML deliverables.</li>
+</ol>
+<h3 id="expected-outputs_1">Expected outputs<a class="headerlink" href="#expected-outputs_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Correct workflow progression from raw data to publication-ready report outputs.</li>
+</ul>
+<h3 id="common-errors-and-recovery_1">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Error: Later tabs show missing data warnings.</li>
+<li>Recovery: return to <code>Data</code> and <code>Columns</code>, then re-run <strong>Apply Column Selection</strong>.</li>
+<li>Error: Compare/Ledger values appear stale.</li>
+<li>Recovery: refresh profile load and re-run cycle/speciation workflows before compare.</li>
+</ul>
+<h3 id="related-exportsartifacts_1">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Plot exports (<code>PNG/PDF/SVG</code>)</li>
+<li>Cycle timeline exports (<code>CSV/plot/table</code>)</li>
+<li>Compare CSV export</li>
+<li>Ledger CSV export</li>
+<li>Final Report (<code>PDF/PNG/HTML</code>)</li>
+</ul>
+<p><img alt="Application navigation map" src="assets/screenshots/01-application-navigation-map.png"><br>
+<em>Figure 1. Application-level navigation and workflow map.</em></p>
+<hr>
+<p><a id="quickstart-workflow"></a></p>
+<h2 id="quickstart-workflow">Quickstart Workflow<a class="headerlink" href="#quickstart-workflow" title="Permanent link">&para;</a></h2>
+<h3 id="purpose_2">Purpose<a class="headerlink" href="#purpose_2" title="Permanent link">&para;</a></h3>
+<p>Give an end-to-end baseline path from input data to final report.</p>
+<h3 id="preconditions_2">Preconditions<a class="headerlink" href="#preconditions_2" title="Permanent link">&para;</a></h3>
+<ul>
+<li>App launched from repository root using the intended environment.</li>
+<li>Input data file is accessible.</li>
+</ul>
+<h3 id="inputs_2">Inputs<a class="headerlink" href="#inputs_2" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Workbook (<code>.xlsx</code>) or GL-260 CSV.</li>
+<li>Optional saved profile for quick setup.</li>
+</ul>
+<h3 id="step-by-step-actions_2">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_2" title="Permanent link">&para;</a></h3>
+<ol>
+<li>On <strong>Data</strong> tab, select source file and target sheet.</li>
+<li>On <strong>Columns</strong> tab, map all required series and click <strong>Apply Column Selection</strong>.</li>
+<li>On <strong>Plot Settings</strong> tab, configure ranges and legend behavior.</li>
+<li>Generate core plots and the <strong>Combined Triple-Axis</strong> plot.</li>
+<li>Open <strong>Cycle Analysis</strong> and run marker detection.</li>
+<li>Manually adjust peaks/troughs if needed, then confirm cycle summary.</li>
+<li>Open <strong>Advanced Solubility</strong> and send cycle payload for equilibrium analysis.</li>
+<li>Optionally open <strong>Compare</strong> for profile-to-profile analysis.</li>
+<li>Add/validate entries in <strong>Ledger</strong>.</li>
+<li>Configure sections in <strong>Final Report</strong> and generate PDF/PNG/HTML output.</li>
+</ol>
+<h3 id="expected-outputs_2">Expected outputs<a class="headerlink" href="#expected-outputs_2" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Validated cycle metrics.</li>
+<li>Optional speciation/equilibrium outputs.</li>
+<li>Final report files suitable for review and distribution.</li>
+</ul>
+<h3 id="common-errors-and-recovery_2">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_2" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Error: Combined/final report generation blocked.</li>
+<li>Recovery: ensure columns were applied after latest data or mapping changes.</li>
+<li>Error: Cycle output inconsistent with expected behavior.</li>
+<li>Recovery: re-run marker detection with adjusted smoothing/radius and review manual edits.</li>
+</ul>
+<h3 id="related-exportsartifacts_2">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_2" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Combined plot artifacts</li>
+<li>Cycle metrics CSV</li>
+<li>Speciation CSV/JSON</li>
+<li>Final report export files</li>
+</ul>
+<hr>
+<p><a id="data-import-and-sheet-selection-workflow"></a></p>
+<h2 id="data-import-and-sheet-selection-workflow">Data Import and Sheet Selection Workflow<a class="headerlink" href="#data-import-and-sheet-selection-workflow" title="Permanent link">&para;</a></h2>
+<h3 id="purpose_3">Purpose<a class="headerlink" href="#purpose_3" title="Permanent link">&para;</a></h3>
+<p>Load source datasets and establish the active sheet/data context for downstream analysis.</p>
+<h3 id="preconditions_3">Preconditions<a class="headerlink" href="#preconditions_3" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Source file path is known.</li>
+<li>File format is either supported workbook or GL-260 CSV source.</li>
+</ul>
+<h3 id="inputs_3">Inputs<a class="headerlink" href="#inputs_3" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>File -&gt; Open Excel...</code></li>
+<li><code>File -&gt; Import GL-260 CSV...</code></li>
+<li><code>File -&gt; Rescan File</code></li>
+<li>Data tab sheet selector and import controls</li>
+</ul>
+<h3 id="step-by-step-actions_3">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_3" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Open <strong>File -&gt; Open Excel...</strong> and choose workbook.</li>
+<li>Confirm detected sheet list populates in Data tab.</li>
+<li>Select target sheet from selector.</li>
+<li>If source is CSV, choose <strong>Import GL-260 CSV...</strong>.</li>
+<li>In CSV dialog:<br>
+   - Browse to CSV source.<br>
+   - Confirm parsed table preview.<br>
+   - Set output workbook/sheet naming.<br>
+   - Complete import and accept confirmation.</li>
+<li>Click <strong>Rescan File</strong> when file content changes externally.</li>
+<li>Confirm imported/selected sheet now contains expected headers and row counts.</li>
+</ol>
+<h3 id="expected-outputs_3">Expected outputs<a class="headerlink" href="#expected-outputs_3" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Active file path and sheet context are set.</li>
+<li>Data tab status confirms loaded dataset.</li>
+</ul>
+<h3 id="common-errors-and-recovery_3">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_3" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Error: sheet list empty.</li>
+<li>Recovery: verify workbook path and that file is not locked/corrupted.</li>
+<li>Error: CSV import fails parse.</li>
+<li>Recovery: validate delimiter/header format and re-run import.</li>
+<li>Error: wrong sheet selected.</li>
+<li>Recovery: switch sheet and re-apply column selection.</li>
+</ul>
+<h3 id="related-exportsartifacts_3">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_3" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Imported workbook generated from CSV ingest flow.</li>
+<li>App state updated with active sheet metadata.</li>
+</ul>
+<p><img alt="Data import and sheet selection" src="assets/screenshots/02-data-import-sheet-selection.png"><br>
+<em>Figure 2. Data tab workflow with sheet selection and CSV import path.</em></p>
+<hr>
+<p><a id="column-mapping-and-apply-workflow"></a></p>
+<h2 id="column-mapping-and-apply-workflow">Column Mapping and Apply Workflow<a class="headerlink" href="#column-mapping-and-apply-workflow" title="Permanent link">&para;</a></h2>
+<h3 id="purpose_4">Purpose<a class="headerlink" href="#purpose_4" title="Permanent link">&para;</a></h3>
+<p>Map source columns to pressure/temperature/derivative traces and commit mappings for analysis.</p>
+<h3 id="preconditions_4">Preconditions<a class="headerlink" href="#preconditions_4" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Dataset loaded and active sheet selected.</li>
+<li>Headers are visible and interpretable.</li>
+</ul>
+<h3 id="inputs_4">Inputs<a class="headerlink" href="#inputs_4" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Columns tab mapping controls.</li>
+<li>Required and optional series selectors.</li>
+<li><strong>Apply Column Selection</strong> action.</li>
+</ul>
+<h3 id="step-by-step-actions_4">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_4" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Open <strong>Columns</strong> tab.</li>
+<li>Map required fields (pressure and other required core traces).</li>
+<li>Map optional channels (additional temperature or derivative traces).</li>
+<li>Validate units and naming conventions for selected columns.</li>
+<li>Click <strong>Apply Column Selection</strong>.</li>
+<li>Wait for completion status (background apply paths may take noticeable time).</li>
+<li>Confirm downstream tabs now recognize selected data series.</li>
+</ol>
+<h3 id="expected-outputs_4">Expected outputs<a class="headerlink" href="#expected-outputs_4" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Canonical column mappings persist into runtime state.</li>
+<li>Plot/Cycle/Speciation workflows are unlocked for current dataset.</li>
+</ul>
+<h3 id="common-errors-and-recovery_4">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_4" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Error: apply fails due to invalid mapping.</li>
+<li>Recovery: clear conflicting selections and remap required fields.</li>
+<li>Error: later workflows still report missing columns.</li>
+<li>Recovery: re-open Columns and apply again after any sheet change.</li>
+</ul>
+<h3 id="related-exportsartifacts_4">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_4" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Updated in-memory mapping state.</li>
+<li>Profile persistence payloads when saved.</li>
+</ul>
+<p><img alt="Column mapping and apply workflow" src="assets/screenshots/03-column-mapping-apply.png"><br>
+<em>Figure 3. Columns tab mapping and apply workflow.</em></p>
+<hr>
+<p><a id="plot-settings-workflow"></a></p>
+<h2 id="plot-settings-workflow">Plot Settings Workflow<a class="headerlink" href="#plot-settings-workflow" title="Permanent link">&para;</a></h2>
+<h3 id="purpose_5">Purpose<a class="headerlink" href="#purpose_5" title="Permanent link">&para;</a></h3>
+<p>Control how plot figures render, including ranges, legends, fonts, cycle overlays, and export behavior.</p>
+<h3 id="preconditions_5">Preconditions<a class="headerlink" href="#preconditions_5" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Column selections applied successfully.</li>
+<li>Plot-ready dataset available.</li>
+</ul>
+<h3 id="inputs_5">Inputs<a class="headerlink" href="#inputs_5" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Plot Settings tab panels (axes, legends, cycle integration, rendering options, export DPI).</li>
+<li>Plot refresh/generation actions.</li>
+</ul>
+<h3 id="step-by-step-actions_5">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_5" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Open <strong>Plot Settings</strong> tab.</li>
+<li>Configure x/y auto-range and manual range overrides where needed.</li>
+<li>Set axis label text and label padding options.</li>
+<li>Configure tick spacing and tick font size policies.</li>
+<li>Tune legend placement and anchor controls.</li>
+<li>Configure cycle integration options:<br>
+   - show/hide cycle markers on core plots<br>
+   - show/hide cycle legend<br>
+   - include/exclude moles info in legend</li>
+<li>Configure global export DPI and layout behavior.</li>
+<li>Generate or refresh plots and validate expected visual output.</li>
+</ol>
+<h3 id="expected-outputs_5">Expected outputs<a class="headerlink" href="#expected-outputs_5" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Plot visuals match configured ranges/style/legend policies.</li>
+<li>Export behavior aligns with display intent.</li>
+</ul>
+<h3 id="common-errors-and-recovery_5">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_5" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Error: axis labels overlap or clip.</li>
+<li>Recovery: adjust label pads, margins, or export padding values.</li>
+<li>Error: legend obscures data.</li>
+<li>Recovery: re-anchor legend or enable centered/offset behavior.</li>
+<li>Error: stale plot rendering after setting change.</li>
+<li>Recovery: trigger explicit refresh and verify full rebuild path where needed.</li>
+</ul>
+<h3 id="related-exportsartifacts_5">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_5" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Core plot figures.</li>
+<li>Persisted plot settings in app settings/profile payloads.</li>
+</ul>
+<p><img alt="Plot settings overview" src="assets/screenshots/04-plot-settings-overview.png"><br>
+<em>Figure 4. Plot Settings tab controls for rendering and export behavior.</em></p>
+<hr>
+<p><a id="combined-triple-axis-plot-workflow"></a></p>
+<h2 id="combined-triple-axis-plot-workflow">Combined Triple-Axis Plot Workflow<a class="headerlink" href="#combined-triple-axis-plot-workflow" title="Permanent link">&para;</a></h2>
+<h3 id="purpose_6">Purpose<a class="headerlink" href="#purpose_6" title="Permanent link">&para;</a></h3>
+<p>Build and tune the combined figure that overlays pressure, temperature, and derivative-oriented traces with cycle context.</p>
+<h3 id="preconditions_6">Preconditions<a class="headerlink" href="#preconditions_6" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Data and columns are ready.</li>
+<li>Plot settings are configured.</li>
+</ul>
+<h3 id="inputs_6">Inputs<a class="headerlink" href="#inputs_6" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Combined triple-axis controls on Plot Settings tab.</li>
+<li>Combined plot generation/refresh actions.</li>
+<li>Axis assignment toggles and right/third-axis options.</li>
+</ul>
+<h3 id="step-by-step-actions_6">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_6" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Select desired datasets for primary/right/third axis roles.</li>
+<li>Enable or disable temperature and derivative axes as needed.</li>
+<li>Configure derivative axis offset and axis label overrides.</li>
+<li>Set combined legend behavior and cycle legend reference axis/corner.</li>
+<li>Generate <strong>Figure 1+2: Combined Triple-Axis</strong>.</li>
+<li>Validate alignment of axis scales and readability of overlays.</li>
+<li>Adjust layout margin profiles for display and export parity.</li>
+<li>Rebuild and verify that cycle overlays and legends remain stable.</li>
+</ol>
+<h3 id="expected-outputs_6">Expected outputs<a class="headerlink" href="#expected-outputs_6" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A single combined plot with aligned x-axis context and readable multi-axis overlays.</li>
+</ul>
+<h3 id="common-errors-and-recovery_6">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_6" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Error: right/third axis not visible.</li>
+<li>Recovery: confirm axis enable flags and dataset assignments.</li>
+<li>Error: cycle legend position drifts.</li>
+<li>Recovery: reset legend position and apply configured reference axis/corner.</li>
+<li>Error: export layout differs from display.</li>
+<li>Recovery: adjust export margins/label pads and validate with preview.</li>
+</ul>
+<h3 id="related-exportsartifacts_6">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_6" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Combined plot image/PDF/SVG exports.</li>
+<li>Final report combined plot pages.</li>
+</ul>
+<p><img alt="Combined triple-axis workflow" src="assets/screenshots/05-combined-triple-axis-workflow.png"><br>
+<em>Figure 5. Combined triple-axis controls and render workflow.</em></p>
+<hr>
+<p><a id="plot-elements-and-annotation-workflow"></a></p>
+<h2 id="plot-elements-and-annotation-workflow">Plot Elements and Annotation Workflow<a class="headerlink" href="#plot-elements-and-annotation-workflow" title="Permanent link">&para;</a></h2>
+<h3 id="purpose_7">Purpose<a class="headerlink" href="#purpose_7" title="Permanent link">&para;</a></h3>
+<p>Add, edit, and persist visual annotations and overlays across plot workflows.</p>
+<h3 id="preconditions_7">Preconditions<a class="headerlink" href="#preconditions_7" title="Permanent link">&para;</a></h3>
+<ul>
+<li>At least one plot is generated.</li>
+<li>Target plot tab is active.</li>
+</ul>
+<h3 id="inputs_7">Inputs<a class="headerlink" href="#inputs_7" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Plot Elements...</strong> dialogs from plot/compare/cycle preview contexts.</li>
+<li>Element list, style controls, placement controls, z-order controls.</li>
+</ul>
+<h3 id="step-by-step-actions_7">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_7" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Open plot element editor for target figure.</li>
+<li>Add element type (line/text/shape/ring/other available element classes).</li>
+<li>Set anchor coordinates and axis target.</li>
+<li>Configure line width, style, fill, alpha, and layer order.</li>
+<li>Apply edits and validate on live figure.</li>
+<li>Repeat for multiple elements and verify no overlap conflicts.</li>
+<li>Save profile/settings so element state persists.</li>
+<li>Close editor and confirm refresh behavior matches final expected state.</li>
+</ol>
+<h3 id="expected-outputs_7">Expected outputs<a class="headerlink" href="#expected-outputs_7" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Target plot includes selected visual elements with persistent styling.</li>
+</ul>
+<h3 id="common-errors-and-recovery_7">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_7" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Error: element appears on wrong axis/context.</li>
+<li>Recovery: update element axis target and anchor coordinates.</li>
+<li>Error: element not visible.</li>
+<li>Recovery: adjust z-order, color contrast, and visibility toggles.</li>
+<li>Error: close editor loses pending edits.</li>
+<li>Recovery: ensure apply action is used before close when live update is off.</li>
+</ul>
+<h3 id="related-exportsartifacts_7">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_7" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Plot exports containing persisted annotations.</li>
+<li>Profile-scoped element definitions.</li>
+</ul>
+<p><img alt="Plot elements editor workflow" src="assets/screenshots/06-plot-elements-editor.png"><br>
+<em>Figure 6. Plot Elements editor and annotation lifecycle.</em></p>
+<hr>
+<p><a id="cycle-analysis-workflow-automatic-and-manual"></a></p>
+<h2 id="cycle-analysis-workflow-automatic-and-manual">Cycle Analysis Workflow (Automatic and Manual)<a class="headerlink" href="#cycle-analysis-workflow-automatic-and-manual" title="Permanent link">&para;</a></h2>
+<h3 id="purpose_8">Purpose<a class="headerlink" href="#purpose_8" title="Permanent link">&para;</a></h3>
+<p>Detect cycles, compute cycle metrics/moles uptake, and support manual correction of markers.</p>
+<h3 id="preconditions_8">Preconditions<a class="headerlink" href="#preconditions_8" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Columns applied and cycle-relevant traces selected.</li>
+<li>Plot context available for marker visualization.</li>
+</ul>
+<h3 id="inputs_8">Inputs<a class="headerlink" href="#inputs_8" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Cycle Analysis tab controls:</li>
+<li>detection thresholds</li>
+<li>smoothing window</li>
+<li>manual snap radius</li>
+<li>auto refine radius</li>
+<li>marker import/export tools</li>
+</ul>
+<h3 id="step-by-step-actions_8">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_8" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Open <strong>Cycle Analysis</strong> tab.</li>
+<li>Start automatic detection.</li>
+<li>Review detected peaks/troughs and segmentation.</li>
+<li>If needed, switch to manual edit behavior:<br>
+   - add marker<br>
+   - remove marker<br>
+   - undo/redo marker changes</li>
+<li>Tune smoothing and snap/refine settings.</li>
+<li>Re-run analysis and compare summary changes.</li>
+<li>Validate cycle summary metrics and conversion/moles outputs.</li>
+<li>Export markers (<code>JSON/CSV</code>) and cycle results (<code>CSV</code>) when required.</li>
+<li>Push cycle payloads to Advanced Solubility workflows as needed.</li>
+</ol>
+<h3 id="expected-outputs_8">Expected outputs<a class="headerlink" href="#expected-outputs_8" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Reliable cycle segmentation with vetted peak/trough markers.</li>
+<li>Cycle summary text and per-cycle metrics ready for downstream workflows.</li>
+</ul>
+<h3 id="common-errors-and-recovery_8">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_8" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Error: too many/too few cycles detected.</li>
+<li>Recovery: adjust smoothing window and detection thresholds; verify selected trace.</li>
+<li>Error: manual edit snaps to incorrect point.</li>
+<li>Recovery: increase/decrease manual snap radius and retry.</li>
+<li>Error: cycle summary missing conversion fields.</li>
+<li>Recovery: confirm required conversion inputs/columns are mapped.</li>
+</ul>
+<h3 id="related-exportsartifacts_8">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_8" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Marker exports (<code>JSON/CSV</code>)</li>
+<li>Cycle results CSV</li>
+<li>Cycle payloads consumed by Advanced Solubility and Final Report</li>
+</ul>
+<p><img alt="Cycle analysis automatic and manual workflow" src="assets/screenshots/07-cycle-analysis-auto-manual.png"><br>
+<em>Figure 7. Cycle Analysis tab including auto-detect and manual marker editing.</em></p>
+<hr>
+<p><a id="plot-and-cycle-export-workflows"></a></p>
+<h2 id="plot-and-cycle-export-workflows">Plot and Cycle Export Workflows<a class="headerlink" href="#plot-and-cycle-export-workflows" title="Permanent link">&para;</a></h2>
+<h3 id="purpose_9">Purpose<a class="headerlink" href="#purpose_9" title="Permanent link">&para;</a></h3>
+<p>Export reproducible plot and cycle artifacts for validation, reporting, and external review.</p>
+<h3 id="preconditions_9">Preconditions<a class="headerlink" href="#preconditions_9" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Relevant plot or cycle view already generated.</li>
+</ul>
+<h3 id="inputs_9">Inputs<a class="headerlink" href="#inputs_9" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Plot export controls (<code>PNG/PDF/SVG</code>).</li>
+<li>Global export DPI setting.</li>
+<li>Cycle export controls (summary PNG, results CSV, marker JSON/CSV).</li>
+</ul>
+<h3 id="step-by-step-actions_9">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_9" title="Permanent link">&para;</a></h3>
+<ol>
+<li>From target plot tab, open export controls and select formats.</li>
+<li>Confirm output dimensions and DPI.</li>
+<li>Export and verify files open correctly.</li>
+<li>In Cycle Analysis, export:<br>
+   - marker set<br>
+   - cycle results table<br>
+   - summary image artifacts</li>
+<li>For timeline workflows in Advanced Solubility, use dedicated timeline export controls.</li>
+<li>Archive artifacts using run-specific naming convention.</li>
+</ol>
+<h3 id="expected-outputs_9">Expected outputs<a class="headerlink" href="#expected-outputs_9" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Complete set of reproducible visual and tabular artifacts.</li>
+</ul>
+<h3 id="common-errors-and-recovery_9">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_9" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Error: export size mismatch.</li>
+<li>Recovery: verify export DPI and plot dimension settings.</li>
+<li>Error: missing legend/annotation in export.</li>
+<li>Recovery: re-generate plot and ensure overlays are enabled before export.</li>
+<li>Error: file write denied.</li>
+<li>Recovery: choose writable destination and avoid locked/open files.</li>
+</ul>
+<h3 id="related-exportsartifacts_9">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_9" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Plot file set (<code>PNG/PDF/SVG</code>)</li>
+<li>Cycle summary and CSV exports</li>
+</ul>
+<hr>
+<p><a id="advanced-speciation-and-equilibrium-workflows"></a></p>
+<h2 id="advanced-speciation-and-equilibrium-workflows">Advanced Speciation and Equilibrium Workflows<a class="headerlink" href="#advanced-speciation-and-equilibrium-workflows" title="Permanent link">&para;</a></h2>
+<h3 id="purpose_10">Purpose<a class="headerlink" href="#purpose_10" title="Permanent link">&para;</a></h3>
+<p>Perform chemistry-driven analyses including cycle-to-speciation projections, planning guidance, and equilibrium summaries.</p>
+<h3 id="preconditions_10">Preconditions<a class="headerlink" href="#preconditions_10" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Cycle analysis has completed or manual cycle payload is defined.</li>
+<li>Advanced Solubility tab is available and initialized.</li>
+</ul>
+<h3 id="inputs_10">Inputs<a class="headerlink" href="#inputs_10" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Advanced Solubility controls:</li>
+<li>send cycle to solubility</li>
+<li>cycle timeline options</li>
+<li>analysis dashboard selectors</li>
+<li>model mode and diagnostics controls</li>
+<li>export actions (PNG/CSV/JSON/timeline artifacts)</li>
+</ul>
+<h3 id="step-by-step-actions_10">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_10" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Open <strong>Advanced Solubility</strong> tab.</li>
+<li>Send cycle payload from Cycle Analysis.</li>
+<li>Choose analysis mode/model settings for speciation/equilibrium workflow.</li>
+<li>Run computation and inspect:<br>
+   - summary panel<br>
+   - selected-cycle notes<br>
+   - dashboard metrics<br>
+   - cycle timeline visualization/table</li>
+<li>Use cycle selector tools to inspect cycle-specific behavior.</li>
+<li>Export outputs:<br>
+   - summary PNG<br>
+   - CSV species table<br>
+   - JSON summary<br>
+   - timeline CSV/plot/table</li>
+<li>Use <strong>Send Dashboard Stats to Ledger</strong> when values should be captured in ledger entries.</li>
+</ol>
+<h3 id="expected-outputs_10">Expected outputs<a class="headerlink" href="#expected-outputs_10" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Speciation/equilibrium summaries tied to cycle-level data.</li>
+<li>Timeline artifacts and dashboard metrics suitable for compare/report/ledger.</li>
+</ul>
+<h3 id="common-errors-and-recovery_10">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_10" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Error: solver/model unavailable.</li>
+<li>Recovery: verify optional dependencies and fallback behavior; re-run in supported mode.</li>
+<li>Error: timeline export unavailable.</li>
+<li>Recovery: ensure timeline rows are populated and required optional table dependency is installed.</li>
+<li>Error: selected cycle mismatch.</li>
+<li>Recovery: re-sync cycle selection and refresh dashboard/timeline views.</li>
+</ul>
+<h3 id="related-exportsartifacts_10">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_10" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Solubility summary PNG</li>
+<li>Solubility CSV/JSON</li>
+<li>Timeline CSV/plot/table exports</li>
+</ul>
+<p><img alt="Advanced speciation and equilibrium workflow" src="assets/screenshots/08-advanced-speciation-equilibrium.png"><br>
+<em>Figure 8. Advanced Solubility workflow with cycle timeline, exports, and ledger handoff.</em></p>
+<hr>
+<p><a id="compare-profiles-workflow"></a></p>
+<h2 id="compare-profiles-workflow">Compare Profiles Workflow<a class="headerlink" href="#compare-profiles-workflow" title="Permanent link">&para;</a></h2>
+<h3 id="purpose_11">Purpose<a class="headerlink" href="#purpose_11" title="Permanent link">&para;</a></h3>
+<p>Compare two profile runs side-by-side and quantify differential cycle/yield behavior.</p>
+<h3 id="preconditions_11">Preconditions<a class="headerlink" href="#preconditions_11" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Two valid profiles exist with usable cycle/analysis context.</li>
+</ul>
+<h3 id="inputs_11">Inputs<a class="headerlink" href="#inputs_11" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Compare tab profile selection controls.</li>
+<li>Side-specific plot settings and optional plot elements.</li>
+<li>Compare cycle table export controls.</li>
+<li><code>Open In Cycle Analysis</code> action for side-specific marker review.</li>
+</ul>
+<h3 id="step-by-step-actions_11">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_11" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Open <strong>Compare</strong> tab.</li>
+<li>Assign profile A and profile B.</li>
+<li>Load each profile and validate status chips/diagnostics.</li>
+<li>Configure side-specific titles and rendering overrides if needed.</li>
+<li>Render both sides and inspect cycle/yield deltas.</li>
+<li>Use <code>Open In Cycle Analysis</code> to inspect side marker fidelity.</li>
+<li>Export compare cycle table CSV when needed.</li>
+<li>Optionally export compare interactive HTML if used in your reporting flow.</li>
+</ol>
+<h3 id="expected-outputs_11">Expected outputs<a class="headerlink" href="#expected-outputs_11" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Side-by-side visual and table-based comparison evidence.</li>
+</ul>
+<h3 id="common-errors-and-recovery_11">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_11" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Error: one side blank or stale.</li>
+<li>Recovery: re-load profile bundle and re-render selected side.</li>
+<li>Error: mismatched axis ranges reduce comparability.</li>
+<li>Recovery: enable/refresh locked x-axis behavior and verify common range policy.</li>
+<li>Error: compare table empty.</li>
+<li>Recovery: ensure both profiles contain cycle outputs and cycle analysis completed.</li>
+</ul>
+<h3 id="related-exportsartifacts_11">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_11" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Compare cycle table CSV</li>
+<li>Compare interactive HTML/report artifacts (if enabled in workflow)</li>
+</ul>
+<p><img alt="Compare profiles workflow" src="assets/screenshots/09-compare-profiles-workflow.png"><br>
+<em>Figure 9. Compare tab profile assignment, render, and export workflow.</em></p>
+<hr>
+<p><a id="ledger-workflow"></a></p>
+<h2 id="ledger-workflow">Ledger Workflow<a class="headerlink" href="#ledger-workflow" title="Permanent link">&para;</a></h2>
+<h3 id="purpose_12">Purpose<a class="headerlink" href="#purpose_12" title="Permanent link">&para;</a></h3>
+<p>Capture cross-run metrics, support manual and prefilled entries, and export consolidated records.</p>
+<h3 id="preconditions_12">Preconditions<a class="headerlink" href="#preconditions_12" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Optional profile/speciation outputs ready for prefill.</li>
+</ul>
+<h3 id="inputs_12">Inputs<a class="headerlink" href="#inputs_12" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Ledger tab controls:</li>
+<li>add/edit/remove rows</li>
+<li>profile prefill actions</li>
+<li>sort/filter options</li>
+<li>custom columns/formula fields</li>
+<li>CSV export</li>
+</ul>
+<h3 id="step-by-step-actions_12">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_12" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Open <strong>Ledger</strong> tab.</li>
+<li>Add a new line manually or use profile/speciation prefill flow.</li>
+<li>Confirm identifiers (<code>Project #</code>, <code>Batch #</code>, <code>Item #</code>) where required.</li>
+<li>Review cycles, uptake, yield fields, and notes.</li>
+<li>Apply sorting/filtering to focus the current review set.</li>
+<li>Validate formula/custom-column outputs if configured.</li>
+<li>Export visible ledger rows to CSV.</li>
+</ol>
+<h3 id="expected-outputs_12">Expected outputs<a class="headerlink" href="#expected-outputs_12" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Auditable run-level ledger entries suitable for operational tracking.</li>
+</ul>
+<h3 id="common-errors-and-recovery_12">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_12" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Error: prefill values missing.</li>
+<li>Recovery: ensure source profile contains cycle/speciation payloads and rerun prefill.</li>
+<li>Error: formula value invalid.</li>
+<li>Recovery: correct formula expression and permitted field references.</li>
+<li>Error: export file empty.</li>
+<li>Recovery: clear filters or ensure rows are visible before export.</li>
+</ul>
+<h3 id="related-exportsartifacts_12">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_12" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Ledger CSV export</li>
+<li>Profile metadata + cycle/speciation metrics snapshots</li>
+</ul>
+<p><img alt="Ledger workflow" src="assets/screenshots/10-ledger-workflow.png"><br>
+<em>Figure 10. Ledger entry management, sorting/filtering, and CSV export.</em></p>
+<hr>
+<p><a id="final-report-workflow"></a></p>
+<h2 id="final-report-workflow">Final Report Workflow<a class="headerlink" href="#final-report-workflow" title="Permanent link">&para;</a></h2>
+<h3 id="purpose_13">Purpose<a class="headerlink" href="#purpose_13" title="Permanent link">&para;</a></h3>
+<p>Assemble and export final, shareable reporting packages using selected sections and layout rules.</p>
+<h3 id="preconditions_13">Preconditions<a class="headerlink" href="#preconditions_13" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Required columns applied.</li>
+<li>Plot/cycle/speciation inputs available for selected report sections.</li>
+</ul>
+<h3 id="inputs_13">Inputs<a class="headerlink" href="#inputs_13" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Final Report tab controls:</li>
+<li>title and narrative fields</li>
+<li>section selection and ordering</li>
+<li>orientation/layout mode</li>
+<li>section captions/headers</li>
+<li>template save/load actions</li>
+<li>generation actions (<code>PDF</code>, <code>PNG</code>, <code>HTML</code>, combined)</li>
+</ul>
+<h3 id="step-by-step-actions_13">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_13" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Open <strong>Final Report</strong> tab.</li>
+<li>Enter report title and required narrative metadata.</li>
+<li>Select report sections and arrange section order.</li>
+<li>Configure orientation and fit/layout mode.</li>
+<li>Enable/disable section headers/captions and preview page layout.</li>
+<li>Save or load report templates as needed.</li>
+<li>Click <strong>Generate Final Report...</strong> and choose output type:<br>
+   - PDF<br>
+   - PNG summary<br>
+   - Interactive HTML<br>
+   - combined multi-format generation</li>
+<li>Verify generated outputs and pagination/caption correctness.</li>
+</ol>
+<h3 id="expected-outputs_13">Expected outputs<a class="headerlink" href="#expected-outputs_13" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Report artifacts matching configured structure and styling.</li>
+</ul>
+<h3 id="common-errors-and-recovery_13">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_13" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Error: report generation blocked by stale columns.</li>
+<li>Recovery: run <strong>Apply Column Selection</strong> again and retry.</li>
+<li>Error: combined plot unavailable for report.</li>
+<li>Recovery: regenerate combined plot and ensure required source traces exist.</li>
+<li>Error: HTML preview opens but missing pages.</li>
+<li>Recovery: ensure selected sections produce renderable figures/tables.</li>
+</ul>
+<h3 id="related-exportsartifacts_13">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_13" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Final report PDF pages</li>
+<li>Final report PNG summary</li>
+<li>Final report interactive HTML</li>
+</ul>
+<p><img alt="Final report workflow" src="assets/screenshots/11-final-report-generation.png"><br>
+<em>Figure 11. Final Report tab configuration and multi-format generation workflow.</em></p>
+<hr>
+<p><a id="profiles-and-settings-persistence"></a></p>
+<h2 id="profiles-and-settings-persistence">Profiles and Settings Persistence<a class="headerlink" href="#profiles-and-settings-persistence" title="Permanent link">&para;</a></h2>
+<h3 id="purpose_14">Purpose<a class="headerlink" href="#purpose_14" title="Permanent link">&para;</a></h3>
+<p>Store and restore repeatable analysis state across sessions and datasets.</p>
+<h3 id="preconditions_14">Preconditions<a class="headerlink" href="#preconditions_14" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A valid configuration has been created in one session.</li>
+</ul>
+<h3 id="inputs_14">Inputs<a class="headerlink" href="#inputs_14" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Profiles menu actions.</li>
+<li>Settings persistence behavior (<code>settings.json</code> and <code>profiles/</code> payloads).</li>
+</ul>
+<h3 id="step-by-step-actions_14">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_14" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Configure tabs and workflows for the current run.</li>
+<li>Save profile from Profiles menu.</li>
+<li>Load profile in a future session and verify expected state restoration.</li>
+<li>Confirm restored state across:<br>
+   - selected traces<br>
+   - plot settings<br>
+   - cycle markers (if captured)<br>
+   - compare and final report preferences</li>
+<li>Export selected profile when needed for transfer/sharing.</li>
+</ol>
+<h3 id="expected-outputs_14">Expected outputs<a class="headerlink" href="#expected-outputs_14" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Consistent reproducibility for recurring workflows.</li>
+</ul>
+<h3 id="common-errors-and-recovery_14">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_14" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Error: profile restore incomplete.</li>
+<li>Recovery: confirm profile schema fields and re-save from current app version.</li>
+<li>Error: settings corruption symptoms.</li>
+<li>Recovery: inspect/reset <code>settings.json</code>, then reload known-good profile.</li>
+</ul>
+<h3 id="related-exportsartifacts_14">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_14" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>profiles/*.json</code></li>
+<li><code>settings.json</code></li>
+</ul>
+<hr>
+<p><a id="troubleshooting-and-recovery-matrix"></a></p>
+<h2 id="troubleshooting-and-recovery-matrix">Troubleshooting and Recovery Matrix<a class="headerlink" href="#troubleshooting-and-recovery-matrix" title="Permanent link">&para;</a></h2>
+<h3 id="purpose_15">Purpose<a class="headerlink" href="#purpose_15" title="Permanent link">&para;</a></h3>
+<p>Provide actionable recovery paths for common user-impacting issues.</p>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely cause</th>
+<th>Recovery</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sheet selector empty</td>
+<td>Workbook path invalid or locked file</td>
+<td>Re-open workbook, verify path and file access</td>
+</tr>
+<tr>
+<td>Apply Column Selection fails</td>
+<td>Missing required mapping</td>
+<td>Re-map required columns and apply again</td>
+</tr>
+<tr>
+<td>Combined plot missing axis</td>
+<td>Axis role not enabled/assigned</td>
+<td>Enable right/third axis and confirm dataset assignment</td>
+</tr>
+<tr>
+<td>Cycle count unrealistic</td>
+<td>Detection tuning mismatch</td>
+<td>Adjust smoothing/snap/refine thresholds and rerun</td>
+</tr>
+<tr>
+<td>Speciation export unavailable</td>
+<td>No valid analysis payload</td>
+<td>Re-send cycle payload and rerun analysis</td>
+</tr>
+<tr>
+<td>Compare rows empty</td>
+<td>Missing cycle data in one profile</td>
+<td>Recompute cycles and reload profile pair</td>
+</tr>
+<tr>
+<td>Ledger prefill incomplete</td>
+<td>Source profile missing metadata</td>
+<td>Update source profile or fill fields manually</td>
+</tr>
+<tr>
+<td>Final report blocked</td>
+<td>Columns changed since last apply</td>
+<td>Re-run Apply Column Selection, then regenerate</td>
+</tr>
+</tbody>
+</table>
+<h3 id="related-exportsartifacts_15">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_15" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Debug logs: <code>gl260_debug.log*</code></li>
+<li>Validation helper: <code>scripts/validate_rust_backend.py</code></li>
+</ul>
+<hr>
+<p><a id="advanced--power-user-appendix"></a></p>
+<h2 id="advanced-power-user-appendix">Advanced / Power User Appendix<a class="headerlink" href="#advanced-power-user-appendix" title="Permanent link">&para;</a></h2>
+<h3 id="purpose_16">Purpose<a class="headerlink" href="#purpose_16" title="Permanent link">&para;</a></h3>
+<p>Document optional runtime controls and diagnostics without interrupting core user flow.</p>
+<h3 id="included-advanced-topics">Included advanced topics<a class="headerlink" href="#included-advanced-topics" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Runtime/dependency diagnostics and capability checks.</li>
+<li>Developer Tools logging/performance controls.</li>
+<li>Optional Rust acceleration validation.</li>
+<li>Timeline table export validation utilities.</li>
+<li>Interpreter/environment consistency checks.</li>
+</ul>
+<h3 id="recommended-advanced-workflow">Recommended advanced workflow<a class="headerlink" href="#recommended-advanced-workflow" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Use installer script for deterministic environment setup.</li>
+<li>Validate runtime dependencies before benchmark-heavy operations.</li>
+<li>Use diagnostics when output parity or performance behavior changes.</li>
+<li>Keep fallback behavior available and verified.</li>
+</ol>
+<p><img alt="Advanced tools appendix" src="assets/screenshots/12-advanced-tools-appendix.png"><br>
+<em>Figure 12. Advanced tools and diagnostics appendix reference visual.</em></p>
+<hr>
+<p><a id="screenshot-contract-and-asset-index"></a></p>
+<h2 id="screenshot-contract-and-asset-index">Screenshot Contract and Asset Index<a class="headerlink" href="#screenshot-contract-and-asset-index" title="Permanent link">&para;</a></h2>
+<h3 id="purpose_17">Purpose<a class="headerlink" href="#purpose_17" title="Permanent link">&para;</a></h3>
+<p>Define required structure and quality criteria for screenshot-driven documentation.</p>
+<h3 id="contract">Contract<a class="headerlink" href="#contract" title="Permanent link">&para;</a></h3>
+<ul>
+<li>All manual images are stored in <code>docs/assets/screenshots/</code>.</li>
+<li>Filenames follow a numeric prefix for deterministic ordering.</li>
+<li>Every image reference includes descriptive alt text and a figure caption.</li>
+<li>UI-heavy sections should use numbered callouts in image content where practical.</li>
+<li>If UI changes invalidate screenshots, update both image and caption in same patch.</li>
+</ul>
+<h3 id="asset-index">Asset index<a class="headerlink" href="#asset-index" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Figure</th>
+<th>File</th>
+<th>Covered workflow</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Figure 1</td>
+<td><code>assets/screenshots/01-application-navigation-map.png</code></td>
+<td>Navigation map</td>
+</tr>
+<tr>
+<td>Figure 2</td>
+<td><code>assets/screenshots/02-data-import-sheet-selection.png</code></td>
+<td>Data import + sheet selection</td>
+</tr>
+<tr>
+<td>Figure 3</td>
+<td><code>assets/screenshots/03-column-mapping-apply.png</code></td>
+<td>Column mapping</td>
+</tr>
+<tr>
+<td>Figure 4</td>
+<td><code>assets/screenshots/04-plot-settings-overview.png</code></td>
+<td>Plot settings</td>
+</tr>
+<tr>
+<td>Figure 5</td>
+<td><code>assets/screenshots/05-combined-triple-axis-workflow.png</code></td>
+<td>Combined plot</td>
+</tr>
+<tr>
+<td>Figure 6</td>
+<td><code>assets/screenshots/06-plot-elements-editor.png</code></td>
+<td>Plot elements</td>
+</tr>
+<tr>
+<td>Figure 7</td>
+<td><code>assets/screenshots/07-cycle-analysis-auto-manual.png</code></td>
+<td>Cycle analysis</td>
+</tr>
+<tr>
+<td>Figure 8</td>
+<td><code>assets/screenshots/08-advanced-speciation-equilibrium.png</code></td>
+<td>Advanced speciation</td>
+</tr>
+<tr>
+<td>Figure 9</td>
+<td><code>assets/screenshots/09-compare-profiles-workflow.png</code></td>
+<td>Compare</td>
+</tr>
+<tr>
+<td>Figure 10</td>
+<td><code>assets/screenshots/10-ledger-workflow.png</code></td>
+<td>Ledger</td>
+</tr>
+<tr>
+<td>Figure 11</td>
+<td><code>assets/screenshots/11-final-report-generation.png</code></td>
+<td>Final report</td>
+</tr>
+<tr>
+<td>Figure 12</td>
+<td><code>assets/screenshots/12-advanced-tools-appendix.png</code></td>
+<td>Advanced appendix</td>
+</tr>
+</tbody>
+</table>
+<h3 id="related-maintenance-rules">Related maintenance rules<a class="headerlink" href="#related-maintenance-rules" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Release updates must follow <code>RELEASE_CHECKLIST.md</code>.</li>
+<li>Do not merge user-facing workflow changes without manual updates.</li>
+</ul>
+<hr>
+<h2 id="versioning-note">Versioning Note<a class="headerlink" href="#versioning-note" title="Permanent link">&para;</a></h2>
+<p>This manual tracks application behavior for the currently active repository state and must be updated incrementally with each user-facing feature change.</p>
+    </main>
+  </div>
+  <div id="image-lightbox" role="dialog" aria-modal="true" aria-label="Screenshot viewer">
+    <button id="lightbox-close" type="button" aria-label="Close image preview">x</button>
+    <img id="lightbox-image" alt="">
+  </div>
+  <script>
+    (function () {
+      const filterInput = document.getElementById("toc-filter");
+      const tocNav = document.getElementById("toc-nav");
+      const tocLinks = Array.from(tocNav.querySelectorAll("a[href^='#']"));
+      const headingMap = new Map();
+      const headingNodes = Array.from(document.querySelectorAll("#manual-content h2, #manual-content h3, #manual-content h4"));
+      for (const heading of headingNodes) {
+        if (heading.id) {
+          headingMap.set("#" + heading.id, heading);
+        }
+      }
+
+      function applyFilter() {
+        const needle = String((filterInput?.value || "")).trim().toLowerCase();
+        for (const link of tocLinks) {
+          const linkText = (link.textContent || "").toLowerCase();
+          const heading = headingMap.get(link.getAttribute("href"));
+          const headingText = heading ? (heading.textContent || "").toLowerCase() : "";
+          const show = !needle || linkText.includes(needle) || headingText.includes(needle);
+          const row = link.closest("li");
+          if (row) {
+            row.style.display = show ? "" : "none";
+          }
+        }
+      }
+
+      if (filterInput) {
+        filterInput.addEventListener("input", applyFilter);
+      }
+      applyFilter();
+
+      const lightbox = document.getElementById("image-lightbox");
+      const lightboxImage = document.getElementById("lightbox-image");
+      const closeButton = document.getElementById("lightbox-close");
+      const contentImages = Array.from(document.querySelectorAll("#manual-content img"));
+
+      function closeLightbox() {
+        lightbox.classList.remove("open");
+        lightboxImage.removeAttribute("src");
+        lightboxImage.removeAttribute("alt");
+      }
+
+      for (const img of contentImages) {
+        img.addEventListener("click", function () {
+          const src = img.getAttribute("src");
+          if (!src) {
+            return;
+          }
+          lightboxImage.setAttribute("src", src);
+          lightboxImage.setAttribute("alt", img.getAttribute("alt") || "Manual image preview");
+          lightbox.classList.add("open");
+        });
+      }
+
+      if (closeButton) {
+        closeButton.addEventListener("click", closeLightbox);
+      }
+      lightbox.addEventListener("click", function (event) {
+        if (event.target === lightbox) {
+          closeLightbox();
+        }
+      });
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape" && lightbox.classList.contains("open")) {
+          closeLightbox();
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

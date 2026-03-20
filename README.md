@@ -7,6 +7,17 @@ The canonical application version is defined in `GL-260 Data Analysis and Plotte
 - `# Version: v4.8.0`
 - `APP_VERSION = "v4.8.0"`
 
+## Canonical User Manual Location
+The canonical, continuously updated user manual now lives in `docs/`:
+- Source of truth: `docs/user-manual.md`
+- Published wiki-style manual: `docs/user-manual.html`
+
+Build/validate commands:
+```powershell
+python scripts/build_user_manual.py
+python scripts/build_user_manual.py --check
+```
+
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
   - [Program Overview and Philosophy](#program-overview-and-philosophy)
@@ -53,7 +64,8 @@ Part I for `v4.8.0` is installer-first by design:
 ### Repository Layout
 Primary paths in this repository:
 - `GL-260 Data Analysis and Plotter.py`: Main application entry script.
-- `README.md`: User manual (Part I) and release ledger (Part II).
+- `README.md`: Project overview and release ledger (Part II).
+- `docs/user-manual.md` + `docs/user-manual.html`: Canonical detailed user manual source and generated wiki artifact.
 - `requirements.txt`: Runtime dependency set installed into local environments.
 - `settings.json`: Runtime preferences persisted by the application.
 - `scripts/install_gl260.py`: Cross-platform bootstrap installer (new primary setup workflow in `v4.8.0`).

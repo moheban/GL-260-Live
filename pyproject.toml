@@ -13,6 +13,7 @@ dependencies = [
   "numpy",
   "openpyxl",
   "pandas",
+  "markdown",
   "scipy",
   "pyflakes",
   "pytest",

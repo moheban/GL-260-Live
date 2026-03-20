@@ -13,6 +13,11 @@ Desktop.ini
 *.pdf
 *.csv
 *.svg
+!docs/assets/screenshots/**/*.png
+!docs/assets/screenshots/**/*.jpg
+!docs/assets/screenshots/**/*.jpeg
+!docs/assets/screenshots/**/*.webp
+!docs/assets/screenshots/**/*.svg
 AGENTS.md
 Prompt.md
 Prompt Template.md
