@@ -1,11 +1,11 @@
-# GL-260 Data Analysis and Plotter (v4.7.9)
+# GL-260 Data Analysis and Plotter (v4.8.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.7.9`
-- `APP_VERSION = "v4.7.9"`
+- `# Version: v4.8.0`
+- `APP_VERSION = "v4.8.0"`
 
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
@@ -90,6 +90,30 @@ Install dependencies from repo root:
 ```powershell
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+```
+
+#### One-command VS Code bootstrap installer (Windows/macOS/Linux)
+Use the repository-local installer to provision environments, dependencies, and Rust build tooling with user-scope/no-admin defaults:
+
+```powershell
+python scripts/install_gl260.py
+```
+
+Optional flags:
+- `--python-std <path>`: explicit interpreter used for `.venv`.
+- `--python-ft <path>`: explicit free-threaded interpreter used for `.venv-314t`.
+- `--dry-run`: print setup command plan without mutating the repo.
+
+Installer behavior:
+- Attempts `.venv` and `.venv-314t` setup, then prefers `.venv-314t` when available.
+- Installs `requirements.txt` into each created environment.
+- Attempts user-scope Rust setup/build (`rustup` + `maturin develop`) in the primary runtime.
+- Falls back safely to Python runtime if Rust build/import is unavailable.
+- Always prints a final `RUN COMMAND: ...` line for VS Code terminal launch.
+
+Example output line:
+```text
+RUN COMMAND: .\.venv-314t\Scripts\python.exe "GL-260 Data Analysis and Plotter.py"
 ```
 
 #### Windows native venv setup (standard + free-threaded)
@@ -238,7 +262,15 @@ Run:
 ```
 
 ### Running the Application
-From repository root:
+Recommended flow:
+
+```powershell
+python scripts/install_gl260.py
+```
+
+Then copy/paste the installer's final `RUN COMMAND: ...` line.
+
+Manual run commands from repository root:
 
 Windows:
 ```powershell
@@ -394,9 +426,10 @@ Free-threaded env:
 
 #### VS Code workflow
 1. Open repository folder in VS Code.
-2. Select interpreter from `.venv` or `.venv-314t`.
-3. Run `GL-260 Data Analysis and Plotter.py` from the selected interpreter.
-4. Use terminal commands with explicit interpreter path when you need exact environment control.
+2. Run `python scripts/install_gl260.py` in the integrated terminal.
+3. Copy/paste the final `RUN COMMAND: ...` line printed by the installer.
+4. Select the same environment interpreter (`.venv` or `.venv-314t`) for editor/debug features.
+5. Use terminal commands with explicit interpreter path when you need exact environment control.
 
 #### Docker (experimental / non-primary)
 - This app is a desktop Tkinter GUI application; Docker is not the recommended daily-run path.
@@ -413,6 +446,16 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.8.0 Cross-Platform VS Code Bootstrap Installer
+- Added `scripts/install_gl260.py` as a single-command installer for Windows, macOS, and Linux repository bootstrapping.
+- Added deterministic interpreter discovery with overrides (`--python-std`, `--python-ft`) and a no-mutation planning mode (`--dry-run`).
+- Added dual-environment setup behavior that always attempts `.venv` and attempts `.venv-314t` when free-threaded Python is available.
+- Added user-scope/no-admin Rust setup flow in the installer (`rustup` detection/install, `maturin` install, extension build, and runtime import verification).
+- Added resilient fallback behavior so app readiness is preserved even when Rust setup fails, with explicit repair commands printed.
+- Added final launch-command contract in installer output (`RUN COMMAND: ...`) so VS Code users get an exact terminal command to run.
+- Updated README installation/running guidance to prioritize the installer workflow.
+- Synced release metadata references to `v4.8.0`.
 
 ### v4.7.9 Cycle Timeline Dual-Panel Export + Startup Splash Handoff Repair
 - Reworked cycle timeline Plot Preview/Export rendering to use the same two-panel structure as the in-tab timeline view across Planning, Analysis, and Reprocessing workflows:
