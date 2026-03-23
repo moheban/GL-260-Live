@@ -1,18 +1,18 @@
-# GL-260 Data Analysis and Plotter (v4.8.1)
+# GL-260 Data Analysis and Plotter (v4.8.2)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest Analysis workflow highlights in `v4.8.1`:
-- measured-pH anchor inputs: `Measured pH cycle` + `Measured pH anchor`
-- explicit `Recompute Calibration` action for anchor-driven reruns
-- side-by-side original vs corrected cycle/cumulative CO2 uptake outputs
-- measured-pH marker + corrected pH trajectory in cycle timeline views
-- measured-pH anchor dashboard tile with corrected speciation and completion gauge
+Latest Analysis workflow highlights in `v4.8.2`:
+- measured-pH anchor correction now back-propagates into Analysis reaction progress, regime, conversion/yield estimates, and required-CO2 guidance
+- Analysis runtime builds a fallback reference trace from cycle uptake + Analysis chemistry inputs when Planning-style trace inputs are unavailable
+- Completion Meter now renders side-by-side pre-anchor and corrected completion gauges
+- Reaction Progress and dashboard/ledger handoff now use corrected-primary values with raw values preserved as secondary context
+- Measured pH Anchor tile remains text/badge focused (no gauge canvas), including corrected speciation and required-CO2 context
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.8.1`
-- `APP_VERSION = "v4.8.1"`
+- `# Version: v4.8.2`
+- `APP_VERSION = "v4.8.2"`
 
 ## Canonical User Manual Location
 The canonical, continuously updated user manual now lives in `docs/`:
@@ -57,7 +57,7 @@ python scripts/build_user_manual.py --check
 ### Program Overview and Philosophy
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib workflow for deterministic GL-260 analysis: data import, cycle detection, moles calculations, advanced solubility workflows, compare/ledger review, and final report generation.
 
-Part I for `v4.8.1` is installer-first by design:
+Part I for `v4.8.2` is installer-first by design:
 - Use `scripts/install_gl260.py` as the default bootstrap path on Windows, macOS, and Linux.
 - Keep runtime behavior deterministic by running through explicit virtual-environment interpreter paths.
 - Treat Rust acceleration as optional; Python paths remain authoritative fallback.
@@ -75,7 +75,7 @@ Primary paths in this repository:
 - `docs/user-manual.md` + `docs/user-manual.html`: Canonical detailed user manual source and generated wiki artifact.
 - `requirements.txt`: Runtime dependency set installed into local environments.
 - `settings.json`: Runtime preferences persisted by the application.
-- `scripts/install_gl260.py`: Cross-platform bootstrap installer (new primary setup workflow in `v4.8.1`).
+- `scripts/install_gl260.py`: Cross-platform bootstrap installer (new primary setup workflow in `v4.8.2`).
 - `scripts/validate_rust_backend.py`: Rust backend rebuild/import validator for pinned Windows free-threaded flow.
 - `rust_ext/`: Rust extension crate built via `maturin` when Rust backend is enabled.
 - `solubility_models/`: Chemistry/speciation package used by advanced solubility workflows.
@@ -263,7 +263,7 @@ $PY="C:\Users\<you>\AppData\Local\Programs\Python\Python314\python.exe"
 ```
 
 #### Rust integration (optional) - Windows and macOS
-Rust backend is optional. `v4.8.1` installer attempts Rust setup automatically in the selected primary environment.
+Rust backend is optional. `v4.8.2` installer attempts Rust setup automatically in the selected primary environment.
 
 Manual Rust workflow (only if needed):
 1. Install `rustup`, `rustc`, and `cargo`.
@@ -316,7 +316,7 @@ Run:
 ```
 
 ### Running the Application
-Primary launch flow for `v4.8.1`:
+Primary launch flow for `v4.8.2`:
 1. Run installer: `python scripts/install_gl260.py`
 2. Copy/paste printed `RUN COMMAND: ...`
 3. Keep using that same interpreter path for terminal runs and VS Code interpreter selection.
@@ -512,6 +512,21 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.8.2 Analysis Anchor Propagation + Corrected Completion UX
+- Back-propagated measured-pH anchored correction through Analysis runtime progress/regime text so corrected uptake and corrected pH are now the primary reaction-progress basis.
+- Added an Analysis fallback reference-trace path from cycle uptake history + Analysis chemistry inputs so progress/regime no longer depend on Planning-only delta-P/manual CO2-per-cycle controls.
+- Extended Analysis dashboard summary payload with corrected contract fields:
+  - `corrected_total_uptake_g`, `corrected_total_uptake_mol`
+  - `corrected_estimated_product_g`, `corrected_actual_yield_pct`
+  - `corrected_planning_completion_pct`, `corrected_equivalence_completion_pct`
+  - `co2_required_for_target_ph_g`, `co2_required_for_target_ph_mol`
+  - `latest_corrected_ph`
+- Updated Completion Meter tile to render adjacent pre-anchor and corrected completion gauges.
+- Removed measured-pH anchor gauge canvas usage and kept the Measured pH Anchor tile text/badge focused with corrected speciation + required-CO2 context.
+- Updated Reaction Progress + Uptake/Yield displays and manual **Send Dashboard Stats to Ledger** handoff to corrected-primary values while retaining raw baselines as secondary context.
+- Added regressions for Analysis fallback reference/progress behavior, anchor-calibration required-CO2/completion outputs, corrected-regime precedence, corrected/raw dashboard summary contract fields, dual-gauge rendering calls, and corrected-primary ledger handoff.
+- Synced release metadata references to `v4.8.2`.
 
 ### v4.8.1 Timeline Legend + Secondary Axis Layout Repair
 - Fixed Advanced Speciation Analysis workflow cycle timeline rendering so the consolidated main legend stays visible and recovers from stale cross-figure legend instances during in-tab refreshes.

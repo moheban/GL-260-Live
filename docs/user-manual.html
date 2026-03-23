@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="62e61eea002ad25a1451f795c22c0d6935cc05095442c2d5a72da19aaaac722e">
+  <meta name="manual-source-sha256" content="7e4a1d0ec6787a48124f2aad34b29ab971640e42295f72c2450f8975e24d03a9">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -243,7 +243,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>62e61eea002ad25a</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>7e4a1d0ec6787a48</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -972,14 +972,16 @@
    - measured pH marker appears on cycle timeline plot<br>
    - corrected pH trajectory appears alongside original/planning trajectories<br>
    - corrected per-cycle and cumulative CO2 uptake values appear next to original values<br>
-   - dashboard tile <strong>Measured pH Anchor</strong> shows latest corrected speciation and measured-pH completion gauge</li>
+   - <strong>Reaction Progress</strong> uses corrected-primary completion/regime text and shows <code>CO2 required for target pH</code><br>
+   - dashboard tile <strong>Completion Meter</strong> shows adjacent pre-anchor and corrected completion gauges<br>
+   - dashboard tile <strong>Measured pH Anchor</strong> stays text/badge focused and shows latest corrected speciation + required-CO2 context (no gauge canvas)</li>
 <li>Use cycle selector tools to inspect cycle-specific behavior.</li>
 <li>Export outputs:<br>
    - summary PNG<br>
    - CSV species table<br>
    - JSON summary<br>
    - timeline CSV/plot/table</li>
-<li>Use <strong>Send Dashboard Stats to Ledger</strong> when values should be captured in ledger entries.</li>
+<li>Use <strong>Send Dashboard Stats to Ledger</strong> when values should be captured in ledger entries (corrected-primary uptake/yield are prefilled; raw baselines remain in notes).</li>
 </ol>
 <h3 id="expected-outputs_10">Expected outputs<a class="headerlink" href="#expected-outputs_10" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1001,6 +1003,8 @@
 <li>Recovery: re-sync cycle selection and refresh dashboard/timeline views.</li>
 <li>Error: measured pH anchor not applied.</li>
 <li>Recovery: confirm Analysis workflow is active, <code>Measured pH cycle</code> is within detected cycle count, and pH is in <code>[0, 14]</code>, then re-run <strong>Recompute Calibration</strong>.</li>
+<li>Error: Analysis progress requests Planning-only delta-P/manual CO2-per-cycle inputs.</li>
+<li>Recovery: update to <code>v4.8.2+</code>; Analysis mode now builds fallback reference traces from cycle uptake + Analysis chemistry inputs and no longer requires Planning-only controls for progress text.</li>
 </ul>
 <h3 id="related-exportsartifacts_10">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_10" title="Permanent link">&para;</a></h3>
 <ul>

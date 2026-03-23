@@ -521,14 +521,16 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
    - measured pH marker appears on cycle timeline plot
    - corrected pH trajectory appears alongside original/planning trajectories
    - corrected per-cycle and cumulative CO2 uptake values appear next to original values
-   - dashboard tile **Measured pH Anchor** shows latest corrected speciation and measured-pH completion gauge
+   - **Reaction Progress** uses corrected-primary completion/regime text and shows `CO2 required for target pH`
+   - dashboard tile **Completion Meter** shows adjacent pre-anchor and corrected completion gauges
+   - dashboard tile **Measured pH Anchor** stays text/badge focused and shows latest corrected speciation + required-CO2 context (no gauge canvas)
 7. Use cycle selector tools to inspect cycle-specific behavior.
 8. Export outputs:
    - summary PNG
    - CSV species table
    - JSON summary
    - timeline CSV/plot/table
-9. Use **Send Dashboard Stats to Ledger** when values should be captured in ledger entries.
+9. Use **Send Dashboard Stats to Ledger** when values should be captured in ledger entries (corrected-primary uptake/yield are prefilled; raw baselines remain in notes).
 
 ### Expected outputs
 - Speciation/equilibrium summaries tied to cycle-level data.
@@ -548,6 +550,8 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
   - Recovery: re-sync cycle selection and refresh dashboard/timeline views.
 - Error: measured pH anchor not applied.
   - Recovery: confirm Analysis workflow is active, `Measured pH cycle` is within detected cycle count, and pH is in `[0, 14]`, then re-run **Recompute Calibration**.
+- Error: Analysis progress requests Planning-only delta-P/manual CO2-per-cycle inputs.
+  - Recovery: update to `v4.8.2+`; Analysis mode now builds fallback reference traces from cycle uptake + Analysis chemistry inputs and no longer requires Planning-only controls for progress text.
 
 ### Related exports/artifacts
 - Solubility summary PNG
