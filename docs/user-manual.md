@@ -512,17 +512,28 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
    - selected-cycle notes
    - dashboard metrics
    - cycle timeline visualization/table
-5. Use cycle selector tools to inspect cycle-specific behavior.
-6. Export outputs:
+5. For Analysis workflow measured-pH anchoring:
+   - enter `Measured pH cycle` (the cycle after opening/blending/re-pressurizing)
+   - enter `Measured pH anchor`
+   - keep anchor enabled (single-anchor behavior: latest entry overwrites previous)
+   - run Analysis or click **Recompute Calibration**
+6. Verify anchored outputs:
+   - measured pH marker appears on cycle timeline plot
+   - corrected pH trajectory appears alongside original/planning trajectories
+   - corrected per-cycle and cumulative CO2 uptake values appear next to original values
+   - dashboard tile **Measured pH Anchor** shows latest corrected speciation and measured-pH completion gauge
+7. Use cycle selector tools to inspect cycle-specific behavior.
+8. Export outputs:
    - summary PNG
    - CSV species table
    - JSON summary
    - timeline CSV/plot/table
-7. Use **Send Dashboard Stats to Ledger** when values should be captured in ledger entries.
+9. Use **Send Dashboard Stats to Ledger** when values should be captured in ledger entries.
 
 ### Expected outputs
 - Speciation/equilibrium summaries tied to cycle-level data.
 - Timeline artifacts and dashboard metrics suitable for compare/report/ledger.
+- Measured-pH anchored correction payloads persisted per profile and auto-applied on reload when chemistry/model basis matches.
 
 ### Common errors and recovery
 - Error: solver/model unavailable.
@@ -535,6 +546,8 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
   - Recovery: use Cycle Timeline Plot Settings for detached-axis spacing; `v4.8.1+` applies normalized detached-axis offset/label padding consistently across in-tab and preview/export timeline renders.
 - Error: selected cycle mismatch.
   - Recovery: re-sync cycle selection and refresh dashboard/timeline views.
+- Error: measured pH anchor not applied.
+  - Recovery: confirm Analysis workflow is active, `Measured pH cycle` is within detected cycle count, and pH is in `[0, 14]`, then re-run **Recompute Calibration**.
 
 ### Related exports/artifacts
 - Solubility summary PNG

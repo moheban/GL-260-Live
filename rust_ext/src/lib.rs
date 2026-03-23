@@ -35,7 +35,7 @@ const RUST_BACKEND_INTERFACE_ID: &str = "gl260_rust_backend";
 const RUST_BACKEND_INTERFACE_VERSION: &str = "1";
 const RUST_BACKEND_MODULE_NAME: &str = env!("CARGO_PKG_NAME");
 const RUST_BACKEND_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
-const RUST_EXPORTED_KERNELS: [&str; 22] = [
+const RUST_EXPORTED_KERNELS: [&str; 23] = [
     "simulate_reaction_state_with_accounting",
     "analyze_bicarbonate_core",
     "carbonate_state_core",
@@ -52,6 +52,7 @@ const RUST_EXPORTED_KERNELS: [&str; 22] = [
     "array_signature_core",
     "analysis_interpolate_reference_series_core",
     "analysis_dashboard_core",
+    "measured_ph_uptake_calibration_core",
     "final_report_cycle_stats_rows_core",
     "final_report_cycle_timeline_rows_core",
     "cycle_timeline_normalize_core",
@@ -1251,6 +1252,36 @@ fn dict_optional_finite_by_keys(dict: &Bound<'_, PyDict>, keys: &[&str]) -> Opti
     None
 }
 
+/// Parse compact NaOH-CO2 Pitzer coefficients from a Python mapping payload.
+///
+/// Returns `None` when any required coefficient is missing or non-finite.
+fn parse_pitzer_params_map(pitzer_params: Option<&Bound<'_, PyDict>>) -> Option<PitzerParamsLite> {
+    let params_map = pitzer_params?;
+    let parse = |key: &str| -> Option<f64> {
+        let value = params_map.get_item(key).ok().flatten()?;
+        let parsed = value.extract::<f64>().ok()?;
+        if parsed.is_finite() {
+            Some(parsed)
+        } else {
+            None
+        }
+    };
+    Some(PitzerParamsLite {
+        b0_na_oh: parse("b0_na_oh")?,
+        b1_na_oh: parse("b1_na_oh")?,
+        c0_na_oh: parse("c0_na_oh")?,
+        b0_na_hco3: parse("b0_na_hco3")?,
+        b1_na_hco3: parse("b1_na_hco3")?,
+        c0_na_hco3: parse("c0_na_hco3")?,
+        b0_na_co3: parse("b0_na_co3")?,
+        b1_na_co3: parse("b1_na_co3")?,
+        c0_na_co3: parse("c0_na_co3")?,
+        theta_co3_oh: parse("theta_co3_oh")?,
+        psi_co3_na_oh: parse("psi_co3_na_oh")?,
+        psi_co3_hco3_na: parse("psi_co3_hco3_na")?,
+    })
+}
+
 fn compare_cycle_row_index(dict: &Bound<'_, PyDict>, fallback_index: usize) -> usize {
     for key in ["cycle_id", "cycle", "cycle_number", "cycle_index", "index"] {
         let Some(any_value) = dict.get_item(key).ok().flatten() else {
@@ -1731,6 +1762,468 @@ fn analysis_dashboard_core(
     let response = PyDict::new(py);
     response.set_item("comparison_series", comparison_series)?;
     response.set_item("summary", summary)?;
+    Ok(response.unbind())
+}
+
+#[pyfunction]
+#[pyo3(signature = (
+    model_key,
+    cycle_uptake_mol_series,
+    anchor_cycle_index,
+    measured_ph,
+    equivalence_cycle_index=None,
+    target_ph=None,
+    initial_naoh_mol=None,
+    solution_volume_l=None,
+    temperature_c=None,
+    planning_reference_total_mol=None,
+    equivalence_co2_mol=None,
+    pitzer_params=None,
+    regularization_strength=0.02,
+    smoothness_strength=0.01,
+    min_factor=0.5,
+    max_factor=1.5
+))]
+/// Calibrate piecewise uptake factors against one measured pH anchor.
+///
+/// The solver mirrors the Python fallback contract: bounded deterministic
+/// search + local refinement with regularization and split-factor smoothness.
+fn measured_ph_uptake_calibration_core(
+    py: Python<'_>,
+    model_key: &str,
+    cycle_uptake_mol_series: &Bound<'_, PyList>,
+    anchor_cycle_index: usize,
+    measured_ph: f64,
+    equivalence_cycle_index: Option<usize>,
+    target_ph: Option<f64>,
+    initial_naoh_mol: Option<f64>,
+    solution_volume_l: Option<f64>,
+    temperature_c: Option<f64>,
+    planning_reference_total_mol: Option<f64>,
+    equivalence_co2_mol: Option<f64>,
+    pitzer_params: Option<Bound<'_, PyDict>>,
+    regularization_strength: f64,
+    smoothness_strength: f64,
+    min_factor: f64,
+    max_factor: f64,
+) -> PyResult<Py<PyDict>> {
+    #[derive(Clone)]
+    struct SimulationPayload {
+        corrected_cycle: Vec<f64>,
+        corrected_cumulative: Vec<f64>,
+        corrected_ph: Vec<Option<f64>>,
+        corrected_fractions: Vec<[f64; 3]>,
+    }
+
+    let build_error =
+        |message: &str| -> PyResult<Py<PyDict>> {
+            let payload = PyDict::new(py);
+            payload.set_item("solver_status", "invalid_input")?;
+            payload.set_item("solver_message", message)?;
+            Ok(payload.unbind())
+        };
+
+    if !measured_ph.is_finite() {
+        return build_error("Measured pH anchor is required for calibration.");
+    }
+
+    let mut cycle_moles: Vec<f64> = Vec::new();
+    for item in cycle_uptake_mol_series.iter() {
+        let parsed = item.extract::<f64>().ok().unwrap_or(0.0);
+        if parsed.is_finite() && parsed >= 0.0 {
+            cycle_moles.push(parsed);
+        } else {
+            cycle_moles.push(0.0);
+        }
+    }
+    if cycle_moles.is_empty() {
+        return build_error("No cycle uptake values were provided for calibration.");
+    }
+
+    let anchor_idx = anchor_cycle_index.max(1).min(cycle_moles.len());
+    let split_idx = equivalence_cycle_index
+        .unwrap_or(anchor_idx)
+        .max(1)
+        .min(cycle_moles.len());
+
+    let mut lower_bound = min_factor.min(max_factor);
+    let mut upper_bound = min_factor.max(max_factor);
+    if !lower_bound.is_finite() || !upper_bound.is_finite() {
+        lower_bound = 0.5;
+        upper_bound = 1.5;
+    }
+    if lower_bound <= 0.0 {
+        lower_bound = 0.1;
+    }
+    if upper_bound <= lower_bound {
+        upper_bound = lower_bound + 0.1;
+    }
+
+    let temp_c = temperature_c
+        .filter(|value| value.is_finite())
+        .unwrap_or(25.0);
+    let use_temp_constants = true;
+    let pka2_value = resolve_pka2_value(Some(temp_c), use_temp_constants);
+    let is_pitzer_model = model_key.trim().eq_ignore_ascii_case("naoh_co2_pitzer_hmw");
+    let pitzer_coeffs = if is_pitzer_model {
+        parse_pitzer_params_map(pitzer_params.as_ref())
+    } else {
+        None
+    };
+    let available_naoh_mol = initial_naoh_mol
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .map(|value| value.max(0.0));
+    let available_volume_l = solution_volume_l
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .map(|value| value.max(1e-9));
+
+    let predict_from_cumulative =
+        |cumulative_mol: f64, _cycle_index: usize| -> (Option<f64>, [f64; 3]) {
+            let cumulative = cumulative_mol.max(0.0);
+
+            // Prefer the Pitzer mapping when the selected model is NaOH-CO2 Pitzer
+            // and compact parameter coefficients are available.
+            if let (Some(params), Some(naoh_mol), Some(volume_l)) =
+                (pitzer_coeffs, available_naoh_mol, available_volume_l)
+            {
+                let total_sodium_m = naoh_mol / volume_l;
+                let total_carbon_m = cumulative / volume_l;
+                if total_sodium_m.is_finite() && total_sodium_m > 0.0 {
+                    if let Ok((ph, _na, _h, _oh, hco3, co3, co2)) =
+                        solve_pitzer_total_carbon_impl(total_carbon_m, total_sodium_m, params, 60)
+                    {
+                        if ph.is_finite() {
+                            let total = (co2.max(0.0) + hco3.max(0.0) + co3.max(0.0)).max(1e-12);
+                            return (
+                                Some(clamp_ph_value(ph)),
+                                [co2.max(0.0) / total, hco3.max(0.0) / total, co3.max(0.0) / total],
+                            );
+                        }
+                    }
+                }
+            }
+
+            if let (Some(naoh_mol), Some(volume_l)) = (available_naoh_mol, available_volume_l) {
+                let input_ledger = LedgerState {
+                    naoh_remaining_mol: naoh_mol,
+                    na2co3_mol: 0.0,
+                    nahco3_mol: 0.0,
+                    co2_excess_mol: 0.0,
+                };
+                let (state, _accounting, ph_value) = simulate_reaction_state_with_accounting_impl(
+                    input_ledger,
+                    cumulative,
+                    pka2_value,
+                    Some(volume_l),
+                    Some(temp_c),
+                    None,
+                    use_temp_constants,
+                    None,
+                    None,
+                    true,
+                );
+                let total_carbon = (state.co2_excess_mol.max(0.0)
+                    + state.nahco3_mol.max(0.0)
+                    + state.na2co3_mol.max(0.0))
+                .max(1e-12);
+                return (
+                    Some(clamp_ph_value(ph_value)),
+                    [
+                        state.co2_excess_mol.max(0.0) / total_carbon,
+                        state.nahco3_mol.max(0.0) / total_carbon,
+                        state.na2co3_mol.max(0.0) / total_carbon,
+                    ],
+                );
+            }
+
+            let (ka1, ka2, _kw) = basic_carbonate_constants(Some(temp_c), use_temp_constants);
+            let pseudo_ph = clamp_ph_value(13.5 - (cumulative + 1.0).ln() * 1.2);
+            let h = 10f64.powf(-pseudo_ph);
+            let denom = h * h + ka1 * h + ka1 * ka2;
+            if denom <= 1e-30 {
+                return (Some(pseudo_ph), [0.0, 0.0, 0.0]);
+            }
+            let h2co3 = (h * h / denom).max(0.0);
+            let hco3 = (ka1 * h / denom).max(0.0);
+            let co3 = (ka1 * ka2 / denom).max(0.0);
+            let total = (h2co3 + hco3 + co3).max(1e-12);
+            (Some(pseudo_ph), [h2co3 / total, hco3 / total, co3 / total])
+        };
+
+    let simulate_for_factors = |alpha_pre: f64, alpha_post: f64| -> SimulationPayload {
+        let mut corrected_cycle: Vec<f64> = Vec::with_capacity(cycle_moles.len());
+        let mut corrected_cumulative: Vec<f64> = Vec::with_capacity(cycle_moles.len());
+        let mut corrected_ph: Vec<Option<f64>> = Vec::with_capacity(cycle_moles.len());
+        let mut corrected_fractions: Vec<[f64; 3]> = Vec::with_capacity(cycle_moles.len());
+        let mut cumulative = 0.0_f64;
+        // Re-evaluate the entire timeline for each candidate pair so objective
+        // scoring is deterministic and independent of iteration order.
+        for (idx, raw_cycle_mol) in cycle_moles.iter().enumerate() {
+            let cycle_index = idx + 1;
+            let factor = if cycle_index <= split_idx {
+                alpha_pre
+            } else {
+                alpha_post
+            };
+            let corrected = (raw_cycle_mol * factor).max(0.0);
+            cumulative += corrected;
+            let (ph_value, fractions) = predict_from_cumulative(cumulative, cycle_index);
+            corrected_cycle.push(corrected);
+            corrected_cumulative.push(cumulative);
+            corrected_ph.push(ph_value.filter(|value| value.is_finite()));
+            corrected_fractions.push([
+                fractions[0].max(0.0),
+                fractions[1].max(0.0),
+                fractions[2].max(0.0),
+            ]);
+        }
+        SimulationPayload {
+            corrected_cycle,
+            corrected_cumulative,
+            corrected_ph,
+            corrected_fractions,
+        }
+    };
+
+    let baseline = simulate_for_factors(1.0, 1.0);
+    let baseline_anchor_ph = baseline
+        .corrected_ph
+        .get(anchor_idx.saturating_sub(1))
+        .copied()
+        .flatten();
+
+    let objective_for =
+        |alpha_pre: f64, alpha_post: f64| -> (f64, SimulationPayload) {
+            let sim_payload = simulate_for_factors(alpha_pre, alpha_post);
+            let anchor_pred = sim_payload
+                .corrected_ph
+                .get(anchor_idx.saturating_sub(1))
+                .copied()
+                .flatten();
+            let Some(anchor_predicted) = anchor_pred else {
+                return (f64::INFINITY, sim_payload);
+            };
+            if !anchor_predicted.is_finite() {
+                return (f64::INFINITY, sim_payload);
+            }
+            let residual = anchor_predicted - measured_ph;
+            let objective = residual * residual
+                + regularization_strength
+                    * ((alpha_pre - 1.0).powi(2) + (alpha_post - 1.0).powi(2))
+                + smoothness_strength * (alpha_post - alpha_pre).powi(2);
+            (objective, sim_payload)
+        };
+
+    let mut grid_values: Vec<f64> = Vec::new();
+    let mut current = lower_bound;
+    while current <= upper_bound + 1e-12 {
+        grid_values.push((current * 1_000_000.0).round() / 1_000_000.0);
+        current += 0.05;
+    }
+    if grid_values.is_empty() {
+        grid_values.push(1.0);
+    }
+
+    let mut best_alpha_pre = 1.0_f64;
+    let mut best_alpha_post = 1.0_f64;
+    let mut best_objective = f64::INFINITY;
+    let mut best_sim = baseline.clone();
+    for alpha_pre in &grid_values {
+        for alpha_post in &grid_values {
+            let (objective_value, sim_payload) = objective_for(*alpha_pre, *alpha_post);
+            if objective_value < best_objective {
+                best_objective = objective_value;
+                best_alpha_pre = *alpha_pre;
+                best_alpha_post = *alpha_post;
+                best_sim = sim_payload;
+            }
+        }
+    }
+
+    let mut local_step = 0.025_f64;
+    for _ in 0..4 {
+        let pre_candidates = [
+            best_alpha_pre - local_step,
+            best_alpha_pre,
+            best_alpha_pre + local_step,
+        ];
+        let post_candidates = [
+            best_alpha_post - local_step,
+            best_alpha_post,
+            best_alpha_post + local_step,
+        ];
+        for pre in pre_candidates {
+            for post in post_candidates {
+                let alpha_pre = pre.clamp(lower_bound, upper_bound);
+                let alpha_post = post.clamp(lower_bound, upper_bound);
+                let (objective_value, sim_payload) = objective_for(alpha_pre, alpha_post);
+                if objective_value < best_objective {
+                    best_objective = objective_value;
+                    best_alpha_pre = alpha_pre;
+                    best_alpha_post = alpha_post;
+                    best_sim = sim_payload;
+                }
+            }
+        }
+        local_step *= 0.5;
+    }
+
+    let corrected_cycle_series = best_sim.corrected_cycle.clone();
+    let corrected_cumulative_series = best_sim.corrected_cumulative.clone();
+    let corrected_ph_series = best_sim.corrected_ph.clone();
+    let corrected_fractions_series = best_sim.corrected_fractions.clone();
+
+    let anchor_after_ph = corrected_ph_series
+        .get(anchor_idx.saturating_sub(1))
+        .copied()
+        .flatten();
+    let anchor_residual_before = baseline_anchor_ph.map(|value| value - measured_ph);
+    let anchor_residual_after = anchor_after_ph.map(|value| value - measured_ph);
+    let corrected_latest_total_mol = corrected_cumulative_series
+        .last()
+        .copied()
+        .unwrap_or(0.0);
+
+    let latest_fraction = corrected_fractions_series
+        .last()
+        .copied()
+        .unwrap_or([0.0, 0.0, 0.0]);
+    let latest_ph = corrected_ph_series.last().copied().flatten();
+
+    let reference_total = planning_reference_total_mol
+        .filter(|value| value.is_finite() && *value > 0.0);
+    let eq_reference = equivalence_co2_mol.filter(|value| value.is_finite() && *value > 0.0);
+    let co2_required_target_mol = if let Some(reference_total_value) = reference_total {
+        let pre_reference = if let Some(eq_reference_value) = eq_reference {
+            reference_total_value.min(eq_reference_value)
+        } else {
+            reference_total_value
+        };
+        let post_reference = (reference_total_value - pre_reference).max(0.0);
+        Some(pre_reference * best_alpha_pre + post_reference * best_alpha_post)
+    } else if let Some(eq_reference_value) = eq_reference {
+        Some(eq_reference_value * best_alpha_pre)
+    } else {
+        None
+    };
+    let completion_pct = co2_required_target_mol.and_then(|required| {
+        if required <= 1e-12 {
+            None
+        } else {
+            Some((corrected_latest_total_mol / required).clamp(0.0, 1.0) * 100.0)
+        }
+    });
+
+    let corrected_cycle_g_series: Vec<f64> = corrected_cycle_series
+        .iter()
+        .map(|value| value * SOL_MW_CO2)
+        .collect();
+    let corrected_cumulative_g_series: Vec<f64> = corrected_cumulative_series
+        .iter()
+        .map(|value| value * SOL_MW_CO2)
+        .collect();
+
+    let set_optional_f64 =
+        |dict: &Bound<'_, PyDict>, key: &str, value: Option<f64>| -> PyResult<()> {
+            if let Some(parsed) = value.filter(|item| item.is_finite()) {
+                dict.set_item(key, parsed)?;
+            } else {
+                dict.set_item(key, py.None())?;
+            }
+            Ok(())
+        };
+
+    let response = PyDict::new(py);
+    response.set_item("solver_status", "ok")?;
+    response.set_item("solver_message", "")?;
+    response.set_item("split_cycle_index", split_idx)?;
+    response.set_item("anchor_cycle_index", anchor_idx)?;
+    response.set_item("anchor_measured_ph", measured_ph)?;
+    set_optional_f64(&response, "anchor_predicted_ph_before", baseline_anchor_ph)?;
+    set_optional_f64(&response, "anchor_predicted_ph_after", anchor_after_ph)?;
+    set_optional_f64(&response, "anchor_residual_before", anchor_residual_before)?;
+    set_optional_f64(&response, "anchor_residual_after", anchor_residual_after)?;
+    if best_objective.is_finite() {
+        response.set_item("objective", best_objective)?;
+    } else {
+        response.set_item("objective", py.None())?;
+    }
+    response.set_item("alpha_pre", best_alpha_pre)?;
+    response.set_item("alpha_post", best_alpha_post)?;
+    response.set_item(
+        "corrected_cycle_uptake_mol_series",
+        corrected_cycle_series.clone(),
+    )?;
+    response.set_item(
+        "corrected_cycle_uptake_g_series",
+        corrected_cycle_g_series.clone(),
+    )?;
+    response.set_item(
+        "corrected_cumulative_co2_mol_series",
+        corrected_cumulative_series.clone(),
+    )?;
+    response.set_item(
+        "corrected_cumulative_co2_g_series",
+        corrected_cumulative_g_series.clone(),
+    )?;
+
+    let corrected_ph_list = PyList::empty(py);
+    for value in corrected_ph_series {
+        if let Some(parsed) = value.filter(|item| item.is_finite()) {
+            corrected_ph_list.append(parsed)?;
+        } else {
+            corrected_ph_list.append(py.None())?;
+        }
+    }
+    response.set_item("corrected_ph_series", corrected_ph_list)?;
+
+    let fractions_list = PyList::empty(py);
+    for fraction_row in corrected_fractions_series {
+        let fraction_map = PyDict::new(py);
+        fraction_map.set_item("H2CO3", fraction_row[0].max(0.0))?;
+        fraction_map.set_item("HCO3-", fraction_row[1].max(0.0))?;
+        fraction_map.set_item("CO3^2-", fraction_row[2].max(0.0))?;
+        fractions_list.append(fraction_map)?;
+    }
+    response.set_item("corrected_fraction_series", fractions_list)?;
+
+    let latest_speciation = PyDict::new(py);
+    set_optional_f64(&latest_speciation, "ph", latest_ph)?;
+    let latest_fractions_map = PyDict::new(py);
+    latest_fractions_map.set_item("H2CO3", latest_fraction[0].max(0.0))?;
+    latest_fractions_map.set_item("HCO3-", latest_fraction[1].max(0.0))?;
+    latest_fractions_map.set_item("CO3^2-", latest_fraction[2].max(0.0))?;
+    latest_speciation.set_item("fractions", latest_fractions_map)?;
+    response.set_item("latest_corrected_speciation", latest_speciation)?;
+
+    set_optional_f64(
+        &response,
+        "co2_required_for_target_ph_mol",
+        co2_required_target_mol,
+    )?;
+    set_optional_f64(
+        &response,
+        "co2_required_for_target_ph_g",
+        co2_required_target_mol.map(|value| value * SOL_MW_CO2),
+    )?;
+    response.set_item(
+        "corrected_cumulative_uptake_latest_mol",
+        corrected_latest_total_mol,
+    )?;
+    response.set_item(
+        "corrected_cumulative_uptake_latest_g",
+        corrected_latest_total_mol * SOL_MW_CO2,
+    )?;
+    set_optional_f64(
+        &response,
+        "completion_from_measured_ph_pct",
+        completion_pct,
+    )?;
+    set_optional_f64(
+        &response,
+        "target_ph",
+        target_ph.filter(|value| value.is_finite()),
+    )?;
     Ok(response.unbind())
 }
 
@@ -4062,6 +4555,10 @@ fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
         module
     )?)?;
     module.add_function(wrap_pyfunction!(analysis_dashboard_core, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        measured_ph_uptake_calibration_core,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(
         final_report_cycle_stats_rows_core,
         module

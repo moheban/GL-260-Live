@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="d935a40e4b26570553028fe991911330f2f65a1f37debb6e6903b822859c8640">
+  <meta name="manual-source-sha256" content="62e61eea002ad25a1451f795c22c0d6935cc05095442c2d5a72da19aaaac722e">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -243,7 +243,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>d935a40e4b265705</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>62e61eea002ad25a</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -963,6 +963,16 @@
    - selected-cycle notes<br>
    - dashboard metrics<br>
    - cycle timeline visualization/table</li>
+<li>For Analysis workflow measured-pH anchoring:<br>
+   - enter <code>Measured pH cycle</code> (the cycle after opening/blending/re-pressurizing)<br>
+   - enter <code>Measured pH anchor</code><br>
+   - keep anchor enabled (single-anchor behavior: latest entry overwrites previous)<br>
+   - run Analysis or click <strong>Recompute Calibration</strong></li>
+<li>Verify anchored outputs:<br>
+   - measured pH marker appears on cycle timeline plot<br>
+   - corrected pH trajectory appears alongside original/planning trajectories<br>
+   - corrected per-cycle and cumulative CO2 uptake values appear next to original values<br>
+   - dashboard tile <strong>Measured pH Anchor</strong> shows latest corrected speciation and measured-pH completion gauge</li>
 <li>Use cycle selector tools to inspect cycle-specific behavior.</li>
 <li>Export outputs:<br>
    - summary PNG<br>
@@ -975,6 +985,7 @@
 <ul>
 <li>Speciation/equilibrium summaries tied to cycle-level data.</li>
 <li>Timeline artifacts and dashboard metrics suitable for compare/report/ledger.</li>
+<li>Measured-pH anchored correction payloads persisted per profile and auto-applied on reload when chemistry/model basis matches.</li>
 </ul>
 <h3 id="common-errors-and-recovery_10">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_10" title="Permanent link">&para;</a></h3>
 <ul>
@@ -988,6 +999,8 @@
 <li>Recovery: use Cycle Timeline Plot Settings for detached-axis spacing; <code>v4.8.1+</code> applies normalized detached-axis offset/label padding consistently across in-tab and preview/export timeline renders.</li>
 <li>Error: selected cycle mismatch.</li>
 <li>Recovery: re-sync cycle selection and refresh dashboard/timeline views.</li>
+<li>Error: measured pH anchor not applied.</li>
+<li>Recovery: confirm Analysis workflow is active, <code>Measured pH cycle</code> is within detected cycle count, and pH is in <code>[0, 14]</code>, then re-run <strong>Recompute Calibration</strong>.</li>
 </ul>
 <h3 id="related-exportsartifacts_10">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_10" title="Permanent link">&para;</a></h3>
 <ul>
