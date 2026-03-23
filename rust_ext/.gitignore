@@ -28,7 +28,7 @@ venv/
 *.egg-info/
 .installed.cfg
 *.egg
-.tmp_patch_validation/
+*.tmp_patch_validation/
 
 # Installer logs
 pip-log.txt
