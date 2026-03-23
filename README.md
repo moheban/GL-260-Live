@@ -3,6 +3,13 @@
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
+Latest Analysis workflow highlights in `v4.8.1`:
+- measured-pH anchor inputs: `Measured pH cycle` + `Measured pH anchor`
+- explicit `Recompute Calibration` action for anchor-driven reruns
+- side-by-side original vs corrected cycle/cumulative CO2 uptake outputs
+- measured-pH marker + corrected pH trajectory in cycle timeline views
+- measured-pH anchor dashboard tile with corrected speciation and completion gauge
+
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
 - `# Version: v4.8.1`
 - `APP_VERSION = "v4.8.1"`
@@ -368,6 +375,8 @@ High-level pipeline:
 
 Core state is held in application-owned data frames, selected-column mappings, plot/cycle settings, and persisted settings/profile payloads. Optional acceleration layers (SciPy/Rust) are additive and fail closed to baseline Python behavior.
 
+Analysis-mode calibration flow now supports one measured-pH anchor per run/profile: select cycle, enter measured pH, run or recompute calibration, then propagate corrected uptake/pH/speciation to downstream cycles and dashboard/timeline outputs.
+
 ### Quickstart Workflow (Linear)
 Recommended order:
 1. Run installer and launch with printed `RUN COMMAND`.
@@ -419,6 +428,10 @@ Primary tabs and purpose:
 - Supports optional Rust-accelerated kernels with Python fallback.
 - Optional NaOH-CO2 path depends on local model module and `pitzer.dat`.
 - Model outputs remain available through fallback paths when optional dependencies are missing.
+- Analysis workflow supports measured-pH anchor entry (`Measured pH cycle`, `Measured pH anchor`) with one-anchor overwrite semantics per run/profile.
+- Anchor-based calibration updates corrected uptake series and corrected pH/speciation series, and displays corrected values beside original estimates.
+- Cycle timeline renders include measured anchor marker, corrected pH trajectory, and corrected cycle uptake traces.
+- Analysis dashboard includes a measured-pH anchor speciation tile and reaction completion gauge tied to corrected cumulative uptake vs required CO2 for target pH.
 
 ### Compare Tab Workflow and Reporting
 - Side-by-side comparison supports selected-cycle and metric-level review.
@@ -443,6 +456,7 @@ Developer tools include:
 - concurrency controls
 - free-threading diagnostics and dependency audits
 - Rust backend status/setup entry points
+- measured-pH uptake calibration kernel path: `measured_ph_uptake_calibration_core` with fail-closed Python fallback semantics
 
 Performance notes:
 - Large datasets and high-resolution exports can be CPU/memory intensive.
@@ -509,6 +523,14 @@ Apache-2.0. See `LICENSE`.
   - detached-axis label/tick non-overlap in display and export,
   - stale cached timeline legend recovery in display refresh.
 - Synced release metadata references to `v4.8.1`.
+
+`v4.8.1` addendum - Measured-pH Anchor + Uptake Recalibration
+- Added Analysis input/state support for measured-pH anchored calibration (`Measured pH cycle`, `Measured pH anchor`, anchor enable/overwrite semantics) and explicit `Recompute Calibration`.
+- Added Analysis runtime payload extensions for measured anchor and correction outputs: `measured_ph_anchor`, `uptake_correction`, corrected uptake series, measured-pH completion payload, and latest corrected speciation payload.
+- Added cycle timeline/table/export visualization updates to show measured anchor marker and corrected pH/uptake series alongside original values.
+- Added per-profile calibration persistence so anchor/correction state restores and auto-applies when profile chemistry/model basis matches.
+- Added Analysis dashboard measured-pH anchor tile with corrected speciation readout and measured completion gauge.
+- Added Rust kernel registration/export for anchor calibration: `measured_ph_uptake_calibration_core`, with strict Python fallback parity behavior.
 
 ### v4.8.0 Cross-Platform VS Code Bootstrap Installer
 - Added `scripts/install_gl260.py` as a single-command installer for Windows, macOS, and Linux repository bootstrapping.
