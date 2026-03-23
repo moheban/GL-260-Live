@@ -437,7 +437,15 @@ def main() -> int:
         smoke_command = [
             str(interpreter_path),
             "-c",
-            "import gl260_rust_ext.gl260_rust_ext as m; print(m.__file__)",
+            (
+                "import gl260_rust_ext as pkg; "
+                "import gl260_rust_ext.gl260_rust_ext as mod; "
+                "pkg_has = hasattr(pkg, 'measured_ph_uptake_calibration_core'); "
+                "mod_has = hasattr(mod, 'measured_ph_uptake_calibration_core'); "
+                "print(mod.__file__); "
+                "print(f'measured_ph_uptake_calibration_core package={pkg_has} extension={mod_has}'); "
+                "raise SystemExit(0 if (pkg_has and mod_has) else 2)"
+            ),
         ]
         smoke_result = _run_command(smoke_command, cwd=REPO_ROOT, env=build_env)
         smoke_output = _format_command_output(smoke_result)
