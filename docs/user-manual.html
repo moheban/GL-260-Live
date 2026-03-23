@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="7e4a1d0ec6787a48124f2aad34b29ab971640e42295f72c2450f8975e24d03a9">
+  <meta name="manual-source-sha256" content="8cbe9574a3859c730c782cfaf4aecd471e58cb95a244d3639d99be20d990aa35">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -243,7 +243,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>7e4a1d0ec6787a48</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>8cbe9574a3859c73</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -1003,6 +1003,8 @@
 <li>Recovery: re-sync cycle selection and refresh dashboard/timeline views.</li>
 <li>Error: measured pH anchor not applied.</li>
 <li>Recovery: confirm Analysis workflow is active, <code>Measured pH cycle</code> is within detected cycle count, and pH is in <code>[0, 14]</code>, then re-run <strong>Recompute Calibration</strong>.</li>
+<li>Error: Warnings / Narrative / Math Context says "No measured pH provided" even after anchor recompute.</li>
+<li>Recovery: update to <code>v4.8.3+</code>; Analysis guidance now consumes <code>Measured pH anchor</code> when final/slurry pH fields are empty and anchor cycle is valid.</li>
 <li>Error: Analysis progress requests Planning-only delta-P/manual CO2-per-cycle inputs.</li>
 <li>Recovery: update to <code>v4.8.2+</code>; Analysis mode now builds fallback reference traces from cycle uptake + Analysis chemistry inputs and no longer requires Planning-only controls for progress text.</li>
 </ul>

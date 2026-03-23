@@ -550,6 +550,8 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
   - Recovery: re-sync cycle selection and refresh dashboard/timeline views.
 - Error: measured pH anchor not applied.
   - Recovery: confirm Analysis workflow is active, `Measured pH cycle` is within detected cycle count, and pH is in `[0, 14]`, then re-run **Recompute Calibration**.
+- Error: Warnings / Narrative / Math Context says "No measured pH provided" even after anchor recompute.
+  - Recovery: update to `v4.8.3+`; Analysis guidance now consumes `Measured pH anchor` when final/slurry pH fields are empty and anchor cycle is valid.
 - Error: Analysis progress requests Planning-only delta-P/manual CO2-per-cycle inputs.
   - Recovery: update to `v4.8.2+`; Analysis mode now builds fallback reference traces from cycle uptake + Analysis chemistry inputs and no longer requires Planning-only controls for progress text.
 
