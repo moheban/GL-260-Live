@@ -1,17 +1,17 @@
-# GL-260 Data Analysis and Plotter (v4.8.3)
+# GL-260 Data Analysis and Plotter (v4.8.4)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest Analysis workflow highlights in `v4.8.3`:
-- Analysis reaction-guidance warnings now honor measured-pH anchor values when final/slurry pH fields are blank and anchor cycle is valid
-- Warnings / Narrative / Math Context no longer reports "No measured pH provided" after measured-pH anchor recompute in Analysis mode
-- Cycle simulation guidance and solver guidance now share one measured-pH precedence path, keeping warning text consistent across Analysis surfaces
-- Prior corrected-first Analysis completion/progress/dashboard behavior from `v4.8.2` remains in place
+Latest timeline/preview highlights in `v4.8.4`:
+- Cycle Speciation Timeline Plot Preview now supports draggable main legend behavior parity with combined preview expectations
+- Closing Timeline Plot Preview now captures the dragged legend location and applies it to the displayed timeline plot
+- Timeline export figure generation now reuses in-session timeline legend placement captured from preview drag actions
+- Prior Analysis measured-pH warning/source alignment behavior from `v4.8.3` remains in place
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.8.3`
-- `APP_VERSION = "v4.8.3"`
+- `# Version: v4.8.4`
+- `APP_VERSION = "v4.8.4"`
 
 ## Canonical User Manual Location
 The canonical, continuously updated user manual now lives in `docs/`:
@@ -56,7 +56,7 @@ python scripts/build_user_manual.py --check
 ### Program Overview and Philosophy
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib workflow for deterministic GL-260 analysis: data import, cycle detection, moles calculations, advanced solubility workflows, compare/ledger review, and final report generation.
 
-Part I for `v4.8.3` is installer-first by design:
+Part I for `v4.8.4` is installer-first by design:
 - Use `scripts/install_gl260.py` as the default bootstrap path on Windows, macOS, and Linux.
 - Keep runtime behavior deterministic by running through explicit virtual-environment interpreter paths.
 - Treat Rust acceleration as optional; Python paths remain authoritative fallback.
@@ -74,7 +74,7 @@ Primary paths in this repository:
 - `docs/user-manual.md` + `docs/user-manual.html`: Canonical detailed user manual source and generated wiki artifact.
 - `requirements.txt`: Runtime dependency set installed into local environments.
 - `settings.json`: Runtime preferences persisted by the application.
-- `scripts/install_gl260.py`: Cross-platform bootstrap installer (new primary setup workflow in `v4.8.3`).
+- `scripts/install_gl260.py`: Cross-platform bootstrap installer (primary setup workflow in `v4.8.4`).
 - `scripts/validate_rust_backend.py`: Rust backend rebuild/import validator for pinned Windows free-threaded flow.
 - `rust_ext/`: Rust extension crate built via `maturin` when Rust backend is enabled.
 - `solubility_models/`: Chemistry/speciation package used by advanced solubility workflows.
@@ -262,7 +262,7 @@ $PY="C:\Users\<you>\AppData\Local\Programs\Python\Python314\python.exe"
 ```
 
 #### Rust integration (optional) - Windows and macOS
-Rust backend is optional. `v4.8.3` installer attempts Rust setup automatically in the selected primary environment.
+Rust backend is optional. `v4.8.4` installer attempts Rust setup automatically in the selected primary environment.
 
 Manual Rust workflow (only if needed):
 1. Install `rustup`, `rustc`, and `cargo`.
@@ -315,7 +315,7 @@ Run:
 ```
 
 ### Running the Application
-Primary launch flow for `v4.8.3`:
+Primary launch flow for `v4.8.4`:
 1. Run installer: `python scripts/install_gl260.py`
 2. Copy/paste printed `RUN COMMAND: ...`
 3. Keep using that same interpreter path for terminal runs and VS Code interpreter selection.
@@ -511,6 +511,17 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.8.4 Cycle Timeline Preview Legend Position Sync
+- Added timeline-preview main-legend role tagging/capture helpers so preview close only syncs the consolidated timeline legend (not inset legends).
+- Enabled draggable legend behavior for Cycle Speciation Timeline Plot Preview and preserved close-time sync into the displayed timeline legend location.
+- Added runtime session legend-location override for timeline display/export parity without introducing persistent settings keys.
+- Updated cycle timeline export figure path to honor in-session preview legend placement while preserving existing main-legend visibility gating.
+- Added targeted regressions for:
+  - preview close-time legend capture/apply to display,
+  - preview legend dragability,
+  - export legend parity with in-session preview override.
+- Synced release metadata references to `v4.8.4`.
 
 ### v4.8.3 Analysis Measured-pH Warning Source Alignment
 - Added one shared Analysis reaction-guidance measured-pH resolver with deterministic precedence:

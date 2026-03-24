@@ -537,6 +537,11 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Timeline artifacts and dashboard metrics suitable for compare/report/ledger.
 - Measured-pH anchored correction payloads persisted per profile and auto-applied on reload when chemistry/model basis matches.
 
+### v4.8.4 Release Note (Timeline Preview Legend Sync)
+- Cycle Timeline Plot Preview now enables draggable main-legend editing parity with combined preview behavior.
+- Closing Timeline Plot Preview now applies the dragged preview legend position to the displayed timeline legend.
+- Timeline plot exports now honor the current in-session timeline legend location captured from preview drag actions.
+
 ### Common errors and recovery
 - Error: solver/model unavailable.
   - Recovery: verify optional dependencies and fallback behavior; re-run in supported mode.
@@ -544,6 +549,8 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
   - Recovery: ensure timeline rows are populated and required optional table dependency is installed.
 - Error: Analysis timeline main legend missing or off-canvas in preview/export.
   - Recovery: update to `v4.8.1+`; timeline legend refresh now preserves valid user placement and auto-recovers to an on-canvas anchor when stale/off-canvas state is detected.
+- Error: timeline legend position snaps back after dragging it in Timeline Plot Preview.
+  - Recovery: update to `v4.8.4+`; preview close now captures the dragged timeline legend location and syncs that location to the displayed timeline and in-session timeline exports.
 - Error: detached cycle CO2 axis label overlaps lower-panel detached-axis tick labels.
   - Recovery: use Cycle Timeline Plot Settings for detached-axis spacing; `v4.8.1+` applies normalized detached-axis offset/label padding consistently across in-tab and preview/export timeline renders.
 - Error: selected cycle mismatch.
