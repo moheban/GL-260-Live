@@ -508,7 +508,7 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 2. Send cycle payload from Cycle Analysis.
 3. Choose analysis mode/model settings for speciation/equilibrium workflow.
 4. Run computation and inspect:
-   - summary panel
+   - Analysis dashboard tiles
    - selected-cycle notes
    - dashboard metrics
    - cycle timeline visualization/table
@@ -521,9 +521,11 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
    - measured pH marker appears on cycle timeline plot
    - corrected pH trajectory appears alongside original/planning trajectories
    - corrected per-cycle and cumulative CO2 uptake values appear next to original values
-   - **Reaction Progress** uses corrected-primary completion/regime text and shows `CO2 required for target pH`
+   - dashboard tile **Reaction Progress** uses corrected-primary completion/regime text and shows required CO2 context
    - dashboard tile **Completion Meter** shows adjacent pre-anchor and corrected completion gauges
-   - dashboard tile **Measured pH Anchor** stays text/badge focused and shows latest corrected speciation + required-CO2 context (no gauge canvas)
+   - dashboard tile **Speciation Snapshot** shows latest corrected speciation and required-CO2 context
+   - dashboard tile **Target Gap & CO2 Needed** visualizes corrected cumulative uptake vs required total to the target pH slider value
+   - dashboard tile **Forecast to Target** shows slowdown-aware remaining cycle/time forecast with confidence
 7. Edit `Cycle timeline plot title` (Planning/Analysis/Reprocessing shared field):
    - default format is `<Job Information> Reaction Simulation`
    - commits apply on `Enter` or when the input loses focus (`FocusOut`)
@@ -535,11 +537,25 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
    - JSON summary
    - timeline CSV/plot/table
 10. Use **Send Dashboard Stats to Ledger** when values should be captured in ledger entries (corrected-primary uptake/yield are prefilled; raw baselines remain in notes).
+11. In Analysis dashboard verify tile coverage:
+   - Target pH controls, Analysis actions, Reaction Progress, Forensic Comparison KPIs
+   - Speciation Snapshot, Reaction Overview visuals, All-cycles pH sweep preview
+   - Warnings/Narrative/Math context
+   - Cycle Comparison Explorer, Cycle Speciation Timeline Explorer/plot, and Selected-Cycle Notes and Export remain in their existing locations.
 
 ### Expected outputs
 - Speciation/equilibrium summaries tied to cycle-level data.
 - Timeline artifacts and dashboard metrics suitable for compare/report/ledger.
 - Measured-pH anchored correction payloads persisted per profile and auto-applied on reload when chemistry/model basis matches.
+
+### v4.8.6 Release Note (Analysis Dashboard Consolidation + Forecasting)
+- Analysis workflow input mode was consolidated into Analysis dashboard tiles for controls, KPIs, visuals, and warnings/math context.
+- Added `Target Gap & CO2 Needed` tile to emphasize corrected cumulative uptake, required total uptake to target pH, and additional CO2 demand.
+- Added `Forecast to Target` tile with slowdown-aware forecasting (knee detection, pre/post trend rates, projected remaining cycles/time, confidence).
+- Analysis slider target pH now synchronizes and persists with forced-target mirror values so warnings and math context use the active slider value.
+- `Key Metrics` panel was removed from Analysis workflow input mode because equivalent coverage is provided by Speciation Snapshot/dashboard summaries.
+- Timeline bottom-legend drag sync now captures bbox placement semantics and keeps wide-under-x-axis legends visible by reserving extra bottom subplot margin.
+- Analysis run/recompute result restore now requires matching workspace, analysis-input, and cycle signatures before auto-restore.
 
 ### v4.8.5 Release Note (Timeline Title Commit + Job Information Default)
 - Cycle Speciation Timeline title edits now commit on explicit input actions (`Enter` and `FocusOut`) instead of per-keystroke persistence.
@@ -572,6 +588,10 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
   - Recovery: update to `v4.8.3+`; Analysis guidance now consumes `Measured pH anchor` when final/slurry pH fields are empty and anchor cycle is valid.
 - Error: Analysis progress requests Planning-only delta-P/manual CO2-per-cycle inputs.
   - Recovery: update to `v4.8.2+`; Analysis mode now builds fallback reference traces from cycle uptake + Analysis chemistry inputs and no longer requires Planning-only controls for progress text.
+- Error: Analysis warnings still display a stale forced target pH value after moving the slider.
+  - Recovery: update to `v4.8.6+`; Analysis slider updates now synchronize and persist both target keys, and warning/math context uses the live Analysis target value.
+- Error: dragged bottom legend in Cycle Timeline preview is clipped or does not sync on close.
+  - Recovery: update to `v4.8.6+`; timeline legend sync now captures loc+bbox placement and reserves enough bottom margin for wide bottom legend mode.
 
 ### Related exports/artifacts
 - Solubility summary PNG

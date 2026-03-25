@@ -1438,8 +1438,10 @@ fn analysis_dashboard_core(
     #[derive(Clone, Copy)]
     struct ActualRow {
         cycle_id: usize,
+        cycle_co2_g: Option<f64>,
         cumulative_co2_g: Option<f64>,
         cumulative_co2_mol: Option<f64>,
+        duration_x: Option<f64>,
         ph: Option<f64>,
         hco3_fraction: f64,
         co3_fraction: f64,
@@ -1453,11 +1455,16 @@ fn analysis_dashboard_core(
     }
     let mut actual_rows: Vec<ActualRow> = Vec::new();
     let mut actual_alignment_override: Vec<String> = Vec::new();
+    let mut inferred_time_label = String::new();
     for (idx, item) in actual_cycle_series.iter().enumerate() {
         let Ok(entry) = item.cast_into::<PyDict>() else {
             continue;
         };
         let cycle_id = compare_cycle_row_index(&entry, idx + 1);
+        let cycle_co2_g = dict_optional_finite_by_keys(
+            &entry,
+            &["co2_cycle_g", "cycle_co2_g", "co2_mass_g"],
+        );
         let cumulative_co2_g = dict_optional_finite_by_keys(
             &entry,
             &["cumulative_co2_g", "co2_g", "cumulative_co2_added_mass_g", "co2_mass_g"],
@@ -1471,6 +1478,10 @@ fn analysis_dashboard_core(
                 "co2_added_moles",
             ],
         );
+        let duration_x = dict_optional_finite_by_keys(&entry, &["duration_x"]);
+        if inferred_time_label.is_empty() {
+            inferred_time_label = dict_string_value(&entry, "x_label");
+        }
         let ph = dict_optional_finite_by_keys(&entry, &["ph", "actual_ph", "solution_ph"]);
         let mut hco3_fraction = 0.0_f64;
         let mut co3_fraction = 0.0_f64;
@@ -1486,8 +1497,10 @@ fn analysis_dashboard_core(
         }
         actual_rows.push(ActualRow {
             cycle_id,
+            cycle_co2_g,
             cumulative_co2_g,
             cumulative_co2_mol,
+            duration_x,
             ph,
             hco3_fraction,
             co3_fraction,
@@ -1706,6 +1719,149 @@ fn analysis_dashboard_core(
             break;
         }
     }
+    let additional_co2_required_g = match (reference_final_g, total_uptake_g) {
+        (Some(reference), Some(total)) if reference.is_finite() && total.is_finite() => {
+            Some((reference - total).max(0.0))
+        }
+        _ => None,
+    };
+    let additional_co2_required_mol = match additional_co2_required_g {
+        Some(value) if co2_mw_value > 0.0 => Some(value / co2_mw_value),
+        _ => None,
+    };
+    let mut forecast_confidence = "low".to_string();
+    let mut forecast_slowdown_detected = false;
+    let mut forecast_lookback_cycles: usize = 0;
+    let mut forecast_knee_cycle: Option<usize> = None;
+    let mut forecast_pre_knee_rate_g_per_cycle: Option<f64> = None;
+    let mut forecast_post_knee_rate_g_per_cycle: Option<f64> = None;
+    let mut forecast_tail_rate_g_per_cycle: Option<f64> = None;
+    let mut forecast_remaining_cycles: Option<f64> = None;
+    let mut forecast_remaining_time_x: Option<f64> = None;
+    let mut forecast_time_basis = "cycles_only".to_string();
+    let remaining_target_g = additional_co2_required_g.unwrap_or(0.0);
+    if remaining_target_g <= 1e-12 {
+        forecast_confidence = "high".to_string();
+        forecast_remaining_cycles = Some(0.0);
+        forecast_remaining_time_x = Some(0.0);
+    } else {
+        let mut cycle_uptakes_g: Vec<f64> = Vec::new();
+        let mut durations_x: Vec<Option<f64>> = Vec::new();
+        let mut cumulative_known = false;
+        let mut last_cumulative = 0.0_f64;
+        for row in &actual_rows {
+            let mut cycle_mass = row.cycle_co2_g;
+            if cycle_mass.is_none() {
+                if let Some(cumulative) = row.cumulative_co2_g {
+                    if cumulative_known {
+                        cycle_mass = Some((cumulative - last_cumulative).max(0.0));
+                    } else {
+                        cycle_mass = Some(cumulative.max(0.0));
+                    }
+                    cumulative_known = true;
+                    last_cumulative = cumulative;
+                }
+            }
+            cycle_uptakes_g.push(cycle_mass.unwrap_or(0.0).max(0.0));
+            let duration = row.duration_x.and_then(|value| {
+                if value.is_finite() && value > 0.0 {
+                    Some(value)
+                } else {
+                    None
+                }
+            });
+            durations_x.push(duration);
+        }
+        let detected_cycles = cycle_uptakes_g.len();
+        if detected_cycles >= 4 {
+            let mut lookback = ((detected_cycles as f64) * 0.2_f64).round() as usize;
+            lookback = lookback.clamp(4, 12).min(detected_cycles);
+            forecast_lookback_cycles = lookback;
+            let recent = &cycle_uptakes_g[detected_cycles - lookback..];
+            if recent.len() >= 4 {
+                let mut best_split: Option<usize> = None;
+                let mut best_sse = f64::INFINITY;
+                for split_idx in 2..(recent.len() - 1) {
+                    let pre = &recent[..split_idx];
+                    let post = &recent[split_idx..];
+                    let pre_mean = pre.iter().sum::<f64>() / pre.len() as f64;
+                    let post_mean = post.iter().sum::<f64>() / post.len() as f64;
+                    let pre_sse = pre
+                        .iter()
+                        .map(|value| (value - pre_mean) * (value - pre_mean))
+                        .sum::<f64>();
+                    let post_sse = post
+                        .iter()
+                        .map(|value| (value - post_mean) * (value - post_mean))
+                        .sum::<f64>();
+                    let sse = pre_sse + post_sse;
+                    if sse < best_sse {
+                        best_sse = sse;
+                        best_split = Some(split_idx);
+                    }
+                }
+                if let Some(split_idx) = best_split {
+                    let pre = &recent[..split_idx];
+                    let post = &recent[split_idx..];
+                    let pre_rate = pre.iter().sum::<f64>() / pre.len() as f64;
+                    let post_rate = post.iter().sum::<f64>() / post.len() as f64;
+                    forecast_pre_knee_rate_g_per_cycle = Some(pre_rate);
+                    forecast_post_knee_rate_g_per_cycle = Some(post_rate);
+                    forecast_knee_cycle = Some(detected_cycles - lookback + split_idx);
+                    forecast_slowdown_detected =
+                        pre_rate > 1e-12 && post_rate <= (pre_rate * 0.92_f64);
+                    let tail_window = recent.len().clamp(3, 5);
+                    let tail_rate = if forecast_slowdown_detected && post_rate > 1e-12 {
+                        post_rate
+                    } else {
+                        recent[recent.len() - tail_window..].iter().sum::<f64>()
+                            / tail_window as f64
+                    };
+                    if tail_rate > 1e-12 && tail_rate.is_finite() {
+                        forecast_tail_rate_g_per_cycle = Some(tail_rate);
+                        let remaining_cycles = (remaining_target_g / tail_rate).max(0.0);
+                        forecast_remaining_cycles = Some(remaining_cycles);
+                        let post_variance = post
+                            .iter()
+                            .map(|value| (value - post_rate) * (value - post_rate))
+                            .sum::<f64>()
+                            / post.len().max(1) as f64;
+                        let post_cv = if post_rate.abs() > 1e-12 {
+                            post_variance.sqrt() / post_rate.abs()
+                        } else {
+                            f64::INFINITY
+                        };
+                        if detected_cycles >= 8 && forecast_slowdown_detected && post_cv <= 0.25 {
+                            forecast_confidence = "high".to_string();
+                        } else if detected_cycles >= 6 && post_cv <= 0.45 {
+                            forecast_confidence = "medium".to_string();
+                        }
+                        let time_label_lower = inferred_time_label.trim().to_lowercase();
+                        let is_time_basis = ["elapsed", "time", "sec", "second", "min", "hour", "day"]
+                            .iter()
+                            .any(|token| time_label_lower.contains(token));
+                        if is_time_basis {
+                            let finite_durations: Vec<f64> = durations_x
+                                [durations_x.len().saturating_sub(lookback)..]
+                                .iter()
+                                .filter_map(|value| *value)
+                                .collect();
+                            if !finite_durations.is_empty() {
+                                let avg_duration =
+                                    finite_durations.iter().sum::<f64>() / finite_durations.len() as f64;
+                                forecast_remaining_time_x = Some(remaining_cycles * avg_duration);
+                                forecast_time_basis = if inferred_time_label.trim().is_empty() {
+                                    "elapsed_time".to_string()
+                                } else {
+                                    inferred_time_label.trim().to_string()
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     let warning_rows = PyList::empty(py);
     if reference_rows.is_empty() && !actual_rows.is_empty() {
         warning_rows.append(
@@ -1757,6 +1913,51 @@ fn analysis_dashboard_core(
     } else {
         summary.set_item("equivalence_cycle_reference", py.None())?;
     }
+    if let Some(value) = additional_co2_required_g {
+        summary.set_item("additional_co2_required_g", value)?;
+    } else {
+        summary.set_item("additional_co2_required_g", py.None())?;
+    }
+    if let Some(value) = additional_co2_required_mol {
+        summary.set_item("additional_co2_required_mol", value)?;
+    } else {
+        summary.set_item("additional_co2_required_mol", py.None())?;
+    }
+    summary.set_item("forecast_model", "two_phase_trend")?;
+    summary.set_item("forecast_confidence", forecast_confidence)?;
+    summary.set_item("forecast_slowdown_detected", forecast_slowdown_detected)?;
+    summary.set_item("forecast_lookback_cycles", forecast_lookback_cycles)?;
+    if let Some(value) = forecast_knee_cycle {
+        summary.set_item("forecast_knee_cycle", value)?;
+    } else {
+        summary.set_item("forecast_knee_cycle", py.None())?;
+    }
+    if let Some(value) = forecast_pre_knee_rate_g_per_cycle {
+        summary.set_item("forecast_pre_knee_rate_g_per_cycle", value)?;
+    } else {
+        summary.set_item("forecast_pre_knee_rate_g_per_cycle", py.None())?;
+    }
+    if let Some(value) = forecast_post_knee_rate_g_per_cycle {
+        summary.set_item("forecast_post_knee_rate_g_per_cycle", value)?;
+    } else {
+        summary.set_item("forecast_post_knee_rate_g_per_cycle", py.None())?;
+    }
+    if let Some(value) = forecast_tail_rate_g_per_cycle {
+        summary.set_item("forecast_tail_rate_g_per_cycle", value)?;
+    } else {
+        summary.set_item("forecast_tail_rate_g_per_cycle", py.None())?;
+    }
+    if let Some(value) = forecast_remaining_cycles {
+        summary.set_item("forecast_remaining_cycles", value)?;
+    } else {
+        summary.set_item("forecast_remaining_cycles", py.None())?;
+    }
+    if let Some(value) = forecast_remaining_time_x {
+        summary.set_item("forecast_remaining_time_x", value)?;
+    } else {
+        summary.set_item("forecast_remaining_time_x", py.None())?;
+    }
+    summary.set_item("forecast_time_basis", forecast_time_basis)?;
     summary.set_item("warnings", warning_rows)?;
 
     let response = PyDict::new(py);

@@ -1,17 +1,18 @@
-# GL-260 Data Analysis and Plotter (v4.8.5)
+# GL-260 Data Analysis and Plotter (v4.8.6)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest timeline/preview highlights in `v4.8.5`:
-- Cycle Speciation Timeline title editing now commits on Enter/focus-out and no longer triggers full timeline refresh on each keystroke
-- Default timeline title now follows Job Information format: `<Job Information> Reaction Simulation`
-- Timeline title commit path now uses a lightweight title redraw to avoid tree-selection refresh churn in Analysis mode
-- Prior timeline preview legend sync behavior from `v4.8.4` remains in place
+Latest Analysis dashboard and forecasting highlights in `v4.8.6`:
+- Analysis workflow controls and diagnostics are consolidated into dashboard tiles, including Target pH controls/actions, Reaction Progress, Forensic KPIs, Speciation Snapshot, Reaction Overview visuals, pH sweep preview, and Warnings/Narrative/Math context.
+- Added `Target Gap & CO2 Needed` and `Forecast to Target` dashboard tiles, including slowdown-aware cycle/time forecasting from recent cycle behavior.
+- Analysis slider wiring now treats `reaction_target_ph` as canonical in Analysis mode and keeps forced-target mirror values synchronized/persisted, so warnings/math context track the live slider target.
+- Restart restore for Analysis run/recompute payloads is now signature-gated (workspace + analysis inputs + cycle payload) and only restores when signatures match.
+- Cycle timeline legend drag-sync now supports loc + bbox semantics and reserves additional bottom margin for wide bottom legend mode.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.8.5`
-- `APP_VERSION = "v4.8.5"`
+- `# Version: v4.8.6`
+- `APP_VERSION = "v4.8.6"`
 
 ## Canonical User Manual Location
 The canonical, continuously updated user manual now lives in `docs/`:
@@ -56,7 +57,7 @@ python scripts/build_user_manual.py --check
 ### Program Overview and Philosophy
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib workflow for deterministic GL-260 analysis: data import, cycle detection, moles calculations, advanced solubility workflows, compare/ledger review, and final report generation.
 
-Part I for `v4.8.5` is installer-first by design:
+Part I for `v4.8.6` is installer-first by design:
 - Use `scripts/install_gl260.py` as the default bootstrap path on Windows, macOS, and Linux.
 - Keep runtime behavior deterministic by running through explicit virtual-environment interpreter paths.
 - Treat Rust acceleration as optional; Python paths remain authoritative fallback.
@@ -74,7 +75,7 @@ Primary paths in this repository:
 - `docs/user-manual.md` + `docs/user-manual.html`: Canonical detailed user manual source and generated wiki artifact.
 - `requirements.txt`: Runtime dependency set installed into local environments.
 - `settings.json`: Runtime preferences persisted by the application.
-- `scripts/install_gl260.py`: Cross-platform bootstrap installer (primary setup workflow in `v4.8.5`).
+- `scripts/install_gl260.py`: Cross-platform bootstrap installer (primary setup workflow in `v4.8.6`).
 - `scripts/validate_rust_backend.py`: Rust backend rebuild/import validator for pinned Windows free-threaded flow.
 - `rust_ext/`: Rust extension crate built via `maturin` when Rust backend is enabled.
 - `solubility_models/`: Chemistry/speciation package used by advanced solubility workflows.
@@ -262,7 +263,7 @@ $PY="C:\Users\<you>\AppData\Local\Programs\Python\Python314\python.exe"
 ```
 
 #### Rust integration (optional) - Windows and macOS
-Rust backend is optional. `v4.8.5` installer attempts Rust setup automatically in the selected primary environment.
+Rust backend is optional. `v4.8.6` installer attempts Rust setup automatically in the selected primary environment.
 
 Manual Rust workflow (only if needed):
 1. Install `rustup`, `rustc`, and `cargo`.
@@ -315,7 +316,7 @@ Run:
 ```
 
 ### Running the Application
-Primary launch flow for `v4.8.5`:
+Primary launch flow for `v4.8.6`:
 1. Run installer: `python scripts/install_gl260.py`
 2. Copy/paste printed `RUN COMMAND: ...`
 3. Keep using that same interpreter path for terminal runs and VS Code interpreter selection.
@@ -511,6 +512,23 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.8.6 Analysis Dashboard Consolidation + Forecasting
+- Converted Analysis workflow-mode sections into a dashboard-tile surface for key Analysis controls and outputs:
+  - Target pH controls, Analysis actions, Reaction Progress, Forensic KPIs, Speciation Snapshot,
+  - Reaction Overview visuals, All-cycles pH sweep preview, and Warnings/Narrative/Math context.
+- Added dashboard tiles:
+  - `Target Gap & CO2 Needed`: corrected cumulative uptake vs required total to target pH with remaining CO2 emphasis.
+  - `Forecast to Target`: slowdown-aware remaining cycles/time estimate with confidence level.
+- Removed redundant Analysis `Key Metrics` section from the Analysis input layout in favor of Speciation Snapshot and dashboard summary tiles.
+- Fixed Analysis target pH slider synchronization and persistence:
+  - slider updates now synchronize `reaction_target_ph` and `forced_ph_target` atomically,
+  - Analysis forced-solve/warning paths treat Analysis target pH as canonical.
+- Extended Analysis runtime payload and dashboard summary with forecast contract fields (knee cycle, pre/post/tail rates, remaining cycles/time, confidence, additional CO2 required).
+- Extended Rust `analysis_dashboard_core` payload support for new forecast/target-gap fields with Python parity checks and fallback.
+- Hardened Analysis result restore so persisted run/recompute results are restored only when workspace fingerprint, analysis-input signature, and cycle signature all match.
+- Fixed cycle timeline legend sync for draggable legends by supporting loc + bbox placement semantics and reserving extra bottom margin for wide-under-x-axis bottom legend mode.
+- Synced release metadata references to `v4.8.6`.
 
 ### v4.8.5 Timeline Title Commit Flow + Job Information Default
 - Reworked Cycle Speciation Timeline title persistence to commit on explicit input actions (`Enter` and `FocusOut`) instead of per-keystroke trace writes.
