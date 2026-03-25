@@ -524,18 +524,27 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
    - **Reaction Progress** uses corrected-primary completion/regime text and shows `CO2 required for target pH`
    - dashboard tile **Completion Meter** shows adjacent pre-anchor and corrected completion gauges
    - dashboard tile **Measured pH Anchor** stays text/badge focused and shows latest corrected speciation + required-CO2 context (no gauge canvas)
-7. Use cycle selector tools to inspect cycle-specific behavior.
-8. Export outputs:
+7. Edit `Cycle timeline plot title` (Planning/Analysis/Reprocessing shared field):
+   - default format is `<Job Information> Reaction Simulation`
+   - commits apply on `Enter` or when the input loses focus (`FocusOut`)
+   - typing alone does not trigger full timeline refresh
+8. Use cycle selector tools to inspect cycle-specific behavior.
+9. Export outputs:
    - summary PNG
    - CSV species table
    - JSON summary
    - timeline CSV/plot/table
-9. Use **Send Dashboard Stats to Ledger** when values should be captured in ledger entries (corrected-primary uptake/yield are prefilled; raw baselines remain in notes).
+10. Use **Send Dashboard Stats to Ledger** when values should be captured in ledger entries (corrected-primary uptake/yield are prefilled; raw baselines remain in notes).
 
 ### Expected outputs
 - Speciation/equilibrium summaries tied to cycle-level data.
 - Timeline artifacts and dashboard metrics suitable for compare/report/ledger.
 - Measured-pH anchored correction payloads persisted per profile and auto-applied on reload when chemistry/model basis matches.
+
+### v4.8.5 Release Note (Timeline Title Commit + Job Information Default)
+- Cycle Speciation Timeline title edits now commit on explicit input actions (`Enter` and `FocusOut`) instead of per-keystroke persistence.
+- Timeline title commit now applies through a lightweight title redraw path, avoiding full timeline refresh loops during title typing.
+- Default timeline title now derives from `Suptitle (Job Information)` with canonical format `<Job Information> Reaction Simulation`.
 
 ### v4.8.4 Release Note (Timeline Preview Legend Sync)
 - Cycle Timeline Plot Preview now enables draggable main-legend editing parity with combined preview behavior.
@@ -551,6 +560,8 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
   - Recovery: update to `v4.8.1+`; timeline legend refresh now preserves valid user placement and auto-recovers to an on-canvas anchor when stale/off-canvas state is detected.
 - Error: timeline legend position snaps back after dragging it in Timeline Plot Preview.
   - Recovery: update to `v4.8.4+`; preview close now captures the dragged timeline legend location and syncs that location to the displayed timeline and in-session timeline exports.
+- Error: timeline title input appears to trigger repeated refresh/select loops while typing.
+  - Recovery: update to `v4.8.5+`; title edits now commit on `Enter`/`FocusOut`, and typing alone no longer runs full timeline refresh.
 - Error: detached cycle CO2 axis label overlaps lower-panel detached-axis tick labels.
   - Recovery: use Cycle Timeline Plot Settings for detached-axis spacing; `v4.8.1+` applies normalized detached-axis offset/label padding consistently across in-tab and preview/export timeline renders.
 - Error: selected cycle mismatch.

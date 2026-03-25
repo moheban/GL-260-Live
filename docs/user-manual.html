@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="8cbe9574a3859c730c782cfaf4aecd471e58cb95a244d3639d99be20d990aa35">
+  <meta name="manual-source-sha256" content="27879e9e9df7e8309ace3a2daf371ae7f0af12ca9c30980e7c8a1d425480d6ea">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -243,7 +243,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>8cbe9574a3859c73</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>27879e9e9df7e830</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -359,6 +359,8 @@
 <li><a href="#inputs_10">Inputs</a></li>
 <li><a href="#step-by-step-actions_10">Step-by-step actions</a></li>
 <li><a href="#expected-outputs_10">Expected outputs</a></li>
+<li><a href="#v485-release-note-timeline-title-commit-job-information-default">v4.8.5 Release Note (Timeline Title Commit + Job Information Default)</a></li>
+<li><a href="#v484-release-note-timeline-preview-legend-sync">v4.8.4 Release Note (Timeline Preview Legend Sync)</a></li>
 <li><a href="#common-errors-and-recovery_10">Common errors and recovery</a></li>
 <li><a href="#related-exportsartifacts_10">Related exports/artifacts</a></li>
 </ul>
@@ -975,6 +977,10 @@
    - <strong>Reaction Progress</strong> uses corrected-primary completion/regime text and shows <code>CO2 required for target pH</code><br>
    - dashboard tile <strong>Completion Meter</strong> shows adjacent pre-anchor and corrected completion gauges<br>
    - dashboard tile <strong>Measured pH Anchor</strong> stays text/badge focused and shows latest corrected speciation + required-CO2 context (no gauge canvas)</li>
+<li>Edit <code>Cycle timeline plot title</code> (Planning/Analysis/Reprocessing shared field):<br>
+   - default format is <code>&lt;Job Information&gt; Reaction Simulation</code><br>
+   - commits apply on <code>Enter</code> or when the input loses focus (<code>FocusOut</code>)<br>
+   - typing alone does not trigger full timeline refresh</li>
 <li>Use cycle selector tools to inspect cycle-specific behavior.</li>
 <li>Export outputs:<br>
    - summary PNG<br>
@@ -989,6 +995,18 @@
 <li>Timeline artifacts and dashboard metrics suitable for compare/report/ledger.</li>
 <li>Measured-pH anchored correction payloads persisted per profile and auto-applied on reload when chemistry/model basis matches.</li>
 </ul>
+<h3 id="v485-release-note-timeline-title-commit-job-information-default">v4.8.5 Release Note (Timeline Title Commit + Job Information Default)<a class="headerlink" href="#v485-release-note-timeline-title-commit-job-information-default" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Cycle Speciation Timeline title edits now commit on explicit input actions (<code>Enter</code> and <code>FocusOut</code>) instead of per-keystroke persistence.</li>
+<li>Timeline title commit now applies through a lightweight title redraw path, avoiding full timeline refresh loops during title typing.</li>
+<li>Default timeline title now derives from <code>Suptitle (Job Information)</code> with canonical format <code>&lt;Job Information&gt; Reaction Simulation</code>.</li>
+</ul>
+<h3 id="v484-release-note-timeline-preview-legend-sync">v4.8.4 Release Note (Timeline Preview Legend Sync)<a class="headerlink" href="#v484-release-note-timeline-preview-legend-sync" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Cycle Timeline Plot Preview now enables draggable main-legend editing parity with combined preview behavior.</li>
+<li>Closing Timeline Plot Preview now applies the dragged preview legend position to the displayed timeline legend.</li>
+<li>Timeline plot exports now honor the current in-session timeline legend location captured from preview drag actions.</li>
+</ul>
 <h3 id="common-errors-and-recovery_10">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_10" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Error: solver/model unavailable.</li>
@@ -997,6 +1015,10 @@
 <li>Recovery: ensure timeline rows are populated and required optional table dependency is installed.</li>
 <li>Error: Analysis timeline main legend missing or off-canvas in preview/export.</li>
 <li>Recovery: update to <code>v4.8.1+</code>; timeline legend refresh now preserves valid user placement and auto-recovers to an on-canvas anchor when stale/off-canvas state is detected.</li>
+<li>Error: timeline legend position snaps back after dragging it in Timeline Plot Preview.</li>
+<li>Recovery: update to <code>v4.8.4+</code>; preview close now captures the dragged timeline legend location and syncs that location to the displayed timeline and in-session timeline exports.</li>
+<li>Error: timeline title input appears to trigger repeated refresh/select loops while typing.</li>
+<li>Recovery: update to <code>v4.8.5+</code>; title edits now commit on <code>Enter</code>/<code>FocusOut</code>, and typing alone no longer runs full timeline refresh.</li>
 <li>Error: detached cycle CO2 axis label overlaps lower-panel detached-axis tick labels.</li>
 <li>Recovery: use Cycle Timeline Plot Settings for detached-axis spacing; <code>v4.8.1+</code> applies normalized detached-axis offset/label padding consistently across in-tab and preview/export timeline renders.</li>
 <li>Error: selected cycle mismatch.</li>
