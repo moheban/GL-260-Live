@@ -7,6 +7,13 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Build command: `python scripts/build_user_manual.py`
 - Validation command: `python scripts/build_user_manual.py --check`
 
+Current release: `v4.9.0`
+
+Analysis timeline pH terminology:
+- `Observed pH`: pH from detected cycle data / mapped observed timeline point.
+- `Corrected pH`: measured-anchor calibrated pH after uptake correction.
+- `Reference pH`: planning/reference curve pH (cycle-index aligned or CO2-aligned).
+
 ---
 
 ## Table of Contents

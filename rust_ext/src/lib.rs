@@ -1970,8 +1970,8 @@ fn analysis_dashboard_core(
 #[pyo3(signature = (
     model_key,
     cycle_uptake_mol_series,
-    anchor_cycle_index,
-    measured_ph,
+    anchor_cycle_index=None,
+    measured_ph=None,
     equivalence_cycle_index=None,
     target_ph=None,
     initial_naoh_mol=None,
@@ -1980,21 +1980,24 @@ fn analysis_dashboard_core(
     planning_reference_total_mol=None,
     equivalence_co2_mol=None,
     pitzer_params=None,
+    anchors=None,
+    prior_cycle_factor_series=None,
+    prior_sample_count=0,
     regularization_strength=0.02,
     smoothness_strength=0.01,
     min_factor=0.5,
     max_factor=1.5
 ))]
-/// Calibrate piecewise uptake factors against one measured pH anchor.
+/// Calibrate piecewise uptake factors against one or more measured pH anchors.
 ///
 /// The solver mirrors the Python fallback contract: bounded deterministic
-/// search + local refinement with regularization and split-factor smoothness.
+/// segment fitting with regularization and split-factor smoothness.
 fn measured_ph_uptake_calibration_core(
     py: Python<'_>,
     model_key: &str,
     cycle_uptake_mol_series: &Bound<'_, PyList>,
-    anchor_cycle_index: usize,
-    measured_ph: f64,
+    anchor_cycle_index: Option<usize>,
+    measured_ph: Option<f64>,
     equivalence_cycle_index: Option<usize>,
     target_ph: Option<f64>,
     initial_naoh_mol: Option<f64>,
@@ -2003,6 +2006,9 @@ fn measured_ph_uptake_calibration_core(
     planning_reference_total_mol: Option<f64>,
     equivalence_co2_mol: Option<f64>,
     pitzer_params: Option<Bound<'_, PyDict>>,
+    anchors: Option<Bound<'_, PyList>>,
+    prior_cycle_factor_series: Option<Bound<'_, PyList>>,
+    prior_sample_count: usize,
     regularization_strength: f64,
     smoothness_strength: f64,
     min_factor: f64,
@@ -2016,17 +2022,19 @@ fn measured_ph_uptake_calibration_core(
         corrected_fractions: Vec<[f64; 3]>,
     }
 
-    let build_error =
-        |message: &str| -> PyResult<Py<PyDict>> {
-            let payload = PyDict::new(py);
-            payload.set_item("solver_status", "invalid_input")?;
-            payload.set_item("solver_message", message)?;
-            Ok(payload.unbind())
-        };
-
-    if !measured_ph.is_finite() {
-        return build_error("Measured pH anchor is required for calibration.");
+    #[derive(Clone)]
+    struct AnchorPoint {
+        cycle_index: usize,
+        measured_ph: f64,
+        source: String,
     }
+
+    let build_error = |message: &str| -> PyResult<Py<PyDict>> {
+        let payload = PyDict::new(py);
+        payload.set_item("solver_status", "invalid_input")?;
+        payload.set_item("solver_message", message)?;
+        Ok(payload.unbind())
+    };
 
     let mut cycle_moles: Vec<f64> = Vec::new();
     for item in cycle_uptake_mol_series.iter() {
@@ -2041,12 +2049,6 @@ fn measured_ph_uptake_calibration_core(
         return build_error("No cycle uptake values were provided for calibration.");
     }
 
-    let anchor_idx = anchor_cycle_index.max(1).min(cycle_moles.len());
-    let split_idx = equivalence_cycle_index
-        .unwrap_or(anchor_idx)
-        .max(1)
-        .min(cycle_moles.len());
-
     let mut lower_bound = min_factor.min(max_factor);
     let mut upper_bound = min_factor.max(max_factor);
     if !lower_bound.is_finite() || !upper_bound.is_finite() {
@@ -2059,6 +2061,104 @@ fn measured_ph_uptake_calibration_core(
     if upper_bound <= lower_bound {
         upper_bound = lower_bound + 0.1;
     }
+
+    let source_priority = |source: &str| -> i32 {
+        match source.trim().to_ascii_lowercase().as_str() {
+            "manual" | "form" => 5,
+            "legacy" => 4,
+            "profile" => 3,
+            "auto_final_ph" => 1,
+            _ => 2,
+        }
+    };
+
+    let mut anchors_by_cycle: BTreeMap<usize, (i32, AnchorPoint)> = BTreeMap::new();
+    if let Some(anchor_rows) = anchors {
+        for item in anchor_rows.iter() {
+            let Ok(row) = item.cast_into::<PyDict>() else {
+                continue;
+            };
+            let cycle_any = row
+                .get_item("cycle_index")
+                .ok()
+                .flatten()
+                .or_else(|| row.get_item("measured_ph_cycle_index").ok().flatten());
+            let ph_any = row
+                .get_item("measured_ph")
+                .ok()
+                .flatten()
+                .or_else(|| row.get_item("measured_ph_value").ok().flatten());
+            let source = row
+                .get_item("source")
+                .ok()
+                .flatten()
+                .and_then(|value| value.extract::<String>().ok())
+                .unwrap_or_else(|| "manual".to_string());
+            let Some(cycle_raw) = cycle_any.and_then(|value| value.extract::<f64>().ok()) else {
+                continue;
+            };
+            let Some(ph_value) = ph_any.and_then(|value| value.extract::<f64>().ok()) else {
+                continue;
+            };
+            if !cycle_raw.is_finite() || !ph_value.is_finite() {
+                continue;
+            }
+            let rounded_cycle = cycle_raw.round();
+            if (cycle_raw - rounded_cycle).abs() > 1e-6 || rounded_cycle <= 0.0 {
+                continue;
+            }
+            let cycle_index = (rounded_cycle as usize).max(1).min(cycle_moles.len());
+            if !(0.0 < ph_value && ph_value < 14.0) {
+                continue;
+            }
+            let anchor = AnchorPoint {
+                cycle_index,
+                measured_ph: ph_value,
+                source: source.clone(),
+            };
+            let incoming_priority = source_priority(&source);
+            if let Some((existing_priority, _existing_anchor)) =
+                anchors_by_cycle.get(&cycle_index)
+            {
+                if incoming_priority < *existing_priority {
+                    continue;
+                }
+            }
+            anchors_by_cycle.insert(cycle_index, (incoming_priority, anchor));
+        }
+    }
+    if anchors_by_cycle.is_empty() {
+        let Some(legacy_ph) = measured_ph.filter(|value| value.is_finite()) else {
+            return build_error("Measured pH anchors are required for calibration.");
+        };
+        let anchor_idx = anchor_cycle_index
+            .unwrap_or(1)
+            .max(1)
+            .min(cycle_moles.len());
+        anchors_by_cycle.insert(
+            anchor_idx,
+            (
+                source_priority("legacy"),
+                AnchorPoint {
+                    cycle_index: anchor_idx,
+                    measured_ph: legacy_ph,
+                    source: "legacy".to_string(),
+                },
+            ),
+        );
+    }
+    let normalized_anchors: Vec<AnchorPoint> = anchors_by_cycle
+        .values()
+        .map(|(_priority, anchor)| anchor.clone())
+        .collect();
+    let primary_anchor = normalized_anchors
+        .last()
+        .cloned()
+        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Missing anchor payload"))?;
+    let split_idx = equivalence_cycle_index
+        .unwrap_or(primary_anchor.cycle_index)
+        .max(1)
+        .min(cycle_moles.len());
 
     let temp_c = temperature_c
         .filter(|value| value.is_finite())
@@ -2151,20 +2251,18 @@ fn measured_ph_uptake_calibration_core(
             (Some(pseudo_ph), [h2co3 / total, hco3 / total, co3 / total])
         };
 
-    let simulate_for_factors = |alpha_pre: f64, alpha_post: f64| -> SimulationPayload {
+    let simulate_for_factor_series = |factor_series: &[f64]| -> SimulationPayload {
         let mut corrected_cycle: Vec<f64> = Vec::with_capacity(cycle_moles.len());
         let mut corrected_cumulative: Vec<f64> = Vec::with_capacity(cycle_moles.len());
         let mut corrected_ph: Vec<Option<f64>> = Vec::with_capacity(cycle_moles.len());
         let mut corrected_fractions: Vec<[f64; 3]> = Vec::with_capacity(cycle_moles.len());
         let mut cumulative = 0.0_f64;
-        // Re-evaluate the entire timeline for each candidate pair so objective
-        // scoring is deterministic and independent of iteration order.
         for (idx, raw_cycle_mol) in cycle_moles.iter().enumerate() {
             let cycle_index = idx + 1;
-            let factor = if cycle_index <= split_idx {
-                alpha_pre
+            let factor = if idx < factor_series.len() {
+                factor_series[idx]
             } else {
-                alpha_post
+                1.0
             };
             let corrected = (raw_cycle_mol * factor).max(0.0);
             cumulative += corrected;
@@ -2186,34 +2284,26 @@ fn measured_ph_uptake_calibration_core(
         }
     };
 
-    let baseline = simulate_for_factors(1.0, 1.0);
-    let baseline_anchor_ph = baseline
-        .corrected_ph
-        .get(anchor_idx.saturating_sub(1))
-        .copied()
-        .flatten();
-
-    let objective_for =
-        |alpha_pre: f64, alpha_post: f64| -> (f64, SimulationPayload) {
-            let sim_payload = simulate_for_factors(alpha_pre, alpha_post);
-            let anchor_pred = sim_payload
-                .corrected_ph
-                .get(anchor_idx.saturating_sub(1))
-                .copied()
-                .flatten();
-            let Some(anchor_predicted) = anchor_pred else {
-                return (f64::INFINITY, sim_payload);
-            };
-            if !anchor_predicted.is_finite() {
-                return (f64::INFINITY, sim_payload);
+    let mut seed_factors: Vec<f64> = vec![1.0; cycle_moles.len()];
+    let mut prior_applied = false;
+    if let Some(prior_rows) = prior_cycle_factor_series {
+        for (idx, item) in prior_rows.iter().enumerate() {
+            if idx >= seed_factors.len() {
+                break;
             }
-            let residual = anchor_predicted - measured_ph;
-            let objective = residual * residual
-                + regularization_strength
-                    * ((alpha_pre - 1.0).powi(2) + (alpha_post - 1.0).powi(2))
-                + smoothness_strength * (alpha_post - alpha_pre).powi(2);
-            (objective, sim_payload)
-        };
+            let parsed = item.extract::<f64>().ok().unwrap_or(1.0);
+            if parsed.is_finite() {
+                seed_factors[idx] = parsed.clamp(lower_bound, upper_bound);
+                prior_applied = true;
+            }
+        }
+    }
+    let prefit_baseline = simulate_for_factor_series(&seed_factors);
+    let mut working_factors = seed_factors.clone();
+    let mut segment_rows: Vec<(usize, usize, f64, bool)> = Vec::new();
+    let mut objective_total = 0.0_f64;
+    let mut prev_anchor_idx = 0_usize;
+    let mut previous_segment_scale = 1.0_f64;
 
     let mut grid_values: Vec<f64> = Vec::new();
     let mut current = lower_bound;
@@ -2225,61 +2315,106 @@ fn measured_ph_uptake_calibration_core(
         grid_values.push(1.0);
     }
 
-    let mut best_alpha_pre = 1.0_f64;
-    let mut best_alpha_post = 1.0_f64;
-    let mut best_objective = f64::INFINITY;
-    let mut best_sim = baseline.clone();
-    for alpha_pre in &grid_values {
-        for alpha_post in &grid_values {
-            let (objective_value, sim_payload) = objective_for(*alpha_pre, *alpha_post);
+    for anchor in &normalized_anchors {
+        let anchor_idx = anchor.cycle_index.max(1).min(cycle_moles.len());
+        let measured_anchor_ph = anchor.measured_ph;
+        let segment_start = prev_anchor_idx + 1;
+        let segment_end = anchor_idx;
+        if segment_end < segment_start {
+            continue;
+        }
+        let segment_base = working_factors.clone();
+        let segment_objective = |segment_scale: f64| -> (f64, SimulationPayload) {
+            let mut candidate_factors = working_factors.clone();
+            for cycle_pos in (segment_start - 1)..segment_end {
+                let candidate_value =
+                    (segment_base[cycle_pos] * segment_scale).clamp(lower_bound, upper_bound);
+                candidate_factors[cycle_pos] = candidate_value;
+            }
+            let sim_payload = simulate_for_factor_series(&candidate_factors);
+            let anchor_pred = sim_payload
+                .corrected_ph
+                .get(anchor_idx.saturating_sub(1))
+                .copied()
+                .flatten();
+            let Some(anchor_predicted) = anchor_pred else {
+                return (f64::INFINITY, sim_payload);
+            };
+            if !anchor_predicted.is_finite() {
+                return (f64::INFINITY, sim_payload);
+            }
+            let residual = anchor_predicted - measured_anchor_ph;
+            let objective = residual * residual
+                + regularization_strength * (segment_scale - 1.0).powi(2)
+                + smoothness_strength * (segment_scale - previous_segment_scale).powi(2);
+            (objective, sim_payload)
+        };
+        let mut best_scale = 1.0_f64;
+        let mut best_objective = f64::INFINITY;
+        let mut best_sim = simulate_for_factor_series(&working_factors);
+        for candidate in &grid_values {
+            let (objective_value, sim_payload) = segment_objective(*candidate);
             if objective_value < best_objective {
                 best_objective = objective_value;
-                best_alpha_pre = *alpha_pre;
-                best_alpha_post = *alpha_post;
+                best_scale = *candidate;
                 best_sim = sim_payload;
             }
         }
-    }
-
-    let mut local_step = 0.025_f64;
-    for _ in 0..4 {
-        let pre_candidates = [
-            best_alpha_pre - local_step,
-            best_alpha_pre,
-            best_alpha_pre + local_step,
-        ];
-        let post_candidates = [
-            best_alpha_post - local_step,
-            best_alpha_post,
-            best_alpha_post + local_step,
-        ];
-        for pre in pre_candidates {
-            for post in post_candidates {
-                let alpha_pre = pre.clamp(lower_bound, upper_bound);
-                let alpha_post = post.clamp(lower_bound, upper_bound);
-                let (objective_value, sim_payload) = objective_for(alpha_pre, alpha_post);
+        let mut local_step = 0.025_f64;
+        for _ in 0..4 {
+            for candidate in [
+                best_scale - local_step,
+                best_scale,
+                best_scale + local_step,
+            ] {
+                let clipped = candidate.clamp(lower_bound, upper_bound);
+                let (objective_value, sim_payload) = segment_objective(clipped);
                 if objective_value < best_objective {
                     best_objective = objective_value;
-                    best_alpha_pre = alpha_pre;
-                    best_alpha_post = alpha_post;
+                    best_scale = clipped;
                     best_sim = sim_payload;
                 }
             }
+            local_step *= 0.5;
         }
-        local_step *= 0.5;
+        for cycle_pos in (segment_start - 1)..segment_end {
+            let candidate_value = (segment_base[cycle_pos] * best_scale).clamp(lower_bound, upper_bound);
+            working_factors[cycle_pos] = candidate_value;
+        }
+        prev_anchor_idx = anchor_idx;
+        previous_segment_scale = best_scale;
+        if best_objective.is_finite() {
+            objective_total += best_objective;
+        }
+        segment_rows.push((segment_start, segment_end, best_scale, false));
+        let _ = best_sim;
+    }
+    if prev_anchor_idx < cycle_moles.len() {
+        let tail_start = prev_anchor_idx + 1;
+        for cycle_pos in prev_anchor_idx..cycle_moles.len() {
+            let candidate_value =
+                (working_factors[cycle_pos] * previous_segment_scale).clamp(lower_bound, upper_bound);
+            working_factors[cycle_pos] = candidate_value;
+        }
+        segment_rows.push((tail_start, cycle_moles.len(), previous_segment_scale, true));
     }
 
-    let corrected_cycle_series = best_sim.corrected_cycle.clone();
-    let corrected_cumulative_series = best_sim.corrected_cumulative.clone();
-    let corrected_ph_series = best_sim.corrected_ph.clone();
-    let corrected_fractions_series = best_sim.corrected_fractions.clone();
-
+    let final_sim = simulate_for_factor_series(&working_factors);
+    let corrected_cycle_series = final_sim.corrected_cycle.clone();
+    let corrected_cumulative_series = final_sim.corrected_cumulative.clone();
+    let corrected_ph_series = final_sim.corrected_ph.clone();
+    let corrected_fractions_series = final_sim.corrected_fractions.clone();
     let anchor_after_ph = corrected_ph_series
-        .get(anchor_idx.saturating_sub(1))
+        .get(primary_anchor.cycle_index.saturating_sub(1))
         .copied()
         .flatten();
-    let anchor_residual_before = baseline_anchor_ph.map(|value| value - measured_ph);
-    let anchor_residual_after = anchor_after_ph.map(|value| value - measured_ph);
+    let anchor_before_ph = prefit_baseline
+        .corrected_ph
+        .get(primary_anchor.cycle_index.saturating_sub(1))
+        .copied()
+        .flatten();
+    let anchor_residual_before = anchor_before_ph.map(|value| value - primary_anchor.measured_ph);
+    let anchor_residual_after = anchor_after_ph.map(|value| value - primary_anchor.measured_ph);
     let corrected_latest_total_mol = corrected_cumulative_series
         .last()
         .copied()
@@ -2291,6 +2426,18 @@ fn measured_ph_uptake_calibration_core(
         .unwrap_or([0.0, 0.0, 0.0]);
     let latest_ph = corrected_ph_series.last().copied().flatten();
 
+    let pre_slice = &working_factors[..split_idx];
+    let alpha_pre = if pre_slice.is_empty() {
+        1.0
+    } else {
+        pre_slice.iter().sum::<f64>() / (pre_slice.len() as f64)
+    };
+    let post_slice = &working_factors[split_idx..];
+    let alpha_post = if post_slice.is_empty() {
+        alpha_pre
+    } else {
+        post_slice.iter().sum::<f64>() / (post_slice.len() as f64)
+    };
     let reference_total = planning_reference_total_mol
         .filter(|value| value.is_finite() && *value > 0.0);
     let eq_reference = equivalence_co2_mol.filter(|value| value.is_finite() && *value > 0.0);
@@ -2301,9 +2448,9 @@ fn measured_ph_uptake_calibration_core(
             reference_total_value
         };
         let post_reference = (reference_total_value - pre_reference).max(0.0);
-        Some(pre_reference * best_alpha_pre + post_reference * best_alpha_post)
+        Some(pre_reference * alpha_pre + post_reference * alpha_post)
     } else if let Some(eq_reference_value) = eq_reference {
-        Some(eq_reference_value * best_alpha_pre)
+        Some(eq_reference_value * alpha_pre)
     } else {
         None
     };
@@ -2338,19 +2485,65 @@ fn measured_ph_uptake_calibration_core(
     response.set_item("solver_status", "ok")?;
     response.set_item("solver_message", "")?;
     response.set_item("split_cycle_index", split_idx)?;
-    response.set_item("anchor_cycle_index", anchor_idx)?;
-    response.set_item("anchor_measured_ph", measured_ph)?;
-    set_optional_f64(&response, "anchor_predicted_ph_before", baseline_anchor_ph)?;
+    response.set_item("anchor_cycle_index", primary_anchor.cycle_index)?;
+    response.set_item("anchor_measured_ph", primary_anchor.measured_ph)?;
+    set_optional_f64(&response, "anchor_predicted_ph_before", anchor_before_ph)?;
     set_optional_f64(&response, "anchor_predicted_ph_after", anchor_after_ph)?;
     set_optional_f64(&response, "anchor_residual_before", anchor_residual_before)?;
     set_optional_f64(&response, "anchor_residual_after", anchor_residual_after)?;
-    if best_objective.is_finite() {
-        response.set_item("objective", best_objective)?;
+    if objective_total.is_finite() {
+        response.set_item("objective", objective_total)?;
     } else {
         response.set_item("objective", py.None())?;
     }
-    response.set_item("alpha_pre", best_alpha_pre)?;
-    response.set_item("alpha_post", best_alpha_post)?;
+    response.set_item("alpha_pre", alpha_pre)?;
+    response.set_item("alpha_post", alpha_post)?;
+    response.set_item("cycle_factor_series", working_factors.clone())?;
+    response.set_item("learning_prior_applied", prior_applied)?;
+    response.set_item("prior_sample_count", prior_sample_count)?;
+    response.set_item("prior_cycle_factor_series", seed_factors.clone())?;
+    let segment_list = PyList::empty(py);
+    for (start_cycle, end_cycle, scale, tail_flag) in &segment_rows {
+        let row = PyDict::new(py);
+        row.set_item("start_cycle_index", *start_cycle)?;
+        row.set_item("end_cycle_index", *end_cycle)?;
+        row.set_item("scale", *scale)?;
+        if *tail_flag {
+            row.set_item("tail_extrapolation", true)?;
+        }
+        segment_list.append(row)?;
+    }
+    response.set_item("segment_scales", segment_list)?;
+    let anchors_list = PyList::empty(py);
+    for anchor in &normalized_anchors {
+        let before_ph = prefit_baseline
+            .corrected_ph
+            .get(anchor.cycle_index.saturating_sub(1))
+            .copied()
+            .flatten();
+        let after_ph = corrected_ph_series
+            .get(anchor.cycle_index.saturating_sub(1))
+            .copied()
+            .flatten();
+        let row = PyDict::new(py);
+        row.set_item("cycle_index", anchor.cycle_index)?;
+        row.set_item("measured_ph", anchor.measured_ph)?;
+        row.set_item("source", anchor.source.clone())?;
+        set_optional_f64(&row, "predicted_ph_before", before_ph)?;
+        set_optional_f64(&row, "predicted_ph_after", after_ph)?;
+        set_optional_f64(
+            &row,
+            "residual_before",
+            before_ph.map(|value| value - anchor.measured_ph),
+        )?;
+        set_optional_f64(
+            &row,
+            "residual_after",
+            after_ph.map(|value| value - anchor.measured_ph),
+        )?;
+        anchors_list.append(row)?;
+    }
+    response.set_item("anchors", anchors_list)?;
     response.set_item(
         "corrected_cycle_uptake_mol_series",
         corrected_cycle_series.clone(),

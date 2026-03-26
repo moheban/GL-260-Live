@@ -1,18 +1,18 @@
-# GL-260 Data Analysis and Plotter (v4.8.6)
+# GL-260 Data Analysis and Plotter (v4.9.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest Analysis dashboard and forecasting highlights in `v4.8.6`:
-- Analysis workflow controls and diagnostics are consolidated into dashboard tiles, including Target pH controls/actions, Reaction Progress, Forensic KPIs, Speciation Snapshot, Reaction Overview visuals, pH sweep preview, and Warnings/Narrative/Math context.
-- Added `Target Gap & CO2 Needed` and `Forecast to Target` dashboard tiles, including slowdown-aware cycle/time forecasting from recent cycle behavior.
-- Analysis slider wiring now treats `reaction_target_ph` as canonical in Analysis mode and keeps forced-target mirror values synchronized/persisted, so warnings/math context track the live slider target.
-- Restart restore for Analysis run/recompute payloads is now signature-gated (workspace + analysis inputs + cycle payload) and only restores when signatures match.
-- Cycle timeline legend drag-sync now supports loc + bbox semantics and reserves additional bottom margin for wide bottom legend mode.
+Latest Analysis workflow highlights in `v4.9.0`:
+- Analysis mode supports multi-anchor measured pH calibration (`measured_ph_anchors`) with segment-based correction across anchor cycles.
+- `Measured final pH` now auto-creates the end anchor at the last cycle when no manual anchor exists at that cycle.
+- Rust kernel `measured_ph_uptake_calibration_core` now accepts multi-anchor + learned-prior payloads; Python multi-anchor core is used as fallback when Rust is unavailable or non-OK.
+- Profile calibration persistence now keeps bounded history and derives a per-cycle learned prior for matching profile/chemistry runs.
+- Cycle timeline pH naming is clarified to `Observed pH`, `Corrected pH`, and `Reference pH (...)`.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.8.6`
-- `APP_VERSION = "v4.8.6"`
+- `# Version: v4.9.0`
+- `APP_VERSION = "v4.9.0"`
 
 ## Canonical User Manual Location
 The canonical, continuously updated user manual now lives in `docs/`:
