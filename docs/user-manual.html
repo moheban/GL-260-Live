@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="27879e9e9df7e8309ace3a2daf371ae7f0af12ca9c30980e7c8a1d425480d6ea">
+  <meta name="manual-source-sha256" content="6c3222fbe626462374f6c3cc29f7821d5e8cb42de8af5568896f3d852282cb01">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -243,7 +243,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>27879e9e9df7e830</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>6c3222fbe6264623</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -359,6 +359,8 @@
 <li><a href="#inputs_10">Inputs</a></li>
 <li><a href="#step-by-step-actions_10">Step-by-step actions</a></li>
 <li><a href="#expected-outputs_10">Expected outputs</a></li>
+<li><a href="#v491-release-note-rust-import-hardening-analysis-persistencelayout-updates">v4.9.1 Release Note (Rust Import Hardening + Analysis Persistence/Layout Updates)</a></li>
+<li><a href="#v486-release-note-analysis-dashboard-consolidation-forecasting">v4.8.6 Release Note (Analysis Dashboard Consolidation + Forecasting)</a></li>
 <li><a href="#v485-release-note-timeline-title-commit-job-information-default">v4.8.5 Release Note (Timeline Title Commit + Job Information Default)</a></li>
 <li><a href="#v484-release-note-timeline-preview-legend-sync">v4.8.4 Release Note (Timeline Preview Legend Sync)</a></li>
 <li><a href="#common-errors-and-recovery_10">Common errors and recovery</a></li>
@@ -438,6 +440,11 @@
 <li>Build command: <code>python scripts/build_user_manual.py</code></li>
 <li>Validation command: <code>python scripts/build_user_manual.py --check</code></li>
 </ul>
+<p>Current release: <code>v4.9.1</code></p>
+<p>Analysis timeline pH terminology:<br>
+- <code>Observed pH</code>: pH from detected cycle data / mapped observed timeline point.<br>
+- <code>Corrected pH</code>: measured-anchor calibrated pH after uptake correction.<br>
+- <code>Reference pH</code>: planning/reference curve pH (cycle-index aligned or CO2-aligned).</p>
 <hr>
 <h2 id="table-of-contents">Table of Contents<a class="headerlink" href="#table-of-contents" title="Permanent link">&para;</a></h2>
 <ol>
@@ -961,22 +968,29 @@
 <li>Send cycle payload from Cycle Analysis.</li>
 <li>Choose analysis mode/model settings for speciation/equilibrium workflow.</li>
 <li>Run computation and inspect:<br>
-   - summary panel<br>
+   - Analysis dashboard tiles<br>
    - selected-cycle notes<br>
    - dashboard metrics<br>
    - cycle timeline visualization/table</li>
 <li>For Analysis workflow measured-pH anchoring:<br>
-   - enter <code>Measured pH cycle</code> (the cycle after opening/blending/re-pressurizing)<br>
-   - enter <code>Measured pH anchor</code><br>
-   - keep anchor enabled (single-anchor behavior: latest entry overwrites previous)<br>
+   - add one or more rows in <code>Measured pH Anchors</code> (<code>Cycle</code>, <code>Measured pH</code>)<br>
+   - keep rows aligned to detected cycle IDs<br>
+   - use <code>Clear Anchors</code> to reset the row editor when needed<br>
    - run Analysis or click <strong>Recompute Calibration</strong></li>
+<li>Use <strong>Analysis Actions</strong> panel (directly below <strong>Guided Steps</strong>) for:<br>
+   - <strong>Import from Cycle Analysis</strong><br>
+   - <strong>Run Analysis</strong><br>
+   - <strong>Recompute Calibration</strong><br>
+   - editing <code>Cycle timeline plot title</code></li>
 <li>Verify anchored outputs:<br>
    - measured pH marker appears on cycle timeline plot<br>
    - corrected pH trajectory appears alongside original/planning trajectories<br>
    - corrected per-cycle and cumulative CO2 uptake values appear next to original values<br>
-   - <strong>Reaction Progress</strong> uses corrected-primary completion/regime text and shows <code>CO2 required for target pH</code><br>
+   - dashboard tile <strong>Reaction Progress</strong> uses corrected-primary completion/regime text and shows required CO2 context<br>
    - dashboard tile <strong>Completion Meter</strong> shows adjacent pre-anchor and corrected completion gauges<br>
-   - dashboard tile <strong>Measured pH Anchor</strong> stays text/badge focused and shows latest corrected speciation + required-CO2 context (no gauge canvas)</li>
+   - dashboard tile <strong>Speciation Snapshot</strong> shows latest corrected speciation and required-CO2 context<br>
+   - dashboard tile <strong>Target Gap &amp; CO2 Needed</strong> visualizes corrected cumulative uptake vs required total to the target pH slider value<br>
+   - dashboard tile <strong>Forecast to Target</strong> shows slowdown-aware remaining cycle/time forecast with confidence</li>
 <li>Edit <code>Cycle timeline plot title</code> (Planning/Analysis/Reprocessing shared field):<br>
    - default format is <code>&lt;Job Information&gt; Reaction Simulation</code><br>
    - commits apply on <code>Enter</code> or when the input loses focus (<code>FocusOut</code>)<br>
@@ -988,12 +1002,38 @@
    - JSON summary<br>
    - timeline CSV/plot/table</li>
 <li>Use <strong>Send Dashboard Stats to Ledger</strong> when values should be captured in ledger entries (corrected-primary uptake/yield are prefilled; raw baselines remain in notes).</li>
+<li>In Analysis dashboard verify tile coverage:<br>
+   - Target pH controls, Reaction Progress, Forensic Comparison KPIs<br>
+   - Speciation Snapshot, Reaction Overview visuals, All-cycles pH sweep preview<br>
+   - Warnings/Narrative/Math context<br>
+   - Cycle Comparison Explorer, Cycle Speciation Timeline Explorer/plot, and Selected-Cycle Notes and Export remain in their existing locations.</li>
 </ol>
 <h3 id="expected-outputs_10">Expected outputs<a class="headerlink" href="#expected-outputs_10" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Speciation/equilibrium summaries tied to cycle-level data.</li>
 <li>Timeline artifacts and dashboard metrics suitable for compare/report/ledger.</li>
-<li>Measured-pH anchored correction payloads persisted per profile and auto-applied on reload when chemistry/model basis matches.</li>
+<li>Measured-pH anchor editor rows persist globally in <code>solubility_inputs</code> and restore on Analysis tab build/restart.</li>
+<li>Measured-pH anchored correction payloads remain persisted per profile and auto-applied on reload when chemistry/model basis matches.</li>
+</ul>
+<h3 id="v491-release-note-rust-import-hardening-analysis-persistencelayout-updates">v4.9.1 Release Note (Rust Import Hardening + Analysis Persistence/Layout Updates)<a class="headerlink" href="#v491-release-note-rust-import-hardening-analysis-persistencelayout-updates" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Rust setup now runs interpreter-pinned subprocess verification of extension import path, interface id/version, and required kernels.</li>
+<li>Added startup/runtime <code>restart_required</code> state when subprocess verification passes but in-process module reload remains stale/deprecated.</li>
+<li>Startup preflight, workflow setup, and Developer Tools validation now report restart-required cleanly and avoid repeated misleading install loops.</li>
+<li>Analysis measured-pH anchor row editor now persists globally in <code>settings["solubility_inputs"]</code> and restores deterministically on tab build.</li>
+<li><strong>Analysis Actions</strong> moved out of dashboard tiles to a dedicated panel directly below <strong>Guided Steps</strong>.</li>
+<li>Legacy dashboard settings containing <code>analysis_actions</code> are auto-normalized to current tile schema.</li>
+<li>Target pH slider synchronization is re-applied after control wiring, on workflow tab changes, and on initial tab render.</li>
+</ul>
+<h3 id="v486-release-note-analysis-dashboard-consolidation-forecasting">v4.8.6 Release Note (Analysis Dashboard Consolidation + Forecasting)<a class="headerlink" href="#v486-release-note-analysis-dashboard-consolidation-forecasting" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Analysis workflow input mode was consolidated into Analysis dashboard tiles for controls, KPIs, visuals, and warnings/math context.</li>
+<li>Added <code>Target Gap &amp; CO2 Needed</code> tile to emphasize corrected cumulative uptake, required total uptake to target pH, and additional CO2 demand.</li>
+<li>Added <code>Forecast to Target</code> tile with slowdown-aware forecasting (knee detection, pre/post trend rates, projected remaining cycles/time, confidence).</li>
+<li>Analysis slider target pH now synchronizes and persists with forced-target mirror values so warnings and math context use the active slider value.</li>
+<li><code>Key Metrics</code> panel was removed from Analysis workflow input mode because equivalent coverage is provided by Speciation Snapshot/dashboard summaries.</li>
+<li>Timeline bottom-legend drag sync now captures bbox placement semantics and keeps wide-under-x-axis legends visible by reserving extra bottom subplot margin.</li>
+<li>Analysis run/recompute result restore now requires matching workspace, analysis-input, and cycle signatures before auto-restore.</li>
 </ul>
 <h3 id="v485-release-note-timeline-title-commit-job-information-default">v4.8.5 Release Note (Timeline Title Commit + Job Information Default)<a class="headerlink" href="#v485-release-note-timeline-title-commit-job-information-default" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1029,6 +1069,12 @@
 <li>Recovery: update to <code>v4.8.3+</code>; Analysis guidance now consumes <code>Measured pH anchor</code> when final/slurry pH fields are empty and anchor cycle is valid.</li>
 <li>Error: Analysis progress requests Planning-only delta-P/manual CO2-per-cycle inputs.</li>
 <li>Recovery: update to <code>v4.8.2+</code>; Analysis mode now builds fallback reference traces from cycle uptake + Analysis chemistry inputs and no longer requires Planning-only controls for progress text.</li>
+<li>Error: Analysis warnings still display a stale forced target pH value after moving the slider.</li>
+<li>Recovery: update to <code>v4.9.1+</code>; Analysis slider sync now re-applies on workflow changes and initial tab load in addition to direct slider movement.</li>
+<li>Error: Rust backend install/build reports failure even though build succeeded and interface appears current.</li>
+<li>Recovery: update to <code>v4.9.1+</code>; runtime now reports <code>restart_required</code> when the current process holds a stale extension image and restart the app to activate Rust acceleration.</li>
+<li>Error: dragged bottom legend in Cycle Timeline preview is clipped or does not sync on close.</li>
+<li>Recovery: update to <code>v4.8.6+</code>; timeline legend sync now captures loc+bbox placement and reserves enough bottom margin for wide bottom legend mode.</li>
 </ul>
 <h3 id="related-exportsartifacts_10">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_10" title="Permanent link">&para;</a></h3>
 <ul>

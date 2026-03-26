@@ -1,18 +1,18 @@
-# GL-260 Data Analysis and Plotter (v4.9.0)
+# GL-260 Data Analysis and Plotter (v4.9.1)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest Analysis workflow highlights in `v4.9.0`:
-- Analysis mode supports multi-anchor measured pH calibration (`measured_ph_anchors`) with segment-based correction across anchor cycles.
-- `Measured final pH` now auto-creates the end anchor at the last cycle when no manual anchor exists at that cycle.
-- Rust kernel `measured_ph_uptake_calibration_core` now accepts multi-anchor + learned-prior payloads; Python multi-anchor core is used as fallback when Rust is unavailable or non-OK.
-- Profile calibration persistence now keeps bounded history and derives a per-cycle learned prior for matching profile/chemistry runs.
-- Cycle timeline pH naming is clarified to `Observed pH`, `Corrected pH`, and `Reference pH (...)`.
+Latest Analysis workflow highlights in `v4.9.1`:
+- Rust setup now classifies `restart_required` when a new build is valid in a fresh subprocess but the current process still holds a stale extension image.
+- Analysis measured-pH anchor editor rows now persist globally under `settings["solubility_inputs"]` and restore on Analysis tab build.
+- **Analysis Actions** moved to a dedicated panel directly below **Guided Steps** (and above **Workflow Inputs**), independent of dashboard tile layout.
+- Analysis target pH slider now re-synchronizes from persisted entry values on initial render and workflow tab switches.
+- Dashboard tile schema removes legacy `analysis_actions`; legacy persisted tile layouts are auto-normalized.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.9.0`
-- `APP_VERSION = "v4.9.0"`
+- `# Version: v4.9.1`
+- `APP_VERSION = "v4.9.1"`
 
 ## Canonical User Manual Location
 The canonical, continuously updated user manual now lives in `docs/`:
@@ -375,7 +375,7 @@ High-level pipeline:
 
 Core state is held in application-owned data frames, selected-column mappings, plot/cycle settings, and persisted settings/profile payloads. Optional acceleration layers (SciPy/Rust) are additive and fail closed to baseline Python behavior.
 
-Analysis-mode calibration flow now supports one measured-pH anchor per run/profile: select cycle, enter measured pH, run or recompute calibration, then propagate corrected uptake/pH/speciation to downstream cycles and dashboard/timeline outputs.
+Analysis-mode calibration flow supports multiple measured-pH anchors per run: add cycle/pH anchor rows, run or recompute calibration, then propagate corrected uptake/pH/speciation to downstream cycles and dashboard/timeline outputs.
 
 ### Quickstart Workflow (Linear)
 Recommended order:
@@ -428,7 +428,7 @@ Primary tabs and purpose:
 - Supports optional Rust-accelerated kernels with Python fallback.
 - Optional NaOH-CO2 path depends on local model module and `pitzer.dat`.
 - Model outputs remain available through fallback paths when optional dependencies are missing.
-- Analysis workflow supports measured-pH anchor entry (`Measured pH cycle`, `Measured pH anchor`) with one-anchor overwrite semantics per run/profile.
+- Analysis workflow supports measured-pH anchor row entry (`Measured pH Anchors`) with multi-anchor persistence and restore semantics.
 - Anchor-based calibration updates corrected uptake series and corrected pH/speciation series, and displays corrected values beside original estimates.
 - Cycle timeline renders include measured anchor marker, corrected pH trajectory, and corrected cycle uptake traces.
 - Analysis dashboard includes a measured-pH anchor speciation tile and reaction completion gauge tied to corrected cumulative uptake vs required CO2 for target pH.
@@ -512,6 +512,17 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.9.1 Rust Import Hardening + Analysis Persistence/Layout Updates
+- Hardened Rust setup verification to run interpreter-pinned subprocess manifest checks (extension import path, interface id/version, required kernels).
+- Added explicit `restart_required` status classification when subprocess verification passes but in-process reload reports deprecated/interface mismatch.
+- Updated startup preflight, workflow setup, and Developer Tools validation to surface restart-required status and avoid misleading rebuild loops; Python fallback remains active until restart.
+- Added `skip_module_probe` support in runtime requirement detection and applied it to setup/build paths to reduce pre-build in-process import side effects.
+- Persisted Analysis measured-pH anchor editor rows globally in `settings["solubility_inputs"]` with deterministic restore and immediate add/remove/edit/reset persistence.
+- Moved **Analysis Actions** into a dedicated panel below **Guided Steps** and above **Workflow Inputs**.
+- Removed `analysis_actions` from Analysis dashboard tile defaults/labels and normalized legacy persisted tile layouts by dropping unknown tile ids.
+- Tightened target pH slider synchronization so persisted entry values are re-applied on initial tab render and workflow tab changes.
+- Added targeted regressions for restart-required classification/status text, anchor-row persistence restore, dashboard normalization, and slider-sync hook presence.
 
 ### v4.8.6 Analysis Dashboard Consolidation + Forecasting
 - Converted Analysis workflow-mode sections into a dashboard-tile surface for key Analysis controls and outputs:

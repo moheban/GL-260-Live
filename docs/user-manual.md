@@ -7,7 +7,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Build command: `python scripts/build_user_manual.py`
 - Validation command: `python scripts/build_user_manual.py --check`
 
-Current release: `v4.9.0`
+Current release: `v4.9.1`
 
 Analysis timeline pH terminology:
 - `Observed pH`: pH from detected cycle data / mapped observed timeline point.
@@ -520,11 +520,16 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
    - dashboard metrics
    - cycle timeline visualization/table
 5. For Analysis workflow measured-pH anchoring:
-   - enter `Measured pH cycle` (the cycle after opening/blending/re-pressurizing)
-   - enter `Measured pH anchor`
-   - keep anchor enabled (single-anchor behavior: latest entry overwrites previous)
+   - add one or more rows in `Measured pH Anchors` (`Cycle`, `Measured pH`)
+   - keep rows aligned to detected cycle IDs
+   - use `Clear Anchors` to reset the row editor when needed
    - run Analysis or click **Recompute Calibration**
-6. Verify anchored outputs:
+6. Use **Analysis Actions** panel (directly below **Guided Steps**) for:
+   - **Import from Cycle Analysis**
+   - **Run Analysis**
+   - **Recompute Calibration**
+   - editing `Cycle timeline plot title`
+7. Verify anchored outputs:
    - measured pH marker appears on cycle timeline plot
    - corrected pH trajectory appears alongside original/planning trajectories
    - corrected per-cycle and cumulative CO2 uptake values appear next to original values
@@ -533,19 +538,19 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
    - dashboard tile **Speciation Snapshot** shows latest corrected speciation and required-CO2 context
    - dashboard tile **Target Gap & CO2 Needed** visualizes corrected cumulative uptake vs required total to the target pH slider value
    - dashboard tile **Forecast to Target** shows slowdown-aware remaining cycle/time forecast with confidence
-7. Edit `Cycle timeline plot title` (Planning/Analysis/Reprocessing shared field):
+8. Edit `Cycle timeline plot title` (Planning/Analysis/Reprocessing shared field):
    - default format is `<Job Information> Reaction Simulation`
    - commits apply on `Enter` or when the input loses focus (`FocusOut`)
    - typing alone does not trigger full timeline refresh
-8. Use cycle selector tools to inspect cycle-specific behavior.
-9. Export outputs:
+9. Use cycle selector tools to inspect cycle-specific behavior.
+10. Export outputs:
    - summary PNG
    - CSV species table
    - JSON summary
    - timeline CSV/plot/table
-10. Use **Send Dashboard Stats to Ledger** when values should be captured in ledger entries (corrected-primary uptake/yield are prefilled; raw baselines remain in notes).
-11. In Analysis dashboard verify tile coverage:
-   - Target pH controls, Analysis actions, Reaction Progress, Forensic Comparison KPIs
+11. Use **Send Dashboard Stats to Ledger** when values should be captured in ledger entries (corrected-primary uptake/yield are prefilled; raw baselines remain in notes).
+12. In Analysis dashboard verify tile coverage:
+   - Target pH controls, Reaction Progress, Forensic Comparison KPIs
    - Speciation Snapshot, Reaction Overview visuals, All-cycles pH sweep preview
    - Warnings/Narrative/Math context
    - Cycle Comparison Explorer, Cycle Speciation Timeline Explorer/plot, and Selected-Cycle Notes and Export remain in their existing locations.
@@ -553,7 +558,17 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 ### Expected outputs
 - Speciation/equilibrium summaries tied to cycle-level data.
 - Timeline artifacts and dashboard metrics suitable for compare/report/ledger.
-- Measured-pH anchored correction payloads persisted per profile and auto-applied on reload when chemistry/model basis matches.
+- Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
+- Measured-pH anchored correction payloads remain persisted per profile and auto-applied on reload when chemistry/model basis matches.
+
+### v4.9.1 Release Note (Rust Import Hardening + Analysis Persistence/Layout Updates)
+- Rust setup now runs interpreter-pinned subprocess verification of extension import path, interface id/version, and required kernels.
+- Added startup/runtime `restart_required` state when subprocess verification passes but in-process module reload remains stale/deprecated.
+- Startup preflight, workflow setup, and Developer Tools validation now report restart-required cleanly and avoid repeated misleading install loops.
+- Analysis measured-pH anchor row editor now persists globally in `settings["solubility_inputs"]` and restores deterministically on tab build.
+- **Analysis Actions** moved out of dashboard tiles to a dedicated panel directly below **Guided Steps**.
+- Legacy dashboard settings containing `analysis_actions` are auto-normalized to current tile schema.
+- Target pH slider synchronization is re-applied after control wiring, on workflow tab changes, and on initial tab render.
 
 ### v4.8.6 Release Note (Analysis Dashboard Consolidation + Forecasting)
 - Analysis workflow input mode was consolidated into Analysis dashboard tiles for controls, KPIs, visuals, and warnings/math context.
@@ -596,7 +611,9 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Error: Analysis progress requests Planning-only delta-P/manual CO2-per-cycle inputs.
   - Recovery: update to `v4.8.2+`; Analysis mode now builds fallback reference traces from cycle uptake + Analysis chemistry inputs and no longer requires Planning-only controls for progress text.
 - Error: Analysis warnings still display a stale forced target pH value after moving the slider.
-  - Recovery: update to `v4.8.6+`; Analysis slider updates now synchronize and persist both target keys, and warning/math context uses the live Analysis target value.
+  - Recovery: update to `v4.9.1+`; Analysis slider sync now re-applies on workflow changes and initial tab load in addition to direct slider movement.
+- Error: Rust backend install/build reports failure even though build succeeded and interface appears current.
+  - Recovery: update to `v4.9.1+`; runtime now reports `restart_required` when the current process holds a stale extension image and restart the app to activate Rust acceleration.
 - Error: dragged bottom legend in Cycle Timeline preview is clipped or does not sync on close.
   - Recovery: update to `v4.8.6+`; timeline legend sync now captures loc+bbox placement and reserves enough bottom margin for wide bottom legend mode.
 
