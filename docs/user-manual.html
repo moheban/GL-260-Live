@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="7b93384c4e78e3bd61650861a779e5e852a99370810c776a2807641efa5886c9">
+  <meta name="manual-source-sha256" content="fc29c3f24a25499f7a22c7d91ba463487b845c43474d70236fdc2b051067b8af">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -243,7 +243,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>7b93384c4e78e3bd</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>fc29c3f24a25499f</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -359,6 +359,7 @@
 <li><a href="#inputs_10">Inputs</a></li>
 <li><a href="#step-by-step-actions_10">Step-by-step actions</a></li>
 <li><a href="#expected-outputs_10">Expected outputs</a></li>
+<li><a href="#v4110-release-note-cycle-timeline-layout-manager-splash-gated-verification">v4.11.0 Release Note (Cycle Timeline Layout Manager + Splash-Gated Verification)</a></li>
 <li><a href="#v4100-release-note-anchor-learning-warning-context-alignment">v4.10.0 Release Note (Anchor Learning + Warning Context Alignment)</a></li>
 <li><a href="#v492-release-note-cycle-timeline-layout-advanced-speciation-tile-stacking">v4.9.2 Release Note (Cycle Timeline Layout + Advanced Speciation Tile Stacking)</a></li>
 <li><a href="#v491-release-note-rust-import-hardening-analysis-persistencelayout-updates">v4.9.1 Release Note (Rust Import Hardening + Analysis Persistence/Layout Updates)</a></li>
@@ -442,7 +443,7 @@
 <li>Build command: <code>python scripts/build_user_manual.py</code></li>
 <li>Validation command: <code>python scripts/build_user_manual.py --check</code></li>
 </ul>
-<p>Current release: <code>v4.10.0</code></p>
+<p>Current release: <code>v4.11.0</code></p>
 <p>Analysis timeline pH terminology:<br>
 - <code>Observed pH</code>: pH from detected cycle data / mapped observed timeline point.<br>
 - <code>Corrected pH</code>: measured-anchor calibrated pH after uptake correction.<br>
@@ -999,6 +1000,7 @@
    - default format is <code>&lt;Job Information&gt; Reaction Simulation</code><br>
    - commits apply on <code>Enter</code> or when the input loses focus (<code>FocusOut</code>)<br>
    - typing alone does not trigger full timeline refresh</li>
+<li>Use <strong>Layout Manager...</strong> (next to <strong>Plot Preview</strong>) to tune timeline layout-manager checks before final display/export.</li>
 <li>Use cycle selector tools to inspect cycle-specific behavior.</li>
 <li>Export outputs:<br>
    - summary PNG<br>
@@ -1018,6 +1020,22 @@
 <li>Timeline artifacts and dashboard metrics suitable for compare/report/ledger.</li>
 <li>Measured-pH anchor editor rows persist globally in <code>solubility_inputs</code> and restore on Analysis tab build/restart.</li>
 <li>Measured-pH anchored correction payloads remain persisted per profile and auto-applied on reload when chemistry/model basis matches.</li>
+</ul>
+<h3 id="v4110-release-note-cycle-timeline-layout-manager-splash-gated-verification">v4.11.0 Release Note (Cycle Timeline Layout Manager + Splash-Gated Verification)<a class="headerlink" href="#v4110-release-note-cycle-timeline-layout-manager-splash-gated-verification" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Added a dedicated <strong>Layout Manager...</strong> button beside <strong>Plot Preview</strong> in the Cycle Speciation Timeline actions row.</li>
+<li>Added a timeline-specific layout-manager dialog with controls for:</li>
+<li>enable/disable,</li>
+<li>strict mode,</li>
+<li>max solve passes,</li>
+<li>legend/xlabel conflict checks,</li>
+<li>right-axis label/tick conflict checks,</li>
+<li>min/max legend-to-xlabel gap,</li>
+<li>minimum axis-label-to-tick-label gap.</li>
+<li>Timeline layout verification now runs behind splash/loading overlays when layout-driving signatures change.</li>
+<li>Added signature-based verification triggers so display/preview solves react to timeline layout-manager settings, axis spacing settings, legend mode, and figure geometry changes.</li>
+<li>Fixed Cycle CO2 axis label padding behavior so <code>pco2_axis_labelpad</code> now changes final attached right-label spacing.</li>
+<li>Added targeted regressions for layout-manager conflict auto-fix paths, splash gating behavior, preview rebuild-on-apply behavior, and preference normalization round-trip.</li>
 </ul>
 <h3 id="v4100-release-note-anchor-learning-warning-context-alignment">v4.10.0 Release Note (Anchor Learning + Warning Context Alignment)<a class="headerlink" href="#v4100-release-note-anchor-learning-warning-context-alignment" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1085,6 +1103,8 @@
 <li>Recovery: update to <code>v4.8.5+</code>; title edits now commit on <code>Enter</code>/<code>FocusOut</code>, and typing alone no longer runs full timeline refresh.</li>
 <li>Error: cycle CO2 uptake y-label overlaps the lower-panel right-axis tick labels.</li>
 <li>Recovery: update to <code>v4.9.2+</code>; timeline layout now applies right-label offset placement while keeping the axis attached.</li>
+<li>Error: changing Cycle CO2 axis label padding does not change timeline right-label spacing.</li>
+<li>Recovery: update to <code>v4.11.0+</code>; attached right-label x solving now includes <code>pco2_axis_labelpad</code>, and layout verification reruns when timeline layout settings change.</li>
 <li>Error: selected cycle mismatch.</li>
 <li>Recovery: re-sync cycle selection and refresh dashboard/timeline views.</li>
 <li>Error: measured pH anchor not applied.</li>

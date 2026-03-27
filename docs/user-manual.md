@@ -7,7 +7,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Build command: `python scripts/build_user_manual.py`
 - Validation command: `python scripts/build_user_manual.py --check`
 
-Current release: `v4.10.0`
+Current release: `v4.11.0`
 
 Analysis timeline pH terminology:
 - `Observed pH`: pH from detected cycle data / mapped observed timeline point.
@@ -544,14 +544,15 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
    - default format is `<Job Information> Reaction Simulation`
    - commits apply on `Enter` or when the input loses focus (`FocusOut`)
    - typing alone does not trigger full timeline refresh
-9. Use cycle selector tools to inspect cycle-specific behavior.
-10. Export outputs:
+9. Use **Layout Manager...** (next to **Plot Preview**) to tune timeline layout-manager checks before final display/export.
+10. Use cycle selector tools to inspect cycle-specific behavior.
+11. Export outputs:
    - summary PNG
    - CSV species table
    - JSON summary
    - timeline CSV/plot/table
-11. Use **Send Dashboard Stats to Ledger** when values should be captured in ledger entries (corrected-primary uptake/yield are prefilled; raw baselines remain in notes).
-12. In Analysis dashboard verify tile coverage:
+12. Use **Send Dashboard Stats to Ledger** when values should be captured in ledger entries (corrected-primary uptake/yield are prefilled; raw baselines remain in notes).
+13. In Analysis dashboard verify tile coverage:
    - Target pH controls, Reaction Progress, Forensic Comparison KPIs
    - Speciation Snapshot, Reaction Overview visuals, All-cycles pH sweep preview
    - Warnings/Narrative/Math context
@@ -562,6 +563,21 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Timeline artifacts and dashboard metrics suitable for compare/report/ledger.
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Measured-pH anchored correction payloads remain persisted per profile and auto-applied on reload when chemistry/model basis matches.
+
+### v4.11.0 Release Note (Cycle Timeline Layout Manager + Splash-Gated Verification)
+- Added a dedicated **Layout Manager...** button beside **Plot Preview** in the Cycle Speciation Timeline actions row.
+- Added a timeline-specific layout-manager dialog with controls for:
+  - enable/disable,
+  - strict mode,
+  - max solve passes,
+  - legend/xlabel conflict checks,
+  - right-axis label/tick conflict checks,
+  - min/max legend-to-xlabel gap,
+  - minimum axis-label-to-tick-label gap.
+- Timeline layout verification now runs behind splash/loading overlays when layout-driving signatures change.
+- Added signature-based verification triggers so display/preview solves react to timeline layout-manager settings, axis spacing settings, legend mode, and figure geometry changes.
+- Fixed Cycle CO2 axis label padding behavior so `pco2_axis_labelpad` now changes final attached right-label spacing.
+- Added targeted regressions for layout-manager conflict auto-fix paths, splash gating behavior, preview rebuild-on-apply behavior, and preference normalization round-trip.
 
 ### v4.10.0 Release Note (Anchor Learning + Warning Context Alignment)
 - Added Analysis anchor-learning controls in Developer Tools Runtime diagnostics:
@@ -622,6 +638,8 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
   - Recovery: update to `v4.8.5+`; title edits now commit on `Enter`/`FocusOut`, and typing alone no longer runs full timeline refresh.
 - Error: cycle CO2 uptake y-label overlaps the lower-panel right-axis tick labels.
   - Recovery: update to `v4.9.2+`; timeline layout now applies right-label offset placement while keeping the axis attached.
+- Error: changing Cycle CO2 axis label padding does not change timeline right-label spacing.
+  - Recovery: update to `v4.11.0+`; attached right-label x solving now includes `pco2_axis_labelpad`, and layout verification reruns when timeline layout settings change.
 - Error: selected cycle mismatch.
   - Recovery: re-sync cycle selection and refresh dashboard/timeline views.
 - Error: measured pH anchor not applied.

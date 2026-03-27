@@ -1,18 +1,19 @@
-# GL-260 Data Analysis and Plotter (v4.10.0)
+# GL-260 Data Analysis and Plotter (v4.11.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest Analysis workflow highlights in `v4.10.0`:
-- Added Analysis anchor-learning controls in Developer Tools Runtime diagnostics (`learning_enabled`, terminal pH low/high range, terminal objective weight).
-- Extended Rust/Python measured-pH calibration payloads with anchor usage breakdown, prior-learning usage diagnostics, terminal-objective metadata, and endpoint diagnostics.
-- Added context-separated warning rendering (`primary`, `forced`, `reaction`, `closed_system`, `analysis`) so forced-scenario warnings no longer conflict with primary Speciation Snapshot metrics.
-- Added Analysis output alignment auditing and auto-reconcile logic so timeline/dashboard/summary fields stay coherent with corrected-primary precedence.
-- Added targeted regressions for warning context separation, terminal-objective endpoint behavior, anchor-learning controls normalization, and alignment-audit reconciliation.
+Latest workflow highlights in `v4.11.0`:
+- Added a dedicated **Layout Manager...** control next to **Plot Preview** in the Cycle Speciation Timeline actions row.
+- Extended timeline layout verification with a cycle-specific, conflict-aware policy (legend/xlabel checks, right-axis label/tick checks, strict mode, bounded passes, spacing thresholds).
+- Added timeline layout signature detection so display updates trigger splash-gated layout verification only when relevant layout-driving inputs change.
+- Updated Plot Preview rebuild behavior so layout-manager policy changes while preview is open immediately rebuild preview output under preview loading overlay.
+- Fixed Cycle CO2 axis label padding so `pco2_axis_labelpad` now materially shifts attached right-label spacing in display/export solve paths.
+- Added targeted timeline regressions for layout-manager conflict auto-fix behavior, splash-gated display verification, preview rebuild on policy apply, and preference normalization round-trip.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.10.0`
-- `APP_VERSION = "v4.10.0"`
+- `# Version: v4.11.0`
+- `APP_VERSION = "v4.11.0"`
 
 ## Canonical User Manual Location
 The canonical, continuously updated user manual now lives in `docs/`:
@@ -512,6 +513,35 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.11.0 Cycle Timeline Layout Manager Parity + Splash-Gated Rendering
+- Added timeline layout-manager policy keys under `settings["cycle_plot_prefs"]`:
+  - `layout_manager_enabled`
+  - `layout_manager_strict_mode`
+  - `layout_manager_max_passes`
+  - `layout_manager_check_legend_conflicts`
+  - `layout_manager_check_axis_label_conflicts`
+  - `layout_manager_min_legend_xlabel_gap_pts`
+  - `layout_manager_max_legend_xlabel_gap_pts`
+  - `layout_manager_min_axis_label_tick_gap_pts`
+- Added dedicated **Cycle Timeline Layout Manager** dialog with `Reset`, `Apply`, and `Apply + Close`.
+- Added signature-based timeline layout verification triggers for display and preview/export figure generation.
+- Timeline display verification now runs splash-gated before reveal when timeline layout signatures change.
+- Timeline layout health checks now include:
+  - legend/xlabel overlap or excessive gap
+  - right-axis label/tick-label overlap
+  - right-axis label off-canvas
+  - off-canvas title/suptitle
+  - over-compressed axes
+- Fixed attached Cycle CO2 axis label spacing so `pco2_axis_labelpad` directly affects resolved right-label x-position.
+- Added a **Layout Manager...** button beside **Plot Preview** in the Cycle Speciation Timeline panel.
+- Added targeted regressions for:
+  - attached CO2 label padding effect
+  - legend/xlabel conflict auto-fix
+  - right-label/tick conflict auto-fix
+  - splash gating on display signature changes
+  - preview rebuild when layout-manager settings are applied with preview open
+  - layout-manager preference normalization/persistence round-trip
 
 ### v4.10.0 Advanced Speciation Anchor Learning + Output Alignment
 - Added Analysis anchor-learning control surface in Developer Tools Runtime diagnostics:
