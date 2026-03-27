@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="c3cba9f20c0967ca744fe8c4c5822dab6ee785f6863462a8f4475aa982838245">
+  <meta name="manual-source-sha256" content="7b93384c4e78e3bd61650861a779e5e852a99370810c776a2807641efa5886c9">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -243,7 +243,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>c3cba9f20c0967ca</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>7b93384c4e78e3bd</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -359,6 +359,7 @@
 <li><a href="#inputs_10">Inputs</a></li>
 <li><a href="#step-by-step-actions_10">Step-by-step actions</a></li>
 <li><a href="#expected-outputs_10">Expected outputs</a></li>
+<li><a href="#v4100-release-note-anchor-learning-warning-context-alignment">v4.10.0 Release Note (Anchor Learning + Warning Context Alignment)</a></li>
 <li><a href="#v492-release-note-cycle-timeline-layout-advanced-speciation-tile-stacking">v4.9.2 Release Note (Cycle Timeline Layout + Advanced Speciation Tile Stacking)</a></li>
 <li><a href="#v491-release-note-rust-import-hardening-analysis-persistencelayout-updates">v4.9.1 Release Note (Rust Import Hardening + Analysis Persistence/Layout Updates)</a></li>
 <li><a href="#v486-release-note-analysis-dashboard-consolidation-forecasting">v4.8.6 Release Note (Analysis Dashboard Consolidation + Forecasting)</a></li>
@@ -441,7 +442,7 @@
 <li>Build command: <code>python scripts/build_user_manual.py</code></li>
 <li>Validation command: <code>python scripts/build_user_manual.py --check</code></li>
 </ul>
-<p>Current release: <code>v4.9.2</code></p>
+<p>Current release: <code>v4.10.0</code></p>
 <p>Analysis timeline pH terminology:<br>
 - <code>Observed pH</code>: pH from detected cycle data / mapped observed timeline point.<br>
 - <code>Corrected pH</code>: measured-anchor calibrated pH after uptake correction.<br>
@@ -990,8 +991,10 @@
    - dashboard tile <strong>Reaction Progress</strong> uses corrected-primary completion/regime text and shows required CO2 context<br>
    - dashboard tile <strong>Completion Meter</strong> shows adjacent pre-anchor and corrected completion gauges<br>
    - dashboard tile <strong>Speciation Snapshot</strong> shows latest corrected speciation and required-CO2 context<br>
+   - Speciation Snapshot also surfaces anchor count/source usage, learning controls, and terminal-objective endpoint diagnostics<br>
    - dashboard tile <strong>Target Gap &amp; CO2 Needed</strong> visualizes corrected cumulative uptake vs required total to the target pH slider value<br>
-   - dashboard tile <strong>Forecast to Target</strong> shows slowdown-aware remaining cycle/time forecast with confidence</li>
+   - dashboard tile <strong>Forecast to Target</strong> shows slowdown-aware remaining cycle/time forecast with confidence<br>
+   - <strong>Warnings / Narrative / Math Context</strong> now renders explicit context sections (<code>Primary</code>, <code>Forced</code>, <code>Reaction</code>, <code>Closed-System</code>, <code>Analysis Alignment</code>) with context-specific metrics to avoid forced-vs-primary conflicts</li>
 <li>Edit <code>Cycle timeline plot title</code> (Planning/Analysis/Reprocessing shared field):<br>
    - default format is <code>&lt;Job Information&gt; Reaction Simulation</code><br>
    - commits apply on <code>Enter</code> or when the input loses focus (<code>FocusOut</code>)<br>
@@ -1015,6 +1018,19 @@
 <li>Timeline artifacts and dashboard metrics suitable for compare/report/ledger.</li>
 <li>Measured-pH anchor editor rows persist globally in <code>solubility_inputs</code> and restore on Analysis tab build/restart.</li>
 <li>Measured-pH anchored correction payloads remain persisted per profile and auto-applied on reload when chemistry/model basis matches.</li>
+</ul>
+<h3 id="v4100-release-note-anchor-learning-warning-context-alignment">v4.10.0 Release Note (Anchor Learning + Warning Context Alignment)<a class="headerlink" href="#v4100-release-note-anchor-learning-warning-context-alignment" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Added Analysis anchor-learning controls in Developer Tools Runtime diagnostics:</li>
+<li>learning enabled toggle,</li>
+<li>terminal pH low/high range,</li>
+<li>terminal objective weight,</li>
+<li>reset learned anchor history for active profile,</li>
+<li>dump anchor-learning diagnostics snapshot.</li>
+<li>Extended measured-pH calibration payloads (Rust and Python) with anchor usage diagnostics, prior-learning usage diagnostics, terminal-objective metadata, objective component breakdown, and endpoint diagnostics.</li>
+<li>Added context-separated warning assembly/rendering so forced pH warnings are shown in a dedicated <strong>Forced Scenario Context</strong> section and no longer conflict with primary snapshot ionic strength/charge residual values.</li>
+<li>Added Analysis alignment-audit pass that reconciles timeline tail vs dashboard summary mismatches and surfaces audit status/mismatch diagnostics.</li>
+<li>Speciation Snapshot dashboard tile now reports anchor usage counts/source breakdown and terminal-objective diagnostics.</li>
 </ul>
 <h3 id="v492-release-note-cycle-timeline-layout-advanced-speciation-tile-stacking">v4.9.2 Release Note (Cycle Timeline Layout + Advanced Speciation Tile Stacking)<a class="headerlink" href="#v492-release-note-cycle-timeline-layout-advanced-speciation-tile-stacking" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1079,6 +1095,8 @@
 <li>Recovery: update to <code>v4.8.2+</code>; Analysis mode now builds fallback reference traces from cycle uptake + Analysis chemistry inputs and no longer requires Planning-only controls for progress text.</li>
 <li>Error: Analysis warnings still display a stale forced target pH value after moving the slider.</li>
 <li>Recovery: update to <code>v4.9.1+</code>; Analysis slider sync now re-applies on workflow changes and initial tab load in addition to direct slider movement.</li>
+<li>Error: Forced warning text appears to conflict with Speciation Snapshot ionic strength or charge residual.</li>
+<li>Recovery: update to <code>v4.10.0+</code>; warnings are now context-separated and forced-scenario diagnostics are rendered under explicit forced context headers with their own metrics.</li>
 <li>Error: Rust backend install/build reports failure even though build succeeded and interface appears current.</li>
 <li>Recovery: update to <code>v4.9.1+</code>; runtime now reports <code>restart_required</code> when the current process holds a stale extension image and restart the app to activate Rust acceleration.</li>
 <li>Error: dragged bottom legend in Cycle Timeline preview is clipped or does not sync on close.</li>

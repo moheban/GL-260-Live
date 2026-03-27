@@ -7,7 +7,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Build command: `python scripts/build_user_manual.py`
 - Validation command: `python scripts/build_user_manual.py --check`
 
-Current release: `v4.9.2`
+Current release: `v4.10.0`
 
 Analysis timeline pH terminology:
 - `Observed pH`: pH from detected cycle data / mapped observed timeline point.
@@ -536,8 +536,10 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
    - dashboard tile **Reaction Progress** uses corrected-primary completion/regime text and shows required CO2 context
    - dashboard tile **Completion Meter** shows adjacent pre-anchor and corrected completion gauges
    - dashboard tile **Speciation Snapshot** shows latest corrected speciation and required-CO2 context
+   - Speciation Snapshot also surfaces anchor count/source usage, learning controls, and terminal-objective endpoint diagnostics
    - dashboard tile **Target Gap & CO2 Needed** visualizes corrected cumulative uptake vs required total to the target pH slider value
    - dashboard tile **Forecast to Target** shows slowdown-aware remaining cycle/time forecast with confidence
+   - **Warnings / Narrative / Math Context** now renders explicit context sections (`Primary`, `Forced`, `Reaction`, `Closed-System`, `Analysis Alignment`) with context-specific metrics to avoid forced-vs-primary conflicts
 8. Edit `Cycle timeline plot title` (Planning/Analysis/Reprocessing shared field):
    - default format is `<Job Information> Reaction Simulation`
    - commits apply on `Enter` or when the input loses focus (`FocusOut`)
@@ -560,6 +562,18 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Timeline artifacts and dashboard metrics suitable for compare/report/ledger.
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Measured-pH anchored correction payloads remain persisted per profile and auto-applied on reload when chemistry/model basis matches.
+
+### v4.10.0 Release Note (Anchor Learning + Warning Context Alignment)
+- Added Analysis anchor-learning controls in Developer Tools Runtime diagnostics:
+  - learning enabled toggle,
+  - terminal pH low/high range,
+  - terminal objective weight,
+  - reset learned anchor history for active profile,
+  - dump anchor-learning diagnostics snapshot.
+- Extended measured-pH calibration payloads (Rust and Python) with anchor usage diagnostics, prior-learning usage diagnostics, terminal-objective metadata, objective component breakdown, and endpoint diagnostics.
+- Added context-separated warning assembly/rendering so forced pH warnings are shown in a dedicated **Forced Scenario Context** section and no longer conflict with primary snapshot ionic strength/charge residual values.
+- Added Analysis alignment-audit pass that reconciles timeline tail vs dashboard summary mismatches and surfaces audit status/mismatch diagnostics.
+- Speciation Snapshot dashboard tile now reports anchor usage counts/source breakdown and terminal-objective diagnostics.
 
 ### v4.9.2 Release Note (Cycle Timeline Layout + Advanced Speciation Tile Stacking)
 - Fixed Advanced Speciation workflow tile host ordering so **Detailed Math Preview** remains below **Cycle Speciation Timeline Explorer**.
@@ -618,6 +632,8 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
   - Recovery: update to `v4.8.2+`; Analysis mode now builds fallback reference traces from cycle uptake + Analysis chemistry inputs and no longer requires Planning-only controls for progress text.
 - Error: Analysis warnings still display a stale forced target pH value after moving the slider.
   - Recovery: update to `v4.9.1+`; Analysis slider sync now re-applies on workflow changes and initial tab load in addition to direct slider movement.
+- Error: Forced warning text appears to conflict with Speciation Snapshot ionic strength or charge residual.
+  - Recovery: update to `v4.10.0+`; warnings are now context-separated and forced-scenario diagnostics are rendered under explicit forced context headers with their own metrics.
 - Error: Rust backend install/build reports failure even though build succeeded and interface appears current.
   - Recovery: update to `v4.9.1+`; runtime now reports `restart_required` when the current process holds a stale extension image and restart the app to activate Rust acceleration.
 - Error: dragged bottom legend in Cycle Timeline preview is clipped or does not sync on close.

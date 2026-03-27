@@ -1,17 +1,18 @@
-# GL-260 Data Analysis and Plotter (v4.9.2)
+# GL-260 Data Analysis and Plotter (v4.10.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest Analysis workflow highlights in `v4.9.2`:
-- Fixed Advanced Speciation workflow tile stacking so **Detailed Math Preview** no longer overlays **Cycle Speciation Timeline Explorer**.
-- Cycle timeline layout solve now incorporates the bottom subplot legend to prevent legend/x-label collisions.
-- Cycle CO2 uptake axis remains attached while the right-side y-label is shifted outward using `pco2_axis_spine_offset`, keeping the label outside tick labels.
-- Added targeted regressions for timeline legend/x-label spacing, attached-axis label offset behavior, and Advanced Speciation tile row ordering.
+Latest Analysis workflow highlights in `v4.10.0`:
+- Added Analysis anchor-learning controls in Developer Tools Runtime diagnostics (`learning_enabled`, terminal pH low/high range, terminal objective weight).
+- Extended Rust/Python measured-pH calibration payloads with anchor usage breakdown, prior-learning usage diagnostics, terminal-objective metadata, and endpoint diagnostics.
+- Added context-separated warning rendering (`primary`, `forced`, `reaction`, `closed_system`, `analysis`) so forced-scenario warnings no longer conflict with primary Speciation Snapshot metrics.
+- Added Analysis output alignment auditing and auto-reconcile logic so timeline/dashboard/summary fields stay coherent with corrected-primary precedence.
+- Added targeted regressions for warning context separation, terminal-objective endpoint behavior, anchor-learning controls normalization, and alignment-audit reconciliation.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.9.2`
-- `APP_VERSION = "v4.9.2"`
+- `# Version: v4.10.0`
+- `APP_VERSION = "v4.10.0"`
 
 ## Canonical User Manual Location
 The canonical, continuously updated user manual now lives in `docs/`:
@@ -511,6 +512,32 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.10.0 Advanced Speciation Anchor Learning + Output Alignment
+- Added Analysis anchor-learning control surface in Developer Tools Runtime diagnostics:
+  - enable/disable learned-prior application,
+  - terminal pH objective low/high range,
+  - terminal objective weight,
+  - reset active-profile learned history,
+  - dump anchor-learning diagnostics snapshot.
+- Extended Rust and Python measured-pH calibration contracts with:
+  - `learning_enabled`, `terminal_ph_range_low`, `terminal_ph_range_high`, `terminal_ph_weight`,
+  - anchor-count/source diagnostics,
+  - prior-learning usage diagnostics,
+  - terminal-objective component breakdown and endpoint diagnostics.
+- Fixed warning/snapshot misalignment by splitting warnings into explicit context streams:
+  - `primary`, `forced`, `reaction`, `closed_system`, `analysis`.
+- Advanced Speciation warning rendering now displays context headers plus per-context pH / ionic strength / charge-residual metrics to avoid forced-vs-primary ambiguity.
+- Added Analysis runtime alignment audit and auto-reconcile behavior:
+  - compares corrected timeline tail vs dashboard summary fields,
+  - applies corrected-primary reconciliation on mismatch,
+  - surfaces audit status/mismatch diagnostics in summary/runtime snapshots.
+- Speciation Snapshot dashboard tile now surfaces anchor usage, learning controls, and terminal-objective diagnostics from the calibration payload.
+- Added targeted regressions for:
+  - warning context split and context-metric rendering,
+  - anchor-learning controls defaults/bounds normalization,
+  - terminal-objective endpoint band behavior,
+  - alignment-audit mismatch detection and reconcile behavior.
 
 ### v4.9.2 Cycle Timeline Layout + Advanced Speciation Tile Stacking Fixes
 - Fixed Advanced Speciation tab grid row ordering so the **Detailed Math Preview** tile host renders below the **Cycle Speciation Timeline Explorer** tile host.

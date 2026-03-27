@@ -1983,6 +1983,10 @@ fn analysis_dashboard_core(
     anchors=None,
     prior_cycle_factor_series=None,
     prior_sample_count=0,
+    learning_enabled=true,
+    terminal_ph_range_low=8.0,
+    terminal_ph_range_high=8.3,
+    terminal_ph_weight=1.0,
     regularization_strength=0.02,
     smoothness_strength=0.01,
     min_factor=0.5,
@@ -2009,6 +2013,10 @@ fn measured_ph_uptake_calibration_core(
     anchors: Option<Bound<'_, PyList>>,
     prior_cycle_factor_series: Option<Bound<'_, PyList>>,
     prior_sample_count: usize,
+    learning_enabled: bool,
+    terminal_ph_range_low: f64,
+    terminal_ph_range_high: f64,
+    terminal_ph_weight: f64,
     regularization_strength: f64,
     smoothness_strength: f64,
     min_factor: f64,
@@ -2061,6 +2069,26 @@ fn measured_ph_uptake_calibration_core(
     if upper_bound <= lower_bound {
         upper_bound = lower_bound + 0.1;
     }
+    let mut terminal_low = if terminal_ph_range_low.is_finite() {
+        terminal_ph_range_low
+    } else {
+        8.0
+    };
+    let mut terminal_high = if terminal_ph_range_high.is_finite() {
+        terminal_ph_range_high
+    } else {
+        8.3
+    };
+    terminal_low = terminal_low.clamp(0.0, 14.5);
+    terminal_high = terminal_high.clamp(0.0, 14.5);
+    if terminal_high < terminal_low {
+        std::mem::swap(&mut terminal_low, &mut terminal_high);
+    }
+    let terminal_weight = if terminal_ph_weight.is_finite() {
+        terminal_ph_weight.clamp(0.0, 20.0)
+    } else {
+        1.0
+    };
 
     let source_priority = |source: &str| -> i32 {
         match source.trim().to_ascii_lowercase().as_str() {
@@ -2283,18 +2311,37 @@ fn measured_ph_uptake_calibration_core(
             corrected_fractions,
         }
     };
+    let terminal_penalty_raw = |endpoint_ph: Option<f64>| -> f64 {
+        let Some(ph_value) = endpoint_ph else {
+            return 0.0;
+        };
+        if !ph_value.is_finite() {
+            return 0.0;
+        }
+        if ph_value < terminal_low {
+            return (terminal_low - ph_value).powi(2);
+        }
+        if ph_value > terminal_high {
+            return (ph_value - terminal_high).powi(2);
+        }
+        0.0
+    };
 
     let mut seed_factors: Vec<f64> = vec![1.0; cycle_moles.len()];
     let mut prior_applied = false;
-    if let Some(prior_rows) = prior_cycle_factor_series {
-        for (idx, item) in prior_rows.iter().enumerate() {
-            if idx >= seed_factors.len() {
-                break;
-            }
-            let parsed = item.extract::<f64>().ok().unwrap_or(1.0);
-            if parsed.is_finite() {
-                seed_factors[idx] = parsed.clamp(lower_bound, upper_bound);
-                prior_applied = true;
+    let mut prior_points_used = 0_usize;
+    if learning_enabled {
+        if let Some(prior_rows) = prior_cycle_factor_series {
+            for (idx, item) in prior_rows.iter().enumerate() {
+                if idx >= seed_factors.len() {
+                    break;
+                }
+                let parsed = item.extract::<f64>().ok().unwrap_or(1.0);
+                if parsed.is_finite() {
+                    seed_factors[idx] = parsed.clamp(lower_bound, upper_bound);
+                    prior_applied = true;
+                    prior_points_used += 1;
+                }
             }
         }
     }
@@ -2344,9 +2391,12 @@ fn measured_ph_uptake_calibration_core(
                 return (f64::INFINITY, sim_payload);
             }
             let residual = anchor_predicted - measured_anchor_ph;
+            let endpoint_ph = sim_payload.corrected_ph.last().copied().flatten();
+            let terminal_penalty = terminal_penalty_raw(endpoint_ph);
             let objective = residual * residual
                 + regularization_strength * (segment_scale - 1.0).powi(2)
-                + smoothness_strength * (segment_scale - previous_segment_scale).powi(2);
+                + smoothness_strength * (segment_scale - previous_segment_scale).powi(2)
+                + (terminal_penalty * terminal_weight);
             (objective, sim_payload)
         };
         let mut best_scale = 1.0_f64;
@@ -2461,6 +2511,51 @@ fn measured_ph_uptake_calibration_core(
             Some((corrected_latest_total_mol / required).clamp(0.0, 1.0) * 100.0)
         }
     });
+    let factor_regularization_term = regularization_strength
+        * working_factors
+            .iter()
+            .map(|value| (value - 1.0).powi(2))
+            .sum::<f64>();
+    let factor_smoothness_term = smoothness_strength
+        * working_factors
+            .windows(2)
+            .map(|window| (window[1] - window[0]).powi(2))
+            .sum::<f64>();
+    let anchor_residual_squared_sum = normalized_anchors
+        .iter()
+        .filter_map(|anchor| {
+            corrected_ph_series
+                .get(anchor.cycle_index.saturating_sub(1))
+                .copied()
+                .flatten()
+                .map(|value| (value - anchor.measured_ph).powi(2))
+        })
+        .sum::<f64>();
+    let terminal_penalty_raw_value = terminal_penalty_raw(latest_ph);
+    let terminal_penalty_weighted_value = terminal_penalty_raw_value * terminal_weight;
+    let objective_total_components = anchor_residual_squared_sum
+        + factor_regularization_term
+        + factor_smoothness_term
+        + terminal_penalty_weighted_value;
+    let endpoint_distance = latest_ph.map(|value| {
+        if value < terminal_low {
+            terminal_low - value
+        } else if value > terminal_high {
+            value - terminal_high
+        } else {
+            0.0
+        }
+    });
+    let mut anchor_source_counts: BTreeMap<String, usize> = BTreeMap::new();
+    for anchor in &normalized_anchors {
+        let key = if anchor.source.trim().is_empty() {
+            "unknown".to_string()
+        } else {
+            anchor.source.trim().to_string()
+        };
+        let next = anchor_source_counts.get(&key).copied().unwrap_or(0) + 1;
+        anchor_source_counts.insert(key, next);
+    }
 
     let corrected_cycle_g_series: Vec<f64> = corrected_cycle_series
         .iter()
@@ -2491,7 +2586,9 @@ fn measured_ph_uptake_calibration_core(
     set_optional_f64(&response, "anchor_predicted_ph_after", anchor_after_ph)?;
     set_optional_f64(&response, "anchor_residual_before", anchor_residual_before)?;
     set_optional_f64(&response, "anchor_residual_after", anchor_residual_after)?;
-    if objective_total.is_finite() {
+    if objective_total_components.is_finite() {
+        response.set_item("objective", objective_total_components)?;
+    } else if objective_total.is_finite() {
         response.set_item("objective", objective_total)?;
     } else {
         response.set_item("objective", py.None())?;
@@ -2499,9 +2596,67 @@ fn measured_ph_uptake_calibration_core(
     response.set_item("alpha_pre", alpha_pre)?;
     response.set_item("alpha_post", alpha_post)?;
     response.set_item("cycle_factor_series", working_factors.clone())?;
+    response.set_item("anchor_count", normalized_anchors.len())?;
+    let anchor_source_count_map = PyDict::new(py);
+    for (source, count) in &anchor_source_counts {
+        anchor_source_count_map.set_item(source, *count)?;
+    }
+    response.set_item("anchor_count_by_source", anchor_source_count_map)?;
+    response.set_item(
+        "anchor_sources",
+        anchor_source_counts.keys().cloned().collect::<Vec<String>>(),
+    )?;
+    response.set_item("learning_enabled", learning_enabled)?;
     response.set_item("learning_prior_applied", prior_applied)?;
     response.set_item("prior_sample_count", prior_sample_count)?;
+    response.set_item(
+        "prior_cycle_factor_points_used",
+        prior_points_used,
+    )?;
     response.set_item("prior_cycle_factor_series", seed_factors.clone())?;
+    response.set_item("terminal_ph_range_low", terminal_low)?;
+    response.set_item("terminal_ph_range_high", terminal_high)?;
+    response.set_item("terminal_ph_weight", terminal_weight)?;
+    response.set_item(
+        "terminal_objective_enabled",
+        terminal_weight > 0.0 && !normalized_anchors.is_empty(),
+    )?;
+    let objective_components = PyDict::new(py);
+    objective_components.set_item(
+        "anchor_residual_squared_sum",
+        anchor_residual_squared_sum,
+    )?;
+    objective_components.set_item(
+        "factor_regularization_term",
+        factor_regularization_term,
+    )?;
+    objective_components.set_item("factor_smoothness_term", factor_smoothness_term)?;
+    objective_components.set_item("terminal_penalty_raw", terminal_penalty_raw_value)?;
+    objective_components.set_item(
+        "terminal_penalty_weighted",
+        terminal_penalty_weighted_value,
+    )?;
+    objective_components.set_item("objective_total", objective_total_components)?;
+    response.set_item("objective_components", objective_components)?;
+    let endpoint_diagnostics = PyDict::new(py);
+    set_optional_f64(&endpoint_diagnostics, "endpoint_ph", latest_ph)?;
+    endpoint_diagnostics.set_item(
+        "in_terminal_band",
+        latest_ph
+            .map(|value| value >= terminal_low && value <= terminal_high)
+            .unwrap_or(false),
+    )?;
+    set_optional_f64(
+        &endpoint_diagnostics,
+        "distance_to_terminal_band",
+        endpoint_distance,
+    )?;
+    endpoint_diagnostics.set_item("terminal_penalty_raw", terminal_penalty_raw_value)?;
+    endpoint_diagnostics.set_item(
+        "terminal_penalty_weighted",
+        terminal_penalty_weighted_value,
+    )?;
+    response.set_item("endpoint_diagnostics", endpoint_diagnostics)?;
     let segment_list = PyList::empty(py);
     for (start_cycle, end_cycle, scale, tail_flag) in &segment_rows {
         let row = PyDict::new(py);
