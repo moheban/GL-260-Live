@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="6c3222fbe626462374f6c3cc29f7821d5e8cb42de8af5568896f3d852282cb01">
+  <meta name="manual-source-sha256" content="c3cba9f20c0967ca744fe8c4c5822dab6ee785f6863462a8f4475aa982838245">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -243,7 +243,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>6c3222fbe6264623</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>c3cba9f20c0967ca</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -359,6 +359,7 @@
 <li><a href="#inputs_10">Inputs</a></li>
 <li><a href="#step-by-step-actions_10">Step-by-step actions</a></li>
 <li><a href="#expected-outputs_10">Expected outputs</a></li>
+<li><a href="#v492-release-note-cycle-timeline-layout-advanced-speciation-tile-stacking">v4.9.2 Release Note (Cycle Timeline Layout + Advanced Speciation Tile Stacking)</a></li>
 <li><a href="#v491-release-note-rust-import-hardening-analysis-persistencelayout-updates">v4.9.1 Release Note (Rust Import Hardening + Analysis Persistence/Layout Updates)</a></li>
 <li><a href="#v486-release-note-analysis-dashboard-consolidation-forecasting">v4.8.6 Release Note (Analysis Dashboard Consolidation + Forecasting)</a></li>
 <li><a href="#v485-release-note-timeline-title-commit-job-information-default">v4.8.5 Release Note (Timeline Title Commit + Job Information Default)</a></li>
@@ -440,7 +441,7 @@
 <li>Build command: <code>python scripts/build_user_manual.py</code></li>
 <li>Validation command: <code>python scripts/build_user_manual.py --check</code></li>
 </ul>
-<p>Current release: <code>v4.9.1</code></p>
+<p>Current release: <code>v4.9.2</code></p>
 <p>Analysis timeline pH terminology:<br>
 - <code>Observed pH</code>: pH from detected cycle data / mapped observed timeline point.<br>
 - <code>Corrected pH</code>: measured-anchor calibrated pH after uptake correction.<br>
@@ -1015,6 +1016,13 @@
 <li>Measured-pH anchor editor rows persist globally in <code>solubility_inputs</code> and restore on Analysis tab build/restart.</li>
 <li>Measured-pH anchored correction payloads remain persisted per profile and auto-applied on reload when chemistry/model basis matches.</li>
 </ul>
+<h3 id="v492-release-note-cycle-timeline-layout-advanced-speciation-tile-stacking">v4.9.2 Release Note (Cycle Timeline Layout + Advanced Speciation Tile Stacking)<a class="headerlink" href="#v492-release-note-cycle-timeline-layout-advanced-speciation-tile-stacking" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Fixed Advanced Speciation workflow tile host ordering so <strong>Detailed Math Preview</strong> remains below <strong>Cycle Speciation Timeline Explorer</strong>.</li>
+<li>Updated cycle timeline layout solving to include bottom legend spacing relative to the shared x-label band.</li>
+<li>Kept the cycle CO2 uptake axis attached while applying <code>pco2_axis_spine_offset</code> to shift the right-side y-label outside the tick-label column.</li>
+<li>Added regressions for timeline bottom-legend/xlabel overlap prevention, attached-axis label offset application, and timeline/math tile row ordering.</li>
+</ul>
 <h3 id="v491-release-note-rust-import-hardening-analysis-persistencelayout-updates">v4.9.1 Release Note (Rust Import Hardening + Analysis Persistence/Layout Updates)<a class="headerlink" href="#v491-release-note-rust-import-hardening-analysis-persistencelayout-updates" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Rust setup now runs interpreter-pinned subprocess verification of extension import path, interface id/version, and required kernels.</li>
@@ -1059,8 +1067,8 @@
 <li>Recovery: update to <code>v4.8.4+</code>; preview close now captures the dragged timeline legend location and syncs that location to the displayed timeline and in-session timeline exports.</li>
 <li>Error: timeline title input appears to trigger repeated refresh/select loops while typing.</li>
 <li>Recovery: update to <code>v4.8.5+</code>; title edits now commit on <code>Enter</code>/<code>FocusOut</code>, and typing alone no longer runs full timeline refresh.</li>
-<li>Error: detached cycle CO2 axis label overlaps lower-panel detached-axis tick labels.</li>
-<li>Recovery: use Cycle Timeline Plot Settings for detached-axis spacing; <code>v4.8.1+</code> applies normalized detached-axis offset/label padding consistently across in-tab and preview/export timeline renders.</li>
+<li>Error: cycle CO2 uptake y-label overlaps the lower-panel right-axis tick labels.</li>
+<li>Recovery: update to <code>v4.9.2+</code>; timeline layout now applies right-label offset placement while keeping the axis attached.</li>
 <li>Error: selected cycle mismatch.</li>
 <li>Recovery: re-sync cycle selection and refresh dashboard/timeline views.</li>
 <li>Error: measured pH anchor not applied.</li>

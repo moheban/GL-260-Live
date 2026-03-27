@@ -1,18 +1,17 @@
-# GL-260 Data Analysis and Plotter (v4.9.1)
+# GL-260 Data Analysis and Plotter (v4.9.2)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest Analysis workflow highlights in `v4.9.1`:
-- Rust setup now classifies `restart_required` when a new build is valid in a fresh subprocess but the current process still holds a stale extension image.
-- Analysis measured-pH anchor editor rows now persist globally under `settings["solubility_inputs"]` and restore on Analysis tab build.
-- **Analysis Actions** moved to a dedicated panel directly below **Guided Steps** (and above **Workflow Inputs**), independent of dashboard tile layout.
-- Analysis target pH slider now re-synchronizes from persisted entry values on initial render and workflow tab switches.
-- Dashboard tile schema removes legacy `analysis_actions`; legacy persisted tile layouts are auto-normalized.
+Latest Analysis workflow highlights in `v4.9.2`:
+- Fixed Advanced Speciation workflow tile stacking so **Detailed Math Preview** no longer overlays **Cycle Speciation Timeline Explorer**.
+- Cycle timeline layout solve now incorporates the bottom subplot legend to prevent legend/x-label collisions.
+- Cycle CO2 uptake axis remains attached while the right-side y-label is shifted outward using `pco2_axis_spine_offset`, keeping the label outside tick labels.
+- Added targeted regressions for timeline legend/x-label spacing, attached-axis label offset behavior, and Advanced Speciation tile row ordering.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.9.1`
-- `APP_VERSION = "v4.9.1"`
+- `# Version: v4.9.2`
+- `APP_VERSION = "v4.9.2"`
 
 ## Canonical User Manual Location
 The canonical, continuously updated user manual now lives in `docs/`:
@@ -512,6 +511,16 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.9.2 Cycle Timeline Layout + Advanced Speciation Tile Stacking Fixes
+- Fixed Advanced Speciation tab grid row ordering so the **Detailed Math Preview** tile host renders below the **Cycle Speciation Timeline Explorer** tile host.
+- Updated cycle timeline layout solving to include the bottom timeline legend as a spacing input while preserving top-legend axis-local behavior.
+- Added timeline legend post-refresh layout solve for `fig_cycle_timeline` so display/preview/export legend updates re-run deterministic spacing resolution.
+- Updated cycle timeline axis layout behavior so `pco2_axis_spine_offset` actively controls right-label x-placement while keeping the uptake axis spine attached at `axes=1.0`.
+- Added targeted regressions for:
+  - bottom legend vs xlabel overlap prevention after finalize/layout solve,
+  - attached uptake-axis label offset application,
+  - Advanced Speciation timeline/math tile host row ordering.
 
 ### v4.9.1 Rust Import Hardening + Analysis Persistence/Layout Updates
 - Hardened Rust setup verification to run interpreter-pinned subprocess manifest checks (extension import path, interface id/version, required kernels).

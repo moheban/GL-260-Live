@@ -7,7 +7,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Build command: `python scripts/build_user_manual.py`
 - Validation command: `python scripts/build_user_manual.py --check`
 
-Current release: `v4.9.1`
+Current release: `v4.9.2`
 
 Analysis timeline pH terminology:
 - `Observed pH`: pH from detected cycle data / mapped observed timeline point.
@@ -561,6 +561,12 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Measured-pH anchored correction payloads remain persisted per profile and auto-applied on reload when chemistry/model basis matches.
 
+### v4.9.2 Release Note (Cycle Timeline Layout + Advanced Speciation Tile Stacking)
+- Fixed Advanced Speciation workflow tile host ordering so **Detailed Math Preview** remains below **Cycle Speciation Timeline Explorer**.
+- Updated cycle timeline layout solving to include bottom legend spacing relative to the shared x-label band.
+- Kept the cycle CO2 uptake axis attached while applying `pco2_axis_spine_offset` to shift the right-side y-label outside the tick-label column.
+- Added regressions for timeline bottom-legend/xlabel overlap prevention, attached-axis label offset application, and timeline/math tile row ordering.
+
 ### v4.9.1 Release Note (Rust Import Hardening + Analysis Persistence/Layout Updates)
 - Rust setup now runs interpreter-pinned subprocess verification of extension import path, interface id/version, and required kernels.
 - Added startup/runtime `restart_required` state when subprocess verification passes but in-process module reload remains stale/deprecated.
@@ -600,8 +606,8 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
   - Recovery: update to `v4.8.4+`; preview close now captures the dragged timeline legend location and syncs that location to the displayed timeline and in-session timeline exports.
 - Error: timeline title input appears to trigger repeated refresh/select loops while typing.
   - Recovery: update to `v4.8.5+`; title edits now commit on `Enter`/`FocusOut`, and typing alone no longer runs full timeline refresh.
-- Error: detached cycle CO2 axis label overlaps lower-panel detached-axis tick labels.
-  - Recovery: use Cycle Timeline Plot Settings for detached-axis spacing; `v4.8.1+` applies normalized detached-axis offset/label padding consistently across in-tab and preview/export timeline renders.
+- Error: cycle CO2 uptake y-label overlaps the lower-panel right-axis tick labels.
+  - Recovery: update to `v4.9.2+`; timeline layout now applies right-label offset placement while keeping the axis attached.
 - Error: selected cycle mismatch.
   - Recovery: re-sync cycle selection and refresh dashboard/timeline views.
 - Error: measured pH anchor not applied.
