@@ -32,3 +32,5 @@ profiles/_autosave_last_workspace.json
 General Plotter Program/general_plotter_settings.json
 gl260_debug.log*
 Debug Results.litcoffee
+docs/codex-session-context.md
+docs/codex-context.md
