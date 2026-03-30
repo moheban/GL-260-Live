@@ -47,12 +47,12 @@
 - Do not leave temporary patch-lint artifacts in the working tree at handoff.
 
 ## Open Work / Next Actions
-- Active checkpoint anchor: Auto checkpoint (default): # Context from my IDE setup: ## Active file: .gitignore ## Open tabs: - 
+- Active checkpoint anchor: Auto checkpoint (plan): # Context from my IDE setup: ## Active file: .gitignore ## Open tabs: - 
 - Current focus area: Not specified
-- Collaboration mode: default
-- Source session id: 019d3f51-a2c8-7803-b668-e90bc2614499
+- Collaboration mode: plan
+- Source session id: 019d3fb2-2012-70a0-85f2-8011171dbc73
 - Turn window used: 30
-- Session checkpoint id: CHK-20260330T160355Z-1fb04726
+- Session checkpoint id: CHK-20260330T182609Z-c69fc03c
 - Session checkpoint file: docs/codex-session-context.md
 - Release context anchor: v2.0.1 Update Highlights
 - Refresh this snapshot at every meaningful checkpoint, including planning-only checkpoints with no code edits.
@@ -63,6 +63,7 @@
 <!-- MANUAL_NOTES_END -->
 
 ## Recent Decisions
+- 2026-03-30: Auto checkpoint (plan): # Context from my IDE setup: ## Active file: .gitignore ## Open tabs: - . Rationale: preserve recoverable user/assistant context across compaction. Mode: plan.
 - 2026-03-30: Auto checkpoint (default): # Context from my IDE setup: ## Active file: .gitignore ## Open tabs: - . Rationale: preserve recoverable user/assistant context across compaction. Mode: default.
 - 2026-03-30: Auto checkpoint (plan): # Context from my IDE setup: ## Active file: settings.json ## Open tabs:. Rationale: preserve recoverable user/assistant context across compaction. Mode: plan.
 - 2026-03-30: codex90. Rationale: preserve recoverable user/assistant context across compaction. Mode: default.
@@ -72,13 +73,13 @@
 - 2026-03-30: Bootstrap repo-scoped context snapshot workflow. Rationale: maintain durable, repo-scoped context after chat compaction. Focus: context retention.
 
 ## Session Recovery Anchor
-- Last checkpoint id: CHK-20260330T160355Z-1fb04726
+- Last checkpoint id: CHK-20260330T182609Z-c69fc03c
 - Companion context file: `docs/codex-session-context.md`
-- Collaboration mode: default
-- Source session id: 019d3f51-a2c8-7803-b668-e90bc2614499
-- Source session file: C:\Users\mmoheban\.codex\sessions\2026\03\30\rollout-2026-03-30T11-16-47-019d3f51-a2c8-7803-b668-e90bc2614499.jsonl
+- Collaboration mode: plan
+- Source session id: 019d3fb2-2012-70a0-85f2-8011171dbc73
+- Source session file: C:\Users\mmoheban\.codex\sessions\2026\03\30\rollout-2026-03-30T13-02-11-019d3fb2-2012-70a0-85f2-8011171dbc73.jsonl
 - Turn window used: 30
-- Fingerprint: 1fb04726b71537257b4439e0b9f024a606c37f14c6172b02d8775747d00e5310
+- Fingerprint: c69fc03c3a8f6a6e4c7f2ec2819db8c6f9c047f9cd3ea725ed5c0177b4866604
 
 ## Validation Commands
 - `python scripts/update_codex_context.py [--milestone "<note>"] [--focus "<area>"]`
@@ -88,17 +89,17 @@
 - `python -m py_compile "GL-260 Data Analysis and Plotter.py"`
 
 ## Snapshot Metadata
-- Last updated (UTC): 2026-03-30T16:03:55Z
+- Last updated (UTC): 2026-03-30T18:26:09Z
 - Owner: Codex + repository maintainers
 - Scope: Repository-local context primer
 - Primer policy: Load this file at task start before broad exploration
 - Refresh cadence: Every meaningful checkpoint
 - Stale threshold: 24 hours
-- Last checkpoint label: Auto checkpoint (default): # Context from my IDE setup: ## Active file: .gitignore ## Open tabs: - 
+- Last checkpoint label: Auto checkpoint (plan): # Context from my IDE setup: ## Active file: .gitignore ## Open tabs: - 
 - Last focus area: Not specified
-- Last collaboration mode: default
-- Last source session id: 019d3f51-a2c8-7803-b668-e90bc2614499
-- Last source session file: C:\Users\mmoheban\.codex\sessions\2026\03\30\rollout-2026-03-30T11-16-47-019d3f51-a2c8-7803-b668-e90bc2614499.jsonl
+- Last collaboration mode: plan
+- Last source session id: 019d3fb2-2012-70a0-85f2-8011171dbc73
+- Last source session file: C:\Users\mmoheban\.codex\sessions\2026\03\30\rollout-2026-03-30T13-02-11-019d3fb2-2012-70a0-85f2-8011171dbc73.jsonl
 - Last turn window used: 30
-- Last session checkpoint id: CHK-20260330T160355Z-1fb04726
-- Last session fingerprint: 1fb04726b71537257b4439e0b9f024a606c37f14c6172b02d8775747d00e5310
+- Last session checkpoint id: CHK-20260330T182609Z-c69fc03c
+- Last session fingerprint: c69fc03c3a8f6a6e4c7f2ec2819db8c6f9c047f9cd3ea725ed5c0177b4866604
