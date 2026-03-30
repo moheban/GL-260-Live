@@ -7,7 +7,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Build command: `python scripts/build_user_manual.py`
 - Validation command: `python scripts/build_user_manual.py --check`
 
-Current release: `v4.11.0`
+Current release: `v4.11.1`
 
 Analysis timeline pH terminology:
 - `Observed pH`: pH from detected cycle data / mapped observed timeline point.
@@ -564,6 +564,14 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Measured-pH anchored correction payloads remain persisted per profile and auto-applied on reload when chemistry/model basis matches.
 
+### v4.11.1 Release Note (Cycle Timeline Legend Sync + Export Render Parity)
+- Fixed Cycle Timeline preview legend drag sync so top/bottom legend drag positions persist to display on preview close.
+- Added timeline preview drag-release legend tracking callbacks so role-specific (`top`/`bottom`) legend overrides are captured immediately after drag completion.
+- Fixed timeline legend location normalization to preserve valid out-of-range draggable tuple positions instead of dropping them.
+- Added close-time timeline layout verification after preview legend sync to minimize bottom legend overlap with x-label and x-tick labels.
+- Aligned timeline plot export save behavior with combined export path by removing timeline `bbox_inches="tight"` cropping.
+- Added regressions for out-of-range tuple capture, preview drag-release override capture, and timeline export save-kwargs parity.
+
 ### v4.11.0 Release Note (Cycle Timeline Layout Manager + Splash-Gated Verification)
 - Added a dedicated **Layout Manager...** button beside **Plot Preview** in the Cycle Speciation Timeline actions row.
 - Added a timeline-specific layout-manager dialog with controls for:
@@ -633,7 +641,7 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Error: Analysis timeline main legend missing or off-canvas in preview/export.
   - Recovery: update to `v4.8.1+`; timeline legend refresh now preserves valid user placement and auto-recovers to an on-canvas anchor when stale/off-canvas state is detected.
 - Error: timeline legend position snaps back after dragging it in Timeline Plot Preview.
-  - Recovery: update to `v4.8.4+`; preview close now captures the dragged timeline legend location and syncs that location to the displayed timeline and in-session timeline exports.
+  - Recovery: update to `v4.11.1+`; preview drag-release and close-time sync now persist role-specific timeline legend positions to display/export state.
 - Error: timeline title input appears to trigger repeated refresh/select loops while typing.
   - Recovery: update to `v4.8.5+`; title edits now commit on `Enter`/`FocusOut`, and typing alone no longer runs full timeline refresh.
 - Error: cycle CO2 uptake y-label overlaps the lower-panel right-axis tick labels.
@@ -655,7 +663,7 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Error: Rust backend install/build reports failure even though build succeeded and interface appears current.
   - Recovery: update to `v4.9.1+`; runtime now reports `restart_required` when the current process holds a stale extension image and restart the app to activate Rust acceleration.
 - Error: dragged bottom legend in Cycle Timeline preview is clipped or does not sync on close.
-  - Recovery: update to `v4.8.6+`; timeline legend sync now captures loc+bbox placement and reserves enough bottom margin for wide bottom legend mode.
+  - Recovery: update to `v4.11.1+`; timeline preview now captures role-specific drag state reliably and reruns bounded layout verification after close-time legend apply.
 
 ### Related exports/artifacts
 - Solubility summary PNG

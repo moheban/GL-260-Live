@@ -1,19 +1,19 @@
-# GL-260 Data Analysis and Plotter (v4.11.0)
+# GL-260 Data Analysis and Plotter (v4.11.1)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.11.0`:
-- Added a dedicated **Layout Manager...** control next to **Plot Preview** in the Cycle Speciation Timeline actions row.
-- Extended timeline layout verification with a cycle-specific, conflict-aware policy (legend/xlabel checks, right-axis label/tick checks, strict mode, bounded passes, spacing thresholds).
-- Added timeline layout signature detection so display updates trigger splash-gated layout verification only when relevant layout-driving inputs change.
-- Updated Plot Preview rebuild behavior so layout-manager policy changes while preview is open immediately rebuild preview output under preview loading overlay.
-- Fixed Cycle CO2 axis label padding so `pco2_axis_labelpad` now materially shifts attached right-label spacing in display/export solve paths.
-- Added targeted timeline regressions for layout-manager conflict auto-fix behavior, splash-gated display verification, preview rebuild on policy apply, and preference normalization round-trip.
+Latest workflow highlights in `v4.11.1`:
+- Fixed Cycle Timeline preview legend drag sync so dragged top/bottom legend positions persist reliably to display and export session state.
+- Added timeline preview drag-release legend tracking parity with combined triple-axis behavior.
+- Fixed timeline legend capture normalization so valid out-of-range draggable tuple locations are preserved instead of dropped.
+- Added close-time timeline layout verification pass after preview sync to minimize legend/x-label/x-tick overlap regressions.
+- Aligned Cycle Timeline export save behavior with combined export path (removed tight-bbox crop from timeline plot export).
+- Added targeted regressions for out-of-range tuple persistence, drag-release capture, and export save kwargs parity.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.11.0`
-- `APP_VERSION = "v4.11.0"`
+- `# Version: v4.11.1`
+- `APP_VERSION = "v4.11.1"`
 
 ## Canonical User Manual Location
 The canonical, continuously updated user manual now lives in `docs/`:
@@ -513,6 +513,14 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.11.1 Cycle Timeline Legend Sync + Export Render Parity
+- Fixed Cycle Speciation Timeline preview legend sync so dragged top/bottom subplot legend positions persist correctly to display close-sync state.
+- Added timeline preview legend drag-release capture tracking (press/move/release callbacks) with role-specific (`top`/`bottom`) override updates.
+- Fixed timeline legend location normalization so out-of-range draggable tuple coordinates are preserved for timeline sync paths.
+- Added bounded close-time timeline layout verification after preview legend apply to reduce legend overlap with lower x-label/tick bands.
+- Aligned timeline plot export save path with combined export behavior by removing `bbox_inches="tight"` crop for timeline PNG/PDF/SVG exports.
+- Added regressions for out-of-range tuple persistence, preview drag-release capture, and timeline export save-kwargs parity.
 
 ### v4.11.0 Cycle Timeline Layout Manager Parity + Splash-Gated Rendering
 - Added timeline layout-manager policy keys under `settings["cycle_plot_prefs"]`:
