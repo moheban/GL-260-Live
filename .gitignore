@@ -25,6 +25,8 @@ Prompt Template.md
 .envrc
 .DS_Store
 .ruff_cache
+.tmp_patch_validation/
+.tmp_*patch*.py
 settings.json
 profiles/_autosave_last_workspace.json
 General Plotter Program/general_plotter_settings.json
