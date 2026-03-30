@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="fc29c3f24a25499f7a22c7d91ba463487b845c43474d70236fdc2b051067b8af">
+  <meta name="manual-source-sha256" content="34d30db978da8f958780ee407d537e6e5f3683bedea9968934d3686c5944d8a5">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -243,7 +243,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>fc29c3f24a25499f</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>34d30db978da8f95</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -359,6 +359,8 @@
 <li><a href="#inputs_10">Inputs</a></li>
 <li><a href="#step-by-step-actions_10">Step-by-step actions</a></li>
 <li><a href="#expected-outputs_10">Expected outputs</a></li>
+<li><a href="#v4120-release-note-global-measured-ph-learning-developer-tools-runtime-manager">v4.12.0 Release Note (Global Measured-pH Learning + Developer Tools Runtime Manager)</a></li>
+<li><a href="#v4111-release-note-cycle-timeline-legend-sync-export-render-parity">v4.11.1 Release Note (Cycle Timeline Legend Sync + Export Render Parity)</a></li>
 <li><a href="#v4110-release-note-cycle-timeline-layout-manager-splash-gated-verification">v4.11.0 Release Note (Cycle Timeline Layout Manager + Splash-Gated Verification)</a></li>
 <li><a href="#v4100-release-note-anchor-learning-warning-context-alignment">v4.10.0 Release Note (Anchor Learning + Warning Context Alignment)</a></li>
 <li><a href="#v492-release-note-cycle-timeline-layout-advanced-speciation-tile-stacking">v4.9.2 Release Note (Cycle Timeline Layout + Advanced Speciation Tile Stacking)</a></li>
@@ -443,7 +445,7 @@
 <li>Build command: <code>python scripts/build_user_manual.py</code></li>
 <li>Validation command: <code>python scripts/build_user_manual.py --check</code></li>
 </ul>
-<p>Current release: <code>v4.11.0</code></p>
+<p>Current release: <code>v4.12.0</code></p>
 <p>Analysis timeline pH terminology:<br>
 - <code>Observed pH</code>: pH from detected cycle data / mapped observed timeline point.<br>
 - <code>Corrected pH</code>: measured-anchor calibrated pH after uptake correction.<br>
@@ -979,6 +981,7 @@
    - add one or more rows in <code>Measured pH Anchors</code> (<code>Cycle</code>, <code>Measured pH</code>)<br>
    - keep rows aligned to detected cycle IDs<br>
    - use <code>Clear Anchors</code> to reset the row editor when needed<br>
+   - use <code>Target pH Controls</code> directly below the anchor section to set the shared target-pH slider value<br>
    - run Analysis or click <strong>Recompute Calibration</strong></li>
 <li>Use <strong>Analysis Actions</strong> panel (directly below <strong>Guided Steps</strong>) for:<br>
    - <strong>Import from Cycle Analysis</strong><br>
@@ -1019,7 +1022,36 @@
 <li>Speciation/equilibrium summaries tied to cycle-level data.</li>
 <li>Timeline artifacts and dashboard metrics suitable for compare/report/ledger.</li>
 <li>Measured-pH anchor editor rows persist globally in <code>solubility_inputs</code> and restore on Analysis tab build/restart.</li>
-<li>Measured-pH anchored correction payloads remain persisted per profile and auto-applied on reload when chemistry/model basis matches.</li>
+<li>Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.</li>
+</ul>
+<h3 id="v4120-release-note-global-measured-ph-learning-developer-tools-runtime-manager">v4.12.0 Release Note (Global Measured-pH Learning + Developer Tools Runtime Manager)<a class="headerlink" href="#v4120-release-note-global-measured-ph-learning-developer-tools-runtime-manager" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Added global measured-pH anchor learning stores (<code>analysis_global_measured_ph_anchor_library</code>, <code>analysis_anchor_learning_history</code>) so anchor knowledge is not profile-scoped.</li>
+<li>Added startup migration from legacy per-profile calibration cache (<code>analysis_uptake_calibration_profiles</code>) into the global anchor/history stores.</li>
+<li>Updated Analysis anchor and prior resolution to reuse compatible global rows with gates:</li>
+<li>model key exact match,</li>
+<li>NaOH concentration relative delta <code>&lt;= 25%</code>,</li>
+<li>temperature delta <code>&lt;= 8.0 C</code>.</li>
+<li>Added Developer Tools Runtime action <strong>Manage Global Measured pH Anchors...</strong> with shared-library CRUD and history reset controls.</li>
+<li>Updated Developer Tools window behavior:</li>
+<li>tab content is now scrollable,</li>
+<li>default/minimum window size increased for full control visibility,</li>
+<li>Regression Checks now uses a draggable split with persisted ratio.</li>
+<li>Added Analysis-tab <strong>Target pH Controls</strong> directly under <strong>Measured pH Anchors</strong> while preserving synchronized slider state across workflows.</li>
+<li>Extended cycle timeline preview legend/layout parity by forcing timeline layout-manager verification before final preview draw.</li>
+<li>Added scaffold-only future extensibility for simulation exports and calculated traces:</li>
+<li>normalized simulation export dataframe contract builder,</li>
+<li>workbook column mapping settings scaffold (<code>simulation_export_workbook_column_mapping</code>),</li>
+<li>combined calculated-trace extension hook (disabled by default in <code>v4.12.0</code>).</li>
+</ul>
+<h3 id="v4111-release-note-cycle-timeline-legend-sync-export-render-parity">v4.11.1 Release Note (Cycle Timeline Legend Sync + Export Render Parity)<a class="headerlink" href="#v4111-release-note-cycle-timeline-legend-sync-export-render-parity" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Fixed Cycle Timeline preview legend drag sync so top/bottom legend drag positions persist to display on preview close.</li>
+<li>Added timeline preview drag-release legend tracking callbacks so role-specific (<code>top</code>/<code>bottom</code>) legend overrides are captured immediately after drag completion.</li>
+<li>Fixed timeline legend location normalization to preserve valid out-of-range draggable tuple positions instead of dropping them.</li>
+<li>Added close-time timeline layout verification after preview legend sync to minimize bottom legend overlap with x-label and x-tick labels.</li>
+<li>Aligned timeline plot export save behavior with combined export path by removing timeline <code>bbox_inches="tight"</code> cropping.</li>
+<li>Added regressions for out-of-range tuple capture, preview drag-release override capture, and timeline export save-kwargs parity.</li>
 </ul>
 <h3 id="v4110-release-note-cycle-timeline-layout-manager-splash-gated-verification">v4.11.0 Release Note (Cycle Timeline Layout Manager + Splash-Gated Verification)<a class="headerlink" href="#v4110-release-note-cycle-timeline-layout-manager-splash-gated-verification" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1098,7 +1130,11 @@
 <li>Error: Analysis timeline main legend missing or off-canvas in preview/export.</li>
 <li>Recovery: update to <code>v4.8.1+</code>; timeline legend refresh now preserves valid user placement and auto-recovers to an on-canvas anchor when stale/off-canvas state is detected.</li>
 <li>Error: timeline legend position snaps back after dragging it in Timeline Plot Preview.</li>
-<li>Recovery: update to <code>v4.8.4+</code>; preview close now captures the dragged timeline legend location and syncs that location to the displayed timeline and in-session timeline exports.</li>
+<li>Recovery: update to <code>v4.11.1+</code>; preview drag-release and close-time sync now persist role-specific timeline legend positions to display/export state.</li>
+<li>Error: bottom timeline legend still overlaps x-label/x-tick labels in Plot Preview.</li>
+<li>Recovery: update to <code>v4.12.0+</code>; preview build now reruns role-aware legend registration and timeline layout-manager verification before final preview draw.</li>
+<li>Error: measured pH anchors entered in one profile are not influencing another profile’s Analysis predictions.</li>
+<li>Recovery: update to <code>v4.12.0+</code>; anchor learning is now global with chemistry-compatibility gating, and shared data can be managed from Developer Tools -&gt; Runtime -&gt; Manage Global Measured pH Anchors.</li>
 <li>Error: timeline title input appears to trigger repeated refresh/select loops while typing.</li>
 <li>Recovery: update to <code>v4.8.5+</code>; title edits now commit on <code>Enter</code>/<code>FocusOut</code>, and typing alone no longer runs full timeline refresh.</li>
 <li>Error: cycle CO2 uptake y-label overlaps the lower-panel right-axis tick labels.</li>
@@ -1120,7 +1156,7 @@
 <li>Error: Rust backend install/build reports failure even though build succeeded and interface appears current.</li>
 <li>Recovery: update to <code>v4.9.1+</code>; runtime now reports <code>restart_required</code> when the current process holds a stale extension image and restart the app to activate Rust acceleration.</li>
 <li>Error: dragged bottom legend in Cycle Timeline preview is clipped or does not sync on close.</li>
-<li>Recovery: update to <code>v4.8.6+</code>; timeline legend sync now captures loc+bbox placement and reserves enough bottom margin for wide bottom legend mode.</li>
+<li>Recovery: update to <code>v4.11.1+</code>; timeline preview now captures role-specific drag state reliably and reruns bounded layout verification after close-time legend apply.</li>
 </ul>
 <h3 id="related-exportsartifacts_10">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_10" title="Permanent link">&para;</a></h3>
 <ul>

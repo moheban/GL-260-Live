@@ -7,7 +7,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Build command: `python scripts/build_user_manual.py`
 - Validation command: `python scripts/build_user_manual.py --check`
 
-Current release: `v4.11.1`
+Current release: `v4.12.0`
 
 Analysis timeline pH terminology:
 - `Observed pH`: pH from detected cycle data / mapped observed timeline point.
@@ -523,6 +523,7 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
    - add one or more rows in `Measured pH Anchors` (`Cycle`, `Measured pH`)
    - keep rows aligned to detected cycle IDs
    - use `Clear Anchors` to reset the row editor when needed
+   - use `Target pH Controls` directly below the anchor section to set the shared target-pH slider value
    - run Analysis or click **Recompute Calibration**
 6. Use **Analysis Actions** panel (directly below **Guided Steps**) for:
    - **Import from Cycle Analysis**
@@ -562,7 +563,26 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Speciation/equilibrium summaries tied to cycle-level data.
 - Timeline artifacts and dashboard metrics suitable for compare/report/ledger.
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
-- Measured-pH anchored correction payloads remain persisted per profile and auto-applied on reload when chemistry/model basis matches.
+- Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.12.0 Release Note (Global Measured-pH Learning + Developer Tools Runtime Manager)
+- Added global measured-pH anchor learning stores (`analysis_global_measured_ph_anchor_library`, `analysis_anchor_learning_history`) so anchor knowledge is not profile-scoped.
+- Added startup migration from legacy per-profile calibration cache (`analysis_uptake_calibration_profiles`) into the global anchor/history stores.
+- Updated Analysis anchor and prior resolution to reuse compatible global rows with gates:
+  - model key exact match,
+  - NaOH concentration relative delta `<= 25%`,
+  - temperature delta `<= 8.0 C`.
+- Added Developer Tools Runtime action **Manage Global Measured pH Anchors...** with shared-library CRUD and history reset controls.
+- Updated Developer Tools window behavior:
+  - tab content is now scrollable,
+  - default/minimum window size increased for full control visibility,
+  - Regression Checks now uses a draggable split with persisted ratio.
+- Added Analysis-tab **Target pH Controls** directly under **Measured pH Anchors** while preserving synchronized slider state across workflows.
+- Extended cycle timeline preview legend/layout parity by forcing timeline layout-manager verification before final preview draw.
+- Added scaffold-only future extensibility for simulation exports and calculated traces:
+  - normalized simulation export dataframe contract builder,
+  - workbook column mapping settings scaffold (`simulation_export_workbook_column_mapping`),
+  - combined calculated-trace extension hook (disabled by default in `v4.12.0`).
 
 ### v4.11.1 Release Note (Cycle Timeline Legend Sync + Export Render Parity)
 - Fixed Cycle Timeline preview legend drag sync so top/bottom legend drag positions persist to display on preview close.
@@ -642,6 +662,10 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
   - Recovery: update to `v4.8.1+`; timeline legend refresh now preserves valid user placement and auto-recovers to an on-canvas anchor when stale/off-canvas state is detected.
 - Error: timeline legend position snaps back after dragging it in Timeline Plot Preview.
   - Recovery: update to `v4.11.1+`; preview drag-release and close-time sync now persist role-specific timeline legend positions to display/export state.
+- Error: bottom timeline legend still overlaps x-label/x-tick labels in Plot Preview.
+  - Recovery: update to `v4.12.0+`; preview build now reruns role-aware legend registration and timeline layout-manager verification before final preview draw.
+- Error: measured pH anchors entered in one profile are not influencing another profile’s Analysis predictions.
+  - Recovery: update to `v4.12.0+`; anchor learning is now global with chemistry-compatibility gating, and shared data can be managed from Developer Tools -> Runtime -> Manage Global Measured pH Anchors.
 - Error: timeline title input appears to trigger repeated refresh/select loops while typing.
   - Recovery: update to `v4.8.5+`; title edits now commit on `Enter`/`FocusOut`, and typing alone no longer runs full timeline refresh.
 - Error: cycle CO2 uptake y-label overlaps the lower-panel right-axis tick labels.

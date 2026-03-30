@@ -1,19 +1,19 @@
-# GL-260 Data Analysis and Plotter (v4.11.1)
+# GL-260 Data Analysis and Plotter (v4.12.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.11.1`:
-- Fixed Cycle Timeline preview legend drag sync so dragged top/bottom legend positions persist reliably to display and export session state.
-- Added timeline preview drag-release legend tracking parity with combined triple-axis behavior.
-- Fixed timeline legend capture normalization so valid out-of-range draggable tuple locations are preserved instead of dropped.
-- Added close-time timeline layout verification pass after preview sync to minimize legend/x-label/x-tick overlap regressions.
-- Aligned Cycle Timeline export save behavior with combined export path (removed tight-bbox crop from timeline plot export).
-- Added targeted regressions for out-of-range tuple persistence, drag-release capture, and export save kwargs parity.
+Latest workflow highlights in `v4.12.0`:
+- Added global measured-pH anchor learning stores so anchors/history entered in any profile are reused across future Analysis predictions with chemistry compatibility gating.
+- Added a new **Manage Global Measured pH Anchors...** Runtime action in Developer Tools with shared-library CRUD and history reset controls.
+- Updated Developer Tools to use scrollable tab hosts and larger window sizing; Regression Checks now uses a persisted draggable split pane.
+- Added Analysis-tab **Target pH Controls** directly below **Measured pH Anchors** while keeping shared slider synchronization across workflows.
+- Extended cycle timeline preview legend/layout parity by forcing post-legend timeline layout-manager verification before final preview draw.
+- Added simulation export and advanced-plotting scaffolding (`simulation_export_workbook_column_mapping`, normalized dataframe contract builder, combined calculated-trace hook) for future Excel-column and wizard-driven plotting expansion.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.11.1`
-- `APP_VERSION = "v4.11.1"`
+- `# Version: v4.12.0`
+- `APP_VERSION = "v4.12.0"`
 
 ## Canonical User Manual Location
 The canonical, continuously updated user manual now lives in `docs/`:
@@ -513,6 +513,32 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.12.0 Global Measured-pH Learning + Developer Tools UX + Preview Layout Parity
+- Added global cross-profile measured-pH anchor learning stores in settings:
+  - `analysis_global_measured_ph_anchor_library`
+  - `analysis_anchor_learning_history`
+- Added startup migration from legacy `analysis_uptake_calibration_profiles` into the new global stores.
+- Updated Analysis calibration anchor/prior resolution to reuse compatible global rows using:
+  - model-key exact match
+  - NaOH concentration relative delta `<= 25%`
+  - temperature delta `<= 8.0 C`
+- Kept Rust-first measured-pH calibration with Python fallback parity, now passing identical globally resolved anchors/prior inputs and emitting global-learning diagnostics metadata.
+- Added Developer Tools Runtime action **Manage Global Measured pH Anchors...** with:
+  - shared anchor-library table CRUD,
+  - explicit save/persist action,
+  - reset active-profile history,
+  - reset global history.
+- Updated Developer Tools dialog to be scrollable per tab and increased default/min window size for dense runtime control coverage.
+- Updated Regression Checks dialog to use a horizontal draggable split pane with persisted ratio:
+  - `developer_regression_checks_split_frac`
+- Added Analysis workflow **Target pH Controls** tile directly under **Measured pH Anchors** while preserving shared slider synchronization with other workflows.
+- Extended cycle timeline Plot Preview layout parity by re-registering legends and forcing timeline layout-manager verification before final preview draw.
+- Added scaffold-only simulation export and advanced plotting extension points:
+  - normalized simulation dataframe contract builder
+  - workbook column mapping settings scaffold (`simulation_export_workbook_column_mapping`)
+  - combined calculated-trace extension hook (disabled by default)
+- Added regressions for global anchor migration, compatibility-gated cross-profile anchor reuse, and global prior-series synthesis diagnostics.
 
 ### v4.11.1 Cycle Timeline Legend Sync + Export Render Parity
 - Fixed Cycle Speciation Timeline preview legend sync so dragged top/bottom subplot legend positions persist correctly to display close-sync state.
