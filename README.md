@@ -1,19 +1,18 @@
-# GL-260 Data Analysis and Plotter (v4.12.0)
+# GL-260 Data Analysis and Plotter (v4.12.3)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.12.0`:
-- Added global measured-pH anchor learning stores so anchors/history entered in any profile are reused across future Analysis predictions with chemistry compatibility gating.
-- Added a new **Manage Global Measured pH Anchors...** Runtime action in Developer Tools with shared-library CRUD and history reset controls.
-- Updated Developer Tools to use scrollable tab hosts and larger window sizing; Regression Checks now uses a persisted draggable split pane.
-- Added Analysis-tab **Target pH Controls** directly below **Measured pH Anchors** while keeping shared slider synchronization across workflows.
-- Extended cycle timeline preview legend/layout parity by forcing post-legend timeline layout-manager verification before final preview draw.
-- Added simulation export and advanced-plotting scaffolding (`simulation_export_workbook_column_mapping`, normalized dataframe contract builder, combined calculated-trace hook) for future Excel-column and wizard-driven plotting expansion.
+Latest workflow highlights in `v4.12.3`:
+- Standardized Advanced Speciation cycle outputs on one presented pH method: guidance/equilibrium target-state estimate.
+- Added canonical timeline/report/export payload key `equilibrium_ph` and kept `final_ph`/`final_pH` as compatibility aliases to the same equilibrium value.
+- Removed user-facing fixed-`pCO2` trajectory endpoint pH as a competing displayed final method across Planning, Analysis, and Reprocessing surfaces.
+- Updated timeline labels, dashboard/callout wording, and report/export fields to equilibrium-primary wording (`Equilibrium pH (Guidance)`).
+- Preserved Rust-accelerated and Python-fallback workflows under one equilibrium-primary presentation contract.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.12.0`
-- `APP_VERSION = "v4.12.0"`
+- `# Version: v4.12.3`
+- `APP_VERSION = "v4.12.3"`
 
 ## Canonical User Manual Location
 The canonical, continuously updated user manual now lives in `docs/`:
@@ -513,6 +512,15 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.12.3 Equilibrium-Primary pH Contract Across Advanced Speciation Workflows
+- Switched presented cycle/final pH in Planning, Analysis, and Reprocessing timeline surfaces to guidance/equilibrium target-state estimates.
+- Added `equilibrium_ph` as the canonical timeline/report/export pH key for user-facing outputs.
+- Preserved backward compatibility by retaining `final_ph` and `final_pH` as aliases to the same equilibrium value.
+- Updated cycle timeline plot/table labels from observed/final wording to equilibrium-primary wording (`Equilibrium pH (Guidance)`).
+- Updated cycle timeline math diagnostics and callout text to report equilibrium-guidance pH as the authoritative displayed method.
+- Stopped presenting fixed-`pCO2` trajectory endpoint pH as a competing user-visible final pH method.
+- Kept Rust and Python fallback paths aligned to the same equilibrium-primary pH presentation contract.
 
 ### v4.12.0 Global Measured-pH Learning + Developer Tools UX + Preview Layout Parity
 - Added global cross-profile measured-pH anchor learning stores in settings:

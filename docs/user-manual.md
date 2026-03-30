@@ -7,12 +7,13 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Build command: `python scripts/build_user_manual.py`
 - Validation command: `python scripts/build_user_manual.py --check`
 
-Current release: `v4.12.0`
+Current release: `v4.12.3`
 
 Analysis timeline pH terminology:
-- `Observed pH`: pH from detected cycle data / mapped observed timeline point.
-- `Corrected pH`: measured-anchor calibrated pH after uptake correction.
+- `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
+- `Corrected pH`: measured-anchor calibrated pH overlay used for Analysis alignment diagnostics.
 - `Reference pH`: planning/reference curve pH (cycle-index aligned or CO2-aligned).
+- `final_ph` / `final_pH`: compatibility aliases mapped to `equilibrium_ph` in timeline/report/export payloads.
 
 ---
 
@@ -532,7 +533,7 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
    - editing `Cycle timeline plot title`
 7. Verify anchored outputs:
    - measured pH marker appears on cycle timeline plot
-   - corrected pH trajectory appears alongside original/planning trajectories
+   - equilibrium pH trajectory appears alongside corrected/planning trajectories
    - corrected per-cycle and cumulative CO2 uptake values appear next to original values
    - dashboard tile **Reaction Progress** uses corrected-primary completion/regime text and shows required CO2 context
    - dashboard tile **Completion Meter** shows adjacent pre-anchor and corrected completion gauges
@@ -564,6 +565,13 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Timeline artifacts and dashboard metrics suitable for compare/report/ledger.
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.12.3 Release Note (Equilibrium-Primary pH Presentation Contract)
+- Advanced Speciation workflows now present one authoritative pH method to users: guidance/equilibrium target-state estimate.
+- Planning, Analysis, and Reprocessing timeline tables/plots/callouts now label primary pH as **Equilibrium pH (Guidance)**.
+- Timeline/export/report payloads now treat `equilibrium_ph` as canonical.
+- `final_ph` and `final_pH` are retained as backward-compatible aliases to the same equilibrium value.
+- Fixed-`pCO2` trajectory endpoint pH is no longer presented as a competing final displayed method.
 
 ### v4.12.0 Release Note (Global Measured-pH Learning + Developer Tools Runtime Manager)
 - Added global measured-pH anchor learning stores (`analysis_global_measured_ph_anchor_library`, `analysis_anchor_learning_history`) so anchor knowledge is not profile-scoped.
