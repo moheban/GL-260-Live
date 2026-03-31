@@ -47,12 +47,12 @@
 - Do not leave temporary patch-lint artifacts in the working tree at handoff.
 
 ## Open Work / Next Actions
-- Active checkpoint anchor: Auto checkpoint (plan): # Context from my IDE setup: ## Active file: docs/codex-context.md ## Op
-- Current focus area: Not specified
-- Collaboration mode: plan
-- Source session id: 019d4031-759b-7de0-9895-461f213301b8
+- Active checkpoint anchor: Implemented Analysis snapshot tile missing-fractions guard with -- placeholders and regression coverage
+- Current focus area: analysis dashboard snapshot tile crash hardening
+- Collaboration mode: default
+- Source session id: 019d4438-98bb-7640-bd47-8cd12090883a
 - Turn window used: 30
-- Session checkpoint id: CHK-20260331T131245Z-22917115
+- Session checkpoint id: CHK-20260331T142015Z-c528f39e
 - Session checkpoint file: docs/codex-session-context.md
 - Release context anchor: v2.0.1 Update Highlights
 - Refresh this snapshot at every meaningful checkpoint, including planning-only checkpoints with no code edits.
@@ -63,6 +63,10 @@
 <!-- MANUAL_NOTES_END -->
 
 ## Recent Decisions
+- 2026-03-31: Implemented Analysis snapshot tile missing-fractions guard with -- placeholders and regression coverage. Rationale: preserve recoverable user/assistant context across compaction. Mode: default. Focus: analysis dashboard snapshot tile crash hardening.
+- 2026-03-31: Implemented timeline legend guard + Analysis Actual-first/source contract + explorer redesign tests. Rationale: preserve recoverable user/assistant context across compaction. Mode: default. Focus: cycle timeline layout manager, analysis dashboard/explorer semantics.
+- 2026-03-31: Auto checkpoint (default): # Context from my IDE setup: ## Active file: docs/codex-context.md ## Op. Rationale: preserve recoverable user/assistant context across compaction. Mode: default.
+- 2026-03-31: Implement legend overlap + Analysis pH/source contract. Rationale: preserve recoverable user/assistant context across compaction. Mode: default. Focus: cycle timeline layout manager, analysis dashboard.
 - 2026-03-31: Auto checkpoint (plan): # Context from my IDE setup: ## Active file: docs/codex-context.md ## Op. Rationale: preserve recoverable user/assistant context across compaction. Mode: plan.
 - 2026-03-31: Auto checkpoint (plan): # Context from my IDE setup: ## Active file: GL-260 Data Analysis and Pl. Rationale: preserve recoverable user/assistant context across compaction. Mode: plan.
 - 2026-03-30: Validated v4.12.3 equilibrium-primary pH implementation. Rationale: preserve recoverable user/assistant context across compaction. Mode: default. Focus: scoped patch validation and docs sync.
@@ -71,19 +75,15 @@
 - 2026-03-30: Auto checkpoint (default): # Context from my IDE setup: ## Active file: .gitignore ## Open tabs: - . Rationale: preserve recoverable user/assistant context across compaction. Mode: default.
 - 2026-03-30: Auto checkpoint (plan): # Context from my IDE setup: ## Active file: settings.json ## Open tabs:. Rationale: preserve recoverable user/assistant context across compaction. Mode: plan.
 - 2026-03-30: codex90. Rationale: preserve recoverable user/assistant context across compaction. Mode: default.
-- 2026-03-30: codex87. Rationale: preserve recoverable user/assistant context across compaction. Mode: default.
-- 2026-03-30: codex. Rationale: preserve recoverable user/assistant context across compaction. Mode: default.
-- 2026-03-30: Milestone refresh verification. Rationale: maintain durable, repo-scoped context after chat compaction. Focus: snapshot refresh test.
-- 2026-03-30: Bootstrap repo-scoped context snapshot workflow. Rationale: maintain durable, repo-scoped context after chat compaction. Focus: context retention.
 
 ## Session Recovery Anchor
-- Last checkpoint id: CHK-20260331T131245Z-22917115
+- Last checkpoint id: CHK-20260331T142015Z-c528f39e
 - Companion context file: `docs/codex-session-context.md`
-- Collaboration mode: plan
-- Source session id: 019d4031-759b-7de0-9895-461f213301b8
-- Source session file: C:\Users\mmoheban\.codex\sessions\2026\03\30\rollout-2026-03-30T15-21-17-019d4031-759b-7de0-9895-461f213301b8.jsonl
+- Collaboration mode: default
+- Source session id: 019d4438-98bb-7640-bd47-8cd12090883a
+- Source session file: C:\Users\mmoheban\.codex\sessions\2026\03\31\rollout-2026-03-31T10-07-33-019d4438-98bb-7640-bd47-8cd12090883a.jsonl
 - Turn window used: 30
-- Fingerprint: 229171155814ae296d9562baa091242142b8b5cf7586909c0e420e0c3205646a
+- Fingerprint: c528f39ec9e1235b9ed926a8689864f68ef309521e37580e53c6b50d966b2bc8
 
 ## Validation Commands
 - `python scripts/update_codex_context.py [--milestone "<note>"] [--focus "<area>"]`
@@ -93,17 +93,17 @@
 - `python -m py_compile "GL-260 Data Analysis and Plotter.py"`
 
 ## Snapshot Metadata
-- Last updated (UTC): 2026-03-31T13:12:45Z
+- Last updated (UTC): 2026-03-31T14:20:15Z
 - Owner: Codex + repository maintainers
 - Scope: Repository-local context primer
 - Primer policy: Load this file at task start before broad exploration
 - Refresh cadence: Every meaningful checkpoint
 - Stale threshold: 24 hours
-- Last checkpoint label: Auto checkpoint (plan): # Context from my IDE setup: ## Active file: docs/codex-context.md ## Op
-- Last focus area: Not specified
-- Last collaboration mode: plan
-- Last source session id: 019d4031-759b-7de0-9895-461f213301b8
-- Last source session file: C:\Users\mmoheban\.codex\sessions\2026\03\30\rollout-2026-03-30T15-21-17-019d4031-759b-7de0-9895-461f213301b8.jsonl
+- Last checkpoint label: Implemented Analysis snapshot tile missing-fractions guard with -- placeholders and regression coverage
+- Last focus area: analysis dashboard snapshot tile crash hardening
+- Last collaboration mode: default
+- Last source session id: 019d4438-98bb-7640-bd47-8cd12090883a
+- Last source session file: C:\Users\mmoheban\.codex\sessions\2026\03\31\rollout-2026-03-31T10-07-33-019d4438-98bb-7640-bd47-8cd12090883a.jsonl
 - Last turn window used: 30
-- Last session checkpoint id: CHK-20260331T131245Z-22917115
-- Last session fingerprint: 229171155814ae296d9562baa091242142b8b5cf7586909c0e420e0c3205646a
+- Last session checkpoint id: CHK-20260331T142015Z-c528f39e
+- Last session fingerprint: c528f39ec9e1235b9ed926a8689864f68ef309521e37580e53c6b50d966b2bc8
