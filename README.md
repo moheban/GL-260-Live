@@ -1,18 +1,18 @@
-# GL-260 Data Analysis and Plotter (v4.12.3)
+# GL-260 Data Analysis and Plotter (v4.13.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.12.3`:
-- Standardized Advanced Speciation cycle outputs on one presented pH method: guidance/equilibrium target-state estimate.
-- Added canonical timeline/report/export payload key `equilibrium_ph` and kept `final_ph`/`final_pH` as compatibility aliases to the same equilibrium value.
-- Removed user-facing fixed-`pCO2` trajectory endpoint pH as a competing displayed final method across Planning, Analysis, and Reprocessing surfaces.
-- Updated timeline labels, dashboard/callout wording, and report/export fields to equilibrium-primary wording (`Equilibrium pH (Guidance)`).
-- Preserved Rust-accelerated and Python-fallback workflows under one equilibrium-primary presentation contract.
+Latest workflow highlights in `v4.13.0`:
+- Consolidated the Analysis dashboard into six core tiles with optional lower-priority detail tiles hidden by default.
+- Moved Analysis actions (`Import from Cycle Analysis`, `Run Analysis`, `Recompute Calibration`) into one colocated `Input & Controls` card beside Analysis inputs.
+- Refined Analysis tile hierarchy so overview, key results, target-gap/forecast, speciation breakdown, and warnings/diagnostics are surfaced first.
+- Reworked Advanced Speciation Analysis wheel routing to use one unified outer scroll flow with edge handoff from nested Text/Tree widgets.
+- Preserved Rust-accelerated and Python-fallback chemistry/speciation behavior with no solver-contract changes.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.12.3`
-- `APP_VERSION = "v4.12.3"`
+- `# Version: v4.13.0`
+- `APP_VERSION = "v4.13.0"`
 
 ## Canonical User Manual Location
 The canonical, continuously updated user manual now lives in `docs/`:
@@ -512,6 +512,25 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.13.0 Analysis UX Consolidation + Unified Scrolling
+- Refactored Analysis workflow presentation into a core-first dashboard layout with six primary tiles:
+  - Analysis Overview / Mode Context
+  - Key Results Summary
+  - Target Gap & Forecast
+  - Speciation / Equilibrium Breakdown
+  - Inputs / Assumptions / Context
+  - Warnings / Diagnostics
+- Kept tile customization enabled (configure/hide/pin/drag), with lower-priority detail tiles available but hidden by default.
+- Relocated Analysis action controls into one colocated `Input & Controls` card inside Analysis workflow inputs:
+  - **Import from Cycle Analysis**
+  - **Run Analysis**
+  - **Recompute Calibration**
+  - shared `Cycle timeline plot title`
+- Added Analysis dashboard state schema migration so legacy persisted layouts normalize safely to the new core-first defaults while preserving valid customizations where possible.
+- Replaced trap-prone Analysis tab wheel routing with unified outer-canvas scrolling plus edge handoff from nested Text/Listbox/Treeview widgets.
+- Removed Analysis-tab local text-wheel hard-capture bindings that previously caused dead-end scroll zones in dense output regions.
+- Added regressions for action colocation, dashboard migration/defaults, consolidated core-tile text contracts, and scroll edge handoff behavior.
 
 ### v4.12.3 Equilibrium-Primary pH Contract Across Advanced Speciation Workflows
 - Switched presented cycle/final pH in Planning, Analysis, and Reprocessing timeline surfaces to guidance/equilibrium target-state estimates.

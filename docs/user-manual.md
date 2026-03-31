@@ -7,7 +7,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Build command: `python scripts/build_user_manual.py`
 - Validation command: `python scripts/build_user_manual.py --check`
 
-Current release: `v4.12.3`
+Current release: `v4.13.0`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
@@ -526,7 +526,7 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
    - use `Clear Anchors` to reset the row editor when needed
    - use `Target pH Controls` directly below the anchor section to set the shared target-pH slider value
    - run Analysis or click **Recompute Calibration**
-6. Use **Analysis Actions** panel (directly below **Guided Steps**) for:
+6. Use the Analysis **Input & Controls** card (inside Analysis workflow inputs) for:
    - **Import from Cycle Analysis**
    - **Run Analysis**
    - **Recompute Calibration**
@@ -554,17 +554,41 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
    - JSON summary
    - timeline CSV/plot/table
 12. Use **Send Dashboard Stats to Ledger** when values should be captured in ledger entries (corrected-primary uptake/yield are prefilled; raw baselines remain in notes).
-13. In Analysis dashboard verify tile coverage:
-   - Target pH controls, Reaction Progress, Forensic Comparison KPIs
-   - Speciation Snapshot, Reaction Overview visuals, All-cycles pH sweep preview
-   - Warnings/Narrative/Math context
-   - Cycle Comparison Explorer, Cycle Speciation Timeline Explorer/plot, and Selected-Cycle Notes and Export remain in their existing locations.
+13. In Analysis dashboard verify core tile coverage:
+   - Analysis Overview / Mode Context
+   - Key Results Summary
+   - Target Gap & Forecast
+   - Speciation / Equilibrium Breakdown
+   - Inputs / Assumptions / Context
+   - Warnings / Diagnostics
+14. Optional detail tiles remain available through tile configuration (hidden by default) and include completion/forensics/comparison/visual detail surfaces.
+15. Cycle Comparison Explorer, Cycle Speciation Timeline Explorer/plot, and Selected-Cycle Notes and Export remain in their existing locations.
 
 ### Expected outputs
 - Speciation/equilibrium summaries tied to cycle-level data.
 - Timeline artifacts and dashboard metrics suitable for compare/report/ledger.
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.13.0 Release Note (Analysis UX Consolidation + Unified Scrolling)
+- Analysis dashboard now uses a core-first six-tile hierarchy:
+  - **Analysis Overview / Mode Context**
+  - **Key Results Summary**
+  - **Target Gap & Forecast**
+  - **Speciation / Equilibrium Breakdown**
+  - **Inputs / Assumptions / Context**
+  - **Warnings / Diagnostics**
+- Lower-priority Analysis detail tiles remain configurable/accessible, but are hidden by default to reduce vertical sprawl.
+- Analysis actions were relocated into one colocated **Input & Controls** card in Analysis workflow inputs:
+  - **Import from Cycle Analysis**
+  - **Run Analysis**
+  - **Recompute Calibration**
+  - shared `Cycle timeline plot title`
+- Analysis tab wheel routing now uses unified outer scrolling with local-widget edge handoff:
+  - Text/Listbox/Treeview widgets consume wheel input while they can scroll.
+  - At top/bottom boundaries, wheel input is handed off to the outer Analysis scroll region.
+  - Analysis-specific local text wheel-capture bindings were removed to prevent dead-end scroll traps.
+- No chemistry/speciation/equilibrium solver logic was changed by this UX refactor.
 
 ### v4.12.3 Release Note (Equilibrium-Primary pH Presentation Contract)
 - Advanced Speciation workflows now present one authoritative pH method to users: guidance/equilibrium target-state estimate.

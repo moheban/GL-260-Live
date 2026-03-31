@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="34d30db978da8f958780ee407d537e6e5f3683bedea9968934d3686c5944d8a5">
+  <meta name="manual-source-sha256" content="50c81727239af70a8ebea65ec17fa3b2faa1cb3988fa1b427c1b5d985f1fcba0">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -243,7 +243,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>34d30db978da8f95</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>50c81727239af70a</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -359,6 +359,8 @@
 <li><a href="#inputs_10">Inputs</a></li>
 <li><a href="#step-by-step-actions_10">Step-by-step actions</a></li>
 <li><a href="#expected-outputs_10">Expected outputs</a></li>
+<li><a href="#v4130-release-note-analysis-ux-consolidation-unified-scrolling">v4.13.0 Release Note (Analysis UX Consolidation + Unified Scrolling)</a></li>
+<li><a href="#v4123-release-note-equilibrium-primary-ph-presentation-contract">v4.12.3 Release Note (Equilibrium-Primary pH Presentation Contract)</a></li>
 <li><a href="#v4120-release-note-global-measured-ph-learning-developer-tools-runtime-manager">v4.12.0 Release Note (Global Measured-pH Learning + Developer Tools Runtime Manager)</a></li>
 <li><a href="#v4111-release-note-cycle-timeline-legend-sync-export-render-parity">v4.11.1 Release Note (Cycle Timeline Legend Sync + Export Render Parity)</a></li>
 <li><a href="#v4110-release-note-cycle-timeline-layout-manager-splash-gated-verification">v4.11.0 Release Note (Cycle Timeline Layout Manager + Splash-Gated Verification)</a></li>
@@ -445,11 +447,12 @@
 <li>Build command: <code>python scripts/build_user_manual.py</code></li>
 <li>Validation command: <code>python scripts/build_user_manual.py --check</code></li>
 </ul>
-<p>Current release: <code>v4.12.0</code></p>
+<p>Current release: <code>v4.13.0</code></p>
 <p>Analysis timeline pH terminology:<br>
-- <code>Observed pH</code>: pH from detected cycle data / mapped observed timeline point.<br>
-- <code>Corrected pH</code>: measured-anchor calibrated pH after uptake correction.<br>
-- <code>Reference pH</code>: planning/reference curve pH (cycle-index aligned or CO2-aligned).</p>
+- <code>Equilibrium pH (Guidance)</code>: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.<br>
+- <code>Corrected pH</code>: measured-anchor calibrated pH overlay used for Analysis alignment diagnostics.<br>
+- <code>Reference pH</code>: planning/reference curve pH (cycle-index aligned or CO2-aligned).<br>
+- <code>final_ph</code> / <code>final_pH</code>: compatibility aliases mapped to <code>equilibrium_ph</code> in timeline/report/export payloads.</p>
 <hr>
 <h2 id="table-of-contents">Table of Contents<a class="headerlink" href="#table-of-contents" title="Permanent link">&para;</a></h2>
 <ol>
@@ -983,14 +986,14 @@
    - use <code>Clear Anchors</code> to reset the row editor when needed<br>
    - use <code>Target pH Controls</code> directly below the anchor section to set the shared target-pH slider value<br>
    - run Analysis or click <strong>Recompute Calibration</strong></li>
-<li>Use <strong>Analysis Actions</strong> panel (directly below <strong>Guided Steps</strong>) for:<br>
+<li>Use the Analysis <strong>Input &amp; Controls</strong> card (inside Analysis workflow inputs) for:<br>
    - <strong>Import from Cycle Analysis</strong><br>
    - <strong>Run Analysis</strong><br>
    - <strong>Recompute Calibration</strong><br>
    - editing <code>Cycle timeline plot title</code></li>
 <li>Verify anchored outputs:<br>
    - measured pH marker appears on cycle timeline plot<br>
-   - corrected pH trajectory appears alongside original/planning trajectories<br>
+   - equilibrium pH trajectory appears alongside corrected/planning trajectories<br>
    - corrected per-cycle and cumulative CO2 uptake values appear next to original values<br>
    - dashboard tile <strong>Reaction Progress</strong> uses corrected-primary completion/regime text and shows required CO2 context<br>
    - dashboard tile <strong>Completion Meter</strong> shows adjacent pre-anchor and corrected completion gauges<br>
@@ -1011,11 +1014,15 @@
    - JSON summary<br>
    - timeline CSV/plot/table</li>
 <li>Use <strong>Send Dashboard Stats to Ledger</strong> when values should be captured in ledger entries (corrected-primary uptake/yield are prefilled; raw baselines remain in notes).</li>
-<li>In Analysis dashboard verify tile coverage:<br>
-   - Target pH controls, Reaction Progress, Forensic Comparison KPIs<br>
-   - Speciation Snapshot, Reaction Overview visuals, All-cycles pH sweep preview<br>
-   - Warnings/Narrative/Math context<br>
-   - Cycle Comparison Explorer, Cycle Speciation Timeline Explorer/plot, and Selected-Cycle Notes and Export remain in their existing locations.</li>
+<li>In Analysis dashboard verify core tile coverage:<br>
+   - Analysis Overview / Mode Context<br>
+   - Key Results Summary<br>
+   - Target Gap &amp; Forecast<br>
+   - Speciation / Equilibrium Breakdown<br>
+   - Inputs / Assumptions / Context<br>
+   - Warnings / Diagnostics</li>
+<li>Optional detail tiles remain available through tile configuration (hidden by default) and include completion/forensics/comparison/visual detail surfaces.</li>
+<li>Cycle Comparison Explorer, Cycle Speciation Timeline Explorer/plot, and Selected-Cycle Notes and Export remain in their existing locations.</li>
 </ol>
 <h3 id="expected-outputs_10">Expected outputs<a class="headerlink" href="#expected-outputs_10" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1023,6 +1030,35 @@
 <li>Timeline artifacts and dashboard metrics suitable for compare/report/ledger.</li>
 <li>Measured-pH anchor editor rows persist globally in <code>solubility_inputs</code> and restore on Analysis tab build/restart.</li>
 <li>Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.</li>
+</ul>
+<h3 id="v4130-release-note-analysis-ux-consolidation-unified-scrolling">v4.13.0 Release Note (Analysis UX Consolidation + Unified Scrolling)<a class="headerlink" href="#v4130-release-note-analysis-ux-consolidation-unified-scrolling" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Analysis dashboard now uses a core-first six-tile hierarchy:</li>
+<li><strong>Analysis Overview / Mode Context</strong></li>
+<li><strong>Key Results Summary</strong></li>
+<li><strong>Target Gap &amp; Forecast</strong></li>
+<li><strong>Speciation / Equilibrium Breakdown</strong></li>
+<li><strong>Inputs / Assumptions / Context</strong></li>
+<li><strong>Warnings / Diagnostics</strong></li>
+<li>Lower-priority Analysis detail tiles remain configurable/accessible, but are hidden by default to reduce vertical sprawl.</li>
+<li>Analysis actions were relocated into one colocated <strong>Input &amp; Controls</strong> card in Analysis workflow inputs:</li>
+<li><strong>Import from Cycle Analysis</strong></li>
+<li><strong>Run Analysis</strong></li>
+<li><strong>Recompute Calibration</strong></li>
+<li>shared <code>Cycle timeline plot title</code></li>
+<li>Analysis tab wheel routing now uses unified outer scrolling with local-widget edge handoff:</li>
+<li>Text/Listbox/Treeview widgets consume wheel input while they can scroll.</li>
+<li>At top/bottom boundaries, wheel input is handed off to the outer Analysis scroll region.</li>
+<li>Analysis-specific local text wheel-capture bindings were removed to prevent dead-end scroll traps.</li>
+<li>No chemistry/speciation/equilibrium solver logic was changed by this UX refactor.</li>
+</ul>
+<h3 id="v4123-release-note-equilibrium-primary-ph-presentation-contract">v4.12.3 Release Note (Equilibrium-Primary pH Presentation Contract)<a class="headerlink" href="#v4123-release-note-equilibrium-primary-ph-presentation-contract" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Advanced Speciation workflows now present one authoritative pH method to users: guidance/equilibrium target-state estimate.</li>
+<li>Planning, Analysis, and Reprocessing timeline tables/plots/callouts now label primary pH as <strong>Equilibrium pH (Guidance)</strong>.</li>
+<li>Timeline/export/report payloads now treat <code>equilibrium_ph</code> as canonical.</li>
+<li><code>final_ph</code> and <code>final_pH</code> are retained as backward-compatible aliases to the same equilibrium value.</li>
+<li>Fixed-<code>pCO2</code> trajectory endpoint pH is no longer presented as a competing final displayed method.</li>
 </ul>
 <h3 id="v4120-release-note-global-measured-ph-learning-developer-tools-runtime-manager">v4.12.0 Release Note (Global Measured-pH Learning + Developer Tools Runtime Manager)<a class="headerlink" href="#v4120-release-note-global-measured-ph-learning-developer-tools-runtime-manager" title="Permanent link">&para;</a></h3>
 <ul>

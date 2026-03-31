@@ -47,12 +47,12 @@
 - Do not leave temporary patch-lint artifacts in the working tree at handoff.
 
 ## Open Work / Next Actions
-- Active checkpoint anchor: Implemented Analysis snapshot tile missing-fractions guard with -- placeholders and regression coverage
-- Current focus area: analysis dashboard snapshot tile crash hardening
+- Active checkpoint anchor: Finalized v4.13.0 Analysis tab UX consolidation with unified edge-handoff scrolling and core-tile schema migration
+- Current focus area: analysis tab ux + scroll dispatcher + dashboard state
 - Collaboration mode: default
-- Source session id: 019d4438-98bb-7640-bd47-8cd12090883a
+- Source session id: 019d4449-a86b-7111-a4af-6691a342c645
 - Turn window used: 30
-- Session checkpoint id: CHK-20260331T142015Z-c528f39e
+- Session checkpoint id: CHK-20260331T163249Z-e1b4277c
 - Session checkpoint file: docs/codex-session-context.md
 - Release context anchor: v2.0.1 Update Highlights
 - Refresh this snapshot at every meaningful checkpoint, including planning-only checkpoints with no code edits.
@@ -63,6 +63,8 @@
 <!-- MANUAL_NOTES_END -->
 
 ## Recent Decisions
+- 2026-03-31: Finalized v4.13.0 Analysis tab UX consolidation with unified edge-handoff scrolling and core-tile schema migration. Rationale: preserve recoverable user/assistant context across compaction. Mode: default. Focus: analysis tab ux + scroll dispatcher + dashboard state.
+- 2026-03-31: Implemented v4.13.0 Analysis tab UX consolidation, action colocation, and unified edge-handoff scrolling. Rationale: preserve recoverable user/assistant context across compaction. Mode: default. Focus: advanced speciation analysis UX + scroll architecture.
 - 2026-03-31: Implemented Analysis snapshot tile missing-fractions guard with -- placeholders and regression coverage. Rationale: preserve recoverable user/assistant context across compaction. Mode: default. Focus: analysis dashboard snapshot tile crash hardening.
 - 2026-03-31: Implemented timeline legend guard + Analysis Actual-first/source contract + explorer redesign tests. Rationale: preserve recoverable user/assistant context across compaction. Mode: default. Focus: cycle timeline layout manager, analysis dashboard/explorer semantics.
 - 2026-03-31: Auto checkpoint (default): # Context from my IDE setup: ## Active file: docs/codex-context.md ## Op. Rationale: preserve recoverable user/assistant context across compaction. Mode: default.
@@ -73,17 +75,15 @@
 - 2026-03-30: Implemented v4.12.3 equilibrium-primary pH surfaces and docs sync. Rationale: preserve recoverable user/assistant context across compaction. Mode: default. Focus: advanced speciation timeline contract.
 - 2026-03-30: Auto checkpoint (plan): # Context from my IDE setup: ## Active file: .gitignore ## Open tabs: - . Rationale: preserve recoverable user/assistant context across compaction. Mode: plan.
 - 2026-03-30: Auto checkpoint (default): # Context from my IDE setup: ## Active file: .gitignore ## Open tabs: - . Rationale: preserve recoverable user/assistant context across compaction. Mode: default.
-- 2026-03-30: Auto checkpoint (plan): # Context from my IDE setup: ## Active file: settings.json ## Open tabs:. Rationale: preserve recoverable user/assistant context across compaction. Mode: plan.
-- 2026-03-30: codex90. Rationale: preserve recoverable user/assistant context across compaction. Mode: default.
 
 ## Session Recovery Anchor
-- Last checkpoint id: CHK-20260331T142015Z-c528f39e
+- Last checkpoint id: CHK-20260331T163249Z-e1b4277c
 - Companion context file: `docs/codex-session-context.md`
 - Collaboration mode: default
-- Source session id: 019d4438-98bb-7640-bd47-8cd12090883a
-- Source session file: C:\Users\mmoheban\.codex\sessions\2026\03\31\rollout-2026-03-31T10-07-33-019d4438-98bb-7640-bd47-8cd12090883a.jsonl
+- Source session id: 019d4449-a86b-7111-a4af-6691a342c645
+- Source session file: C:\Users\mmoheban\.codex\sessions\2026\03\31\rollout-2026-03-31T10-26-11-019d4449-a86b-7111-a4af-6691a342c645.jsonl
 - Turn window used: 30
-- Fingerprint: c528f39ec9e1235b9ed926a8689864f68ef309521e37580e53c6b50d966b2bc8
+- Fingerprint: e1b4277c5734c011bdf35ee80522b1493f035935390ddecf084843e8f17dfc8f
 
 ## Validation Commands
 - `python scripts/update_codex_context.py [--milestone "<note>"] [--focus "<area>"]`
@@ -93,17 +93,17 @@
 - `python -m py_compile "GL-260 Data Analysis and Plotter.py"`
 
 ## Snapshot Metadata
-- Last updated (UTC): 2026-03-31T14:20:15Z
+- Last updated (UTC): 2026-03-31T16:32:49Z
 - Owner: Codex + repository maintainers
 - Scope: Repository-local context primer
 - Primer policy: Load this file at task start before broad exploration
 - Refresh cadence: Every meaningful checkpoint
 - Stale threshold: 24 hours
-- Last checkpoint label: Implemented Analysis snapshot tile missing-fractions guard with -- placeholders and regression coverage
-- Last focus area: analysis dashboard snapshot tile crash hardening
+- Last checkpoint label: Finalized v4.13.0 Analysis tab UX consolidation with unified edge-handoff scrolling and core-tile schema migration
+- Last focus area: analysis tab ux + scroll dispatcher + dashboard state
 - Last collaboration mode: default
-- Last source session id: 019d4438-98bb-7640-bd47-8cd12090883a
-- Last source session file: C:\Users\mmoheban\.codex\sessions\2026\03\31\rollout-2026-03-31T10-07-33-019d4438-98bb-7640-bd47-8cd12090883a.jsonl
+- Last source session id: 019d4449-a86b-7111-a4af-6691a342c645
+- Last source session file: C:\Users\mmoheban\.codex\sessions\2026\03\31\rollout-2026-03-31T10-26-11-019d4449-a86b-7111-a4af-6691a342c645.jsonl
 - Last turn window used: 30
-- Last session checkpoint id: CHK-20260331T142015Z-c528f39e
-- Last session fingerprint: c528f39ec9e1235b9ed926a8689864f68ef309521e37580e53c6b50d966b2bc8
+- Last session checkpoint id: CHK-20260331T163249Z-e1b4277c
+- Last session fingerprint: e1b4277c5734c011bdf35ee80522b1493f035935390ddecf084843e8f17dfc8f
