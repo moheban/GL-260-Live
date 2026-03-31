@@ -47,12 +47,12 @@
 - Do not leave temporary patch-lint artifacts in the working tree at handoff.
 
 ## Open Work / Next Actions
-- Active checkpoint anchor: Validated v4.12.3 equilibrium-primary pH implementation
-- Current focus area: scoped patch validation and docs sync
-- Collaboration mode: default
-- Source session id: 019d3fb2-2012-70a0-85f2-8011171dbc73
+- Active checkpoint anchor: Auto checkpoint (plan): # Context from my IDE setup: ## Active file: docs/codex-context.md ## Op
+- Current focus area: Not specified
+- Collaboration mode: plan
+- Source session id: 019d4031-759b-7de0-9895-461f213301b8
 - Turn window used: 30
-- Session checkpoint id: CHK-20260330T185654Z-f229f274
+- Session checkpoint id: CHK-20260331T131245Z-22917115
 - Session checkpoint file: docs/codex-session-context.md
 - Release context anchor: v2.0.1 Update Highlights
 - Refresh this snapshot at every meaningful checkpoint, including planning-only checkpoints with no code edits.
@@ -63,6 +63,8 @@
 <!-- MANUAL_NOTES_END -->
 
 ## Recent Decisions
+- 2026-03-31: Auto checkpoint (plan): # Context from my IDE setup: ## Active file: docs/codex-context.md ## Op. Rationale: preserve recoverable user/assistant context across compaction. Mode: plan.
+- 2026-03-31: Auto checkpoint (plan): # Context from my IDE setup: ## Active file: GL-260 Data Analysis and Pl. Rationale: preserve recoverable user/assistant context across compaction. Mode: plan.
 - 2026-03-30: Validated v4.12.3 equilibrium-primary pH implementation. Rationale: preserve recoverable user/assistant context across compaction. Mode: default. Focus: scoped patch validation and docs sync.
 - 2026-03-30: Implemented v4.12.3 equilibrium-primary pH surfaces and docs sync. Rationale: preserve recoverable user/assistant context across compaction. Mode: default. Focus: advanced speciation timeline contract.
 - 2026-03-30: Auto checkpoint (plan): # Context from my IDE setup: ## Active file: .gitignore ## Open tabs: - . Rationale: preserve recoverable user/assistant context across compaction. Mode: plan.
@@ -75,13 +77,13 @@
 - 2026-03-30: Bootstrap repo-scoped context snapshot workflow. Rationale: maintain durable, repo-scoped context after chat compaction. Focus: context retention.
 
 ## Session Recovery Anchor
-- Last checkpoint id: CHK-20260330T185654Z-f229f274
+- Last checkpoint id: CHK-20260331T131245Z-22917115
 - Companion context file: `docs/codex-session-context.md`
-- Collaboration mode: default
-- Source session id: 019d3fb2-2012-70a0-85f2-8011171dbc73
-- Source session file: C:\Users\mmoheban\.codex\sessions\2026\03\30\rollout-2026-03-30T13-02-11-019d3fb2-2012-70a0-85f2-8011171dbc73.jsonl
+- Collaboration mode: plan
+- Source session id: 019d4031-759b-7de0-9895-461f213301b8
+- Source session file: C:\Users\mmoheban\.codex\sessions\2026\03\30\rollout-2026-03-30T15-21-17-019d4031-759b-7de0-9895-461f213301b8.jsonl
 - Turn window used: 30
-- Fingerprint: f229f274a404b2f2587436aa47c85d49f2a2ded1f7d7dbcfbd5ccd0cb4961d79
+- Fingerprint: 229171155814ae296d9562baa091242142b8b5cf7586909c0e420e0c3205646a
 
 ## Validation Commands
 - `python scripts/update_codex_context.py [--milestone "<note>"] [--focus "<area>"]`
@@ -91,17 +93,17 @@
 - `python -m py_compile "GL-260 Data Analysis and Plotter.py"`
 
 ## Snapshot Metadata
-- Last updated (UTC): 2026-03-30T18:56:54Z
+- Last updated (UTC): 2026-03-31T13:12:45Z
 - Owner: Codex + repository maintainers
 - Scope: Repository-local context primer
 - Primer policy: Load this file at task start before broad exploration
 - Refresh cadence: Every meaningful checkpoint
 - Stale threshold: 24 hours
-- Last checkpoint label: Validated v4.12.3 equilibrium-primary pH implementation
-- Last focus area: scoped patch validation and docs sync
-- Last collaboration mode: default
-- Last source session id: 019d3fb2-2012-70a0-85f2-8011171dbc73
-- Last source session file: C:\Users\mmoheban\.codex\sessions\2026\03\30\rollout-2026-03-30T13-02-11-019d3fb2-2012-70a0-85f2-8011171dbc73.jsonl
+- Last checkpoint label: Auto checkpoint (plan): # Context from my IDE setup: ## Active file: docs/codex-context.md ## Op
+- Last focus area: Not specified
+- Last collaboration mode: plan
+- Last source session id: 019d4031-759b-7de0-9895-461f213301b8
+- Last source session file: C:\Users\mmoheban\.codex\sessions\2026\03\30\rollout-2026-03-30T15-21-17-019d4031-759b-7de0-9895-461f213301b8.jsonl
 - Last turn window used: 30
-- Last session checkpoint id: CHK-20260330T185654Z-f229f274
-- Last session fingerprint: f229f274a404b2f2587436aa47c85d49f2a2ded1f7d7dbcfbd5ccd0cb4961d79
+- Last session checkpoint id: CHK-20260331T131245Z-22917115
+- Last session fingerprint: 229171155814ae296d9562baa091242142b8b5cf7586909c0e420e0c3205646a
