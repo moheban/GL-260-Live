@@ -7,7 +7,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Build command: `python scripts/build_user_manual.py`
 - Validation command: `python scripts/build_user_manual.py --check`
 
-Current release: `v4.13.0`
+Current release: `v4.13.2`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
@@ -568,7 +568,14 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Speciation/equilibrium summaries tied to cycle-level data.
 - Timeline artifacts and dashboard metrics suitable for compare/report/ledger.
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
+- Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.13.2 Release Note (Timeline Export Legend Parity + Analysis Restart Rehydrate)
+- Cycle timeline plot export now captures current display legend overrides immediately before export build so exported main-legend placement matches live/preview placement.
+- Timeline export save-path parity remains unchanged (no `bbox_inches="tight"` crop path reintroduced).
+- Startup Advanced Speciation refresh now routes restored workflow payloads through the shared widget rehydrate path so Analysis timeline/dashboard surfaces repopulate consistently after restart when context/signatures match.
+- Added regression coverage for startup widget-path Analysis restore behavior.
 
 ### v4.13.0 Release Note (Analysis UX Consolidation + Unified Scrolling)
 - Analysis dashboard now uses a core-first six-tile hierarchy:
@@ -694,6 +701,8 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
   - Recovery: update to `v4.8.1+`; timeline legend refresh now preserves valid user placement and auto-recovers to an on-canvas anchor when stale/off-canvas state is detected.
 - Error: timeline legend position snaps back after dragging it in Timeline Plot Preview.
   - Recovery: update to `v4.11.1+`; preview drag-release and close-time sync now persist role-specific timeline legend positions to display/export state.
+- Error: exported timeline main legend does not match the current live/preview legend placement.
+  - Recovery: update to `v4.13.2+`; export now captures display legend overrides immediately before export build.
 - Error: bottom timeline legend still overlaps x-label/x-tick labels in Plot Preview.
   - Recovery: update to `v4.12.0+`; preview build now reruns role-aware legend registration and timeline layout-manager verification before final preview draw.
 - Error: measured pH anchors entered in one profile are not influencing another profile’s Analysis predictions.
@@ -714,6 +723,8 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
   - Recovery: update to `v4.8.2+`; Analysis mode now builds fallback reference traces from cycle uptake + Analysis chemistry inputs and no longer requires Planning-only controls for progress text.
 - Error: Analysis warnings still display a stale forced target pH value after moving the slider.
   - Recovery: update to `v4.9.1+`; Analysis slider sync now re-applies on workflow changes and initial tab load in addition to direct slider movement.
+- Error: latest Analysis run is missing after restart even though dataset/profile context did not change.
+  - Recovery: update to `v4.13.2+`; startup refresh now rehydrates Analysis timeline/dashboard widgets from persisted matching-context results.
 - Error: Forced warning text appears to conflict with Speciation Snapshot ionic strength or charge residual.
   - Recovery: update to `v4.10.0+`; warnings are now context-separated and forced-scenario diagnostics are rendered under explicit forced context headers with their own metrics.
 - Error: Rust backend install/build reports failure even though build succeeded and interface appears current.

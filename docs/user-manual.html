@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="50c81727239af70a8ebea65ec17fa3b2faa1cb3988fa1b427c1b5d985f1fcba0">
+  <meta name="manual-source-sha256" content="9b4d38b677086978923dcef3d5ec0641ac26be05b0f75622d7b1e33cf1257c1e">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -243,7 +243,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>50c81727239af70a</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>9b4d38b677086978</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -359,6 +359,7 @@
 <li><a href="#inputs_10">Inputs</a></li>
 <li><a href="#step-by-step-actions_10">Step-by-step actions</a></li>
 <li><a href="#expected-outputs_10">Expected outputs</a></li>
+<li><a href="#v4132-release-note-timeline-export-legend-parity-analysis-restart-rehydrate">v4.13.2 Release Note (Timeline Export Legend Parity + Analysis Restart Rehydrate)</a></li>
 <li><a href="#v4130-release-note-analysis-ux-consolidation-unified-scrolling">v4.13.0 Release Note (Analysis UX Consolidation + Unified Scrolling)</a></li>
 <li><a href="#v4123-release-note-equilibrium-primary-ph-presentation-contract">v4.12.3 Release Note (Equilibrium-Primary pH Presentation Contract)</a></li>
 <li><a href="#v4120-release-note-global-measured-ph-learning-developer-tools-runtime-manager">v4.12.0 Release Note (Global Measured-pH Learning + Developer Tools Runtime Manager)</a></li>
@@ -447,7 +448,7 @@
 <li>Build command: <code>python scripts/build_user_manual.py</code></li>
 <li>Validation command: <code>python scripts/build_user_manual.py --check</code></li>
 </ul>
-<p>Current release: <code>v4.13.0</code></p>
+<p>Current release: <code>v4.13.2</code></p>
 <p>Analysis timeline pH terminology:<br>
 - <code>Equilibrium pH (Guidance)</code>: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.<br>
 - <code>Corrected pH</code>: measured-anchor calibrated pH overlay used for Analysis alignment diagnostics.<br>
@@ -1029,7 +1030,15 @@
 <li>Speciation/equilibrium summaries tied to cycle-level data.</li>
 <li>Timeline artifacts and dashboard metrics suitable for compare/report/ledger.</li>
 <li>Measured-pH anchor editor rows persist globally in <code>solubility_inputs</code> and restore on Analysis tab build/restart.</li>
+<li>Latest Analysis run payload restores after restart when workspace context/signatures match persisted <code>sol_analysis_last_result_v2</code> metadata.</li>
 <li>Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.</li>
+</ul>
+<h3 id="v4132-release-note-timeline-export-legend-parity-analysis-restart-rehydrate">v4.13.2 Release Note (Timeline Export Legend Parity + Analysis Restart Rehydrate)<a class="headerlink" href="#v4132-release-note-timeline-export-legend-parity-analysis-restart-rehydrate" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Cycle timeline plot export now captures current display legend overrides immediately before export build so exported main-legend placement matches live/preview placement.</li>
+<li>Timeline export save-path parity remains unchanged (no <code>bbox_inches="tight"</code> crop path reintroduced).</li>
+<li>Startup Advanced Speciation refresh now routes restored workflow payloads through the shared widget rehydrate path so Analysis timeline/dashboard surfaces repopulate consistently after restart when context/signatures match.</li>
+<li>Added regression coverage for startup widget-path Analysis restore behavior.</li>
 </ul>
 <h3 id="v4130-release-note-analysis-ux-consolidation-unified-scrolling">v4.13.0 Release Note (Analysis UX Consolidation + Unified Scrolling)<a class="headerlink" href="#v4130-release-note-analysis-ux-consolidation-unified-scrolling" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1167,6 +1176,8 @@
 <li>Recovery: update to <code>v4.8.1+</code>; timeline legend refresh now preserves valid user placement and auto-recovers to an on-canvas anchor when stale/off-canvas state is detected.</li>
 <li>Error: timeline legend position snaps back after dragging it in Timeline Plot Preview.</li>
 <li>Recovery: update to <code>v4.11.1+</code>; preview drag-release and close-time sync now persist role-specific timeline legend positions to display/export state.</li>
+<li>Error: exported timeline main legend does not match the current live/preview legend placement.</li>
+<li>Recovery: update to <code>v4.13.2+</code>; export now captures display legend overrides immediately before export build.</li>
 <li>Error: bottom timeline legend still overlaps x-label/x-tick labels in Plot Preview.</li>
 <li>Recovery: update to <code>v4.12.0+</code>; preview build now reruns role-aware legend registration and timeline layout-manager verification before final preview draw.</li>
 <li>Error: measured pH anchors entered in one profile are not influencing another profile’s Analysis predictions.</li>
@@ -1187,6 +1198,8 @@
 <li>Recovery: update to <code>v4.8.2+</code>; Analysis mode now builds fallback reference traces from cycle uptake + Analysis chemistry inputs and no longer requires Planning-only controls for progress text.</li>
 <li>Error: Analysis warnings still display a stale forced target pH value after moving the slider.</li>
 <li>Recovery: update to <code>v4.9.1+</code>; Analysis slider sync now re-applies on workflow changes and initial tab load in addition to direct slider movement.</li>
+<li>Error: latest Analysis run is missing after restart even though dataset/profile context did not change.</li>
+<li>Recovery: update to <code>v4.13.2+</code>; startup refresh now rehydrates Analysis timeline/dashboard widgets from persisted matching-context results.</li>
 <li>Error: Forced warning text appears to conflict with Speciation Snapshot ionic strength or charge residual.</li>
 <li>Recovery: update to <code>v4.10.0+</code>; warnings are now context-separated and forced-scenario diagnostics are rendered under explicit forced context headers with their own metrics.</li>
 <li>Error: Rust backend install/build reports failure even though build succeeded and interface appears current.</li>

@@ -1,18 +1,17 @@
-# GL-260 Data Analysis and Plotter (v4.13.0)
+# GL-260 Data Analysis and Plotter (v4.13.2)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.13.0`:
-- Consolidated the Analysis dashboard into six core tiles with optional lower-priority detail tiles hidden by default.
-- Moved Analysis actions (`Import from Cycle Analysis`, `Run Analysis`, `Recompute Calibration`) into one colocated `Input & Controls` card beside Analysis inputs.
-- Refined Analysis tile hierarchy so overview, key results, target-gap/forecast, speciation breakdown, and warnings/diagnostics are surfaced first.
-- Reworked Advanced Speciation Analysis wheel routing to use one unified outer scroll flow with edge handoff from nested Text/Tree widgets.
+Latest workflow highlights in `v4.13.2`:
+- Cycle Speciation Timeline plot export now captures the current display legend state before export build so main-legend placement matches live/preview positioning.
+- Analysis latest-run persistence and startup rehydrate paths were hardened so matching-context Analysis results repopulate timeline/dashboard surfaces more consistently after restart.
+- Updated release documentation (`README.md`, `docs/user-manual.md`, regenerated `docs/user-manual.html`) for the v4.13.2 timeline/export and Analysis-restore behavior.
 - Preserved Rust-accelerated and Python-fallback chemistry/speciation behavior with no solver-contract changes.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.13.0`
-- `APP_VERSION = "v4.13.0"`
+- `# Version: v4.13.2`
+- `APP_VERSION = "v4.13.2"`
 
 ## Canonical User Manual Location
 The canonical, continuously updated user manual now lives in `docs/`:
@@ -512,6 +511,13 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.13.2 Cycle Timeline Export Legend Parity + Analysis Restart Rehydrate
+- Updated cycle timeline plot export to capture current display legend overrides immediately before export figure build so exported main-legend placement matches live/preview state.
+- Kept timeline export save-path parity unchanged (no `bbox_inches="tight"` path reintroduced).
+- Hardened startup Advanced Speciation refresh flow to route restored workflow payloads through `_update_cycle_solubility_widgets(...)`, ensuring Analysis timeline/dashboard widgets rehydrate from persisted `sol_analysis_last_result_v2` payloads when context/signatures match.
+- Preserved fail-closed Analysis restore behavior for context mismatch (no stale cross-workspace reuse).
+- Added startup rehydrate regression coverage to verify widget-path restore behavior for persisted Analysis payloads.
 
 ### v4.13.0 Analysis UX Consolidation + Unified Scrolling
 - Refactored Analysis workflow presentation into a core-first dashboard layout with six primary tiles:
