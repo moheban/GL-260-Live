@@ -34,3 +34,4 @@ gl260_debug.log*
 Debug Results.litcoffee
 docs/codex-session-context.md
 docs/codex-context.md
+.codex_context_watch_state.json

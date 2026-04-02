@@ -12,17 +12,24 @@ import argparse
 import hashlib
 import json
 import re
+import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 MANUAL_NOTES_START = "<!-- MANUAL_NOTES_START -->"
 MANUAL_NOTES_END = "<!-- MANUAL_NOTES_END -->"
 DEFAULT_TURN_LIMIT = 30
+DEFAULT_SESSION_SCOPE = 2
+DEFAULT_THRESHOLD = 0.80
+DEFAULT_POLL_INTERVAL_SECONDS = 15.0
+WATCH_COOLDOWN_SECONDS = 180
+SNAPSHOT_STALE_HOURS = 24
 CHECKPOINT_HEADER = "# Codex Session Context"
 CHECKPOINT_LOG_HEADER = "## Checkpoint Log"
 SESSION_ROOT = Path.home() / ".codex" / "sessions"
+WATCH_STATE_FILENAME = ".codex_context_watch_state.json"
 
 PROJECT_MAP_CANDIDATES: tuple[tuple[str, str], ...] = (
     ("GL-260 Data Analysis and Plotter.py", "Primary Python application entry point."),
@@ -59,7 +66,10 @@ class SessionContext:
     """Container for session metadata and extracted turn excerpts."""
 
     session_file: Path | None
+    session_files: list[Path]
     session_id: str
+    session_chain_ids: list[str]
+    session_chain_timestamps: list[str]
     collaboration_mode: str
     session_timestamp: str
     turns: list[TurnEntry]
@@ -67,17 +77,38 @@ class SessionContext:
     fingerprint: str
 
 
+@dataclass
+class SessionSource:
+    """Container for one parsed session source and extracted message turns."""
+
+    session_file: Path
+    session_id: str
+    session_timestamp: str
+    collaboration_mode: str
+    turns: list[TurnEntry]
+
+
+@dataclass
+class TokenUsageSnapshot:
+    """Container for latest token usage values from a session file."""
+
+    total_tokens: int
+    model_context_window: int
+    ratio: float
+    observed_utc: str
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for snapshot regeneration.
 
     Purpose:
-    - Require a milestone note so each refresh records explicit intent.
+    - Support manual refresh, watch automation, and task-start resume workflows.
     Why:
-    - Milestone anchoring keeps snapshot updates meaningful and auditable.
+    - One script should handle continuity checkpointing and deterministic resume reads.
     Inputs:
     - CLI flags from `sys.argv`.
     Outputs:
-    - Parsed namespace with `milestone` and optional `focus`.
+    - Parsed namespace containing mode, scope, and update behavior options.
     Side effects:
     - None.
     Exceptions:
@@ -107,6 +138,35 @@ def parse_args() -> argparse.Namespace:
         "--session-file",
         default="",
         help="Optional explicit session jsonl path for debugging.",
+    )
+    parser.add_argument(
+        "--session-scope",
+        type=int,
+        default=DEFAULT_SESSION_SCOPE,
+        help="Number of same-repo sessions to merge for recovery continuity.",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=DEFAULT_THRESHOLD,
+        help="Token window ratio that triggers automatic checkpointing in watch mode.",
+    )
+    parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=DEFAULT_POLL_INTERVAL_SECONDS,
+        help="Seconds between token-window checks in watch mode.",
+    )
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--watch",
+        action="store_true",
+        help="Continuously monitor token usage and auto-checkpoint on threshold crossings.",
+    )
+    mode_group.add_argument(
+        "--resume-brief",
+        action="store_true",
+        help="Print deterministic resume context from snapshot and checkpoint files.",
     )
     return parser.parse_args()
 
@@ -400,45 +460,56 @@ def read_session_meta(session_file: Path) -> dict[str, str]:
     return metadata
 
 
-def select_session_file(repo_root: Path, session_override: str) -> Path | None:
-    """Select the best session file to recover context for this repository.
+def select_session_files(
+    repo_root: Path, session_override: str, session_scope: int
+) -> list[Path]:
+    """Select same-repo session files used for continuity recovery.
 
     Purpose:
-    - Resolve a deterministic session source for compacted-context recovery.
+    - Resolve a deterministic session chain for compacted-context recovery.
     Why:
-    - Using unrelated sessions introduces wrong context into the snapshot.
+    - New compacted sessions can initially miss in-progress turns.
     Inputs:
     - `repo_root`: current repository root path.
     - `session_override`: optional explicit session file path.
+    - `session_scope`: max number of session files to include.
     Outputs:
-    - Selected session file path or `None` when unavailable.
+    - Ordered list (newest-first) of session files used for context reconstruction.
     Side effects:
     - Reads session directory and minimal session metadata.
     Exceptions:
     - `FileNotFoundError` when an explicit override path does not exist.
     """
 
+    safe_scope = max(1, int(session_scope))
     if session_override.strip():
         override_path = Path(session_override).expanduser().resolve()
         if not override_path.exists():
             raise FileNotFoundError(f"Session override not found: {override_path}")
-        return override_path
+        return [override_path]
 
     session_files = iter_session_files()
     if not session_files:
-        return None
+        return []
 
     normalized_repo_root = normalize_path(repo_root)
+    matching_files: list[Path] = []
     for session_file in session_files:
         meta = read_session_meta(session_file)
         session_cwd = str(meta.get("cwd") or "")
         if session_cwd and normalize_path(session_cwd) == normalized_repo_root:
-            return session_file
-    return session_files[0]
+            matching_files.append(session_file)
+    if matching_files:
+        return matching_files[:safe_scope]
+    return session_files[:safe_scope]
 
 
 def build_turn_fingerprint(
-    session_id: str, collaboration_mode: str, turn_limit: int, turns: list[TurnEntry]
+    session_id: str,
+    collaboration_mode: str,
+    turn_limit: int,
+    turns: list[TurnEntry],
+    session_chain_ids: list[str],
 ) -> str:
     """Build a stable fingerprint for extracted session turns.
 
@@ -451,6 +522,7 @@ def build_turn_fingerprint(
     - `collaboration_mode`: detected mode token (`plan`, `default`, etc.).
     - `turn_limit`: window size used for extraction.
     - `turns`: extracted user/assistant excerpts.
+    - `session_chain_ids`: ordered session-id chain used to build `turns`.
     Outputs:
     - SHA-256 fingerprint hex string.
     Side effects:
@@ -463,6 +535,7 @@ def build_turn_fingerprint(
         "session_id": session_id,
         "collaboration_mode": collaboration_mode,
         "turn_limit": int(turn_limit),
+        "session_chain_ids": [str(value) for value in session_chain_ids],
         "turns": [
             {"role": turn.role, "phase": turn.phase, "text": turn.text}
             for turn in turns
@@ -472,38 +545,22 @@ def build_turn_fingerprint(
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
-def load_session_context(session_file: Path | None, turn_limit: int) -> SessionContext:
-    """Load session metadata and recent turn excerpts from a jsonl session file.
+def parse_session_source(session_file: Path) -> SessionSource:
+    """Parse one session file into reusable metadata and turn excerpts.
 
     Purpose:
-    - Recover compacted conversation context without rescanning repo state.
+    - Normalize one session source for multi-session continuity merges.
     Why:
-    - Planning and editing checkpoints both need durable turn-level context.
+    - Compaction boundaries can split in-progress context across sessions.
     Inputs:
-    - `session_file`: selected source session log (or `None` if unavailable).
-    - `turn_limit`: number of recent turns to retain.
+    - `session_file`: source session jsonl path.
     Outputs:
-    - `SessionContext` with mode, session ids, turns, and fingerprint.
+    - Parsed `SessionSource` containing metadata and normalized turns.
     Side effects:
     - Reads session jsonl content.
     Exceptions:
     - `OSError` or `UnicodeDecodeError` for unreadable files.
     """
-
-    safe_turn_limit = max(1, int(turn_limit))
-    if session_file is None:
-        empty_fingerprint = build_turn_fingerprint(
-            "unknown", "unknown", safe_turn_limit, []
-        )
-        return SessionContext(
-            session_file=None,
-            session_id="unknown",
-            collaboration_mode="unknown",
-            session_timestamp="",
-            turns=[],
-            turn_limit=safe_turn_limit,
-            fingerprint=empty_fingerprint,
-        )
 
     session_id = "unknown"
     session_timestamp = ""
@@ -570,18 +627,91 @@ def load_session_context(session_file: Path | None, turn_limit: int) -> SessionC
             TurnEntry(role=turn.role, phase=turn.phase, text=normalized_text)
         )
 
-    windowed_turns = deduped_turns[-safe_turn_limit:]
-    fingerprint = build_turn_fingerprint(
-        session_id=session_id,
-        collaboration_mode=collaboration_mode,
-        turn_limit=safe_turn_limit,
-        turns=windowed_turns,
-    )
-    return SessionContext(
+    return SessionSource(
         session_file=session_file,
         session_id=session_id,
-        collaboration_mode=collaboration_mode,
         session_timestamp=session_timestamp,
+        collaboration_mode=collaboration_mode,
+        turns=deduped_turns,
+    )
+
+
+def load_session_context(session_files: list[Path], turn_limit: int) -> SessionContext:
+    """Load metadata and merged turn excerpts from one or more session files.
+
+    Purpose:
+    - Recover compacted conversation context without rescanning repo state.
+    Why:
+    - Planning and editing checkpoints both need durable turn-level context.
+    Inputs:
+    - `session_files`: selected source session logs (newest-first list).
+    - `turn_limit`: number of recent turns to retain.
+    Outputs:
+    - `SessionContext` with mode, session chain ids, turns, and fingerprint.
+    Side effects:
+    - Reads session jsonl content.
+    Exceptions:
+    - `OSError` or `UnicodeDecodeError` for unreadable files.
+    """
+
+    safe_turn_limit = max(1, int(turn_limit))
+    if not session_files:
+        empty_fingerprint = build_turn_fingerprint(
+            "unknown",
+            "unknown",
+            safe_turn_limit,
+            [],
+            ["unknown"],
+        )
+        return SessionContext(
+            session_file=None,
+            session_files=[],
+            session_id="unknown",
+            session_chain_ids=["unknown"],
+            session_chain_timestamps=[],
+            collaboration_mode="unknown",
+            session_timestamp="",
+            turns=[],
+            turn_limit=safe_turn_limit,
+            fingerprint=empty_fingerprint,
+        )
+
+    ordered_files = sorted(session_files, key=lambda path: path.stat().st_mtime)
+    parsed_sources = [parse_session_source(path) for path in ordered_files]
+    primary_source = parsed_sources[-1]
+
+    merged_turns: list[TurnEntry] = []
+    seen: set[tuple[str, str, str]] = set()
+    for source in parsed_sources:
+        for turn in source.turns:
+            dedupe_key = (turn.role, turn.phase, turn.text)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            merged_turns.append(turn)
+
+    windowed_turns = merged_turns[-safe_turn_limit:]
+    session_chain_ids = [
+        source.session_id.strip() or "unknown" for source in parsed_sources
+    ]
+    session_chain_timestamps = [
+        source.session_timestamp.strip() for source in parsed_sources
+    ]
+    fingerprint = build_turn_fingerprint(
+        session_id=primary_source.session_id,
+        collaboration_mode=primary_source.collaboration_mode,
+        turn_limit=safe_turn_limit,
+        turns=windowed_turns,
+        session_chain_ids=session_chain_ids,
+    )
+    return SessionContext(
+        session_file=primary_source.session_file,
+        session_files=ordered_files,
+        session_id=primary_source.session_id,
+        session_chain_ids=session_chain_ids,
+        session_chain_timestamps=session_chain_timestamps,
+        collaboration_mode=primary_source.collaboration_mode,
+        session_timestamp=primary_source.session_timestamp,
         turns=windowed_turns,
         turn_limit=safe_turn_limit,
         fingerprint=fingerprint,
@@ -704,6 +834,7 @@ def append_session_checkpoint(
     session_context: SessionContext,
     checkpoint_label: str,
     focus_area: str,
+    trigger_reason: str,
     captured_utc: datetime,
 ) -> tuple[str, bool]:
     """Append a new checkpoint block unless an identical fingerprint already exists.
@@ -717,6 +848,7 @@ def append_session_checkpoint(
     - `session_context`: current session metadata and excerpt window.
     - `checkpoint_label`: milestone/auto-generated checkpoint label.
     - `focus_area`: optional current focus label.
+    - `trigger_reason`: reason checkpoint refresh was initiated.
     - `captured_utc`: UTC timestamp for checkpoint capture.
     Outputs:
     - Tuple `(checkpoint_id, appended)` where `appended` is false when deduped.
@@ -742,6 +874,7 @@ def append_session_checkpoint(
         if session_context.session_file
         else "unavailable"
     )
+    session_chain_ids_text = ", ".join(session_context.session_chain_ids)
     focus_value = focus_area.strip() if focus_area.strip() else "Not specified"
 
     block_lines = [
@@ -750,6 +883,7 @@ def append_session_checkpoint(
         f"- Collaboration mode: `{session_context.collaboration_mode}`",
         f"- Source session id: `{session_context.session_id}`",
         f"- Source session file: `{session_file_text}`",
+        f"- Source session chain ids: `{session_chain_ids_text}`",
         (
             "- Source session timestamp: "
             f"`{session_context.session_timestamp or 'unknown'}`"
@@ -758,6 +892,7 @@ def append_session_checkpoint(
         f"- Fingerprint: `{session_context.fingerprint}`",
         f"- Checkpoint label: {checkpoint_label}",
         f"- Focus area: {focus_value}",
+        f"- Trigger reason: {trigger_reason.strip() or 'manual'}",
         "",
         "#### Excerpts",
     ]
@@ -942,6 +1077,7 @@ def extract_recent_decisions(existing_snapshot: str) -> list[str]:
 def render_snapshot(
     checkpoint_label: str,
     focus_area: str,
+    trigger_reason: str,
     repo_root: Path,
     existing_snapshot: str,
     session_context: SessionContext,
@@ -958,6 +1094,7 @@ def render_snapshot(
     Inputs:
     - `milestone_note`: required operator-provided summary of milestone.
     - `focus_area`: optional subsystem emphasis.
+    - `trigger_reason`: reason checkpoint refresh was initiated.
     - `repo_root`: repository root path.
     - `existing_snapshot`: prior snapshot text for block preservation.
     Outputs:
@@ -1002,19 +1139,24 @@ def render_snapshot(
             '[--focus "<area>"]`'
         ),
         "- `python scripts/update_codex_context.py`",
+        "- `python scripts/update_codex_context.py --resume-brief`",
+        "- `python scripts/update_codex_context.py --watch`",
         "- `python scripts/validate_rust_backend.py`",
         "- `python -m pytest -q`",
         '- `python -m py_compile "GL-260 Data Analysis and Plotter.py"`',
     ]
+    session_chain_ids_text = ", ".join(session_context.session_chain_ids)
 
     open_work_lines = [
         f"- Active checkpoint anchor: {checkpoint_label}",
         f"- Current focus area: {focus_value}",
         f"- Collaboration mode: {session_context.collaboration_mode}",
         f"- Source session id: {session_context.session_id}",
+        f"- Source session chain ids: {session_chain_ids_text}",
         f"- Turn window used: {session_context.turn_limit}",
         f"- Session checkpoint id: {checkpoint_id}",
         f"- Session checkpoint file: {companion_rel_path}",
+        f"- Last checkpoint trigger reason: {trigger_reason.strip() or 'manual'}",
         f"- Release context anchor: {release_anchor}",
         (
             "- Refresh this snapshot at every meaningful checkpoint, including "
@@ -1050,6 +1192,7 @@ def render_snapshot(
         f"- Companion context file: `{companion_rel_path}`",
         f"- Collaboration mode: {session_context.collaboration_mode}",
         f"- Source session id: {session_context.session_id}",
+        f"- Source session chain ids: {session_chain_ids_text}",
         f"- Source session file: {session_context.session_file or 'unavailable'}",
         f"- Turn window used: {session_context.turn_limit}",
         f"- Fingerprint: {session_context.fingerprint}",
@@ -1068,8 +1211,10 @@ def render_snapshot(
         f"- Last focus area: {focus_value}",
         f"- Last collaboration mode: {session_context.collaboration_mode}",
         f"- Last source session id: {session_context.session_id}",
+        f"- Last source session chain ids: {session_chain_ids_text}",
         f"- Last source session file: {session_context.session_file or 'unavailable'}",
         f"- Last turn window used: {session_context.turn_limit}",
+        f"- Last trigger reason: {trigger_reason.strip() or 'manual'}",
         f"- Last session checkpoint id: {checkpoint_id}",
         f"- Last session fingerprint: {session_context.fingerprint}",
         "",
@@ -1098,45 +1243,389 @@ def write_snapshot(snapshot_path: Path, content: str) -> None:
     write_text_file(snapshot_path, content)
 
 
-def main() -> None:
-    """Run CLI workflow to refresh the repo context snapshot.
+def parse_utc_iso8601(value: str) -> datetime | None:
+    """Parse UTC timestamp strings used in snapshot and watcher state documents.
 
     Purpose:
-    - Tie argument parsing, snapshot rendering, and file output together.
+    - Convert persisted ISO strings into timezone-aware datetimes safely.
     Why:
-    - Provide a single repeatable command for milestone-based context updates.
+    - Resume staleness and watcher cooldown checks require robust UTC parsing.
     Inputs:
-    - CLI options parsed by `parse_args()`.
+    - `value`: ISO-8601 timestamp string, expected with a trailing `Z`.
     Outputs:
-    - Prints updated snapshot path on success.
+    - Parsed UTC datetime or `None` when parsing fails.
     Side effects:
-    - Reads repository files and writes `docs/codex-context.md`.
+    - None.
     Exceptions:
-    - Propagates parsing/path/file exceptions with non-zero process exit.
+    - None; malformed timestamps return `None`.
     """
 
-    args = parse_args()
-    repo_root = resolve_repo_root()
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        return None
+    normalized = cleaned[:-1] + "+00:00" if cleaned.endswith("Z") else cleaned
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def extract_snapshot_metadata_value(snapshot_text: str, label: str) -> str:
+    """Extract one metadata value line from the snapshot markdown.
+
+    Purpose:
+    - Read specific metadata fields without reparsing the full document structure.
+    Why:
+    - Resume output requires deterministic extraction of key recovery fields.
+    Inputs:
+    - `snapshot_text`: full `docs/codex-context.md` text.
+    - `label`: metadata label text after `- ` and before `:`.
+    Outputs:
+    - Field value string or empty string when not found.
+    Side effects:
+    - None.
+    Exceptions:
+    - None.
+    """
+
+    pattern = rf"(?m)^- {re.escape(label)}: (.+)$"
+    match = re.search(pattern, snapshot_text)
+    return str(match.group(1)).strip() if match else ""
+
+
+def extract_latest_assistant_excerpt(companion_text: str) -> str:
+    """Extract the latest assistant excerpt from the newest checkpoint block.
+
+    Purpose:
+    - Surface actionable assistant context for deterministic post-compaction resume.
+    Why:
+    - Resume brief should expose immediate continuation context, not just metadata.
+    Inputs:
+    - `companion_text`: full `docs/codex-session-context.md` content.
+    Outputs:
+    - Normalized excerpt string, truncated for compact display.
+    Side effects:
+    - None.
+    Exceptions:
+    - None.
+    """
+
+    checkpoint_pattern = (
+        r"(?ms)^### Checkpoint `(?P<id>[^`]+)`\n"
+        r"(?P<body>.*?)(?=^### Checkpoint `|\Z)"
+    )
+    checkpoint_matches = list(re.finditer(checkpoint_pattern, companion_text))
+    if not checkpoint_matches:
+        return "No assistant excerpt captured in checkpoint companion."
+    newest_body = str(checkpoint_matches[-1].group("body") or "")
+    assistant_pattern = r"(?ms)^\d+\. \[assistant\]\[phase=[^\]]+\]\n<<<\n(.*?)\n>>>"
+    assistant_matches = list(re.finditer(assistant_pattern, newest_body))
+    if not assistant_matches:
+        return "No assistant excerpt captured in latest checkpoint."
+    excerpt_text = normalize_whitespace(str(assistant_matches[-1].group(1) or ""))
+    if len(excerpt_text) <= 280:
+        return excerpt_text
+    return f"{excerpt_text[:277]}..."
+
+
+def build_resume_brief(repo_root: Path) -> str:
+    """Build a deterministic resume brief from snapshot and companion files.
+
+    Purpose:
+    - Provide a compact recovery summary for post-compaction task continuation.
+    Why:
+    - Explicit resume reads prevent unnecessary context re-discovery work.
+    Inputs:
+    - `repo_root`: absolute repository root path.
+    Outputs:
+    - Multi-line text summary for terminal display.
+    Side effects:
+    - Reads snapshot and companion context documents.
+    Exceptions:
+    - `RuntimeError` when snapshot is missing or stale.
+    """
+
+    snapshot_path = repo_root / "docs" / "codex-context.md"
+    companion_path = repo_root / "docs" / "codex-session-context.md"
+    refresh_hint = (
+        'python scripts/update_codex_context.py --milestone "<note>" --focus "<area>"'
+    )
+    if not snapshot_path.exists():
+        raise RuntimeError(
+            "Resume brief unavailable: docs/codex-context.md is missing. "
+            f"Run: {refresh_hint}"
+        )
+
+    snapshot_text = read_text_file(snapshot_path)
+    updated_at_text = extract_snapshot_metadata_value(snapshot_text, "Last updated (UTC)")
+    updated_at = parse_utc_iso8601(updated_at_text)
+    if updated_at is None:
+        raise RuntimeError(
+            "Resume brief unavailable: snapshot metadata is missing a valid UTC timestamp. "
+            f"Run: {refresh_hint}"
+        )
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(hours=SNAPSHOT_STALE_HOURS)
+    if updated_at < stale_cutoff:
+        raise RuntimeError(
+            "Resume brief unavailable: snapshot is stale (>24h). "
+            f"Last updated: {updated_at_text}. Run: {refresh_hint}"
+        )
+
+    companion_text = read_text_file(companion_path)
+    open_work_anchor = extract_snapshot_metadata_value(
+        snapshot_text, "Active checkpoint anchor"
+    )
+    checkpoint_id = extract_snapshot_metadata_value(
+        snapshot_text, "Last session checkpoint id"
+    )
+    checkpoint_label = extract_snapshot_metadata_value(
+        snapshot_text, "Last checkpoint label"
+    )
+    collaboration_mode = extract_snapshot_metadata_value(
+        snapshot_text, "Last collaboration mode"
+    )
+    focus_area = extract_snapshot_metadata_value(snapshot_text, "Last focus area")
+    assistant_excerpt = extract_latest_assistant_excerpt(companion_text)
+
+    lines = [
+        "Resume Brief",
+        f"- Last checkpoint id: {checkpoint_id or 'unknown'}",
+        f"- Last checkpoint label: {checkpoint_label or 'unknown'}",
+        f"- Last collaboration mode: {collaboration_mode or 'unknown'}",
+        f"- Last focus area: {focus_area or 'Not specified'}",
+        f"- Open-work anchor: {open_work_anchor or 'unknown'}",
+        f"- Latest assistant excerpt: {assistant_excerpt}",
+    ]
+    return "\n".join(lines)
+
+
+def print_resume_brief(repo_root: Path) -> None:
+    """Print deterministic resume context details for task-start recovery.
+
+    Purpose:
+    - Emit a required terminal-visible recovery summary before broad exploration.
+    Why:
+    - Visibility confirms resume context was actually loaded after compaction.
+    Inputs:
+    - `repo_root`: absolute repository root path.
+    Outputs:
+    - None.
+    Side effects:
+    - Prints resume lines to stdout.
+    Exceptions:
+    - Propagates `RuntimeError` from `build_resume_brief(...)`.
+    """
+
+    print(build_resume_brief(repo_root))
+
+
+def read_latest_token_usage(session_file: Path) -> TokenUsageSnapshot | None:
+    """Read the most recent token usage sample from a session log file.
+
+    Purpose:
+    - Monitor model context-window pressure for pre-compaction checkpoint triggers.
+    Why:
+    - Watch mode relies on local token telemetry emitted in session logs.
+    Inputs:
+    - `session_file`: source session jsonl path.
+    Outputs:
+    - Latest `TokenUsageSnapshot`, or `None` when unavailable.
+    Side effects:
+    - Reads session jsonl file contents.
+    Exceptions:
+    - `OSError` for unreadable files.
+    """
+
+    latest_snapshot: TokenUsageSnapshot | None = None
+    with session_file.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if str(record.get("type") or "") != "event_msg":
+                continue
+            payload_value = record.get("payload")
+            payload = payload_value if isinstance(payload_value, dict) else {}
+            if str(payload.get("type") or "") != "token_count":
+                continue
+            info_value = payload.get("info")
+            info = info_value if isinstance(info_value, dict) else {}
+            last_usage_value = info.get("last_token_usage")
+            last_usage = (
+                last_usage_value if isinstance(last_usage_value, dict) else {}
+            )
+            total_tokens = int(last_usage.get("total_tokens") or 0)
+            model_context_window = int(info.get("model_context_window") or 0)
+            if total_tokens <= 0 or model_context_window <= 0:
+                continue
+            ratio = float(total_tokens) / float(model_context_window)
+            latest_snapshot = TokenUsageSnapshot(
+                total_tokens=total_tokens,
+                model_context_window=model_context_window,
+                ratio=ratio,
+                observed_utc=str(record.get("timestamp") or ""),
+            )
+    return latest_snapshot
+
+
+def load_watch_state(state_path: Path) -> dict[str, Any]:
+    """Load watcher cooldown and threshold state from local state storage.
+
+    Purpose:
+    - Persist threshold-crossing bookkeeping across watch process restarts.
+    Why:
+    - Cooldown behavior must survive watcher restarts to avoid checkpoint spam.
+    Inputs:
+    - `state_path`: filesystem path for watcher state file.
+    Outputs:
+    - State mapping with normalized keys and defaults.
+    Side effects:
+    - Reads state file when it exists.
+    Exceptions:
+    - `OSError` for unreadable state files.
+    """
+
+    default_state: dict[str, Any] = {
+        "last_session_id": "",
+        "last_ratio": 0.0,
+        "last_trigger_utc": "",
+        "last_observed_utc": "",
+    }
+    if not state_path.exists():
+        return default_state
+    try:
+        raw_state = json.loads(read_text_file(state_path))
+    except json.JSONDecodeError:
+        return default_state
+    if not isinstance(raw_state, dict):
+        return default_state
+    normalized = dict(default_state)
+    normalized["last_session_id"] = str(raw_state.get("last_session_id") or "")
+    normalized["last_ratio"] = float(raw_state.get("last_ratio") or 0.0)
+    normalized["last_trigger_utc"] = str(raw_state.get("last_trigger_utc") or "")
+    normalized["last_observed_utc"] = str(raw_state.get("last_observed_utc") or "")
+    return normalized
+
+
+def save_watch_state(state_path: Path, state: dict[str, Any]) -> None:
+    """Persist watcher cooldown and threshold state to a local file.
+
+    Purpose:
+    - Keep watch trigger state deterministic across invocations.
+    Why:
+    - Cross-process continuity avoids repetitive threshold-triggered writes.
+    Inputs:
+    - `state_path`: filesystem path for watcher state file.
+    - `state`: normalized watcher state mapping.
+    Outputs:
+    - None.
+    Side effects:
+    - Writes local watcher state file.
+    Exceptions:
+    - `OSError` for directory creation or write failures.
+    """
+
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True)
+    write_text_file(state_path, serialized + "\n")
+
+
+def should_trigger_watch_checkpoint(
+    state: dict[str, Any],
+    session_id: str,
+    ratio: float,
+    threshold: float,
+    now_utc: datetime,
+) -> bool:
+    """Decide whether watch mode should trigger a new checkpoint update.
+
+    Purpose:
+    - Gate automatic checkpoint writes to threshold crossings with cooldown.
+    Why:
+    - Prevent repetitive writes when token usage remains above threshold.
+    Inputs:
+    - `state`: persisted watcher state mapping.
+    - `session_id`: active session identifier.
+    - `ratio`: current token usage ratio (`last_tokens / context_window`).
+    - `threshold`: configured watch trigger threshold.
+    - `now_utc`: current UTC timestamp.
+    Outputs:
+    - `True` when update should trigger, else `False`.
+    Side effects:
+    - None.
+    Exceptions:
+    - None.
+    """
+
+    effective_threshold = max(0.01, min(float(threshold), 0.99))
+    previous_ratio = float(state.get("last_ratio") or 0.0)
+    if str(state.get("last_session_id") or "") != str(session_id):
+        previous_ratio = 0.0
+    crossed_threshold = ratio >= effective_threshold and previous_ratio < effective_threshold
+    if not crossed_threshold:
+        return False
+    last_trigger = parse_utc_iso8601(str(state.get("last_trigger_utc") or ""))
+    if last_trigger is None:
+        return True
+    return (now_utc - last_trigger).total_seconds() >= WATCH_COOLDOWN_SECONDS
+
+
+def run_snapshot_update(
+    args: argparse.Namespace,
+    repo_root: Path,
+    *,
+    trigger_reason: str,
+) -> tuple[str, bool]:
+    """Run one snapshot/checkpoint update cycle with explicit trigger reason.
+
+    Purpose:
+    - Reuse one deterministic update workflow across default and watch modes.
+    Why:
+    - Shared path keeps metadata and checkpoint outputs consistent.
+    Inputs:
+    - `args`: parsed CLI options.
+    - `repo_root`: absolute repository root path.
+    - `trigger_reason`: reason checkpoint refresh was initiated.
+    Outputs:
+    - Tuple `(checkpoint_id, appended)` for update status reporting.
+    Side effects:
+    - Reads session/snapshot files and writes snapshot/companion files.
+    Exceptions:
+    - Propagates file and parsing exceptions from helper functions.
+    """
+
     captured_utc = datetime.now(timezone.utc)
     snapshot_path = repo_root / "docs" / "codex-context.md"
     companion_path = repo_root / "docs" / "codex-session-context.md"
     companion_rel_path = str(companion_path.relative_to(repo_root)).replace("\\", "/")
-    session_file = select_session_file(repo_root, args.session_file)
-    session_context = load_session_context(session_file, args.turn_limit)
+    session_files = select_session_files(
+        repo_root,
+        args.session_file,
+        int(args.session_scope),
+    )
+    session_context = load_session_context(session_files, args.turn_limit)
     checkpoint_label = build_checkpoint_label(
-        args.milestone, session_context, captured_utc
+        args.milestone,
+        session_context,
+        captured_utc,
     )
     checkpoint_id, appended = append_session_checkpoint(
         companion_path=companion_path,
         session_context=session_context,
         checkpoint_label=checkpoint_label,
         focus_area=args.focus,
+        trigger_reason=trigger_reason,
         captured_utc=captured_utc,
     )
     existing_snapshot = read_text_file(snapshot_path)
     rendered = render_snapshot(
         checkpoint_label=checkpoint_label,
         focus_area=args.focus,
+        trigger_reason=trigger_reason,
         repo_root=repo_root,
         existing_snapshot=existing_snapshot,
         session_context=session_context,
@@ -1148,6 +1637,124 @@ def main() -> None:
     status_text = "appended" if appended else "reused_existing"
     print(f"Updated snapshot: {snapshot_path}")
     print(f"Updated session context: {companion_path} ({status_text})")
+    print(f"Session chain ids: {', '.join(session_context.session_chain_ids)}")
+    print(f"Trigger reason: {trigger_reason}")
+    return checkpoint_id, appended
+
+
+def run_watch_loop(args: argparse.Namespace, repo_root: Path) -> None:
+    """Run continuous token-window monitoring with threshold-triggered updates.
+
+    Purpose:
+    - Trigger automatic pre-compaction checkpoints from local session telemetry.
+    Why:
+    - Hybrid automation removes manual timing dependence near compaction.
+    Inputs:
+    - `args`: parsed CLI options.
+    - `repo_root`: absolute repository root path.
+    Outputs:
+    - None.
+    Side effects:
+    - Polls session logs, writes watcher state, and may update snapshot/checkpoint files.
+    Exceptions:
+    - Propagates file/parsing exceptions from helper functions.
+    """
+
+    threshold = max(0.01, min(float(args.threshold), 0.99))
+    poll_interval = max(1.0, float(args.poll_interval))
+    state_path = repo_root / WATCH_STATE_FILENAME
+    state = load_watch_state(state_path)
+    print(
+        "Watch mode started: "
+        f"threshold={threshold:.2f}, poll_interval={poll_interval:.1f}s, "
+        f"session_scope={max(1, int(args.session_scope))}"
+    )
+    try:
+        while True:
+            now_utc = datetime.now(timezone.utc)
+            session_files = select_session_files(
+                repo_root,
+                args.session_file,
+                int(args.session_scope),
+            )
+            if not session_files:
+                print("Watch heartbeat: no session files detected.")
+                time.sleep(poll_interval)
+                continue
+
+            primary_file = sorted(
+                session_files,
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )[0]
+            session_meta = read_session_meta(primary_file)
+            session_id = str(session_meta.get("id") or "unknown")
+            token_snapshot = read_latest_token_usage(primary_file)
+            if token_snapshot is None:
+                print(
+                    "Watch heartbeat: token usage unavailable; waiting for token_count events."
+                )
+                time.sleep(poll_interval)
+                continue
+
+            if should_trigger_watch_checkpoint(
+                state=state,
+                session_id=session_id,
+                ratio=token_snapshot.ratio,
+                threshold=threshold,
+                now_utc=now_utc,
+            ):
+                trigger_reason = (
+                    "pre-compaction threshold crossing "
+                    f"({token_snapshot.ratio:.3f} >= {threshold:.2f})"
+                )
+                run_snapshot_update(args, repo_root, trigger_reason=trigger_reason)
+                state["last_trigger_utc"] = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            state["last_session_id"] = session_id
+            state["last_ratio"] = token_snapshot.ratio
+            state["last_observed_utc"] = token_snapshot.observed_utc
+            save_watch_state(state_path, state)
+            print(
+                "Watch heartbeat: "
+                f"session={session_id}, ratio={token_snapshot.ratio:.3f}, "
+                f"tokens={token_snapshot.total_tokens}/{token_snapshot.model_context_window}"
+            )
+            time.sleep(poll_interval)
+    except KeyboardInterrupt:
+        save_watch_state(state_path, state)
+        print("Watch mode stopped.")
+
+
+def main() -> None:
+    """Run CLI workflow for snapshot update, watch mode, or resume brief output.
+
+    Purpose:
+    - Tie argument parsing and mode dispatch into one entrypoint command.
+    Why:
+    - Operator workflows should use one script for manual, automated, and resume actions.
+    Inputs:
+    - CLI options parsed by `parse_args()`.
+    Outputs:
+    - Prints update/resume/watch status messages.
+    Side effects:
+    - Reads session files, reads/writes snapshot files, and may write watch state.
+    Exceptions:
+    - Raises `SystemExit` with non-zero status for invalid runtime prerequisites.
+    """
+
+    args = parse_args()
+    repo_root = resolve_repo_root()
+    try:
+        if args.resume_brief:
+            print_resume_brief(repo_root)
+            return
+        if args.watch:
+            run_watch_loop(args, repo_root)
+            return
+        run_snapshot_update(args, repo_root, trigger_reason="manual")
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 if __name__ == "__main__":

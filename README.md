@@ -13,6 +13,26 @@ The canonical application version is defined in `GL-260 Data Analysis and Plotte
 - `# Version: v4.13.2`
 - `APP_VERSION = "v4.13.2"`
 
+## Codex Context Continuity Workflow
+Use the context updater in two modes to avoid post-compaction restart churn:
+
+- Task-start deterministic resume read:
+```powershell
+python scripts/update_codex_context.py --resume-brief
+```
+- Milestone/manual snapshot refresh:
+```powershell
+python scripts/update_codex_context.py --milestone "<note>" --focus "<area>"
+```
+- Optional local watcher (hybrid automation, 80% default threshold):
+```powershell
+python scripts/update_codex_context.py --watch
+```
+- Optional watcher tuning:
+```powershell
+python scripts/update_codex_context.py --watch --threshold 0.80 --poll-interval 15 --session-scope 2
+```
+
 ## Canonical User Manual Location
 The canonical, continuously updated user manual now lives in `docs/`:
 - Source of truth: `docs/user-manual.md`
