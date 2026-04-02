@@ -7,7 +7,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Build command: `python scripts/build_user_manual.py`
 - Validation command: `python scripts/build_user_manual.py --check`
 
-Current release: `v4.13.2`
+Current release: `v4.13.3`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
@@ -546,23 +546,26 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
    - default format is `<Job Information> Reaction Simulation`
    - commits apply on `Enter` or when the input loses focus (`FocusOut`)
    - typing alone does not trigger full timeline refresh
-9. Use **Layout Manager...** (next to **Plot Preview**) to tune timeline layout-manager checks before final display/export.
-10. Use cycle selector tools to inspect cycle-specific behavior.
-11. Export outputs:
+9. Use timeline actions in two rows under **Selected-Cycle Notes And Export**:
+   - interactive row: **Plot Preview**, **Open Plot in New Tab**, **Layout Manager...**, **Add Plot Elements...**, **Expand Timeline**
+   - export/navigation row: **Export Timeline CSV**, **Export To Workbook**, **Export Timeline Plot**, **Export Timeline Table**, **Export Options...**, **Workbook Export Options...**, **Scroll to Latest**
+10. Use **Open Plot in New Tab** to render cycle timeline in the main plot notebook with combined-style generated-tab controls (Refresh/Close/Plot Settings/Data Trace Settings/Plot Elements/Save As/Plot Preview/format toggles). Re-opening refreshes/reuses the same timeline tab.
+11. Use cycle selector tools to inspect cycle-specific behavior.
+12. Export outputs:
    - summary PNG
    - CSV species table
    - JSON summary
    - timeline CSV/plot/table
-12. Use **Send Dashboard Stats to Ledger** when values should be captured in ledger entries (corrected-primary uptake/yield are prefilled; raw baselines remain in notes).
-13. In Analysis dashboard verify core tile coverage:
+13. Use **Send Dashboard Stats to Ledger** when values should be captured in ledger entries (corrected-primary uptake/yield are prefilled; raw baselines remain in notes).
+14. In Analysis dashboard verify core tile coverage:
    - Analysis Overview / Mode Context
    - Key Results Summary
    - Target Gap & Forecast
    - Speciation / Equilibrium Breakdown
    - Inputs / Assumptions / Context
    - Warnings / Diagnostics
-14. Optional detail tiles remain available through tile configuration (hidden by default) and include completion/forensics/comparison/visual detail surfaces.
-15. Cycle Comparison Explorer, Cycle Speciation Timeline Explorer/plot, and Selected-Cycle Notes and Export remain in their existing locations.
+15. Optional detail tiles remain available through tile configuration (hidden by default) and include completion/forensics/comparison/visual detail surfaces.
+16. Cycle Comparison Explorer, Cycle Speciation Timeline Explorer/plot, and Selected-Cycle Notes and Export remain in their existing locations.
 
 ### Expected outputs
 - Speciation/equilibrium summaries tied to cycle-level data.
@@ -570,6 +573,13 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.13.3 Release Note (Cycle Timeline New Tab + Generated-Tab Pipeline Reuse)
+- Added **Open Plot in New Tab** beside **Plot Preview** in Advanced Speciation timeline actions.
+- Cycle timeline now supports profile-backed generated notebook rendering (`fig_cycle_timeline_tab`) mapped to shared plot ID `fig_cycle_timeline`.
+- New timeline notebook tab uses combined-style generated-tab controls and lifecycle routing (open/refresh/save/export/close) without duplicating render pipeline logic.
+- Re-open behavior reuses one timeline notebook tab instance; users manually refresh after workflow reruns.
+- Split **Selected-Cycle Notes And Export** controls into two rows (interactive row + export/navigation row) for clearer workflow grouping.
 
 ### v4.13.2 Release Note (Timeline Export Legend Parity + Analysis Restart Rehydrate)
 - Cycle timeline plot export now captures current display legend overrides immediately before export build so exported main-legend placement matches live/preview placement.

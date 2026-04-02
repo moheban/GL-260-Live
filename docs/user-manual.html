@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="9b4d38b677086978923dcef3d5ec0641ac26be05b0f75622d7b1e33cf1257c1e">
+  <meta name="manual-source-sha256" content="6a2cd9c0114019305b8d28c0f5dbe589131f40eb162f7c6df6ed48a8ee973d31">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -243,7 +243,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>9b4d38b677086978</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>6a2cd9c011401930</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -359,6 +359,7 @@
 <li><a href="#inputs_10">Inputs</a></li>
 <li><a href="#step-by-step-actions_10">Step-by-step actions</a></li>
 <li><a href="#expected-outputs_10">Expected outputs</a></li>
+<li><a href="#v4133-release-note-cycle-timeline-new-tab-generated-tab-pipeline-reuse">v4.13.3 Release Note (Cycle Timeline New Tab + Generated-Tab Pipeline Reuse)</a></li>
 <li><a href="#v4132-release-note-timeline-export-legend-parity-analysis-restart-rehydrate">v4.13.2 Release Note (Timeline Export Legend Parity + Analysis Restart Rehydrate)</a></li>
 <li><a href="#v4130-release-note-analysis-ux-consolidation-unified-scrolling">v4.13.0 Release Note (Analysis UX Consolidation + Unified Scrolling)</a></li>
 <li><a href="#v4123-release-note-equilibrium-primary-ph-presentation-contract">v4.12.3 Release Note (Equilibrium-Primary pH Presentation Contract)</a></li>
@@ -448,7 +449,7 @@
 <li>Build command: <code>python scripts/build_user_manual.py</code></li>
 <li>Validation command: <code>python scripts/build_user_manual.py --check</code></li>
 </ul>
-<p>Current release: <code>v4.13.2</code></p>
+<p>Current release: <code>v4.13.3</code></p>
 <p>Analysis timeline pH terminology:<br>
 - <code>Equilibrium pH (Guidance)</code>: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.<br>
 - <code>Corrected pH</code>: measured-anchor calibrated pH overlay used for Analysis alignment diagnostics.<br>
@@ -1007,7 +1008,10 @@
    - default format is <code>&lt;Job Information&gt; Reaction Simulation</code><br>
    - commits apply on <code>Enter</code> or when the input loses focus (<code>FocusOut</code>)<br>
    - typing alone does not trigger full timeline refresh</li>
-<li>Use <strong>Layout Manager...</strong> (next to <strong>Plot Preview</strong>) to tune timeline layout-manager checks before final display/export.</li>
+<li>Use timeline actions in two rows under <strong>Selected-Cycle Notes And Export</strong>:<br>
+   - interactive row: <strong>Plot Preview</strong>, <strong>Open Plot in New Tab</strong>, <strong>Layout Manager...</strong>, <strong>Add Plot Elements...</strong>, <strong>Expand Timeline</strong><br>
+   - export/navigation row: <strong>Export Timeline CSV</strong>, <strong>Export To Workbook</strong>, <strong>Export Timeline Plot</strong>, <strong>Export Timeline Table</strong>, <strong>Export Options...</strong>, <strong>Workbook Export Options...</strong>, <strong>Scroll to Latest</strong></li>
+<li>Use <strong>Open Plot in New Tab</strong> to render cycle timeline in the main plot notebook with combined-style generated-tab controls (Refresh/Close/Plot Settings/Data Trace Settings/Plot Elements/Save As/Plot Preview/format toggles). Re-opening refreshes/reuses the same timeline tab.</li>
 <li>Use cycle selector tools to inspect cycle-specific behavior.</li>
 <li>Export outputs:<br>
    - summary PNG<br>
@@ -1032,6 +1036,14 @@
 <li>Measured-pH anchor editor rows persist globally in <code>solubility_inputs</code> and restore on Analysis tab build/restart.</li>
 <li>Latest Analysis run payload restores after restart when workspace context/signatures match persisted <code>sol_analysis_last_result_v2</code> metadata.</li>
 <li>Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.</li>
+</ul>
+<h3 id="v4133-release-note-cycle-timeline-new-tab-generated-tab-pipeline-reuse">v4.13.3 Release Note (Cycle Timeline New Tab + Generated-Tab Pipeline Reuse)<a class="headerlink" href="#v4133-release-note-cycle-timeline-new-tab-generated-tab-pipeline-reuse" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Added <strong>Open Plot in New Tab</strong> beside <strong>Plot Preview</strong> in Advanced Speciation timeline actions.</li>
+<li>Cycle timeline now supports profile-backed generated notebook rendering (<code>fig_cycle_timeline_tab</code>) mapped to shared plot ID <code>fig_cycle_timeline</code>.</li>
+<li>New timeline notebook tab uses combined-style generated-tab controls and lifecycle routing (open/refresh/save/export/close) without duplicating render pipeline logic.</li>
+<li>Re-open behavior reuses one timeline notebook tab instance; users manually refresh after workflow reruns.</li>
+<li>Split <strong>Selected-Cycle Notes And Export</strong> controls into two rows (interactive row + export/navigation row) for clearer workflow grouping.</li>
 </ul>
 <h3 id="v4132-release-note-timeline-export-legend-parity-analysis-restart-rehydrate">v4.13.2 Release Note (Timeline Export Legend Parity + Analysis Restart Rehydrate)<a class="headerlink" href="#v4132-release-note-timeline-export-legend-parity-analysis-restart-rehydrate" title="Permanent link">&para;</a></h3>
 <ul>

@@ -1,17 +1,18 @@
-# GL-260 Data Analysis and Plotter (v4.13.2)
+# GL-260 Data Analysis and Plotter (v4.13.3)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.13.2`:
-- Cycle Speciation Timeline plot export now captures the current display legend state before export build so main-legend placement matches live/preview positioning.
-- Analysis latest-run persistence and startup rehydrate paths were hardened so matching-context Analysis results repopulate timeline/dashboard surfaces more consistently after restart.
-- Updated release documentation (`README.md`, `docs/user-manual.md`, regenerated `docs/user-manual.html`) for the v4.13.2 timeline/export and Analysis-restore behavior.
-- Preserved Rust-accelerated and Python-fallback chemistry/speciation behavior with no solver-contract changes.
+Latest workflow highlights in `v4.13.3`:
+- Added **Open Plot in New Tab** for Advanced Speciation cycle timeline so the timeline opens in the main plot notebook through the generated plot-tab pipeline.
+- Registered cycle timeline as a profile-backed generated tab (`fig_cycle_timeline_tab` -> `fig_cycle_timeline`) with single-tab reuse and manual Refresh routing parity.
+- New timeline notebook tab now uses combined-style toolbar parity: Refresh, Close, Plot Settings, Data Trace Settings, Plot Elements, Save As, Plot Preview, and format toggles.
+- Split Advanced Speciation **Selected-Cycle Notes And Export** controls into two rows, with **Open Plot in New Tab** adjacent to **Plot Preview**.
+- Updated release documentation (`README.md`, `docs/user-manual.md`, regenerated `docs/user-manual.html`) for `v4.13.3` timeline-tab workflow changes.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.13.2`
-- `APP_VERSION = "v4.13.2"`
+- `# Version: v4.13.3`
+- `APP_VERSION = "v4.13.3"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -531,6 +532,16 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.13.3 Cycle Timeline New-Tab Pipeline Reuse + Advanced Speciation Two-Row Actions
+- Added Advanced Speciation action **Open Plot in New Tab** beside **Plot Preview** to open the cycle speciation timeline in the main plot notebook.
+- Reused generated-plot tab plumbing through a registered timeline profile (`fig_cycle_timeline_tab`) so open/refresh/save/export/close behavior follows shared generated-tab lifecycle patterns.
+- Added combined-style toolbar parity for the timeline notebook tab, including Plot Settings, Data Trace Settings, Plot Elements, Plot Preview, Save As, Refresh, Close, and format toggles.
+- Enforced single-tab reuse for timeline notebook rendering so repeated open actions refresh/reuse one timeline tab instance.
+- Split **Selected-Cycle Notes And Export** controls into two rows:
+  - row 1 interactive: Plot Preview, Open Plot in New Tab, Layout Manager, Add Plot Elements, Expand Timeline
+  - row 2 exports/navigation: Export Timeline CSV, Export To Workbook, Export Timeline Plot, Export Timeline Table, Export Options, Workbook Export Options, Scroll to Latest
+- Added targeted regressions for generated timeline profile mapping, single-tab reuse routing, generated refresh dispatch, and action-state gating for the new button.
 
 ### v4.13.2 Cycle Timeline Export Legend Parity + Analysis Restart Rehydrate
 - Updated cycle timeline plot export to capture current display legend overrides immediately before export figure build so exported main-legend placement matches live/preview state.
