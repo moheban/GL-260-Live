@@ -7,7 +7,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Build command: `python scripts/build_user_manual.py`
 - Validation command: `python scripts/build_user_manual.py --check`
 
-Current release: `v4.13.3`
+Current release: `v4.13.4`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
@@ -573,6 +573,17 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.13.4 Release Note (Tab-Aware Data Trace + Deterministic Timeline Export Anchor)
+- Data Trace Settings now resolves trace rows by active plot tab context:
+  - cycle timeline tab opens timeline trace keys,
+  - combined/core tabs keep their existing trace-key sets.
+- Timeline trace settings persist under `cycle_plot_prefs.trace_series` while combined/core trace settings remain in `scatter_series`.
+- Timeline Data Trace controls now support and apply:
+  - `enabled`, `color`, `marker`, `size`, `linestyle`, `linewidth`, `zorder`, `start_x`.
+- Timeline trace enable/disable and advanced overrides are applied in both display and export figure builds.
+- Timeline export legend clearance now uses a deterministic export-prepare path with bottom-wide safe anchor + bottom margin floor before final export draw.
+- Export-mode overlap retry/guard loops were simplified to avoid redundant multi-pass behavior; overlap diagnostics remain available for troubleshooting.
 
 ### v4.13.3 Release Note (Cycle Timeline New Tab + Generated-Tab Pipeline Reuse)
 - Added **Open Plot in New Tab** beside **Plot Preview** in Advanced Speciation timeline actions.

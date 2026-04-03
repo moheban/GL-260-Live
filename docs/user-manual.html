@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="6a2cd9c0114019305b8d28c0f5dbe589131f40eb162f7c6df6ed48a8ee973d31">
+  <meta name="manual-source-sha256" content="3870632099347fc0202cfa23ecfb0d2e372fc0101a45cd00b2485040e80ead95">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -243,7 +243,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>6a2cd9c011401930</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>3870632099347fc0</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -359,6 +359,7 @@
 <li><a href="#inputs_10">Inputs</a></li>
 <li><a href="#step-by-step-actions_10">Step-by-step actions</a></li>
 <li><a href="#expected-outputs_10">Expected outputs</a></li>
+<li><a href="#v4134-release-note-tab-aware-data-trace-deterministic-timeline-export-anchor">v4.13.4 Release Note (Tab-Aware Data Trace + Deterministic Timeline Export Anchor)</a></li>
 <li><a href="#v4133-release-note-cycle-timeline-new-tab-generated-tab-pipeline-reuse">v4.13.3 Release Note (Cycle Timeline New Tab + Generated-Tab Pipeline Reuse)</a></li>
 <li><a href="#v4132-release-note-timeline-export-legend-parity-analysis-restart-rehydrate">v4.13.2 Release Note (Timeline Export Legend Parity + Analysis Restart Rehydrate)</a></li>
 <li><a href="#v4130-release-note-analysis-ux-consolidation-unified-scrolling">v4.13.0 Release Note (Analysis UX Consolidation + Unified Scrolling)</a></li>
@@ -449,7 +450,7 @@
 <li>Build command: <code>python scripts/build_user_manual.py</code></li>
 <li>Validation command: <code>python scripts/build_user_manual.py --check</code></li>
 </ul>
-<p>Current release: <code>v4.13.3</code></p>
+<p>Current release: <code>v4.13.4</code></p>
 <p>Analysis timeline pH terminology:<br>
 - <code>Equilibrium pH (Guidance)</code>: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.<br>
 - <code>Corrected pH</code>: measured-anchor calibrated pH overlay used for Analysis alignment diagnostics.<br>
@@ -1036,6 +1037,18 @@
 <li>Measured-pH anchor editor rows persist globally in <code>solubility_inputs</code> and restore on Analysis tab build/restart.</li>
 <li>Latest Analysis run payload restores after restart when workspace context/signatures match persisted <code>sol_analysis_last_result_v2</code> metadata.</li>
 <li>Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.</li>
+</ul>
+<h3 id="v4134-release-note-tab-aware-data-trace-deterministic-timeline-export-anchor">v4.13.4 Release Note (Tab-Aware Data Trace + Deterministic Timeline Export Anchor)<a class="headerlink" href="#v4134-release-note-tab-aware-data-trace-deterministic-timeline-export-anchor" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Data Trace Settings now resolves trace rows by active plot tab context:</li>
+<li>cycle timeline tab opens timeline trace keys,</li>
+<li>combined/core tabs keep their existing trace-key sets.</li>
+<li>Timeline trace settings persist under <code>cycle_plot_prefs.trace_series</code> while combined/core trace settings remain in <code>scatter_series</code>.</li>
+<li>Timeline Data Trace controls now support and apply:</li>
+<li><code>enabled</code>, <code>color</code>, <code>marker</code>, <code>size</code>, <code>linestyle</code>, <code>linewidth</code>, <code>zorder</code>, <code>start_x</code>.</li>
+<li>Timeline trace enable/disable and advanced overrides are applied in both display and export figure builds.</li>
+<li>Timeline export legend clearance now uses a deterministic export-prepare path with bottom-wide safe anchor + bottom margin floor before final export draw.</li>
+<li>Export-mode overlap retry/guard loops were simplified to avoid redundant multi-pass behavior; overlap diagnostics remain available for troubleshooting.</li>
 </ul>
 <h3 id="v4133-release-note-cycle-timeline-new-tab-generated-tab-pipeline-reuse">v4.13.3 Release Note (Cycle Timeline New Tab + Generated-Tab Pipeline Reuse)<a class="headerlink" href="#v4133-release-note-cycle-timeline-new-tab-generated-tab-pipeline-reuse" title="Permanent link">&para;</a></h3>
 <ul>

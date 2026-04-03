@@ -1,18 +1,19 @@
-# GL-260 Data Analysis and Plotter (v4.13.3)
+# GL-260 Data Analysis and Plotter (v4.13.4)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.13.3`:
-- Added **Open Plot in New Tab** for Advanced Speciation cycle timeline so the timeline opens in the main plot notebook through the generated plot-tab pipeline.
-- Registered cycle timeline as a profile-backed generated tab (`fig_cycle_timeline_tab` -> `fig_cycle_timeline`) with single-tab reuse and manual Refresh routing parity.
-- New timeline notebook tab now uses combined-style toolbar parity: Refresh, Close, Plot Settings, Data Trace Settings, Plot Elements, Save As, Plot Preview, and format toggles.
-- Split Advanced Speciation **Selected-Cycle Notes And Export** controls into two rows, with **Open Plot in New Tab** adjacent to **Plot Preview**.
-- Updated release documentation (`README.md`, `docs/user-manual.md`, regenerated `docs/user-manual.html`) for `v4.13.3` timeline-tab workflow changes.
+Latest workflow highlights in `v4.13.4`:
+- Data Trace Settings is now plot-tab aware: opening from the cycle timeline tab resolves timeline trace keys instead of combined triple-axis keys.
+- Added timeline trace-series persistence in `cycle_plot_prefs.trace_series`, including advanced fields (`enabled`, `color`, `marker`, `size`, `linestyle`, `linewidth`, `zorder`, `start_x`).
+- Timeline trace enable/disable and advanced overrides now apply consistently to both display and export figure builds.
+- Simplified cycle timeline export legend handling to a deterministic bottom-wide safe-anchor prepare path, removing redundant export overlap retry passes.
+- Added targeted regressions for tab-aware Data Trace key resolution, timeline trace enable/disable, timeline `start_x`/`zorder` overrides, combined-store compatibility, and deterministic export safe-anchor behavior.
+- Updated release documentation (`README.md`, `docs/user-manual.md`, regenerated `docs/user-manual.html`) for `v4.13.4`.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.13.3`
-- `APP_VERSION = "v4.13.3"`
+- `# Version: v4.13.4`
+- `APP_VERSION = "v4.13.4"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -532,6 +533,26 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.13.4 Tab-Aware Data Trace Settings + Deterministic Timeline Export Anchor
+- Updated generated-plot toolbar wiring so **Data Trace Settings...** opens with the active tab `plot_id` context rather than defaulting to combined-triple-axis context.
+- Refactored Data Trace key/catalog resolution by plot context:
+  - `fig_combined_triple_axis`: combined trace set.
+  - `fig_pressure_temp` and `fig_pressure_derivative`: only traces present for those tabs.
+  - `fig_cycle_timeline`: explicit timeline trace catalog, with figure-introspection fallback.
+- Added timeline trace-series persistence under `settings["cycle_plot_prefs"]["trace_series"]` while preserving backward-compatible combined/core persistence in `settings["scatter_series"]`.
+- Extended timeline trace sanitization/application to include:
+  - `enabled`, `color`, `marker`, `size`, `linestyle`, `linewidth`, `zorder`, `start_x`.
+- Applied timeline trace settings during timeline figure build for display and export paths so Data Trace edits stay render/export aligned.
+- Simplified timeline export overlap control flow:
+  - export prepare now deterministically applies bottom-wide safe anchor + bottom margin floor before final export draw.
+  - removed redundant export-mode overlap retry/guard passes from layout-manager verification (kept overlap instrumentation for diagnostics).
+- Added targeted regressions for:
+  - timeline-tab Data Trace key resolution,
+  - timeline trace enable/disable display+export behavior,
+  - timeline `start_x` and `zorder` overrides,
+  - combined/core Data Trace store compatibility,
+  - deterministic export prepare safe-anchor enforcement.
 
 ### v4.13.3 Cycle Timeline New-Tab Pipeline Reuse + Advanced Speciation Two-Row Actions
 - Added Advanced Speciation action **Open Plot in New Tab** beside **Plot Preview** to open the cycle speciation timeline in the main plot notebook.
