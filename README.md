@@ -1,19 +1,31 @@
-# GL-260 Data Analysis and Plotter (v4.13.4)
+# GL-260 Data Analysis and Plotter (v4.13.5)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.13.4`:
-- Data Trace Settings is now plot-tab aware: opening from the cycle timeline tab resolves timeline trace keys instead of combined triple-axis keys.
-- Added timeline trace-series persistence in `cycle_plot_prefs.trace_series`, including advanced fields (`enabled`, `color`, `marker`, `size`, `linestyle`, `linewidth`, `zorder`, `start_x`).
-- Timeline trace enable/disable and advanced overrides now apply consistently to both display and export figure builds.
-- Simplified cycle timeline export legend handling to a deterministic bottom-wide safe-anchor prepare path, removing redundant export overlap retry passes.
-- Added targeted regressions for tab-aware Data Trace key resolution, timeline trace enable/disable, timeline `start_x`/`zorder` overrides, combined-store compatibility, and deterministic export safe-anchor behavior.
-- Updated release documentation (`README.md`, `docs/user-manual.md`, regenerated `docs/user-manual.html`) for `v4.13.4`.
+Latest workflow highlights in `v4.13.5`:
+- Analysis runtime now prefers cycle-derived reference traces (`analysis_cycle`) for per-cycle CO2 parity, with planning reference used only as explicit fallback (`planning_fallback`).
+- Added explicit Analysis traceability metadata across runtime/dashboard summaries:
+  - `analysis_reference_trace_source`
+  - `analysis_last_action`
+  - `ml_correction_applied`
+  - `ml_training_sample_count`
+  - `ml_fit_error`
+- Unified selected-cycle row resolution across Current Cycle Snapshot, Simulation Compare, Speciation Snapshot, and mapped pH text so displayed pH sources remain cycle-aligned.
+- Removed solver-context thermodynamic pH from user-facing Speciation Snapshot tile and moved that line to Runtime diagnostics text only.
+- Added hybrid Analysis pH correction pipeline:
+  - baseline measured-anchor calibration,
+  - residual ML ridge stage with chemistry-gated global incremental memory,
+  - equilibrium-consistent fraction recomputation from corrected pH,
+  - fail-closed baseline fallback when ML is unavailable/invalid.
+- Added Analysis control `Use ML-corrected pH in this run` (default ON) and clarified deterministic semantics:
+  - **Run Analysis**: refresh/re-run with cycle payload + compatible saved corrections; no forced retraining.
+  - **Recompute Calibration**: recalibrate/relearn from current run data; apply per toggle.
+- Added targeted regressions for reference-trace precedence, selected-cycle pH/source alignment, snapshot thermo-line removal, Run vs Recompute action semantics, and hybrid ML toggle/fail-closed behavior.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.13.4`
-- `APP_VERSION = "v4.13.4"`
+- `# Version: v4.13.5`
+- `APP_VERSION = "v4.13.5"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -533,6 +545,40 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.13.5 Analysis CO2 Parity + pH Alignment + Hybrid ML Correction
+- Updated Analysis runtime reference-trace precedence:
+  - use `_build_analysis_reference_trace_from_timeline(...)` first (`analysis_cycle` source),
+  - use `_build_planning_reference_trace_for_analysis(...)` only when cycle-derived trace is unavailable (`planning_fallback` source).
+- Added additive Analysis summary/runtime metadata:
+  - `analysis_reference_trace_source`
+  - `analysis_last_action`
+  - `ml_correction_applied`
+  - `ml_training_sample_count`
+  - `ml_fit_error`
+- Added shared selected-cycle resolver usage across Analysis tile surfaces so Current Cycle, Simulation Compare, Speciation Snapshot, and mapped pH text draw from aligned selected-cycle rows.
+- Removed `Thermo pH snapshot (solver context)` from user-facing Speciation Snapshot tile; this diagnostic now appears in Runtime Developer diagnostics only.
+- Extended Analysis alignment-audit reconcile behavior to include selected-cycle pH summary keys (`latest_actual_ph`, `latest_plan_cycle_ph`, `latest_plan_co2_aligned_ph`) and emit reconciliation warnings when mismatches are auto-fixed.
+- Added hybrid pH correction stage in Analysis measured-anchor calibration:
+  - baseline anchor calibration,
+  - residual regularized ML correction over chemistry/cycle features,
+  - equilibrium-consistent carbonate fraction recompute from corrected pH.
+- Added global chemistry-gated incremental ML stores/settings:
+  - `analysis_ml_training_store`
+  - `analysis_ml_model_state`
+  - `analysis_apply_ml_correction_default`
+  - `analysis_ml_model_version`
+- Added per-cycle additive timeline fields:
+  - `ml_corrected_ph`
+  - `ml_corrected_fractions`
+- Added Analysis workflow control `Use ML-corrected pH in this run` and deterministic action semantics:
+  - **Run Analysis** refreshes from cycle payload and applies compatible saved corrections without forced retraining.
+  - **Recompute Calibration** recalibrates/relearns from current run data and applies corrected pH per toggle.
+- Added targeted regressions for:
+  - cycle-vs-planning reference trace precedence,
+  - snapshot pH/source contract and solver-context line removal,
+  - hybrid ML toggle/fail-closed behavior,
+  - Run Analysis vs Recompute calibration action semantics.
 
 ### v4.13.4 Tab-Aware Data Trace Settings + Deterministic Timeline Export Anchor
 - Updated generated-plot toolbar wiring so **Data Trace Settings...** opens with the active tab `plot_id` context rather than defaulting to combined-triple-axis context.

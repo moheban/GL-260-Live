@@ -7,12 +7,13 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Build command: `python scripts/build_user_manual.py`
 - Validation command: `python scripts/build_user_manual.py --check`
 
-Current release: `v4.13.4`
+Current release: `v4.13.5`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
 - `Corrected pH`: measured-anchor calibrated pH overlay used for Analysis alignment diagnostics.
 - `Reference pH`: planning/reference curve pH (cycle-index aligned or CO2-aligned).
+- `Solver-context thermo pH`: runtime diagnostics-only developer context; not displayed in the user-facing Speciation Snapshot tile.
 - `final_ph` / `final_pH`: compatibility aliases mapped to `equilibrium_ph` in timeline/report/export payloads.
 
 ---
@@ -530,15 +531,20 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
    - **Import from Cycle Analysis**
    - **Run Analysis**
    - **Recompute Calibration**
+   - **Use ML-corrected pH in this run** (toggle)
    - editing `Cycle timeline plot title`
+   - deterministic action semantics:
+     - **Run Analysis** refreshes from cycle payload and applies compatible saved corrections; no forced ML retraining.
+     - **Recompute Calibration** keeps current cycle payload, recalibrates/relearns on current run data, then applies correction per toggle.
 7. Verify anchored outputs:
    - measured pH marker appears on cycle timeline plot
    - equilibrium pH trajectory appears alongside corrected/planning trajectories
    - corrected per-cycle and cumulative CO2 uptake values appear next to original values
    - dashboard tile **Reaction Progress** uses corrected-primary completion/regime text and shows required CO2 context
    - dashboard tile **Completion Meter** shows adjacent pre-anchor and corrected completion gauges
-   - dashboard tile **Speciation Snapshot** shows latest corrected speciation and required-CO2 context
+   - dashboard tile **Speciation Snapshot** shows selected-cycle-aligned pH source lines and latest corrected speciation/required-CO2 context
    - Speciation Snapshot also surfaces anchor count/source usage, learning controls, and terminal-objective endpoint diagnostics
+   - Speciation Snapshot does not display solver-context thermo pH; that line is shown in Runtime diagnostics only
    - dashboard tile **Target Gap & CO2 Needed** visualizes corrected cumulative uptake vs required total to the target pH slider value
    - dashboard tile **Forecast to Target** shows slowdown-aware remaining cycle/time forecast with confidence
    - **Warnings / Narrative / Math Context** now renders explicit context sections (`Primary`, `Forced`, `Reaction`, `Closed-System`, `Analysis Alignment`) with context-specific metrics to avoid forced-vs-primary conflicts
@@ -573,6 +579,38 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.13.5 Release Note (Analysis CO2 Parity + pH Alignment + Hybrid ML Correction)
+- Analysis runtime now prefers cycle-derived reference traces as the primary source and uses planning reference only as fallback:
+  - `analysis_reference_trace_source = analysis_cycle` when cycle-derived trace is available.
+  - `analysis_reference_trace_source = planning_fallback` only when cycle-derived trace is unavailable.
+- Added Analysis action/runtime metadata for deterministic traceability:
+  - `analysis_reference_trace_source`
+  - `analysis_last_action`
+  - `ml_correction_applied`
+  - `ml_training_sample_count`
+  - `ml_fit_error`
+- Added a shared selected-cycle resolver so `Current Cycle`, `Simulation Compare`, `Speciation Snapshot`, and mapped pH text all read from aligned selected-cycle rows.
+- Updated Speciation Snapshot pH source policy:
+  - canonical user-facing pH lines are selected-cycle aligned,
+  - solver-context thermo pH line removed from this tile and moved to Runtime diagnostics text.
+- Added hybrid Analysis pH correction pipeline:
+  - baseline measured-anchor calibration,
+  - residual ML ridge correction over chemistry + cycle features,
+  - equilibrium-consistent carbonate fraction recomputation from corrected pH.
+- Added global incremental ML stores/settings (chemistry-gated compatibility):
+  - `analysis_ml_training_store`
+  - `analysis_ml_model_state`
+  - `analysis_apply_ml_correction_default`
+  - `analysis_ml_model_version`
+- Added per-cycle additive timeline fields:
+  - `ml_corrected_ph`
+  - `ml_corrected_fractions`
+- Added Analysis input toggle:
+  - **Use ML-corrected pH in this run** (default ON).
+- Deterministic action semantics:
+  - **Run Analysis**: refresh from imported cycle payload, rerun simulation, apply compatible saved corrections per toggle, no forced retraining.
+  - **Recompute Calibration**: no payload re-apply; recalibrate/relearn on current run data, then apply per toggle.
 
 ### v4.13.4 Release Note (Tab-Aware Data Trace + Deterministic Timeline Export Anchor)
 - Data Trace Settings now resolves trace rows by active plot tab context:
