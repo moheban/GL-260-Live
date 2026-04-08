@@ -30,6 +30,12 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 MANUAL_MD_PATH = REPO_ROOT / "docs" / "user-manual.md"
 MANUAL_HTML_PATH = REPO_ROOT / "docs" / "user-manual.html"
+INLINE_MATH_SENTINELS = (
+    (r"\(", "GL260INLINEMATHOPENPARENZXCV"),
+    (r"\)", "GL260INLINEMATHCLOSEPARENZXCV"),
+    (r"\[", "GL260INLINEMATHOPENBRACKETZXCV"),
+    (r"\]", "GL260INLINEMATHCLOSEBRACKETZXCV"),
+)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -123,6 +129,55 @@ def source_sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _protect_inline_math_delimiters(markdown_text: str) -> str:
+    """Protect inline LaTeX delimiters before Markdown conversion.
+
+    Purpose:
+        Preserve escaped LaTeX delimiters that Python-Markdown would otherwise
+        treat as generic escapes.
+    Why:
+        Manual content uses `\\(...\\)` and `\\[...\\]` notation that must
+        survive into HTML for MathJax runtime rendering.
+    Args:
+        markdown_text: Source Markdown payload.
+    Returns:
+        Markdown text with deterministic temporary sentinel substitutions.
+    Side Effects:
+        None.
+    Exceptions:
+        None under normal usage.
+    """
+
+    protected_text = markdown_text
+    # Replace only delimiter tokens so equation content remains unchanged.
+    for source, sentinel in INLINE_MATH_SENTINELS:
+        protected_text = protected_text.replace(source, sentinel)
+    return protected_text
+
+
+def _restore_inline_math_delimiters(rendered_text: str) -> str:
+    """Restore protected inline LaTeX delimiters after Markdown conversion.
+
+    Purpose:
+        Convert temporary sentinel tokens back to canonical LaTeX delimiters.
+    Why:
+        The HTML output needs real math delimiters for MathJax parsing.
+    Args:
+        rendered_text: Converted HTML fragment containing sentinel substitutions.
+    Returns:
+        HTML fragment with restored `\\(...\\)` and `\\[...\\]` delimiters.
+    Side Effects:
+        None.
+    Exceptions:
+        None under normal usage.
+    """
+
+    restored_text = rendered_text
+    for source, sentinel in INLINE_MATH_SENTINELS:
+        restored_text = restored_text.replace(sentinel, source)
+    return restored_text
+
+
 def render_markdown(markdown_text: str) -> tuple[str, str]:
     """Render Markdown content and table-of-contents HTML.
 
@@ -140,6 +195,7 @@ def render_markdown(markdown_text: str) -> tuple[str, str]:
         Propagates exceptions raised by the markdown renderer.
     """
 
+    protected_markdown = _protect_inline_math_delimiters(markdown_text)
     md = markdown.Markdown(
         extensions=[
             "toc",
@@ -153,8 +209,10 @@ def render_markdown(markdown_text: str) -> tuple[str, str]:
         extension_configs={"toc": {"permalink": True, "toc_depth": "2-4"}},
         output_format="html5",
     )
-    body_html = md.convert(markdown_text)
-    toc_html = md.toc or "<ul><li>No headings detected</li></ul>"
+    body_html = _restore_inline_math_delimiters(md.convert(protected_markdown))
+    toc_html = _restore_inline_math_delimiters(
+        md.toc or "<ul><li>No headings detected</li></ul>"
+    )
     return body_html, toc_html
 
 
@@ -323,6 +381,21 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       color: inherit;
       padding: 0;
     }}
+    .content .math-display-block {{
+      border: 1px solid var(--edge);
+      border-radius: 10px;
+      background: #fbfdfe;
+      padding: 12px 14px;
+      margin: 10px 0;
+      overflow-x: auto;
+      max-width: min(120ch, 100%);
+    }}
+    .content pre.latex-fallback {{
+      margin-top: 8px;
+    }}
+    .content pre.latex-fallback.math-fallback-hidden {{
+      display: none;
+    }}
     .content table {{
       border-collapse: collapse;
       width: min(120ch, 100%);
@@ -446,6 +519,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     (function () {{
       const filterInput = document.getElementById("toc-filter");
       const tocNav = document.getElementById("toc-nav");
+      const manualContent = document.getElementById("manual-content");
       const tocLinks = Array.from(tocNav.querySelectorAll("a[href^='#']"));
       const headingMap = new Map();
       const headingNodes = Array.from(document.querySelectorAll("#manual-content h2, #manual-content h3, #manual-content h4"));
@@ -473,6 +547,99 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         filterInput.addEventListener("input", applyFilter);
       }}
       applyFilter();
+
+      function prepareLatexDisplayBlocks() {{
+        if (!manualContent) {{
+          return [];
+        }}
+        const latexCodeNodes = Array.from(
+          manualContent.querySelectorAll("pre > code.language-latex")
+        );
+        const prepared = [];
+        for (const codeNode of latexCodeNodes) {{
+          const preNode = codeNode.closest("pre");
+          if (!preNode || !preNode.parentNode) {{
+            continue;
+          }}
+          const latexRaw = String(codeNode.textContent || "").trim();
+          if (!latexRaw) {{
+            continue;
+          }}
+          const displayNode = document.createElement("div");
+          displayNode.className = "math-display-block";
+          displayNode.textContent = `\\\\[\\n${{latexRaw}}\\n\\\\]`;
+          preNode.parentNode.insertBefore(displayNode, preNode);
+          preNode.classList.add("latex-fallback");
+          prepared.push({{ displayNode, fallbackNode: preNode }});
+        }}
+        return prepared;
+      }}
+
+      function loadScript(src) {{
+        return new Promise(function (resolve, reject) {{
+          const script = document.createElement("script");
+          script.src = src;
+          script.async = true;
+          script.onload = function () {{
+            resolve(src);
+          }};
+          script.onerror = function () {{
+            reject(new Error("Failed to load " + src));
+          }};
+          document.head.appendChild(script);
+        }});
+      }}
+
+      function loadMathJaxDualMode() {{
+        if (window.MathJax && typeof window.MathJax.typesetPromise === "function") {{
+          return Promise.resolve("existing");
+        }}
+        window.MathJax = {{
+          tex: {{
+            inlineMath: [["\\\\(", "\\\\)"], ["$", "$"]],
+            displayMath: [["\\\\[", "\\\\]"]],
+            processEscapes: true
+          }},
+          options: {{
+            skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"]
+          }}
+        }};
+        const localMathJax = "mathjax/es5/tex-mml-chtml.js";
+        const cdnMathJax = "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js";
+        return loadScript(localMathJax).catch(function () {{
+          return loadScript(cdnMathJax);
+        }});
+      }}
+
+      function initializeMathRendering() {{
+        const prepared = prepareLatexDisplayBlocks();
+        if (!prepared.length) {{
+          return;
+        }}
+        loadMathJaxDualMode()
+          .then(function () {{
+            if (!(window.MathJax && typeof window.MathJax.typesetPromise === "function")) {{
+              throw new Error("MathJax unavailable after script load.");
+            }}
+            const displayNodes = prepared.map(function (entry) {{
+              return entry.displayNode;
+            }});
+            return window.MathJax.typesetPromise(displayNodes).then(function () {{
+              for (const entry of prepared) {{
+                entry.fallbackNode.classList.add("math-fallback-hidden");
+              }}
+            }});
+          }})
+          .catch(function () {{
+            // Keep raw LaTeX fallbacks visible when MathJax is unavailable.
+            for (const entry of prepared) {{
+              if (entry.displayNode && entry.displayNode.parentNode) {{
+                entry.displayNode.parentNode.removeChild(entry.displayNode);
+              }}
+            }}
+          }});
+      }}
+      initializeMathRendering();
 
       const lightbox = document.getElementById("image-lightbox");
       const lightboxImage = document.getElementById("lightbox-image");
