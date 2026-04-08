@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="3870632099347fc0202cfa23ecfb0d2e372fc0101a45cd00b2485040e80ead95">
+  <meta name="manual-source-sha256" content="59e70ea5bf969f317a2526957f318d5c0c77dc4f9924255c060f77a7d8b4a8e0">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -243,7 +243,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>3870632099347fc0</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>59e70ea5bf969f31</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -359,6 +359,8 @@
 <li><a href="#inputs_10">Inputs</a></li>
 <li><a href="#step-by-step-actions_10">Step-by-step actions</a></li>
 <li><a href="#expected-outputs_10">Expected outputs</a></li>
+<li><a href="#v4136-release-note-calculation-transparency-upgrade">v4.13.6 Release Note (Calculation Transparency Upgrade)</a></li>
+<li><a href="#v4135-release-note-analysis-co2-parity-ph-alignment-hybrid-ml-correction">v4.13.5 Release Note (Analysis CO2 Parity + pH Alignment + Hybrid ML Correction)</a></li>
 <li><a href="#v4134-release-note-tab-aware-data-trace-deterministic-timeline-export-anchor">v4.13.4 Release Note (Tab-Aware Data Trace + Deterministic Timeline Export Anchor)</a></li>
 <li><a href="#v4133-release-note-cycle-timeline-new-tab-generated-tab-pipeline-reuse">v4.13.3 Release Note (Cycle Timeline New Tab + Generated-Tab Pipeline Reuse)</a></li>
 <li><a href="#v4132-release-note-timeline-export-legend-parity-analysis-restart-rehydrate">v4.13.2 Release Note (Timeline Export Legend Parity + Analysis Restart Rehydrate)</a></li>
@@ -375,6 +377,29 @@
 <li><a href="#v484-release-note-timeline-preview-legend-sync">v4.8.4 Release Note (Timeline Preview Legend Sync)</a></li>
 <li><a href="#common-errors-and-recovery_10">Common errors and recovery</a></li>
 <li><a href="#related-exportsartifacts_10">Related exports/artifacts</a></li>
+</ul>
+</li>
+<li><a href="#calculation-overview">Calculation Overview</a><ul>
+<li><a href="#purpose-and-scope">Purpose and scope</a></li>
+<li><a href="#symbols-units-and-constants">Symbols, units, and constants</a></li>
+<li><a href="#carbonate-equilibria-ph-and-temperature-adjusted-constants">Carbonate equilibria, pH, and temperature-adjusted constants</a></li>
+<li><a href="#speciation-fractions-and-species-concentrations">Speciation fractions and species concentrations</a></li>
+<li><a href="#ionic-strength-and-activity-correction-equations">Ionic strength and activity-correction equations</a></li>
+<li><a href="#closed-system-vs-fixed-pco_2-residual-equations-and-charge-balance">Closed-system vs fixed-(pCO_2) residual equations and charge balance</a></li>
+<li><a href="#co2-dosing-stoichiometry-naoh-na2co3-nahco3-transitions">CO2 dosing stoichiometry (NaOH / Na2CO3 / NaHCO3 transitions)</a></li>
+<li><a href="#required-co2-logic-and-precedence">Required CO2 logic and precedence</a></li>
+<li><a href="#completion-metrics-target-gap-and-forecast">Completion metrics, target gap, and forecast</a></li>
+<li><a href="#model-by-model-pathway-details">Model-by-model pathway details</a><ul>
+<li><a href="#debye-huckel-full">Debye-Huckel Full</a></li>
+<li><a href="#debye-huckel-capped">Debye-Huckel Capped</a></li>
+<li><a href="#davies-limited">Davies Limited</a></li>
+<li><a href="#pitzer-lite">Pitzer Lite</a></li>
+<li><a href="#aqion-closed">Aqion Closed</a></li>
+<li><a href="#naoh-co2-pitzer-hmw-deepest-detail">NaOH-CO2 Pitzer HMW (deepest detail)</a></li>
+</ul>
+</li>
+<li><a href="#math-viewer-stepwise-contract">Math Viewer stepwise contract</a></li>
+<li><a href="#equation-to-ui-mapping-table">Equation-to-UI mapping table</a></li>
 </ul>
 </li>
 <li><a href="#compare-profiles-workflow">Compare Profiles Workflow</a><ul>
@@ -450,11 +475,12 @@
 <li>Build command: <code>python scripts/build_user_manual.py</code></li>
 <li>Validation command: <code>python scripts/build_user_manual.py --check</code></li>
 </ul>
-<p>Current release: <code>v4.13.4</code></p>
+<p>Current release: <code>v4.13.6</code></p>
 <p>Analysis timeline pH terminology:<br>
 - <code>Equilibrium pH (Guidance)</code>: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.<br>
 - <code>Corrected pH</code>: measured-anchor calibrated pH overlay used for Analysis alignment diagnostics.<br>
 - <code>Reference pH</code>: planning/reference curve pH (cycle-index aligned or CO2-aligned).<br>
+- <code>Solver-context thermo pH</code>: runtime diagnostics-only developer context; not displayed in the user-facing Speciation Snapshot tile.<br>
 - <code>final_ph</code> / <code>final_pH</code>: compatibility aliases mapped to <code>equilibrium_ph</code> in timeline/report/export payloads.</p>
 <hr>
 <h2 id="table-of-contents">Table of Contents<a class="headerlink" href="#table-of-contents" title="Permanent link">&para;</a></h2>
@@ -470,6 +496,7 @@
 <li><a href="#cycle-analysis-workflow-automatic-and-manual">Cycle Analysis Workflow (Automatic and Manual)</a></li>
 <li><a href="#plot-and-cycle-export-workflows">Plot and Cycle Export Workflows</a></li>
 <li><a href="#advanced-speciation-and-equilibrium-workflows">Advanced Speciation and Equilibrium Workflows</a></li>
+<li><a href="#calculation-overview">Calculation Overview</a></li>
 <li><a href="#compare-profiles-workflow">Compare Profiles Workflow</a></li>
 <li><a href="#ledger-workflow">Ledger Workflow</a></li>
 <li><a href="#final-report-workflow">Final Report Workflow</a></li>
@@ -993,15 +1020,22 @@
    - <strong>Import from Cycle Analysis</strong><br>
    - <strong>Run Analysis</strong><br>
    - <strong>Recompute Calibration</strong><br>
-   - editing <code>Cycle timeline plot title</code></li>
+   - <strong>Use ML-corrected pH in this run</strong> (toggle)<br>
+   - editing <code>Cycle timeline plot title</code><br>
+   - deterministic action semantics:<ul>
+<li><strong>Run Analysis</strong> refreshes from cycle payload and applies compatible saved corrections; no forced ML retraining.</li>
+<li><strong>Recompute Calibration</strong> keeps current cycle payload, recalibrates/relearns on current run data, then applies correction per toggle.</li>
+</ul>
+</li>
 <li>Verify anchored outputs:<br>
    - measured pH marker appears on cycle timeline plot<br>
    - equilibrium pH trajectory appears alongside corrected/planning trajectories<br>
    - corrected per-cycle and cumulative CO2 uptake values appear next to original values<br>
    - dashboard tile <strong>Reaction Progress</strong> uses corrected-primary completion/regime text and shows required CO2 context<br>
    - dashboard tile <strong>Completion Meter</strong> shows adjacent pre-anchor and corrected completion gauges<br>
-   - dashboard tile <strong>Speciation Snapshot</strong> shows latest corrected speciation and required-CO2 context<br>
+   - dashboard tile <strong>Speciation Snapshot</strong> shows selected-cycle-aligned pH source lines and latest corrected speciation/required-CO2 context<br>
    - Speciation Snapshot also surfaces anchor count/source usage, learning controls, and terminal-objective endpoint diagnostics<br>
+   - Speciation Snapshot does not display solver-context thermo pH; that line is shown in Runtime diagnostics only<br>
    - dashboard tile <strong>Target Gap &amp; CO2 Needed</strong> visualizes corrected cumulative uptake vs required total to the target pH slider value<br>
    - dashboard tile <strong>Forecast to Target</strong> shows slowdown-aware remaining cycle/time forecast with confidence<br>
    - <strong>Warnings / Narrative / Math Context</strong> now renders explicit context sections (<code>Primary</code>, <code>Forced</code>, <code>Reaction</code>, <code>Closed-System</code>, <code>Analysis Alignment</code>) with context-specific metrics to avoid forced-vs-primary conflicts</li>
@@ -1037,6 +1071,58 @@
 <li>Measured-pH anchor editor rows persist globally in <code>solubility_inputs</code> and restore on Analysis tab build/restart.</li>
 <li>Latest Analysis run payload restores after restart when workspace context/signatures match persisted <code>sol_analysis_last_result_v2</code> metadata.</li>
 <li>Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.</li>
+</ul>
+<h3 id="v4136-release-note-calculation-transparency-upgrade">v4.13.6 Release Note (Calculation Transparency Upgrade)<a class="headerlink" href="#v4136-release-note-calculation-transparency-upgrade" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Added a top-level <strong>Calculation Overview</strong> section with raw LaTeX equations for pH, speciation, activity correction, requirement precedence, completion metrics, target gap, and forecast.</li>
+<li>Added model-by-model derivation documentation for:</li>
+<li>Debye-Huckel Full</li>
+<li>Debye-Huckel Capped</li>
+<li>Davies Limited</li>
+<li>Pitzer Lite</li>
+<li>Aqion Closed</li>
+<li>NaOH-CO2 Pitzer HMW (deepest detail)</li>
+<li>Expanded Advanced Speciation Math Viewer sections to include symbolic equations, substitutions, evaluated results, units, and explanatory notes for:</li>
+<li>inputs/constants/basis conversions,</li>
+<li>active-model pH/speciation pathway,</li>
+<li>CO2 requirement/completion/forecast derivations,</li>
+<li>cycle-level derivations.</li>
+<li>Added Math Viewer cycle scope selector (default <code>Latest</code>) for cycle-specific derivation filtering while retaining global sections.</li>
+<li>Added dedicated NaOH Pitzer traceability entries for context normalization, Rust/Python health-gated path routing, and downstream species terms that feed dashboard metrics.</li>
+<li>Added targeted regressions covering cycle selector behavior, section/LaTeX payload completeness, requirement-source precedence, and NaOH Pitzer detail-section emission.</li>
+</ul>
+<h3 id="v4135-release-note-analysis-co2-parity-ph-alignment-hybrid-ml-correction">v4.13.5 Release Note (Analysis CO2 Parity + pH Alignment + Hybrid ML Correction)<a class="headerlink" href="#v4135-release-note-analysis-co2-parity-ph-alignment-hybrid-ml-correction" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Analysis runtime now prefers cycle-derived reference traces as the primary source and uses planning reference only as fallback:</li>
+<li><code>analysis_reference_trace_source = analysis_cycle</code> when cycle-derived trace is available.</li>
+<li><code>analysis_reference_trace_source = planning_fallback</code> only when cycle-derived trace is unavailable.</li>
+<li>Added Analysis action/runtime metadata for deterministic traceability:</li>
+<li><code>analysis_reference_trace_source</code></li>
+<li><code>analysis_last_action</code></li>
+<li><code>ml_correction_applied</code></li>
+<li><code>ml_training_sample_count</code></li>
+<li><code>ml_fit_error</code></li>
+<li>Added a shared selected-cycle resolver so <code>Current Cycle</code>, <code>Simulation Compare</code>, <code>Speciation Snapshot</code>, and mapped pH text all read from aligned selected-cycle rows.</li>
+<li>Updated Speciation Snapshot pH source policy:</li>
+<li>canonical user-facing pH lines are selected-cycle aligned,</li>
+<li>solver-context thermo pH line removed from this tile and moved to Runtime diagnostics text.</li>
+<li>Added hybrid Analysis pH correction pipeline:</li>
+<li>baseline measured-anchor calibration,</li>
+<li>residual ML ridge correction over chemistry + cycle features,</li>
+<li>equilibrium-consistent carbonate fraction recomputation from corrected pH.</li>
+<li>Added global incremental ML stores/settings (chemistry-gated compatibility):</li>
+<li><code>analysis_ml_training_store</code></li>
+<li><code>analysis_ml_model_state</code></li>
+<li><code>analysis_apply_ml_correction_default</code></li>
+<li><code>analysis_ml_model_version</code></li>
+<li>Added per-cycle additive timeline fields:</li>
+<li><code>ml_corrected_ph</code></li>
+<li><code>ml_corrected_fractions</code></li>
+<li>Added Analysis input toggle:</li>
+<li><strong>Use ML-corrected pH in this run</strong> (default ON).</li>
+<li>Deterministic action semantics:</li>
+<li><strong>Run Analysis</strong>: refresh from imported cycle payload, rerun simulation, apply compatible saved corrections per toggle, no forced retraining.</li>
+<li><strong>Recompute Calibration</strong>: no payload re-apply; recalibrate/relearn on current run data, then apply per toggle.</li>
 </ul>
 <h3 id="v4134-release-note-tab-aware-data-trace-deterministic-timeline-export-anchor">v4.13.4 Release Note (Tab-Aware Data Trace + Deterministic Timeline Export Anchor)<a class="headerlink" href="#v4134-release-note-tab-aware-data-trace-deterministic-timeline-export-anchor" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1240,6 +1326,258 @@
 </ul>
 <p><img alt="Advanced speciation and equilibrium workflow" src="assets/screenshots/08-advanced-speciation-equilibrium.png"><br>
 <em>Figure 8. Advanced Solubility workflow with cycle timeline, exports, and ledger handoff.</em></p>
+<hr>
+<p><a id="calculation-overview"></a></p>
+<h2 id="calculation-overview">Calculation Overview<a class="headerlink" href="#calculation-overview" title="Permanent link">&para;</a></h2>
+<h3 id="purpose-and-scope">Purpose and scope<a class="headerlink" href="#purpose-and-scope" title="Permanent link">&para;</a></h3>
+<p>This section is the calculation traceability contract for <code>v4.13.6</code>. It explains how displayed values are computed in Advanced Speciation and Analysis dashboards.</p>
+<ul>
+<li>Math Viewer is <strong>active-model only</strong> per run.</li>
+<li>Math Viewer includes a <strong>cycle selector</strong> and defaults to <strong>Latest</strong> cycle.</li>
+<li>Equations below are raw LaTeX blocks (no external MathJax dependency).</li>
+<li>Solver chemistry behavior is unchanged in this release; transparency and traceability were expanded.</li>
+</ul>
+<h3 id="symbols-units-and-constants">Symbols, units, and constants<a class="headerlink" href="#symbols-units-and-constants" title="Permanent link">&para;</a></h3>
+<pre><code class="language-latex">\begin{aligned}
+&amp;m_{\mathrm{CO_2}} &amp;&amp;\text{CO}_2\text{ mass (g)} \\
+&amp;n_{\mathrm{CO_2}} &amp;&amp;\text{CO}_2\text{ moles (mol)} \\
+&amp;MW_{\mathrm{CO_2}} &amp;&amp;\text{molar mass of CO}_2\ (\mathrm{g/mol}) \\
+&amp;m_{\mathrm{NaOH}} &amp;&amp;\text{NaOH mass (g)} \\
+&amp;MW_{\mathrm{NaOH}} &amp;&amp;\text{molar mass of NaOH}\ (\mathrm{g/mol}) \\
+&amp;V &amp;&amp;\text{solution volume (L)} \\
+&amp;I &amp;&amp;\text{ionic strength (mol/L)} \\
+&amp;C_T &amp;&amp;\text{total inorganic carbon concentration} \\
+&amp;K_{a1},K_{a2},K_w &amp;&amp;\text{carbonate/water equilibrium constants} \\
+&amp;\alpha_0,\alpha_1,\alpha_2 &amp;&amp;\text{fractions of }H_2CO_3^\ast,\ HCO_3^-,\ CO_3^{2-} \\
+&amp;\mathrm{pH} &amp;&amp;-\log_{10}[H^+] \\
+&amp;m_{\mathrm{required}} &amp;&amp;\text{total CO}_2\text{ required to hit target pH (g)} \\
+&amp;m_{\mathrm{uptake}} &amp;&amp;\text{cumulative uptake used by completion/gap tiles (g)}
+\end{aligned}
+</code></pre>
+<h3 id="carbonate-equilibria-ph-and-temperature-adjusted-constants">Carbonate equilibria, pH, and temperature-adjusted constants<a class="headerlink" href="#carbonate-equilibria-ph-and-temperature-adjusted-constants" title="Permanent link">&para;</a></h3>
+<pre><code class="language-latex">\begin{aligned}
+K_{a1} &amp;= 10^{-pK_{a1}}, \\
+K_{a2} &amp;= 10^{-pK_{a2}}, \\
+K_w &amp;= 10^{-pK_w}, \\
+\mathrm{pH} &amp;= -\log_{10}[H^+], \\
+[OH^-] &amp;= \frac{K_w}{[H^+]}.
+\end{aligned}
+</code></pre>
+<p>When temperature-adjusted constants are enabled, the solver resolves (K_{a1}, K_{a2}, K_w) from the selected temperature, then propagates those values through speciation and residual equations.</p>
+<h3 id="speciation-fractions-and-species-concentrations">Speciation fractions and species concentrations<a class="headerlink" href="#speciation-fractions-and-species-concentrations" title="Permanent link">&para;</a></h3>
+<pre><code class="language-latex">\begin{aligned}
+D &amp;= [H^+]^2 + K_{a1}[H^+] + K_{a1}K_{a2}, \\
+\alpha_0 &amp;= \frac{[H^+]^2}{D}, \\
+\alpha_1 &amp;= \frac{K_{a1}[H^+]}{D}, \\
+\alpha_2 &amp;= \frac{K_{a1}K_{a2}}{D}, \\
+[H_2CO_3^\ast] &amp;= \alpha_0 C_T,\quad
+[HCO_3^-] = \alpha_1 C_T,\quad
+[CO_3^{2-}] = \alpha_2 C_T.
+\end{aligned}
+</code></pre>
+<h3 id="ionic-strength-and-activity-correction-equations">Ionic strength and activity-correction equations<a class="headerlink" href="#ionic-strength-and-activity-correction-equations" title="Permanent link">&para;</a></h3>
+<pre><code class="language-latex">I=\frac{1}{2}\sum_i c_i z_i^2
+</code></pre>
+<p>Debye-Huckel (full/capped):</p>
+<pre><code class="language-latex">\log_{10}\gamma_i=-\frac{A z_i^2\sqrt{I}}{1+B a_i\sqrt{I}}
+</code></pre>
+<p>Davies (limited):</p>
+<pre><code class="language-latex">\log_{10}\gamma_i=-A z_i^2\left(\frac{\sqrt{I}}{1+\sqrt{I}}-0.3I\right)
+</code></pre>
+<p>Pitzer-lite:</p>
+<pre><code class="language-latex">\ln\gamma_i=f(I)+\sum_j m_j(2B_{ij}+ZC_{ij})+\cdots
+</code></pre>
+<h3 id="closed-system-vs-fixed-pco_2-residual-equations-and-charge-balance">Closed-system vs fixed-(pCO_2) residual equations and charge balance<a class="headerlink" href="#closed-system-vs-fixed-pco_2-residual-equations-and-charge-balance" title="Permanent link">&para;</a></h3>
+<p>Closed-system charge residual root:</p>
+<pre><code class="language-latex">f([H^+])=[H^+]+[Na^+]-[OH^-]-[HCO_3^-]-2[CO_3^{2-}]=0
+</code></pre>
+<p>Fixed-(pCO_2) boundary:</p>
+<pre><code class="language-latex">[H_2CO_3^\ast]=p_{\mathrm{CO_2}}K_H
+</code></pre>
+<p>General charge-balance expression used for diagnostics:</p>
+<pre><code class="language-latex">R_q=[\text{cations}]-[\text{anions}]
+</code></pre>
+<h3 id="co2-dosing-stoichiometry-naoh-na2co3-nahco3-transitions">CO2 dosing stoichiometry (NaOH / Na2CO3 / NaHCO3 transitions)<a class="headerlink" href="#co2-dosing-stoichiometry-naoh-na2co3-nahco3-transitions" title="Permanent link">&para;</a></h3>
+<pre><code class="language-latex">\begin{aligned}
+\text{Stage 1: }&amp;2\mathrm{NaOH}+\mathrm{CO_2}\rightarrow \mathrm{Na_2CO_3}+H_2O \\
+\text{Stage 2: }&amp;\mathrm{Na_2CO_3}+\mathrm{CO_2}+H_2O\rightarrow 2\mathrm{NaHCO_3}
+\end{aligned}
+</code></pre>
+<p>Mass-mole conversions:</p>
+<pre><code class="language-latex">n_{\mathrm{CO_2}}=\frac{m_{\mathrm{CO_2}}}{MW_{\mathrm{CO_2}}},\quad
+n_{\mathrm{NaOH}}=\frac{m_{\mathrm{NaOH}}}{MW_{\mathrm{NaOH}}}
+</code></pre>
+<h3 id="required-co2-logic-and-precedence">Required CO2 logic and precedence<a class="headerlink" href="#required-co2-logic-and-precedence" title="Permanent link">&para;</a></h3>
+<p>Requirement source precedence is deterministic:</p>
+<pre><code class="language-latex">\text{guidance\_model} \;\rightarrow\; \text{measured\_ph\_calibration} \;\rightarrow\; \text{planning\_reference}
+</code></pre>
+<p>If guidance-model additional CO2 is available:</p>
+<pre><code class="language-latex">\begin{aligned}
+m_{\mathrm{additional}} &amp;= m_{\mathrm{guidance\ additional}}, \\
+m_{\mathrm{required}} &amp;= m_{\mathrm{uptake}} + m_{\mathrm{additional}}.
+\end{aligned}
+</code></pre>
+<p>Else if calibration total requirement is available:</p>
+<pre><code class="language-latex">\begin{aligned}
+m_{\mathrm{required}} &amp;= m_{\mathrm{calibration\ total}}, \\
+m_{\mathrm{additional}} &amp;= \max\left(m_{\mathrm{required}}-m_{\mathrm{uptake}},0\right).
+\end{aligned}
+</code></pre>
+<p>Else planning-reference fallback:</p>
+<pre><code class="language-latex">\begin{aligned}
+m_{\mathrm{required}} &amp;= m_{\mathrm{planning\ reference\ final}}, \\
+m_{\mathrm{additional}} &amp;= \max\left(m_{\mathrm{required}}-m_{\mathrm{uptake}},0\right).
+\end{aligned}
+</code></pre>
+<p>And:</p>
+<pre><code class="language-latex">n_{\mathrm{required}}=\frac{m_{\mathrm{required}}}{MW_{\mathrm{CO_2}}}
+</code></pre>
+<h3 id="completion-metrics-target-gap-and-forecast">Completion metrics, target gap, and forecast<a class="headerlink" href="#completion-metrics-target-gap-and-forecast" title="Permanent link">&para;</a></h3>
+<p>Raw planning completion:</p>
+<pre><code class="language-latex">C_{\mathrm{raw}}=\mathrm{clamp}\left(\frac{m_{\mathrm{raw\ uptake}}}{m_{\mathrm{planning\ reference}}},0,1\right)\times 100
+</code></pre>
+<p>Corrected planning completion:</p>
+<pre><code class="language-latex">C_{\mathrm{corr}}=\mathrm{clamp}\left(\frac{m_{\mathrm{corrected\ uptake}}}{m_{\mathrm{planning\ reference}}},0,1\right)\times 100
+</code></pre>
+<p>Equivalence completion:</p>
+<pre><code class="language-latex">C_{\mathrm{eq}}=\mathrm{clamp}\left(\frac{m_{\mathrm{uptake}}}{m_{\mathrm{equivalence}}},0,1\right)\times 100
+</code></pre>
+<p>Requirement-relative completion (guidance-gap progress bar interpretation):</p>
+<pre><code class="language-latex">C_{\mathrm{required}}=\mathrm{clamp}\left(\frac{m_{\mathrm{uptake}}}{m_{\mathrm{required}}},0,1\right)\times 100
+</code></pre>
+<p>Target gap:</p>
+<pre><code class="language-latex">\Delta m_{\mathrm{target}}=\max\left(m_{\mathrm{required}}-m_{\mathrm{uptake}},0\right)
+</code></pre>
+<p>Forecast:</p>
+<pre><code class="language-latex">\begin{aligned}
+N_{\mathrm{remaining}}&amp;=\frac{\Delta m_{\mathrm{target}}}{r_{\mathrm{tail}}}, \\
+T_{\mathrm{remaining}}&amp;=N_{\mathrm{remaining}}\cdot \bar{t}_{\mathrm{cycle}}
+\end{aligned}
+</code></pre>
+<h3 id="model-by-model-pathway-details">Model-by-model pathway details<a class="headerlink" href="#model-by-model-pathway-details" title="Permanent link">&para;</a></h3>
+<h4 id="debye-huckel-full">Debye-Huckel Full<a class="headerlink" href="#debye-huckel-full" title="Permanent link">&para;</a></h4>
+<ul>
+<li>Uses full ionic-strength-dependent Debye-Huckel activity correction.</li>
+<li>Predicted pH comes from equilibrium solve with activity-adjusted terms.</li>
+<li>Speciation uses (\alpha_0,\alpha_1,\alpha_2) with solved (H^+).</li>
+<li>Required CO2 is still dashboard precedence-driven (guidance -&gt; calibration -&gt; planning), not a separate model-only requirement channel.</li>
+</ul>
+<h4 id="debye-huckel-capped">Debye-Huckel Capped<a class="headerlink" href="#debye-huckel-capped" title="Permanent link">&para;</a></h4>
+<ul>
+<li>Same equation family as Debye-Huckel Full.</li>
+<li>Applies ionic-strength capping safeguards for stability/validity bounds.</li>
+<li>Downstream pH/speciation and requirement tiles follow the same mapping contract.</li>
+</ul>
+<h4 id="davies-limited">Davies Limited<a class="headerlink" href="#davies-limited" title="Permanent link">&para;</a></h4>
+<ul>
+<li>Uses Davies activity equation in limited ionic-strength regime.</li>
+<li>pH/speciation derive from charge/equilibrium solve under Davies (\gamma_i) corrections.</li>
+<li>Requirement/completion/forecast metrics are computed by shared summary logic after solve outputs are available.</li>
+</ul>
+<h4 id="pitzer-lite">Pitzer Lite<a class="headerlink" href="#pitzer-lite" title="Permanent link">&para;</a></h4>
+<ul>
+<li>Uses reduced Pitzer interaction terms ((B_{ij}, C_{ij})-style virial interactions).</li>
+<li>pH/speciation are produced with interaction-adjusted activities.</li>
+<li>Requirement/forecast use the same precedence and tile equations as other models.</li>
+</ul>
+<h4 id="aqion-closed">Aqion Closed<a class="headerlink" href="#aqion-closed" title="Permanent link">&para;</a></h4>
+<ul>
+<li>Uses closed-system charge-balance root form as primary boundary behavior.</li>
+<li>pH/speciation are computed from closed-system residual and carbonate fractions.</li>
+<li>Requirement metrics stay in shared dashboard summary path.</li>
+</ul>
+<h4 id="naoh-co2-pitzer-hmw-deepest-detail">NaOH-CO2 Pitzer HMW (deepest detail)<a class="headerlink" href="#naoh-co2-pitzer-hmw-deepest-detail" title="Permanent link">&para;</a></h4>
+<p>This is the deepest and most traceable model path in the viewer/manual.</p>
+<p>Context normalization:</p>
+<pre><code class="language-latex">\begin{aligned}
+kg_{\mathrm{water}} &amp;= \frac{m_{\mathrm{water}}}{1000}, \\
+m_{\mathrm{NaT}} &amp;= \frac{m_{\mathrm{NaOH}}/MW_{\mathrm{NaOH}}}{kg_{\mathrm{water}}}, \\
+m_{CT} &amp;= \frac{m_{\mathrm{CO_2}}/MW_{\mathrm{CO_2}}}{kg_{\mathrm{water}}}
+\end{aligned}
+</code></pre>
+<p>Core solve outputs surfaced:</p>
+<pre><code class="language-latex">C_T=[H_2CO_3]+[HCO_3^-]+[CO_3^{2-}]
+</code></pre>
+<p>Runtime path gating:<br>
+- Rust path is used only when backend health/payload/parity guards pass.<br>
+- Python fallback is fail-closed and remains authoritative when Rust is unavailable/incompatible/unhealthy.<br>
+- The resulting pH/speciation feed requirement/completion/forecast equations exactly through the same shared summary contract.</p>
+<h3 id="math-viewer-stepwise-contract">Math Viewer stepwise contract<a class="headerlink" href="#math-viewer-stepwise-contract" title="Permanent link">&para;</a></h3>
+<p>Each key entry in the expanded Math Viewer uses:</p>
+<ol>
+<li>symbolic equation,</li>
+<li>substituted numeric form,</li>
+<li>evaluated result,</li>
+<li>units,</li>
+<li>optional explanatory detail.</li>
+</ol>
+<p>Sections emitted:<br>
+- <code>Inputs / Constants / Basis Conversions</code><br>
+- <code>Active-Model pH / Speciation Pathway</code><br>
+- <code>CO2 Requirement / Completion / Forecast</code><br>
+- <code>Cycle-Level Derivations</code><br>
+- <code>NaOH Pitzer HMW Detail</code> (active model = NaOH Pitzer)</p>
+<p>Cycle selector behavior:<br>
+- <code>Latest</code> is default.<br>
+- Cycle-specific entries filter to selected cycle.<br>
+- Non-cycle global entries remain visible.</p>
+<h3 id="equation-to-ui-mapping-table">Equation-to-UI mapping table<a class="headerlink" href="#equation-to-ui-mapping-table" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Equation / block</th>
+<th>UI field(s)</th>
+<th>Runtime key(s) / source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>( \mathrm{pH}=-\log_{10}[H^+] ) and model solve</td>
+<td><code>Equilibrium pH (Guidance)</code>, Speciation Snapshot pH lines</td>
+<td><code>equilibrium_ph</code>, <code>latest_*_ph</code> channels</td>
+</tr>
+<tr>
+<td>( \alpha_i ) fraction equations</td>
+<td>Speciation Snapshot fractions, cycle-table fraction columns</td>
+<td><code>fractions</code>, <code>latest_corrected_fractions</code></td>
+</tr>
+<tr>
+<td>( C_T=[H_2CO_3]+[HCO_3^-]+[CO_3^{2-}] )</td>
+<td>NaOH Pitzer detail, speciation diagnostics</td>
+<td>model concentrations payload</td>
+</tr>
+<tr>
+<td>Requirement precedence + (m_{\mathrm{required}})</td>
+<td>Target Gap &amp; CO2 Needed tile, Forecast tile, summary text</td>
+<td><code>co2_requirement_source</code>, <code>co2_required_for_target_ph_g</code></td>
+</tr>
+<tr>
+<td>( \Delta m_{\mathrm{target}}=\max(m_{\mathrm{required}}-m_{\mathrm{uptake}},0) )</td>
+<td><code>CO2 left to target</code> / gap bars</td>
+<td><code>additional_co2_required_g</code></td>
+</tr>
+<tr>
+<td>( C_{\mathrm{raw}}, C_{\mathrm{corr}} )</td>
+<td>Completion gauges and reaction-progress text</td>
+<td><code>planning_completion_pct</code>, <code>corrected_planning_completion_pct</code></td>
+</tr>
+<tr>
+<td>( C_{\mathrm{eq}} )</td>
+<td>Equivalence progress metrics</td>
+<td><code>equivalence_completion_pct</code>, <code>corrected_equivalence_completion_pct</code></td>
+</tr>
+<tr>
+<td>(N_{\mathrm{remaining}}, T_{\mathrm{remaining}})</td>
+<td>Forecast to Target tile</td>
+<td><code>forecast_remaining_cycles</code>, <code>forecast_remaining_time_x</code>, <code>forecast_tail_rate_g_per_cycle</code></td>
+</tr>
+<tr>
+<td>Cycle dose conversion ( \Delta m = \Delta n \cdot MW )</td>
+<td>Cycle-Level Derivations entries</td>
+<td>per-cycle <code>co2_moles</code>, <code>co2_g</code>, <code>co2_total_moles</code></td>
+</tr>
+</tbody>
+</table>
 <hr>
 <p><a id="compare-profiles-workflow"></a></p>
 <h2 id="compare-profiles-workflow">Compare Profiles Workflow<a class="headerlink" href="#compare-profiles-workflow" title="Permanent link">&para;</a></h2>

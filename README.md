@@ -1,31 +1,29 @@
-# GL-260 Data Analysis and Plotter (v4.13.5)
+# GL-260 Data Analysis and Plotter (v4.13.6)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.13.5`:
-- Analysis runtime now prefers cycle-derived reference traces (`analysis_cycle`) for per-cycle CO2 parity, with planning reference used only as explicit fallback (`planning_fallback`).
-- Added explicit Analysis traceability metadata across runtime/dashboard summaries:
-  - `analysis_reference_trace_source`
-  - `analysis_last_action`
-  - `ml_correction_applied`
-  - `ml_training_sample_count`
-  - `ml_fit_error`
-- Unified selected-cycle row resolution across Current Cycle Snapshot, Simulation Compare, Speciation Snapshot, and mapped pH text so displayed pH sources remain cycle-aligned.
-- Removed solver-context thermodynamic pH from user-facing Speciation Snapshot tile and moved that line to Runtime diagnostics text only.
-- Added hybrid Analysis pH correction pipeline:
-  - baseline measured-anchor calibration,
-  - residual ML ridge stage with chemistry-gated global incremental memory,
-  - equilibrium-consistent fraction recomputation from corrected pH,
-  - fail-closed baseline fallback when ML is unavailable/invalid.
-- Added Analysis control `Use ML-corrected pH in this run` (default ON) and clarified deterministic semantics:
-  - **Run Analysis**: refresh/re-run with cycle payload + compatible saved corrections; no forced retraining.
-  - **Recompute Calibration**: recalibrate/relearn from current run data; apply per toggle.
-- Added targeted regressions for reference-trace precedence, selected-cycle pH/source alignment, snapshot thermo-line removal, Run vs Recompute action semantics, and hybrid ML toggle/fail-closed behavior.
+Latest workflow highlights in `v4.13.6`:
+- Added a full **Calculation Overview** section in the user manual with raw LaTeX equations for pH, speciation, activity corrections, CO2 requirement precedence, completion metrics, target-gap, and forecast logic.
+- Added model-by-model derivation documentation for:
+  - Debye-Huckel Full
+  - Debye-Huckel Capped
+  - Davies Limited
+  - Pitzer Lite
+  - Aqion Closed
+  - NaOH-CO2 Pitzer HMW (deep-detail path)
+- Expanded Advanced Speciation **Math Viewer** output to include symbolic equations, numeric substitutions, evaluated results, and units across:
+  - Inputs/constants/basis conversions
+  - Active-model pH/speciation pathway
+  - CO2 requirement/completion/forecast derivations
+  - Cycle-level derivations
+- Added Math Viewer **cycle selector** (default latest cycle) so cycle-specific derivations are filtered without dumping all cycles by default.
+- Added dedicated NaOH Pitzer transparency entries for context normalization, Rust/Python health-gated path routing, and downstream species outputs feeding requirement/completion/forecast values.
+- Added targeted regressions for Math Viewer LaTeX section coverage, cycle selector filtering, requirement-source precedence consistency, and NaOH Pitzer detail-section emission.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.13.5`
-- `APP_VERSION = "v4.13.5"`
+- `# Version: v4.13.6`
+- `APP_VERSION = "v4.13.6"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -545,6 +543,32 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.13.6 Calculation Transparency Upgrade
+- Added a new top-level **Calculation Overview** section to `docs/user-manual.md` and synchronized TOC routing.
+- Added raw LaTeX documentation blocks covering:
+  - symbol/unit definitions and constants,
+  - carbonate equilibria and pH equations,
+  - speciation fractions and concentration mappings,
+  - ionic strength and activity-correction equations,
+  - closed-system vs fixed-`pCO2` residual/charge-balance forms,
+  - NaOH/Na2CO3/NaHCO3 CO2 dosing stoichiometry,
+  - required-CO2 precedence and completion/forecast metrics.
+- Added model-by-model documentation for pH/speciation/requirement pathways with deepest detail for NaOH-CO2 Pitzer HMW.
+- Expanded Advanced Speciation Math Viewer payloads with richer section content:
+  - `Inputs / Constants / Basis Conversions`
+  - `Active-Model pH / Speciation Pathway`
+  - `CO2 Requirement / Completion / Forecast`
+  - `Cycle-Level Derivations`
+  - `NaOH Pitzer HMW Detail` (active model path only)
+- Added Math Viewer cycle scope selector (default `Latest`) with filtering helpers that retain global entries while narrowing cycle-specific derivations.
+- Kept `Render LaTeX (beta)` behavior unchanged while enriching per-entry step payloads (`symbolic`, `substitute`, `evaluate`, `units`, `detail`).
+- Added targeted regressions for:
+  - cycle-selector default/filter behavior,
+  - LaTeX step payload coverage in required sections,
+  - requirement-source precedence consistency (`guidance_model` -> `measured_ph_calibration` -> `planning_reference`),
+  - NaOH Pitzer dedicated detail section emission.
+- Updated application version metadata to `v4.13.6` in script header and `APP_VERSION`, and synchronized README/user-manual release references.
 
 ### v4.13.5 Analysis CO2 Parity + pH Alignment + Hybrid ML Correction
 - Updated Analysis runtime reference-trace precedence:
