@@ -396,6 +396,22 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     .content pre.latex-fallback.math-fallback-hidden {{
       display: none;
     }}
+    .content .math-render-warning {{
+      border: 1px solid #d3a046;
+      background: #fff7e8;
+      color: #6d4a00;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin: 6px 0;
+      font-size: 13px;
+      font-weight: 600;
+      max-width: min(120ch, 100%);
+    }}
+    .content pre.latex-fallback[data-math-render-status="failed"] {{
+      display: block;
+      border-color: #7b2e2e;
+      box-shadow: inset 0 0 0 1px rgba(198, 86, 86, 0.25);
+    }}
     .content table {{
       border-collapse: collapse;
       width: min(120ch, 100%);
@@ -570,9 +586,27 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
           displayNode.textContent = `\\\\[\\n${{latexRaw}}\\n\\\\]`;
           preNode.parentNode.insertBefore(displayNode, preNode);
           preNode.classList.add("latex-fallback");
-          prepared.push({{ displayNode, fallbackNode: preNode }});
+          preNode.removeAttribute("data-math-render-status");
+          prepared.push({{ displayNode, fallbackNode: preNode, warningNode: null }});
         }}
         return prepared;
+      }}
+
+      function setMathRenderFailure(entry, reason) {{
+        if (entry.displayNode && entry.displayNode.parentNode) {{
+          entry.displayNode.parentNode.removeChild(entry.displayNode);
+        }}
+        if (!entry.warningNode && entry.fallbackNode.parentNode) {{
+          const warningNode = document.createElement("div");
+          warningNode.className = "math-render-warning";
+          entry.fallbackNode.parentNode.insertBefore(warningNode, entry.fallbackNode);
+          entry.warningNode = warningNode;
+        }}
+        if (entry.warningNode) {{
+          entry.warningNode.textContent = reason;
+        }}
+        entry.fallbackNode.classList.remove("math-fallback-hidden");
+        entry.fallbackNode.setAttribute("data-math-render-status", "failed");
       }}
 
       function loadScript(src) {{
@@ -604,11 +638,24 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"]
           }}
         }};
-        const localMathJax = "mathjax/es5/tex-mml-chtml.js";
-        const cdnMathJax = "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js";
-        return loadScript(localMathJax).catch(function () {{
-          return loadScript(cdnMathJax);
-        }});
+        const mathJaxSources = [
+          "mathjax/es5/tex-mml-chtml.js",
+          "../mathjax/es5/tex-mml-chtml.js",
+          "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js",
+          "https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-mml-chtml.js"
+        ];
+        let index = 0;
+        function tryLoadNextSource() {{
+          if (index >= mathJaxSources.length) {{
+            return Promise.reject(new Error("No MathJax source could be loaded."));
+          }}
+          const source = mathJaxSources[index];
+          index += 1;
+          return loadScript(source).catch(function () {{
+            return tryLoadNextSource();
+          }});
+        }}
+        return tryLoadNextSource();
       }}
 
       function initializeMathRendering() {{
@@ -621,21 +668,31 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             if (!(window.MathJax && typeof window.MathJax.typesetPromise === "function")) {{
               throw new Error("MathJax unavailable after script load.");
             }}
-            const displayNodes = prepared.map(function (entry) {{
-              return entry.displayNode;
+            const renderTasks = prepared.map(function (entry) {{
+              return window.MathJax.typesetPromise([entry.displayNode])
+                .then(function () {{
+                  if (entry.warningNode && entry.warningNode.parentNode) {{
+                    entry.warningNode.parentNode.removeChild(entry.warningNode);
+                  }}
+                  entry.warningNode = null;
+                  entry.fallbackNode.removeAttribute("data-math-render-status");
+                  entry.fallbackNode.classList.add("math-fallback-hidden");
+                }})
+                .catch(function () {{
+                  setMathRenderFailure(
+                    entry,
+                    "Math rendering failed for this block. Showing raw LaTeX."
+                  );
+                }});
             }});
-            return window.MathJax.typesetPromise(displayNodes).then(function () {{
-              for (const entry of prepared) {{
-                entry.fallbackNode.classList.add("math-fallback-hidden");
-              }}
-            }});
+            return Promise.all(renderTasks);
           }})
           .catch(function () {{
-            // Keep raw LaTeX fallbacks visible when MathJax is unavailable.
             for (const entry of prepared) {{
-              if (entry.displayNode && entry.displayNode.parentNode) {{
-                entry.displayNode.parentNode.removeChild(entry.displayNode);
-              }}
+              setMathRenderFailure(
+                entry,
+                "MathJax could not be loaded. Showing raw LaTeX."
+              );
             }}
           }});
       }}
