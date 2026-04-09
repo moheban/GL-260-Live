@@ -221,10 +221,6 @@ Under the locked walkthrough assumptions (25 C, 700 g NaOH, 2,200 mL water), a c
 
 The trend is the key operational point: higher `pCO2` materially suppresses carbonate fraction and widens the bicarbonate-dominant operating window.
 
-<div id="pco2-sweep-chart-mount" class="pco2-sweep-chart-mount" aria-label="pCO2 sensitivity chart mount">
-  <canvas id="pco2-sweep-chart" aria-label="pCO2 sensitivity chart"></canvas>
-</div>
-
 ---
 
 ## 6) NaOH-CO2 Pitzer (HMW-Focused) Calculation Path
@@ -331,7 +327,7 @@ Interpretation:
 ## 9) Measured-pH Calibration + Hybrid ML Correction (Analysis Mode)
 Measured anchors reshape the baseline simulation, and ML residual correction is only accepted when anchor quality is preserved.
 
-### 10.1 Locked Multi-Anchor Example
+### 9.1 Locked Multi-Anchor Example
 
 - Anchor A: cycle 5 measured pH = `9.45`
 - Anchor B: cycle 8 measured pH = `7.95`
@@ -350,7 +346,7 @@ r_{8} &= 7.95 - 7.8538 = +0.0962
 \end{aligned}
 ```
 
-### 10.2 Baseline Piecewise Calibration Objective (from Analysis fallback contract)
+### 9.2 Baseline Piecewise Calibration Objective
 
 Per-anchor segment scale search minimizes:
 
@@ -371,7 +367,7 @@ This stage outputs:
 - corrected pH series,
 - corrected fractions series.
 
-### 10.3 Residual ML Ridge Correction Stage
+### 9.3 Residual ML Ridge Correction Stage
 
 After baseline anchor calibration, Analysis can learn residual structure using the feature vector:
 

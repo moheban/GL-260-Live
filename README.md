@@ -1,29 +1,33 @@
-# GL-260 Data Analysis and Plotter (v4.13.6)
+# GL-260 Data Analysis and Plotter (v4.14.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.13.6`:
-- Added a full **Calculation Overview** section in the user manual with raw LaTeX equations for pH, speciation, activity corrections, CO2 requirement precedence, completion metrics, target-gap, and forecast logic.
-- Added model-by-model derivation documentation for:
-  - Debye-Huckel Full
-  - Debye-Huckel Capped
-  - Davies Limited
-  - Pitzer Lite
-  - Aqion Closed
-  - NaOH-CO2 Pitzer HMW (deep-detail path)
-- Expanded Advanced Speciation **Math Viewer** output to include symbolic equations, numeric substitutions, evaluated results, and units across:
-  - Inputs/constants/basis conversions
-  - Active-model pH/speciation pathway
-  - CO2 requirement/completion/forecast derivations
-  - Cycle-level derivations
-- Added Math Viewer **cycle selector** (default latest cycle) so cycle-specific derivations are filtered without dumping all cycles by default.
-- Added dedicated NaOH Pitzer transparency entries for context normalization, Rust/Python health-gated path routing, and downstream species outputs feeding requirement/completion/forecast values.
-- Added targeted regressions for Math Viewer LaTeX section coverage, cycle selector filtering, requirement-source precedence consistency, and NaOH Pitzer detail-section emission.
+Latest workflow highlights in `v4.14.0`:
+- Redesigned **Analysis** workflow inputs into one focused cluster (imported basis, chemistry targets, measured-pH anchors, and target-pH controls).
+- Added a sticky **Analysis Workflow Actions** bar with:
+  - `Import from Cycle Analysis`
+  - `Run Analysis`
+  - `Recompute Calibration`
+  - `Use ML-corrected pH in this run`
+  - `Cycle timeline plot title`
+- Replaced fixed lower output stacking with a shared freeform output workspace (drag + snap-grid resize) containing:
+  - Analysis Dashboard
+  - Cycle Comparison Explorer
+  - Cycle Speciation Timeline Explorer
+  - Selected-Cycle Notes and Export
+  - Detailed Math Preview
+- Added persisted layout layering with precedence `default -> global -> profile override`, including editor actions:
+  - Save as Global Default
+  - Save as Profile Override
+  - Revert to Global
+  - Reset Current Layout Layer
+- Added output scroll/geometry hardening (debounced reflow, bounds clamp, and wheel edge-handoff routing).
+- Added targeted regressions for panel registry, snap/min-size/bounds behavior, precedence resolution, profile-action enablement, sticky action bar wiring, and shared workspace availability across workflows.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.13.6`
-- `APP_VERSION = "v4.13.6"`
+- `# Version: v4.14.0`
+- `APP_VERSION = "v4.14.0"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -543,6 +547,40 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.14.0 Analysis Input Redesign + Shared Freeform Output Workspace
+- Redesigned the **Analysis** workflow input tab into one focused input cluster:
+  - imported basis,
+  - chemistry targets,
+  - measured-pH anchors,
+  - target-pH controls.
+- Added sticky top **Analysis Workflow Actions** controls:
+  - `Import from Cycle Analysis`
+  - `Run Analysis`
+  - `Recompute Calibration`
+  - `Use ML-corrected pH in this run`
+  - `Cycle timeline plot title`
+- Replaced static output panel placement with a shared freeform workspace canvas for all workflows.
+- Added draggable/resizable panel shells (snap-grid behavior) for:
+  - Analysis Dashboard
+  - Cycle Comparison Explorer
+  - Cycle Speciation Timeline Explorer
+  - Selected-Cycle Notes and Export
+  - Detailed Math Preview
+- Added persisted panel-layout settings with schema versioning and layered precedence:
+  - `default -> global -> profile override`
+- Added layout editor actions:
+  - Save as Global Default
+  - Save as Profile Override
+  - Revert to Global
+  - Reset Current Layout Layer
+- Added scroll/reflow reliability hardening:
+  - wheel edge handoff local-first then workspace canvas,
+  - debounced workspace reflow,
+  - restored-bounds clamping to current canvas.
+- Kept solver/speciation chemistry behavior unchanged; this release is UI/layout and persistence hardening.
+- Added targeted regressions for sticky action bar wiring, workspace panel registry, snap/min-size/bounds clamp, precedence, profile-action enablement, and shared cross-workflow workspace availability.
+- Updated application version metadata to `v4.14.0` in script header and `APP_VERSION`, and synchronized README/user-manual release references.
 
 ### v4.13.6 Calculation Transparency Upgrade
 - Added a new top-level **Calculation Overview** section to `docs/user-manual.md` and synchronized TOC routing.

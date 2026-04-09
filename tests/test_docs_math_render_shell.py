@@ -162,3 +162,38 @@ def test_failure_warning_contract(script_name: str, module_name: str) -> None:
     assert "math-render-warning" in html
     assert "Math rendering failed for this block. Showing raw LaTeX." in html
     assert "MathJax could not be loaded. Showing raw LaTeX." in html
+
+
+@pytest.mark.parametrize(
+    ("script_name", "module_name"),
+    [
+        ("build_user_manual.py", "build_user_manual_single_bootstrap_test"),
+        (
+            "build_equilibrium_walkthrough.py",
+            "build_equilibrium_single_bootstrap_test",
+        ),
+    ],
+)
+def test_single_math_bootstrap_pipeline(script_name: str, module_name: str) -> None:
+    """Ensure each generated shell emits one canonical math bootstrap pipeline.
+
+    Purpose:
+    - Guard against duplicated MathJax bootstrap blocks in generated docs shells.
+    Why:
+    - Duplicate bootstrap paths can race each other and cause unstable LaTeX output.
+    Inputs:
+    - ``script_name`` and ``module_name`` from parametrized test cases.
+    Outputs:
+    - None.
+    Side effects:
+    - Reads source markdown via script ``build_once()``.
+    Exceptions:
+    - Raises assertions when canonical math helper functions are duplicated.
+    """
+
+    html = build_docs_html(script_name, module_name)
+    assert html.count("function prepareLatexDisplayBlocks()") == 1
+    assert html.count("function setMathRenderFailure(entry, reason)") == 1
+    assert html.count("function loadScript(src)") == 1
+    assert html.count("function loadMathJaxDualMode()") == 1
+    assert html.count("function initializeMathRendering()") == 1

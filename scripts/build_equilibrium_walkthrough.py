@@ -350,7 +350,23 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       padding: 10px 18px;
       box-shadow: 0 8px 24px rgba(12, 181, 194, 0.35);
     }}
-    .headerlink {{ display: none !important; }}
+    .headerlink,
+    .content .headerlink,
+    .content a.anchor-link,
+    .content a.permalink {{
+      display: none !important;
+    }}
+    .sr-only {{
+      position: absolute !important;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }}
     .control-bar {{
       position: sticky;
       top: 8px;
@@ -362,10 +378,20 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       background: var(--surface);
       backdrop-filter: blur(8px);
       padding: 10px 12px;
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+    }}
+    .control-primary,
+    .control-secondary {{
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
       align-items: center;
+      min-width: 0;
+    }}
+    .control-secondary[hidden] {{
+      display: none;
     }}
     .control-bar .label {{
       color: var(--ink-muted);
@@ -373,7 +399,6 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       letter-spacing: 0.07em;
       font-size: 0.72rem;
       font-weight: 700;
-      margin-right: 4px;
     }}
     .control-bar button,
     .control-bar select {{
@@ -387,46 +412,17 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       min-height: 32px;
       cursor: pointer;
     }}
+    .control-bar select {{
+      min-width: 88px;
+      cursor: default;
+      max-width: min(100%, 560px);
+    }}
     .control-bar button[aria-pressed="true"] {{
       background: var(--accent-soft);
       color: #dffcff;
       border-color: rgba(78, 223, 230, 0.74);
     }}
-    .control-bar select {{
-      min-width: 88px;
-      cursor: default;
-    }}
-    .floating-nav {{
-      position: fixed;
-      right: 14px;
-      bottom: 14px;
-      z-index: 35;
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      border: 1px solid var(--edge);
-      background: rgba(8, 24, 35, 0.92);
-      border-radius: 12px;
-      padding: 8px;
-      box-shadow: 0 10px 26px rgba(4, 15, 29, 0.35);
-      backdrop-filter: blur(6px);
-    }}
-    .floating-nav button,
-    .floating-nav select {{
-      border: 1px solid rgba(162, 196, 215, 0.44);
-      background: rgba(8, 23, 34, 0.9);
-      color: var(--ink);
-      border-radius: 8px;
-      font-family: var(--body-font);
-      font-size: 0.84rem;
-      min-height: 30px;
-      padding: 5px 9px;
-    }}
-    .floating-nav select {{
-      min-width: 190px;
-    }}
-    .control-bar button:disabled,
-    .floating-nav button:disabled {{
+    .control-bar button:disabled {{
       opacity: 0.48;
       cursor: not-allowed;
     }}
@@ -447,14 +443,22 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       display: flex;
       align-items: flex-end;
     }}
+    body.presentation-mode .control-bar {{
+      top: 6px;
+      width: min(1480px, calc(100vw - 16px));
+      margin-bottom: 10px;
+      padding: 8px 10px;
+    }}
     body.presentation-mode .shell {{
-      width: min(1600px, calc(100vw - 18px));
+      width: min(1600px, calc(100vw - 16px));
       margin-bottom: 16px;
       gap: 10px;
+      grid-template-columns: minmax(240px, 270px) minmax(0, 1fr);
     }}
     body.presentation-mode .rail {{
-      top: 64px;
-      max-height: calc(100vh - 78px);
+      top: 58px;
+      max-height: calc(100vh - 72px);
+      border-radius: 12px;
     }}
     body.presentation-mode .surface {{
       border-radius: 12px;
@@ -482,6 +486,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       grid-template-columns: 300px minmax(0, 1fr);
       gap: 15px;
       align-items: start;
+      min-width: 0;
     }}
     .rail {{
       position: sticky;
@@ -492,6 +497,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       border-radius: 16px;
       background: var(--surface);
       backdrop-filter: blur(6px);
+      min-width: 0;
     }}
     .rail-head {{ padding: 13px 14px 10px; border-bottom: 1px solid var(--edge); }}
     .rail-head h2 {{ margin: 0; font-family: var(--heading-font); font-size: 1rem; }}
@@ -508,9 +514,9 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     #toc-nav a {{ display: block; border-radius: 8px; padding: 3px 7px; text-decoration: none; color: #abc2d1; transition: 120ms ease; }}
     #toc-nav a:hover {{ color: #edfaff; background: rgba(94, 212, 228, 0.16); transform: translateX(2px); }}
     #toc-nav a.is-active {{ color: #0d2733; background: linear-gradient(90deg, rgba(95, 225, 233, 0.94), rgba(166, 250, 252, 0.90)); font-weight: 700; }}
-    .stage {{ display: grid; gap: 13px; }}
-    .surface {{ border: 1px solid rgba(188, 214, 230, 0.50); border-radius: 16px; background: var(--paper); box-shadow: 0 14px 34px rgba(4, 15, 29, 0.30); }}
-    .chart-panel {{ padding: 15px 17px 17px; }}
+    .stage {{ display: grid; gap: 13px; min-width: 0; }}
+    .surface {{ border: 1px solid rgba(188, 214, 230, 0.50); border-radius: 16px; background: var(--paper); box-shadow: 0 14px 34px rgba(4, 15, 29, 0.30); min-width: 0; }}
+    .chart-panel {{ padding: 15px 17px 17px; min-width: 0; }}
     .chart-panel h2 {{ margin: 0; font-family: var(--heading-font); color: #102839; }}
     .chart-panel p {{ margin: 6px 0 0; color: #345468; }}
     .chart-module {{ margin-top: 12px; border: 1px solid #d6e8f2; border-radius: 12px; background: #fcfeff; padding: 10px; min-width: 0; overflow: hidden; }}
@@ -525,16 +531,16 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     .chart-viewport canvas {{ display: block; width: 100% !important; height: 100% !important; }}
     .chart-fallback {{ margin-top: 10px; border: 1px dashed #c5dce9; border-radius: 10px; background: #f7fbfd; color: #4f6a7d; padding: 8px 10px; display: none; }}
     .chart-fallback.visible {{ display: block; }}
-    .content {{ padding: clamp(18px, 3vw, 34px); color: var(--ink-body); }}
+    .content {{ padding: clamp(18px, 3vw, 34px); color: var(--ink-body); min-width: 0; overflow-x: hidden; }}
     .content h1, .content h2, .content h3, .content h4 {{ font-family: var(--heading-font); color: #102638; scroll-margin-top: 72px; }}
     .content h1 {{ margin-top: 0; font-size: clamp(1.84rem, 3.4vw, 2.48rem); letter-spacing: -0.02em; }}
     .content h2 {{ margin-top: 2rem; border-top: 1px solid #deebf3; padding-top: 1rem; font-size: clamp(1.32rem, 2.2vw, 1.64rem); }}
     .content p, .content li {{ color: #21384a; font-size: 1.03rem; }}
     .content blockquote {{ margin: 0.8rem 0 1rem; border-left: 4px solid #18b1c0; background: #eef9fc; color: #143448; border-radius: 8px; padding: 0.75rem 0.95rem; font-weight: 600; }}
     .content code {{ background: #e8f5fb; border: 1px solid #cee5f1; border-radius: 6px; padding: 0.06rem 0.26rem; font-family: var(--mono-font); color: #0f3648; }}
-    .content pre {{ margin: 0.68rem 0; background: #08131d; color: #e3f0fa; border-radius: 12px; padding: 14px; overflow-x: auto; border: 1px solid #1f3545; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03); }}
+    .content pre {{ margin: 0.68rem 0; background: #08131d; color: #e3f0fa; border-radius: 12px; padding: 14px; overflow-x: auto; max-width: 100%; border: 1px solid #1f3545; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03); }}
     .content pre code {{ background: transparent; border: 0; color: inherit; padding: 0; font-size: 0.92rem; }}
-    .content table {{ width: 100%; border-collapse: collapse; margin: 1rem 0 1.2rem; font-size: 0.94rem; }}
+    .content table {{ display: block; width: 100%; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 1rem 0 1.2rem; font-size: 0.94rem; }}
     .content th, .content td {{ border: 1px solid #d6e6f0; padding: 0.55rem; text-align: left; }}
     .content th {{ background: #edf7fc; color: #163547; font-family: var(--heading-font); text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.85rem; }}
     .content tr:nth-child(even) td {{ background: #f9fdff; }}
@@ -543,7 +549,9 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     .content pre.latex-fallback.math-fallback-hidden {{ display: none; }}
     .math-render-warning {{ border: 1px solid #d8a652; background: #fff4e3; color: #7a4f00; border-radius: 8px; padding: 0.42rem 0.62rem; margin-top: 0.38rem; font-size: 0.85rem; font-weight: 700; }}
     .content pre.latex-fallback[data-math-render-status="failed"] {{ display: block; border-color: #8d3a3a; box-shadow: inset 0 0 0 1px rgba(198, 86, 86, 0.25); }}
-    .pco2-sweep-chart-mount {{ margin: 0.9rem 0 1.2rem; border: 1px solid #d6e8f2; border-radius: 12px; background: #fcfeff; padding: 10px; height: clamp(220px, 28vw, 320px); min-height: 220px; max-height: 320px; }}
+    .pco2-sweep-chart-mount {{ margin: 0.9rem 0 1.2rem; border: 1px solid #d6e8f2; border-radius: 12px; background: #fcfeff; padding: 10px; min-width: 0; display: grid; gap: 8px; overflow: hidden; }}
+    .pco2-sweep-chart-mount .inline-chart-title {{ margin: 0; color: #19384a; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.84rem; font-family: var(--heading-font); }}
+    .pco2-sweep-chart-mount .chart-viewport {{ height: clamp(220px, 28vw, 320px); min-height: 220px; max-height: 320px; }}
     .pco2-sweep-chart-mount canvas {{ width: 100% !important; height: 100% !important; display: block; }}
     .reveal-node {{ opacity: 0; transform: translateY(12px); transition: opacity 360ms ease, transform 360ms ease; }}
     .reveal-node.is-visible {{ opacity: 1; transform: translateY(0); }}
@@ -554,28 +562,34 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       .control-bar {{ width: min(1480px, calc(100vw - 16px)); }}
       .rail {{ position: static; max-height: none; }}
       .toc-scroll {{ max-height: 340px; }}
-      .floating-nav {{
-        left: 8px;
-        right: 8px;
-        bottom: 8px;
-        justify-content: space-between;
+      body.presentation-mode .shell {{ grid-template-columns: 1fr; }}
+      body.presentation-mode .rail {{
+        position: sticky;
+        top: 58px;
+        z-index: 24;
+        max-height: min(44vh, 360px);
       }}
-      .floating-nav select {{ flex: 1 1 auto; min-width: 120px; }}
+      body.presentation-mode .toc-scroll {{ max-height: 250px; }}
+      .control-primary,
+      .control-secondary {{ gap: 6px; }}
+      .control-primary select {{ flex: 1 1 240px; }}
     }}
     @media (max-width: 760px) {{
       .hero-metrics {{ grid-template-columns: 1fr; }}
       .chart-stack {{ height: clamp(200px, 52vw, 260px); min-height: 200px; max-height: 260px; }}
-      .pco2-sweep-chart-mount {{ height: clamp(200px, 52vw, 260px); min-height: 200px; max-height: 260px; }}
+      .pco2-sweep-chart-mount .chart-viewport {{ height: clamp(200px, 52vw, 260px); min-height: 200px; max-height: 260px; }}
       .control-bar {{ padding: 8px; gap: 6px; }}
-      .control-bar .label {{ width: 100%; }}
-      .control-bar button,
-      .control-bar select {{ flex: 1 1 calc(50% - 6px); }}
-      .floating-nav {{
+      .control-primary,
+      .control-secondary {{
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 6px;
+        width: 100%;
       }}
-      .floating-nav select {{ grid-column: 1 / -1; width: 100%; }}
+      .control-primary select,
+      .control-secondary select {{
+        grid-column: 1 / -1;
+        width: 100%;
+      }}
     }}
     @media print {{
       body {{
@@ -585,7 +599,6 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       .hero,
       .control-bar,
       .rail,
-      .floating-nav,
       .progress-track,
       .math-render-warning {{
         display: none !important;
@@ -636,22 +649,30 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
   </header>
 
   <section class="control-bar" id="presenter-controls" aria-label="Presentation controls">
-    <span class="label">Presentation Controls</span>
-    <button id="motion" type="button" aria-pressed="true">Motion: On</button>
-    <button id="auto-advance" type="button" aria-pressed="false">Auto-Advance: Off</button>
-    <label for="speed" class="label">Speed</label>
-    <select id="speed" aria-label="Auto-advance speed">
-      <option value="3">3s</option>
-      <option value="5" selected>5s</option>
-      <option value="8">8s</option>
-      <option value="12">12s</option>
-    </select>
-    <button id="slide-mode" type="button" aria-pressed="false">Slide Mode: Off</button>
-    <button id="reset" type="button">Reset View</button>
-    <button id="print-export" type="button">Print/PDF</button>
+    <div class="control-primary">
+      <button id="prev" type="button" aria-label="Previous section">Previous</button>
+      <button id="next" type="button" aria-label="Next section">Next</button>
+      <label for="section-selector" class="sr-only">Jump to section</label>
+      <select id="section-selector" aria-label="Jump to section"></select>
+      <button id="slide-mode" type="button" aria-pressed="false">Slide Mode: Off</button>
+      <button id="controls-more" type="button" aria-expanded="false" aria-controls="secondary-controls">More Controls</button>
+    </div>
+    <div class="control-secondary" id="secondary-controls" hidden>
+      <button id="motion" type="button" aria-pressed="true">Motion: On</button>
+      <button id="auto-advance" type="button" aria-pressed="false">Auto-Advance: Off</button>
+      <label for="speed" class="label">Speed</label>
+      <select id="speed" aria-label="Auto-advance speed">
+        <option value="3">3s</option>
+        <option value="5" selected>5s</option>
+        <option value="8">8s</option>
+        <option value="12">12s</option>
+      </select>
+      <button id="reset" type="button">Reset View</button>
+      <button id="print-export" type="button">Print/PDF</button>
+    </div>
   </section>
 
-  <div class=\"shell\">
+  <div class="shell">
     <aside class="rail" aria-label="Walkthrough navigation">
       <div class="rail-head">
         <h2>Presentation Rail</h2>
@@ -700,12 +721,6 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     </main>
   </div>
 
-  <div class="floating-nav" aria-label="Section navigation">
-    <button id="prev" type="button" aria-label="Previous section">Previous</button>
-    <select id="section-selector" aria-label="Jump to section"></select>
-    <button id="next" type="button" aria-label="Next section">Next</button>
-  </div>
-
   <script>
     (function () {{
       const tocNav = document.getElementById("toc-nav");
@@ -718,6 +733,8 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       const autoAdvanceToggle = document.getElementById("auto-advance");
       const speedSelect = document.getElementById("speed");
       const slideModeToggle = document.getElementById("slide-mode");
+      const controlsMoreButton = document.getElementById("controls-more");
+      const secondaryControlsPanel = document.getElementById("secondary-controls");
       const resetButton = document.getElementById("reset");
       const printExportButton = document.getElementById("print-export");
       const prevButton = document.getElementById("prev");
@@ -1213,6 +1230,44 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         return series.pco2.length ? series : null;
       }}
 
+      function ensurePco2ChartMount() {{
+        const existingCanvas = document.getElementById("pco2-sweep-chart");
+        if (existingCanvas) {{
+          return existingCanvas;
+        }}
+        const tables = Array.from(content.querySelectorAll("table"));
+        const targetTable = tables.find(function (tableNode) {{
+          const headers = Array.from(tableNode.querySelectorAll("th")).map(function (header) {{
+            return String(header.textContent || "").trim().toLowerCase();
+          }});
+          return (
+            headers.includes("pco2 (atm)") &&
+            headers.includes("hco3- frac") &&
+            headers.includes("co3^2- frac")
+          );
+        }});
+        if (!(targetTable && targetTable.parentNode)) {{
+          return null;
+        }}
+        const mount = document.createElement("div");
+        mount.id = "pco2-sweep-chart-mount";
+        mount.className = "pco2-sweep-chart-mount";
+        mount.setAttribute("aria-label", "pCO2 sensitivity chart");
+        const title = document.createElement("p");
+        title.className = "inline-chart-title";
+        title.textContent = "pCO2 Sensitivity Trend";
+        const viewport = document.createElement("div");
+        viewport.className = "chart-viewport";
+        const canvas = document.createElement("canvas");
+        canvas.id = "pco2-sweep-chart";
+        canvas.setAttribute("aria-label", "pCO2 sensitivity chart");
+        viewport.appendChild(canvas);
+        mount.appendChild(title);
+        mount.appendChild(viewport);
+        targetTable.insertAdjacentElement("afterend", mount);
+        return canvas;
+      }}
+
       function showChartFallback(message) {{
         if (!chartFallback) {{
           return;
@@ -1255,8 +1310,8 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         }}
         const phViewport = closestByClass(phCanvas, "chart-viewport");
         const fractionViewport = closestByClass(fractionCanvas, "chart-viewport");
-        const pco2Canvas = document.getElementById("pco2-sweep-chart");
-        const pco2Viewport = pco2Canvas ? closestByClass(pco2Canvas, "pco2-sweep-chart-mount") : null;
+        const pco2Canvas = ensurePco2ChartMount();
+        const pco2Viewport = pco2Canvas ? closestByClass(pco2Canvas, "chart-viewport") : null;
         if (!(phViewport && fractionViewport)) {{
           throw new Error("Chart viewport containers are missing.");
         }}
@@ -1675,6 +1730,17 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         }}
       }}
 
+      function setSecondaryControlsVisible(visible) {{
+        const isVisible = Boolean(visible);
+        if (secondaryControlsPanel) {{
+          secondaryControlsPanel.hidden = !isVisible;
+        }}
+        if (controlsMoreButton) {{
+          controlsMoreButton.setAttribute("aria-expanded", String(isVisible));
+          controlsMoreButton.textContent = isVisible ? "Hide Controls" : "More Controls";
+        }}
+      }}
+
       function initializeSectionNavigation() {{
         sectionHeadings = collectSectionHeadings();
         for (const tocLink of tocLinks) {{
@@ -1772,6 +1838,13 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       }}
 
       function initializePresentationControls() {{
+        if (controlsMoreButton) {{
+          controlsMoreButton.addEventListener("click", function () {{
+            const currentlyExpanded =
+              controlsMoreButton.getAttribute("aria-expanded") === "true";
+            setSecondaryControlsVisible(!currentlyExpanded);
+          }});
+        }}
         if (motionToggle) {{
           motionToggle.addEventListener("click", function () {{
             const enableMotion = motionToggle.getAttribute("aria-pressed") !== "true";
@@ -1819,6 +1892,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             window.print();
           }});
         }}
+        setSecondaryControlsVisible(false);
       }}
 
       function initializePresentationPhase() {{
@@ -1840,169 +1914,6 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       }} else {{
         window.setTimeout(readyCallback, 0);
       }}
-    }})();
-  </script>
-  <script>
-    (function () {{
-      const walkthroughContent = document.getElementById("walkthrough-content");
-      if (!walkthroughContent) {{
-        return;
-      }}
-
-      function prepareLatexDisplayBlocks() {{
-        const latexCodeNodes = Array.from(
-          walkthroughContent.querySelectorAll("pre > code.language-latex")
-        );
-        const prepared = [];
-        for (const codeNode of latexCodeNodes) {{
-          const preNode = codeNode.parentNode;
-          if (!(preNode && preNode.tagName === "PRE" && preNode.parentNode)) {{
-            continue;
-          }}
-          if (preNode.getAttribute("data-math-prepared") === "true") {{
-            continue;
-          }}
-          const latexRaw = String(codeNode.textContent || "").trim();
-          if (!latexRaw) {{
-            continue;
-          }}
-          const displayNode = document.createElement("div");
-          displayNode.className = "math-display-block";
-          displayNode.textContent = "\\\\[\\n" + latexRaw + "\\n\\\\]";
-          preNode.parentNode.insertBefore(displayNode, preNode);
-          preNode.setAttribute("data-math-prepared", "true");
-          preNode.classList.add("latex-fallback");
-          preNode.classList.add("math-fallback-hidden");
-          preNode.removeAttribute("data-math-render-status");
-          prepared.push({{ displayNode: displayNode, fallbackNode: preNode, warningNode: null }});
-        }}
-        return prepared;
-      }}
-
-      function setMathRenderFailure(entry, reason) {{
-        if (entry.displayNode && entry.displayNode.parentNode) {{
-          entry.displayNode.parentNode.removeChild(entry.displayNode);
-        }}
-        if (!entry.warningNode && entry.fallbackNode.parentNode) {{
-          const warningNode = document.createElement("div");
-          warningNode.className = "math-render-warning";
-          entry.fallbackNode.parentNode.insertBefore(warningNode, entry.fallbackNode);
-          entry.warningNode = warningNode;
-        }}
-        if (entry.warningNode) {{
-          entry.warningNode.textContent = reason;
-        }}
-        entry.fallbackNode.classList.remove("math-fallback-hidden");
-        entry.fallbackNode.setAttribute("data-math-render-status", "failed");
-      }}
-
-      function loadScript(src) {{
-        return new Promise(function (resolve, reject) {{
-          const existingScript = Array.from(document.querySelectorAll("script[src]")).find(
-            function (node) {{
-              return node.getAttribute("src") === src;
-            }}
-          );
-          if (existingScript) {{
-            if (window.MathJax && typeof window.MathJax.typesetPromise === "function") {{
-              resolve(src);
-              return;
-            }}
-            existingScript.addEventListener("load", function () {{
-              resolve(src);
-            }}, {{ once: true }});
-            existingScript.addEventListener("error", function () {{
-              reject(new Error("Failed to load " + src));
-            }}, {{ once: true }});
-            return;
-          }}
-          const script = document.createElement("script");
-          script.src = src;
-          script.async = true;
-          script.onload = function () {{
-            resolve(src);
-          }};
-          script.onerror = function () {{
-            reject(new Error("Failed to load " + src));
-          }};
-          document.head.appendChild(script);
-        }});
-      }}
-
-      function loadMathJaxDualMode() {{
-        if (window.MathJax && typeof window.MathJax.typesetPromise === "function") {{
-          return Promise.resolve("existing");
-        }}
-        window.MathJax = {{
-          tex: {{
-            inlineMath: [["\\\\(", "\\\\)"], ["$", "$"]],
-            displayMath: [["\\\\[", "\\\\]"]],
-            processEscapes: true
-          }},
-          options: {{
-            skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"]
-          }}
-        }};
-        const mathJaxSources = [
-          "mathjax/es5/tex-mml-chtml.js",
-          "../mathjax/es5/tex-mml-chtml.js",
-          "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js",
-          "https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-mml-chtml.js"
-        ];
-        let index = 0;
-        function tryLoadNextSource() {{
-          if (index >= mathJaxSources.length) {{
-            return Promise.reject(new Error("No MathJax source could be loaded."));
-          }}
-          const source = mathJaxSources[index];
-          index += 1;
-          return loadScript(source).catch(function () {{
-            return tryLoadNextSource();
-          }});
-        }}
-        return tryLoadNextSource();
-      }}
-
-      function initializeMathRendering() {{
-        const prepared = prepareLatexDisplayBlocks();
-        if (!prepared.length) {{
-          return;
-        }}
-        loadMathJaxDualMode()
-          .then(function () {{
-            if (!(window.MathJax && typeof window.MathJax.typesetPromise === "function")) {{
-              throw new Error("MathJax unavailable after script load.");
-            }}
-            const renderTasks = prepared.map(function (entry) {{
-              return window.MathJax.typesetPromise([entry.displayNode])
-                .then(function () {{
-                  if (entry.warningNode && entry.warningNode.parentNode) {{
-                    entry.warningNode.parentNode.removeChild(entry.warningNode);
-                  }}
-                  entry.warningNode = null;
-                  entry.fallbackNode.removeAttribute("data-math-render-status");
-                  entry.fallbackNode.classList.add("math-fallback-hidden");
-                }})
-                .catch(function () {{
-                  setMathRenderFailure(
-                    entry,
-                    "Math rendering failed for this block. Showing raw LaTeX."
-                  );
-                }});
-            }});
-            return Promise.all(renderTasks);
-          }})
-          .catch(function () {{
-            for (const entry of prepared) {{
-              setMathRenderFailure(
-                entry,
-                "MathJax could not be loaded. Showing raw LaTeX."
-              );
-            }}
-          }});
-      }}
-
-      initializeMathRendering();
     }})();
   </script>
 </body>

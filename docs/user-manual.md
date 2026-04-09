@@ -7,7 +7,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Build command: `python scripts/build_user_manual.py`
 - Validation command: `python scripts/build_user_manual.py --check`
 
-Current release: `v4.13.6`
+Current release: `v4.14.0`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
@@ -528,7 +528,7 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
    - use `Clear Anchors` to reset the row editor when needed
    - use `Target pH Controls` directly below the anchor section to set the shared target-pH slider value
    - run Analysis or click **Recompute Calibration**
-6. Use the Analysis **Input & Controls** card (inside Analysis workflow inputs) for:
+6. Use the sticky **Analysis Workflow Actions** bar (top of Advanced Speciation outputs) for:
    - **Import from Cycle Analysis**
    - **Run Analysis**
    - **Recompute Calibration**
@@ -553,26 +553,37 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
    - default format is `<Job Information> Reaction Simulation`
    - commits apply on `Enter` or when the input loses focus (`FocusOut`)
    - typing alone does not trigger full timeline refresh
-9. Use timeline actions in two rows under **Selected-Cycle Notes And Export**:
+9. Use the **Shared Output Workspace** editor controls when needed:
+   - **Edit layout** enables panel drag/resize mode.
+   - **Save as Global Default** persists layout for all profiles.
+   - **Save as Profile Override** persists profile-scoped layout (enabled only with an active profile).
+   - **Revert to Global** rehydrates current layout from global layer.
+   - **Reset Current Layout Layer** resets profile layer (when active) or global layer (when no active profile).
+10. Use timeline actions in two rows under **Selected-Cycle Notes And Export**:
    - interactive row: **Plot Preview**, **Open Plot in New Tab**, **Layout Manager...**, **Add Plot Elements...**, **Expand Timeline**
    - export/navigation row: **Export Timeline CSV**, **Export To Workbook**, **Export Timeline Plot**, **Export Timeline Table**, **Export Options...**, **Workbook Export Options...**, **Scroll to Latest**
-10. Use **Open Plot in New Tab** to render cycle timeline in the main plot notebook with combined-style generated-tab controls (Refresh/Close/Plot Settings/Data Trace Settings/Plot Elements/Save As/Plot Preview/format toggles). Re-opening refreshes/reuses the same timeline tab.
-11. Use cycle selector tools to inspect cycle-specific behavior.
-12. Export outputs:
+11. Use **Open Plot in New Tab** to render cycle timeline in the main plot notebook with combined-style generated-tab controls (Refresh/Close/Plot Settings/Data Trace Settings/Plot Elements/Save As/Plot Preview/format toggles). Re-opening refreshes/reuses the same timeline tab.
+12. Use cycle selector tools to inspect cycle-specific behavior.
+13. Export outputs:
    - summary PNG
    - CSV species table
    - JSON summary
    - timeline CSV/plot/table
-13. Use **Send Dashboard Stats to Ledger** when values should be captured in ledger entries (corrected-primary uptake/yield are prefilled; raw baselines remain in notes).
-14. In Analysis dashboard verify core tile coverage:
+14. Use **Send Dashboard Stats to Ledger** when values should be captured in ledger entries (corrected-primary uptake/yield are prefilled; raw baselines remain in notes).
+15. In Analysis dashboard verify core tile coverage:
    - Analysis Overview / Mode Context
    - Key Results Summary
    - Target Gap & Forecast
    - Speciation / Equilibrium Breakdown
    - Inputs / Assumptions / Context
    - Warnings / Diagnostics
-15. Optional detail tiles remain available through tile configuration (hidden by default) and include completion/forensics/comparison/visual detail surfaces.
-16. Cycle Comparison Explorer, Cycle Speciation Timeline Explorer/plot, and Selected-Cycle Notes and Export remain in their existing locations.
+16. Optional detail tiles remain available through tile configuration (hidden by default) and include completion/forensics/comparison/visual detail surfaces.
+17. The freeform shared output workspace includes five panel-level regions:
+   - **Analysis Dashboard**
+   - **Cycle Comparison Explorer**
+   - **Cycle Speciation Timeline Explorer**
+   - **Selected-Cycle Notes And Export**
+   - **Detailed Math Preview**
 
 ### Expected outputs
 - Speciation/equilibrium summaries tied to cycle-level data.
@@ -580,6 +591,27 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.14.0 Release Note (Analysis Input Redesign + Shared Freeform Output Workspace)
+- Reworked Analysis inputs into one focused cluster covering imported basis, chemistry targets, measured-pH anchors, and target-pH controls.
+- Added sticky top **Analysis Workflow Actions** controls:
+  - **Import from Cycle Analysis**
+  - **Run Analysis**
+  - **Recompute Calibration**
+  - **Use ML-corrected pH in this run**
+  - shared `Cycle timeline plot title`
+- Replaced fixed lower output stacking with a shared freeform output workspace used across Planning/Analysis/Reprocessing.
+- Added panel-level drag + resize interaction with snap-grid behavior and minimum-size/bounds clamping.
+- Added persisted layout layers with precedence:
+  - `default -> global -> profile override`
+- Added layout editor actions:
+  - **Save as Global Default**
+  - **Save as Profile Override**
+  - **Revert to Global**
+  - **Reset Current Layout Layer**
+- Profile-override save behavior is disabled when no active profile exists, with explicit status messaging.
+- Preserved existing solver/speciation behavior and dashboard tile customization semantics (`analysis_dashboard_state` unchanged).
+- Added targeted regressions for sticky action bar wiring, workspace panel registry, snap/min-size/bounds behavior, layout precedence, profile-action enablement, wheel handoff, and cross-workflow workspace availability.
 
 ### v4.13.6 Release Note (Calculation Transparency Upgrade)
 - Added a top-level **Calculation Overview** section with raw LaTeX equations for pH, speciation, activity correction, requirement precedence, completion metrics, target gap, and forecast.

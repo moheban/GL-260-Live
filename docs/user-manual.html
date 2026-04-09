@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="59e70ea5bf969f317a2526957f318d5c0c77dc4f9924255c060f77a7d8b4a8e0">
+  <meta name="manual-source-sha256" content="ad7175f93e4048568fb30830d8696eeab2ea60fea13f5a9ed1a1dae18c2a5be3">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -274,7 +274,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>59e70ea5bf969f31</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>ad7175f93e404856</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -390,6 +390,7 @@
 <li><a href="#inputs_10">Inputs</a></li>
 <li><a href="#step-by-step-actions_10">Step-by-step actions</a></li>
 <li><a href="#expected-outputs_10">Expected outputs</a></li>
+<li><a href="#v4140-release-note-analysis-input-redesign-shared-freeform-output-workspace">v4.14.0 Release Note (Analysis Input Redesign + Shared Freeform Output Workspace)</a></li>
 <li><a href="#v4136-release-note-calculation-transparency-upgrade">v4.13.6 Release Note (Calculation Transparency Upgrade)</a></li>
 <li><a href="#v4135-release-note-analysis-co2-parity-ph-alignment-hybrid-ml-correction">v4.13.5 Release Note (Analysis CO2 Parity + pH Alignment + Hybrid ML Correction)</a></li>
 <li><a href="#v4134-release-note-tab-aware-data-trace-deterministic-timeline-export-anchor">v4.13.4 Release Note (Tab-Aware Data Trace + Deterministic Timeline Export Anchor)</a></li>
@@ -506,7 +507,7 @@
 <li>Build command: <code>python scripts/build_user_manual.py</code></li>
 <li>Validation command: <code>python scripts/build_user_manual.py --check</code></li>
 </ul>
-<p>Current release: <code>v4.13.6</code></p>
+<p>Current release: <code>v4.14.0</code></p>
 <p>Analysis timeline pH terminology:<br>
 - <code>Equilibrium pH (Guidance)</code>: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.<br>
 - <code>Corrected pH</code>: measured-anchor calibrated pH overlay used for Analysis alignment diagnostics.<br>
@@ -1047,7 +1048,7 @@
    - use <code>Clear Anchors</code> to reset the row editor when needed<br>
    - use <code>Target pH Controls</code> directly below the anchor section to set the shared target-pH slider value<br>
    - run Analysis or click <strong>Recompute Calibration</strong></li>
-<li>Use the Analysis <strong>Input &amp; Controls</strong> card (inside Analysis workflow inputs) for:<br>
+<li>Use the sticky <strong>Analysis Workflow Actions</strong> bar (top of Advanced Speciation outputs) for:<br>
    - <strong>Import from Cycle Analysis</strong><br>
    - <strong>Run Analysis</strong><br>
    - <strong>Recompute Calibration</strong><br>
@@ -1074,6 +1075,12 @@
    - default format is <code>&lt;Job Information&gt; Reaction Simulation</code><br>
    - commits apply on <code>Enter</code> or when the input loses focus (<code>FocusOut</code>)<br>
    - typing alone does not trigger full timeline refresh</li>
+<li>Use the <strong>Shared Output Workspace</strong> editor controls when needed:<br>
+   - <strong>Edit layout</strong> enables panel drag/resize mode.<br>
+   - <strong>Save as Global Default</strong> persists layout for all profiles.<br>
+   - <strong>Save as Profile Override</strong> persists profile-scoped layout (enabled only with an active profile).<br>
+   - <strong>Revert to Global</strong> rehydrates current layout from global layer.<br>
+   - <strong>Reset Current Layout Layer</strong> resets profile layer (when active) or global layer (when no active profile).</li>
 <li>Use timeline actions in two rows under <strong>Selected-Cycle Notes And Export</strong>:<br>
    - interactive row: <strong>Plot Preview</strong>, <strong>Open Plot in New Tab</strong>, <strong>Layout Manager...</strong>, <strong>Add Plot Elements...</strong>, <strong>Expand Timeline</strong><br>
    - export/navigation row: <strong>Export Timeline CSV</strong>, <strong>Export To Workbook</strong>, <strong>Export Timeline Plot</strong>, <strong>Export Timeline Table</strong>, <strong>Export Options...</strong>, <strong>Workbook Export Options...</strong>, <strong>Scroll to Latest</strong></li>
@@ -1093,7 +1100,12 @@
    - Inputs / Assumptions / Context<br>
    - Warnings / Diagnostics</li>
 <li>Optional detail tiles remain available through tile configuration (hidden by default) and include completion/forensics/comparison/visual detail surfaces.</li>
-<li>Cycle Comparison Explorer, Cycle Speciation Timeline Explorer/plot, and Selected-Cycle Notes and Export remain in their existing locations.</li>
+<li>The freeform shared output workspace includes five panel-level regions:<br>
+   - <strong>Analysis Dashboard</strong><br>
+   - <strong>Cycle Comparison Explorer</strong><br>
+   - <strong>Cycle Speciation Timeline Explorer</strong><br>
+   - <strong>Selected-Cycle Notes And Export</strong><br>
+   - <strong>Detailed Math Preview</strong></li>
 </ol>
 <h3 id="expected-outputs_10">Expected outputs<a class="headerlink" href="#expected-outputs_10" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1102,6 +1114,28 @@
 <li>Measured-pH anchor editor rows persist globally in <code>solubility_inputs</code> and restore on Analysis tab build/restart.</li>
 <li>Latest Analysis run payload restores after restart when workspace context/signatures match persisted <code>sol_analysis_last_result_v2</code> metadata.</li>
 <li>Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.</li>
+</ul>
+<h3 id="v4140-release-note-analysis-input-redesign-shared-freeform-output-workspace">v4.14.0 Release Note (Analysis Input Redesign + Shared Freeform Output Workspace)<a class="headerlink" href="#v4140-release-note-analysis-input-redesign-shared-freeform-output-workspace" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Reworked Analysis inputs into one focused cluster covering imported basis, chemistry targets, measured-pH anchors, and target-pH controls.</li>
+<li>Added sticky top <strong>Analysis Workflow Actions</strong> controls:</li>
+<li><strong>Import from Cycle Analysis</strong></li>
+<li><strong>Run Analysis</strong></li>
+<li><strong>Recompute Calibration</strong></li>
+<li><strong>Use ML-corrected pH in this run</strong></li>
+<li>shared <code>Cycle timeline plot title</code></li>
+<li>Replaced fixed lower output stacking with a shared freeform output workspace used across Planning/Analysis/Reprocessing.</li>
+<li>Added panel-level drag + resize interaction with snap-grid behavior and minimum-size/bounds clamping.</li>
+<li>Added persisted layout layers with precedence:</li>
+<li><code>default -&gt; global -&gt; profile override</code></li>
+<li>Added layout editor actions:</li>
+<li><strong>Save as Global Default</strong></li>
+<li><strong>Save as Profile Override</strong></li>
+<li><strong>Revert to Global</strong></li>
+<li><strong>Reset Current Layout Layer</strong></li>
+<li>Profile-override save behavior is disabled when no active profile exists, with explicit status messaging.</li>
+<li>Preserved existing solver/speciation behavior and dashboard tile customization semantics (<code>analysis_dashboard_state</code> unchanged).</li>
+<li>Added targeted regressions for sticky action bar wiring, workspace panel registry, snap/min-size/bounds behavior, layout precedence, profile-action enablement, wheel handoff, and cross-workflow workspace availability.</li>
 </ul>
 <h3 id="v4136-release-note-calculation-transparency-upgrade">v4.13.6 Release Note (Calculation Transparency Upgrade)<a class="headerlink" href="#v4136-release-note-calculation-transparency-upgrade" title="Permanent link">&para;</a></h3>
 <ul>
