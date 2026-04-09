@@ -7,7 +7,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Build command: `python scripts/build_user_manual.py`
 - Validation command: `python scripts/build_user_manual.py --check`
 
-Current release: `v4.14.0`
+Current release: `v4.14.2`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
@@ -578,12 +578,18 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
    - Inputs / Assumptions / Context
    - Warnings / Diagnostics
 16. Optional detail tiles remain available through tile configuration (hidden by default) and include completion/forensics/comparison/visual detail surfaces.
-17. The freeform shared output workspace includes five panel-level regions:
+17. The freeform shared output workspace includes panel-level regions:
    - **Analysis Dashboard**
    - **Cycle Comparison Explorer**
    - **Cycle Speciation Timeline Explorer**
    - **Selected-Cycle Notes And Export**
    - **Detailed Math Preview**
+   - **KPI Status Strip**
+   - **Residual And Quality Analytics**
+   - **Distribution Diagnostics**
+18. Dense analytics panel visibility is controlled by **Dense analytics scope**:
+   - `analysis_only`: show dense analytics panels only while the Analysis workflow tab is active.
+   - `all_workflows`: keep dense analytics panels visible in Planning and Reprocessing as well.
 
 ### Expected outputs
 - Speciation/equilibrium summaries tied to cycle-level data.
@@ -591,6 +597,26 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.14.2 Release Note (Advanced Speciation Analysis UX Reliability + Dense Analytics)
+- Added drop-time collision resolution to shared output workspace panel editing:
+  - freeform drag remains unconstrained during movement,
+  - overlaps are resolved on release with snap-grid and min-size/bounds normalization.
+- Preserved drag reliability safeguards:
+  - active-panel raise on interaction start,
+  - drag-state refresh guard,
+  - debounced workspace reflow using working layout.
+- Expanded workspace panels with dense analytics:
+  - **KPI Status Strip**
+  - **Residual And Quality Analytics**
+  - **Distribution Diagnostics**
+- Added persisted dense analytics visibility scope (`analysis_only` vs `all_workflows`) in workspace settings.
+- Improved Analysis table usability:
+  - horizontal scrollbar support for cycle comparison and cycle timeline tables,
+  - **Fit All Visible** actions,
+  - separator double-click autofit,
+  - persisted column widths by active workflow/profile context.
+- Kept solver/speciation chemistry behavior unchanged.
 
 ### v4.14.0 Release Note (Analysis Input Redesign + Shared Freeform Output Workspace)
 - Reworked Analysis inputs into one focused cluster covering imported basis, chemistry targets, measured-pH anchors, and target-pH controls.

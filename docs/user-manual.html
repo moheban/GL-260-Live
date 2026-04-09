@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="ad7175f93e4048568fb30830d8696eeab2ea60fea13f5a9ed1a1dae18c2a5be3">
+  <meta name="manual-source-sha256" content="2db9eaf7a238255219e31748d7fa39aca20fc2ffd5938982f0b83721037b233a">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -274,7 +274,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>ad7175f93e404856</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>2db9eaf7a2382552</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -390,6 +390,7 @@
 <li><a href="#inputs_10">Inputs</a></li>
 <li><a href="#step-by-step-actions_10">Step-by-step actions</a></li>
 <li><a href="#expected-outputs_10">Expected outputs</a></li>
+<li><a href="#v4142-release-note-advanced-speciation-analysis-ux-reliability-dense-analytics">v4.14.2 Release Note (Advanced Speciation Analysis UX Reliability + Dense Analytics)</a></li>
 <li><a href="#v4140-release-note-analysis-input-redesign-shared-freeform-output-workspace">v4.14.0 Release Note (Analysis Input Redesign + Shared Freeform Output Workspace)</a></li>
 <li><a href="#v4136-release-note-calculation-transparency-upgrade">v4.13.6 Release Note (Calculation Transparency Upgrade)</a></li>
 <li><a href="#v4135-release-note-analysis-co2-parity-ph-alignment-hybrid-ml-correction">v4.13.5 Release Note (Analysis CO2 Parity + pH Alignment + Hybrid ML Correction)</a></li>
@@ -507,7 +508,7 @@
 <li>Build command: <code>python scripts/build_user_manual.py</code></li>
 <li>Validation command: <code>python scripts/build_user_manual.py --check</code></li>
 </ul>
-<p>Current release: <code>v4.14.0</code></p>
+<p>Current release: <code>v4.14.2</code></p>
 <p>Analysis timeline pH terminology:<br>
 - <code>Equilibrium pH (Guidance)</code>: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.<br>
 - <code>Corrected pH</code>: measured-anchor calibrated pH overlay used for Analysis alignment diagnostics.<br>
@@ -1100,12 +1101,18 @@
    - Inputs / Assumptions / Context<br>
    - Warnings / Diagnostics</li>
 <li>Optional detail tiles remain available through tile configuration (hidden by default) and include completion/forensics/comparison/visual detail surfaces.</li>
-<li>The freeform shared output workspace includes five panel-level regions:<br>
+<li>The freeform shared output workspace includes panel-level regions:<br>
    - <strong>Analysis Dashboard</strong><br>
    - <strong>Cycle Comparison Explorer</strong><br>
    - <strong>Cycle Speciation Timeline Explorer</strong><br>
    - <strong>Selected-Cycle Notes And Export</strong><br>
-   - <strong>Detailed Math Preview</strong></li>
+   - <strong>Detailed Math Preview</strong><br>
+   - <strong>KPI Status Strip</strong><br>
+   - <strong>Residual And Quality Analytics</strong><br>
+   - <strong>Distribution Diagnostics</strong></li>
+<li>Dense analytics panel visibility is controlled by <strong>Dense analytics scope</strong>:<br>
+   - <code>analysis_only</code>: show dense analytics panels only while the Analysis workflow tab is active.<br>
+   - <code>all_workflows</code>: keep dense analytics panels visible in Planning and Reprocessing as well.</li>
 </ol>
 <h3 id="expected-outputs_10">Expected outputs<a class="headerlink" href="#expected-outputs_10" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1114,6 +1121,27 @@
 <li>Measured-pH anchor editor rows persist globally in <code>solubility_inputs</code> and restore on Analysis tab build/restart.</li>
 <li>Latest Analysis run payload restores after restart when workspace context/signatures match persisted <code>sol_analysis_last_result_v2</code> metadata.</li>
 <li>Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.</li>
+</ul>
+<h3 id="v4142-release-note-advanced-speciation-analysis-ux-reliability-dense-analytics">v4.14.2 Release Note (Advanced Speciation Analysis UX Reliability + Dense Analytics)<a class="headerlink" href="#v4142-release-note-advanced-speciation-analysis-ux-reliability-dense-analytics" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Added drop-time collision resolution to shared output workspace panel editing:</li>
+<li>freeform drag remains unconstrained during movement,</li>
+<li>overlaps are resolved on release with snap-grid and min-size/bounds normalization.</li>
+<li>Preserved drag reliability safeguards:</li>
+<li>active-panel raise on interaction start,</li>
+<li>drag-state refresh guard,</li>
+<li>debounced workspace reflow using working layout.</li>
+<li>Expanded workspace panels with dense analytics:</li>
+<li><strong>KPI Status Strip</strong></li>
+<li><strong>Residual And Quality Analytics</strong></li>
+<li><strong>Distribution Diagnostics</strong></li>
+<li>Added persisted dense analytics visibility scope (<code>analysis_only</code> vs <code>all_workflows</code>) in workspace settings.</li>
+<li>Improved Analysis table usability:</li>
+<li>horizontal scrollbar support for cycle comparison and cycle timeline tables,</li>
+<li><strong>Fit All Visible</strong> actions,</li>
+<li>separator double-click autofit,</li>
+<li>persisted column widths by active workflow/profile context.</li>
+<li>Kept solver/speciation chemistry behavior unchanged.</li>
 </ul>
 <h3 id="v4140-release-note-analysis-input-redesign-shared-freeform-output-workspace">v4.14.0 Release Note (Analysis Input Redesign + Shared Freeform Output Workspace)<a class="headerlink" href="#v4140-release-note-analysis-input-redesign-shared-freeform-output-workspace" title="Permanent link">&para;</a></h3>
 <ul>
