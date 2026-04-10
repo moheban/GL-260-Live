@@ -3,9 +3,12 @@ numpy
 openpyxl
 pandas
 markdown
+latex2mathml
 scipy
 pyflakes
 pytest
+playwright
+pytest-playwright
 mplcursors
 PyPDF2
 pypdf

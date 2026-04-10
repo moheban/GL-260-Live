@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="2db9eaf7a238255219e31748d7fa39aca20fc2ffd5938982f0b83721037b233a">
+  <meta name="manual-source-sha256" content="53c68aa1a51d2c397758a0303ec4bcb3bf153e4f7c28c230fd31776b5b40f78c">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -151,27 +151,19 @@
       overflow-x: auto;
       max-width: min(120ch, 100%);
     }
-    .content pre.latex-fallback {
-      margin-top: 8px;
+    .content .math-inline {
+      display: inline-block;
+      max-width: 100%;
+      vertical-align: middle;
     }
-    .content pre.latex-fallback.math-fallback-hidden {
-      display: none;
-    }
-    .content .math-render-warning {
-      border: 1px solid #d3a046;
-      background: #fff7e8;
-      color: #6d4a00;
-      border-radius: 8px;
-      padding: 8px 10px;
-      margin: 6px 0;
-      font-size: 13px;
-      font-weight: 600;
-      max-width: min(120ch, 100%);
-    }
-    .content pre.latex-fallback[data-math-render-status="failed"] {
+    .content .math-inline-display {
       display: block;
-      border-color: #7b2e2e;
-      box-shadow: inset 0 0 0 1px rgba(198, 86, 86, 0.25);
+      margin: 8px 0;
+      overflow-x: auto;
+    }
+    .content .math-display-block math,
+    .content .math-inline math {
+      max-width: 100%;
     }
     .content table {
       border-collapse: collapse;
@@ -274,7 +266,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>2db9eaf7a2382552</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>53c68aa1a51d2c39</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -418,7 +410,7 @@
 <li><a href="#carbonate-equilibria-ph-and-temperature-adjusted-constants">Carbonate equilibria, pH, and temperature-adjusted constants</a></li>
 <li><a href="#speciation-fractions-and-species-concentrations">Speciation fractions and species concentrations</a></li>
 <li><a href="#ionic-strength-and-activity-correction-equations">Ionic strength and activity-correction equations</a></li>
-<li><a href="#closed-system-vs-fixed-gl260inlinemathopenparenzxcvpco_2gl260inlinemathcloseparenzxcv-residual-equations-and-charge-balance">Closed-system vs fixed-\(pCO_2\) residual equations and charge balance</a></li>
+<li><a href="#closed-system-vs-fixed-gl260inlinemathopenparenzxcvpco_2gl260inlinemathcloseparenzxcv-residual-equations-and-charge-balance">Closed-system vs fixed-<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>p</mi><mi>C</mi><msub><mi>O</mi><mn>2</mn></msub></mrow></math></span> residual equations and charge balance</a></li>
 <li><a href="#co2-dosing-stoichiometry-naoh-na2co3-nahco3-transitions">CO2 dosing stoichiometry (NaOH / Na2CO3 / NaHCO3 transitions)</a></li>
 <li><a href="#required-co2-logic-and-precedence">Required CO2 logic and precedence</a></li>
 <li><a href="#completion-metrics-target-gap-and-forecast">Completion metrics, target gap, and forecast</a></li>
@@ -507,6 +499,8 @@
 <li>Generated artifact: <code>docs/user-manual.html</code></li>
 <li>Build command: <code>python scripts/build_user_manual.py</code></li>
 <li>Validation command: <code>python scripts/build_user_manual.py --check</code></li>
+<li>Browser smoke setup: <code>python -m playwright install chromium</code></li>
+<li>Browser smoke test: <code>python -m pytest -q tests/test_docs_math_runtime_playwright.py</code></li>
 </ul>
 <p>Current release: <code>v4.14.2</code></p>
 <p>Analysis timeline pH terminology:<br>
@@ -558,6 +552,7 @@
 <li>Update this Markdown file when any user-facing behavior, workflow, or UI control changes.</li>
 <li>Run <code>python scripts/build_user_manual.py</code> to regenerate HTML.</li>
 <li>Run <code>python scripts/build_user_manual.py --check</code> to confirm generated HTML is current.</li>
+<li>Run <code>python -m pytest -q tests/test_docs_math_runtime_playwright.py</code> to verify browser math rendering contracts.</li>
 <li>Ensure screenshot references resolve and correspond to current UI behavior.</li>
 <li>Confirm <code>README.md</code> continues to point users to canonical docs in <code>docs/</code>.</li>
 </ol>
@@ -1431,128 +1426,61 @@
 <li>Solver chemistry behavior is unchanged in this release; transparency and traceability were expanded.</li>
 </ul>
 <h3 id="symbols-units-and-constants">Symbols, units, and constants<a class="headerlink" href="#symbols-units-and-constants" title="Permanent link">&para;</a></h3>
-<pre><code class="language-latex">\begin{aligned}
-&amp;m_{\mathrm{CO_2}} &amp;&amp;\text{CO}_2\text{ mass (g)} \\
-&amp;n_{\mathrm{CO_2}} &amp;&amp;\text{CO}_2\text{ moles (mol)} \\
-&amp;MW_{\mathrm{CO_2}} &amp;&amp;\text{molar mass of CO}_2\ (\mathrm{g/mol}) \\
-&amp;m_{\mathrm{NaOH}} &amp;&amp;\text{NaOH mass (g)} \\
-&amp;MW_{\mathrm{NaOH}} &amp;&amp;\text{molar mass of NaOH}\ (\mathrm{g/mol}) \\
-&amp;V &amp;&amp;\text{solution volume (L)} \\
-&amp;I &amp;&amp;\text{ionic strength (mol/L)} \\
-&amp;C_T &amp;&amp;\text{total inorganic carbon concentration} \\
-&amp;K_{a1},K_{a2},K_w &amp;&amp;\text{carbonate/water equilibrium constants} \\
-&amp;\alpha_0,\alpha_1,\alpha_2 &amp;&amp;\text{fractions of }H_2CO_3^\ast,\ HCO_3^-,\ CO_3^{2-} \\
-&amp;\mathrm{pH} &amp;&amp;-\log_{10}[H^+] \\
-&amp;m_{\mathrm{required}} &amp;&amp;\text{total CO}_2\text{ required to hit target pH (g)} \\
-&amp;m_{\mathrm{uptake}} &amp;&amp;\text{cumulative uptake used by completion/gap tiles (g)}
-\end{aligned}
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mi>&</mi><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow></mrow></msub><mi>&</mi><mi>&</mi><msub><mtext>CO</mtext><mn>2</mn></msub><mtext>&#x000A0;mass&#x000A0;(g)</mtext><mspace linebreak="newline" /><mi>&</mi><msub><mi>n</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow></mrow></msub><mi>&</mi><mi>&</mi><msub><mtext>CO</mtext><mn>2</mn></msub><mtext>&#x000A0;moles&#x000A0;(mol)</mtext><mspace linebreak="newline" /><mi>&</mi><mi>M</mi><msub><mi>W</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow></mrow></msub><mi>&</mi><mi>&</mi><msub><mtext>molar&#x000A0;mass&#x000A0;of&#x000A0;CO</mtext><mn>2</mn></msub><mtext>&#x000A0;</mtext><mo stretchy="false">&#x00028;</mo><mrow><mi mathvariant="normal">g</mi><mo>&#x0002F;</mo><mi mathvariant="normal">m</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">l</mi></mrow><mo stretchy="false">&#x00029;</mo><mspace linebreak="newline" /><mi>&</mi><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow></msub><mi>&</mi><mi>&</mi><mtext>NaOH&#x000A0;mass&#x000A0;(g)</mtext><mspace linebreak="newline" /><mi>&</mi><mi>M</mi><msub><mi>W</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow></msub><mi>&</mi><mi>&</mi><mtext>molar&#x000A0;mass&#x000A0;of&#x000A0;NaOH</mtext><mtext>&#x000A0;</mtext><mo stretchy="false">&#x00028;</mo><mrow><mi mathvariant="normal">g</mi><mo>&#x0002F;</mo><mi mathvariant="normal">m</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">l</mi></mrow><mo stretchy="false">&#x00029;</mo><mspace linebreak="newline" /><mi>&</mi><mi>V</mi><mi>&</mi><mi>&</mi><mtext>solution&#x000A0;volume&#x000A0;(L)</mtext><mspace linebreak="newline" /><mi>&</mi><mi>I</mi><mi>&</mi><mi>&</mi><mtext>ionic&#x000A0;strength&#x000A0;(mol/L)</mtext><mspace linebreak="newline" /><mi>&</mi><msub><mi>C</mi><mi>T</mi></msub><mi>&</mi><mi>&</mi><mtext>total&#x000A0;inorganic&#x000A0;carbon&#x000A0;concentration</mtext><mspace linebreak="newline" /><mi>&</mi><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mo>&#x0002C;</mo><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub><mo>&#x0002C;</mo><msub><mi>K</mi><mi>w</mi></msub><mi>&</mi><mi>&</mi><mtext>carbonate/water&#x000A0;equilibrium&#x000A0;constants</mtext><mspace linebreak="newline" /><mi>&</mi><msub><mi>&#x003B1;</mi><mn>0</mn></msub><mo>&#x0002C;</mo><msub><mi>&#x003B1;</mi><mn>1</mn></msub><mo>&#x0002C;</mo><msub><mi>&#x003B1;</mi><mn>2</mn></msub><mi>&</mi><mi>&</mi><mtext>fractions&#x000A0;of&#x000A0;</mtext><msub><mi>H</mi><mn>2</mn></msub><mi>C</mi><msubsup><mi>O</mi><mn>3</mn><mo>&#x0002A;</mo></msubsup><mo>&#x0002C;</mo><mtext>&#x000A0;</mtext><mi>H</mi><mi>C</mi><msubsup><mi>O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup><mo>&#x0002C;</mo><mtext>&#x000A0;</mtext><mi>C</mi><msubsup><mi>O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup><mspace linebreak="newline" /><mi>&</mi><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">H</mi></mrow><mi>&</mi><mi>&</mi><mo>&#x02212;</mo><msub><mi>log</mi><mrow><mn>10</mn></mrow></msub><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mspace linebreak="newline" /><mi>&</mi><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">q</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></mrow></msub><mi>&</mi><mi>&</mi><msub><mtext>total&#x000A0;CO</mtext><mn>2</mn></msub><mtext>&#x000A0;required&#x000A0;to&#x000A0;hit&#x000A0;target&#x000A0;pH&#x000A0;(g)</mtext><mspace linebreak="newline" /><mi>&</mi><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">u</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">k</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub><mi>&</mi><mi>&</mi><mtext>cumulative&#x000A0;uptake&#x000A0;used&#x000A0;by&#x000A0;completion/gap&#x000A0;tiles&#x000A0;(g)</mtext></mrow></mrow></math></div>
 <h3 id="carbonate-equilibria-ph-and-temperature-adjusted-constants">Carbonate equilibria, pH, and temperature-adjusted constants<a class="headerlink" href="#carbonate-equilibria-ph-and-temperature-adjusted-constants" title="Permanent link">&para;</a></h3>
-<pre><code class="language-latex">\begin{aligned}
-K_{a1} &amp;= 10^{-pK_{a1}}, \\
-K_{a2} &amp;= 10^{-pK_{a2}}, \\
-K_w &amp;= 10^{-pK_w}, \\
-\mathrm{pH} &amp;= -\log_{10}[H^+], \\
-[OH^-] &amp;= \frac{K_w}{[H^+]}.
-\end{aligned}
-</code></pre>
-<p>When temperature-adjusted constants are enabled, the solver resolves \(K_{a1}, K_{a2}, K_w\) from the selected temperature, then propagates those values through speciation and residual equations.</p>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mi>&</mi><mo>&#x0003D;</mo><msup><mn>10</mn><mrow><mo>&#x02212;</mo><mi>p</mi><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub></mrow></msup><mo>&#x0002C;</mo><mspace linebreak="newline" /><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub><mi>&</mi><mo>&#x0003D;</mo><msup><mn>10</mn><mrow><mo>&#x02212;</mo><mi>p</mi><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub></mrow></msup><mo>&#x0002C;</mo><mspace linebreak="newline" /><msub><mi>K</mi><mi>w</mi></msub><mi>&</mi><mo>&#x0003D;</mo><msup><mn>10</mn><mrow><mo>&#x02212;</mo><mi>p</mi><msub><mi>K</mi><mi>w</mi></msub></mrow></msup><mo>&#x0002C;</mo><mspace linebreak="newline" /><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">H</mi></mrow><mi>&</mi><mo>&#x0003D;</mo><mo>&#x02212;</mo><msub><mi>log</mi><mrow><mn>10</mn></mrow></msub><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0002C;</mo><mspace linebreak="newline" /><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mi>O</mi><msup><mi>H</mi><mo>&#x02212;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mi>&</mi><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>K</mi><mi>w</mi></msub></mrow><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></mfrac><mo>&#x0002E;</mo></mrow></mrow></math></div>
+<p>When temperature-adjusted constants are enabled, the solver resolves <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mo>&#x0002C;</mo><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub><mo>&#x0002C;</mo><msub><mi>K</mi><mi>w</mi></msub></mrow></math></span> from the selected temperature, then propagates those values through speciation and residual equations.</p>
 <h3 id="speciation-fractions-and-species-concentrations">Speciation fractions and species concentrations<a class="headerlink" href="#speciation-fractions-and-species-concentrations" title="Permanent link">&para;</a></h3>
-<pre><code class="language-latex">\begin{aligned}
-D &amp;= [H^+]^2 + K_{a1}[H^+] + K_{a1}K_{a2}, \\
-\alpha_0 &amp;= \frac{[H^+]^2}{D}, \\
-\alpha_1 &amp;= \frac{K_{a1}[H^+]}{D}, \\
-\alpha_2 &amp;= \frac{K_{a1}K_{a2}}{D}, \\
-[H_2CO_3^\ast] &amp;= \alpha_0 C_T,\quad
-[HCO_3^-] = \alpha_1 C_T,\quad
-[CO_3^{2-}] = \alpha_2 C_T.
-\end{aligned}
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mi>D</mi><mi>&</mi><mo>&#x0003D;</mo><msup><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mn>2</mn></msup><mo>&#x0002B;</mo><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0002B;</mo><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub><mo>&#x0002C;</mo><mspace linebreak="newline" /><msub><mi>&#x003B1;</mi><mn>0</mn></msub><mi>&</mi><mo>&#x0003D;</mo><mfrac><mrow><msup><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mn>2</mn></msup></mrow><mrow><mi>D</mi></mrow></mfrac><mo>&#x0002C;</mo><mspace linebreak="newline" /><msub><mi>&#x003B1;</mi><mn>1</mn></msub><mi>&</mi><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow><mrow><mi>D</mi></mrow></mfrac><mo>&#x0002C;</mo><mspace linebreak="newline" /><msub><mi>&#x003B1;</mi><mn>2</mn></msub><mi>&</mi><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub></mrow><mrow><mi>D</mi></mrow></mfrac><mo>&#x0002C;</mo><mspace linebreak="newline" /><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msub><mi>H</mi><mn>2</mn></msub><mi>C</mi><msubsup><mi>O</mi><mn>3</mn><mo>&#x0002A;</mo></msubsup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mi>&</mi><mo>&#x0003D;</mo><msub><mi>&#x003B1;</mi><mn>0</mn></msub><msub><mi>C</mi><mi>T</mi></msub><mo>&#x0002C;</mo><mspace width="1em" /><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mi>H</mi><mi>C</mi><msubsup><mi>O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><msub><mi>&#x003B1;</mi><mn>1</mn></msub><msub><mi>C</mi><mi>T</mi></msub><mo>&#x0002C;</mo><mspace width="1em" /><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mi>C</mi><msubsup><mi>O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><msub><mi>&#x003B1;</mi><mn>2</mn></msub><msub><mi>C</mi><mi>T</mi></msub><mo>&#x0002E;</mo></mrow></mrow></math></div>
 <h3 id="ionic-strength-and-activity-correction-equations">Ionic strength and activity-correction equations<a class="headerlink" href="#ionic-strength-and-activity-correction-equations" title="Permanent link">&para;</a></h3>
-<pre><code class="language-latex">I=\frac{1}{2}\sum_i c_i z_i^2
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>I</mi><mo>&#x0003D;</mo><mfrac><mrow><mn>1</mn></mrow><mrow><mn>2</mn></mrow></mfrac><munder><mo>&#x02211;</mo><mi>i</mi></munder><msub><mi>c</mi><mi>i</mi></msub><msubsup><mi>z</mi><mi>i</mi><mn>2</mn></msubsup></mrow></math></div>
 <p>Debye-Huckel (full/capped):</p>
-<pre><code class="language-latex">\log_{10}\gamma_i=-\frac{A z_i^2\sqrt{I}}{1+B a_i\sqrt{I}}
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>log</mi><mrow><mn>10</mn></mrow></msub><msub><mi>&#x003B3;</mi><mi>i</mi></msub><mo>&#x0003D;</mo><mo>&#x02212;</mo><mfrac><mrow><mi>A</mi><msubsup><mi>z</mi><mi>i</mi><mn>2</mn></msubsup><msqrt><mrow><mi>I</mi></mrow></msqrt></mrow><mrow><mn>1</mn><mo>&#x0002B;</mo><mi>B</mi><msub><mi>a</mi><mi>i</mi></msub><msqrt><mrow><mi>I</mi></mrow></msqrt></mrow></mfrac></mrow></math></div>
 <p>Davies (limited):</p>
-<pre><code class="language-latex">\log_{10}\gamma_i=-A z_i^2\left(\frac{\sqrt{I}}{1+\sqrt{I}}-0.3I\right)
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>log</mi><mrow><mn>10</mn></mrow></msub><msub><mi>&#x003B3;</mi><mi>i</mi></msub><mo>&#x0003D;</mo><mo>&#x02212;</mo><mi>A</mi><msubsup><mi>z</mi><mi>i</mi><mn>2</mn></msubsup><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mfrac><mrow><msqrt><mrow><mi>I</mi></mrow></msqrt></mrow><mrow><mn>1</mn><mo>&#x0002B;</mo><msqrt><mrow><mi>I</mi></mrow></msqrt></mrow></mfrac><mo>&#x02212;</mo><mn>0.3</mn><mi>I</mi><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow></mrow></math></div>
 <p>Pitzer-lite:</p>
-<pre><code class="language-latex">\ln\gamma_i=f(I)+\sum_j m_j(2B_{ij}+ZC_{ij})+\cdots
-</code></pre>
-<h3 id="closed-system-vs-fixed-gl260inlinemathopenparenzxcvpco_2gl260inlinemathcloseparenzxcv-residual-equations-and-charge-balance">Closed-system vs fixed-\(pCO_2\) residual equations and charge balance<a class="headerlink" href="#closed-system-vs-fixed-gl260inlinemathopenparenzxcvpco_2gl260inlinemathcloseparenzxcv-residual-equations-and-charge-balance" title="Permanent link">&para;</a></h3>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>ln</mi><msub><mi>&#x003B3;</mi><mi>i</mi></msub><mo>&#x0003D;</mo><mi>f</mi><mo stretchy="false">&#x00028;</mo><mi>I</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0002B;</mo><munder><mo>&#x02211;</mo><mi>j</mi></munder><msub><mi>m</mi><mi>j</mi></msub><mo stretchy="false">&#x00028;</mo><mn>2</mn><msub><mi>B</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>&#x0002B;</mo><mi>Z</mi><msub><mi>C</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo stretchy="false">&#x00029;</mo><mo>&#x0002B;</mo><mo>&#x022EF;</mo></mrow></math></div>
+<h3 id="closed-system-vs-fixed-gl260inlinemathopenparenzxcvpco_2gl260inlinemathcloseparenzxcv-residual-equations-and-charge-balance">Closed-system vs fixed-<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>p</mi><mi>C</mi><msub><mi>O</mi><mn>2</mn></msub></mrow></math></span> residual equations and charge balance<a class="headerlink" href="#closed-system-vs-fixed-gl260inlinemathopenparenzxcvpco_2gl260inlinemathcloseparenzxcv-residual-equations-and-charge-balance" title="Permanent link">&para;</a></h3>
 <p>Closed-system charge residual root:</p>
-<pre><code class="language-latex">f([H^+])=[H^+]+[Na^+]-[OH^-]-[HCO_3^-]-2[CO_3^{2-}]=0
-</code></pre>
-<p>Fixed-\(pCO_2\) boundary:</p>
-<pre><code class="language-latex">[H_2CO_3^\ast]=p_{\mathrm{CO_2}}K_H
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>f</mi><mo stretchy="false">&#x00028;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0002B;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mi>N</mi><msup><mi>a</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x02212;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mi>O</mi><msup><mi>H</mi><mo>&#x02212;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x02212;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mi>H</mi><mi>C</mi><msubsup><mi>O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x02212;</mo><mn>2</mn><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mi>C</mi><msubsup><mi>O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><mn>0</mn></mrow></math></div>
+<p>Fixed-<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>p</mi><mi>C</mi><msub><mi>O</mi><mn>2</mn></msub></mrow></math></span> boundary:</p>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msub><mi>H</mi><mn>2</mn></msub><mi>C</mi><msubsup><mi>O</mi><mn>3</mn><mo>&#x0002A;</mo></msubsup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><msub><mi>p</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow></mrow></msub><msub><mi>K</mi><mi>H</mi></msub></mrow></math></div>
 <p>General charge-balance expression used for diagnostics:</p>
-<pre><code class="language-latex">R_q=[\text{cations}]-[\text{anions}]
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>R</mi><mi>q</mi></msub><mo>&#x0003D;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mtext>cations</mtext><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x02212;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mtext>anions</mtext><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></div>
 <h3 id="co2-dosing-stoichiometry-naoh-na2co3-nahco3-transitions">CO2 dosing stoichiometry (NaOH / Na2CO3 / NaHCO3 transitions)<a class="headerlink" href="#co2-dosing-stoichiometry-naoh-na2co3-nahco3-transitions" title="Permanent link">&para;</a></h3>
-<pre><code class="language-latex">\begin{aligned}
-\text{Stage 1: }&amp;2\mathrm{NaOH}+\mathrm{CO_2}\rightarrow \mathrm{Na_2CO_3}+H_2O \\
-\text{Stage 2: }&amp;\mathrm{Na_2CO_3}+\mathrm{CO_2}+H_2O\rightarrow 2\mathrm{NaHCO_3}
-\end{aligned}
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mtext>Stage&#x000A0;1:&#x000A0;</mtext><mi>&</mi><mn>2</mn><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow><mo>&#x0002B;</mo><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow><mo>&#x02192;</mo><mrow><mi mathvariant="normal">N</mi><msub><mi mathvariant="normal">a</mi><mn>2</mn></msub><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow><mo>&#x0002B;</mo><msub><mi>H</mi><mn>2</mn></msub><mi>O</mi><mspace linebreak="newline" /><mtext>Stage&#x000A0;2:&#x000A0;</mtext><mi>&</mi><mrow><mi mathvariant="normal">N</mi><msub><mi mathvariant="normal">a</mi><mn>2</mn></msub><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow><mo>&#x0002B;</mo><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow><mo>&#x0002B;</mo><msub><mi>H</mi><mn>2</mn></msub><mi>O</mi><mo>&#x02192;</mo><mn>2</mn><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow></mrow></math></div>
 <p>Mass-mole conversions:</p>
-<pre><code class="language-latex">n_{\mathrm{CO_2}}=\frac{m_{\mathrm{CO_2}}}{MW_{\mathrm{CO_2}}},\quad
-n_{\mathrm{NaOH}}=\frac{m_{\mathrm{NaOH}}}{MW_{\mathrm{NaOH}}}
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>n</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow></mrow></msub><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow></mrow></msub></mrow><mrow><mi>M</mi><msub><mi>W</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow></mrow></msub></mrow></mfrac><mo>&#x0002C;</mo><mspace width="1em" /><msub><mi>n</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow></msub></mrow><mrow><mi>M</mi><msub><mi>W</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow></msub></mrow></mfrac></mrow></math></div>
 <h3 id="required-co2-logic-and-precedence">Required CO2 logic and precedence<a class="headerlink" href="#required-co2-logic-and-precedence" title="Permanent link">&para;</a></h3>
 <p>Requirement source precedence is deterministic:</p>
-<pre><code class="language-latex">\text{guidance\_model} \;\rightarrow\; \text{measured\_ph\_calibration} \;\rightarrow\; \text{planning\_reference}
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mtext>guidance\_model</mtext><mspace width="0.278em" /><mo>&#x02192;</mo><mspace width="0.278em" /><mtext>measured\_ph\_calibration</mtext><mspace width="0.278em" /><mo>&#x02192;</mo><mspace width="0.278em" /><mtext>planning\_reference</mtext></mrow></math></div>
 <p>If guidance-model additional CO2 is available:</p>
-<pre><code class="language-latex">\begin{aligned}
-m_{\mathrm{additional}} &amp;= m_{\mathrm{guidance\ additional}}, \\
-m_{\mathrm{required}} &amp;= m_{\mathrm{uptake}} + m_{\mathrm{additional}}.
-\end{aligned}
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">l</mi></mrow></mrow></msub><mi>&</mi><mo>&#x0003D;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">g</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">e</mi><mtext>&#x000A0;</mtext><mi mathvariant="normal">a</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">l</mi></mrow></mrow></msub><mo>&#x0002C;</mo><mspace linebreak="newline" /><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">q</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></mrow></msub><mi>&</mi><mo>&#x0003D;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">u</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">k</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub><mo>&#x0002B;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">l</mi></mrow></mrow></msub><mo>&#x0002E;</mo></mrow></mrow></math></div>
 <p>Else if calibration total requirement is available:</p>
-<pre><code class="language-latex">\begin{aligned}
-m_{\mathrm{required}} &amp;= m_{\mathrm{calibration\ total}}, \\
-m_{\mathrm{additional}} &amp;= \max\left(m_{\mathrm{required}}-m_{\mathrm{uptake}},0\right).
-\end{aligned}
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">q</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></mrow></msub><mi>&</mi><mo>&#x0003D;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">b</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">n</mi><mtext>&#x000A0;</mtext><mi mathvariant="normal">t</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">l</mi></mrow></mrow></msub><mo>&#x0002C;</mo><mspace linebreak="newline" /><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">l</mi></mrow></mrow></msub><mi>&</mi><mo>&#x0003D;</mo><mo>max</mo><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">q</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></mrow></msub><mo>&#x02212;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">u</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">k</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub><mo>&#x0002C;</mo><mn>0</mn><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo>&#x0002E;</mo></mrow></mrow></math></div>
 <p>Else planning-reference fallback:</p>
-<pre><code class="language-latex">\begin{aligned}
-m_{\mathrm{required}} &amp;= m_{\mathrm{planning\ reference\ final}}, \\
-m_{\mathrm{additional}} &amp;= \max\left(m_{\mathrm{required}}-m_{\mathrm{uptake}},0\right).
-\end{aligned}
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">q</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></mrow></msub><mi>&</mi><mo>&#x0003D;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">g</mi><mtext>&#x000A0;</mtext><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">e</mi><mtext>&#x000A0;</mtext><mi mathvariant="normal">f</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">l</mi></mrow></mrow></msub><mo>&#x0002C;</mo><mspace linebreak="newline" /><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">l</mi></mrow></mrow></msub><mi>&</mi><mo>&#x0003D;</mo><mo>max</mo><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">q</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></mrow></msub><mo>&#x02212;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">u</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">k</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub><mo>&#x0002C;</mo><mn>0</mn><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo>&#x0002E;</mo></mrow></mrow></math></div>
 <p>And:</p>
-<pre><code class="language-latex">n_{\mathrm{required}}=\frac{m_{\mathrm{required}}}{MW_{\mathrm{CO_2}}}
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>n</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">q</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">q</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></mrow></msub></mrow><mrow><mi>M</mi><msub><mi>W</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow></mrow></msub></mrow></mfrac></mrow></math></div>
 <h3 id="completion-metrics-target-gap-and-forecast">Completion metrics, target gap, and forecast<a class="headerlink" href="#completion-metrics-target-gap-and-forecast" title="Permanent link">&para;</a></h3>
 <p>Raw planning completion:</p>
-<pre><code class="language-latex">C_{\mathrm{raw}}=\mathrm{clamp}\left(\frac{m_{\mathrm{raw\ uptake}}}{m_{\mathrm{planning\ reference}}},0,1\right)\times 100
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>C</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">w</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mfrac><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">w</mi><mtext>&#x000A0;</mtext><mi mathvariant="normal">u</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">k</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub></mrow><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">g</mi><mtext>&#x000A0;</mtext><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub></mrow></mfrac><mo>&#x0002C;</mo><mn>0</mn><mo>&#x0002C;</mo><mn>1</mn><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo>&#x000D7;</mo><mn>100</mn></mrow></math></div>
 <p>Corrected planning completion:</p>
-<pre><code class="language-latex">C_{\mathrm{corr}}=\mathrm{clamp}\left(\frac{m_{\mathrm{corrected\ uptake}}}{m_{\mathrm{planning\ reference}}},0,1\right)\times 100
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>C</mi><mrow><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">r</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mfrac><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi><mtext>&#x000A0;</mtext><mi mathvariant="normal">u</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">k</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub></mrow><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">g</mi><mtext>&#x000A0;</mtext><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub></mrow></mfrac><mo>&#x0002C;</mo><mn>0</mn><mo>&#x0002C;</mo><mn>1</mn><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo>&#x000D7;</mo><mn>100</mn></mrow></math></div>
 <p>Equivalence completion:</p>
-<pre><code class="language-latex">C_{\mathrm{eq}}=\mathrm{clamp}\left(\frac{m_{\mathrm{uptake}}}{m_{\mathrm{equivalence}}},0,1\right)\times 100
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>C</mi><mrow><mrow><mi mathvariant="normal">e</mi><mi mathvariant="normal">q</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mfrac><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">u</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">k</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub></mrow><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">e</mi><mi mathvariant="normal">q</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">v</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub></mrow></mfrac><mo>&#x0002C;</mo><mn>0</mn><mo>&#x0002C;</mo><mn>1</mn><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo>&#x000D7;</mo><mn>100</mn></mrow></math></div>
 <p>Requirement-relative completion (guidance-gap progress bar interpretation):</p>
-<pre><code class="language-latex">C_{\mathrm{required}}=\mathrm{clamp}\left(\frac{m_{\mathrm{uptake}}}{m_{\mathrm{required}}},0,1\right)\times 100
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>C</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">q</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi></mrow><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mfrac><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">u</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">k</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub></mrow><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">q</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></mrow></msub></mrow></mfrac><mo>&#x0002C;</mo><mn>0</mn><mo>&#x0002C;</mo><mn>1</mn><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo>&#x000D7;</mo><mn>100</mn></mrow></math></div>
 <p>Target gap:</p>
-<pre><code class="language-latex">\Delta m_{\mathrm{target}}=\max\left(m_{\mathrm{required}}-m_{\mathrm{uptake}},0\right)
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>&#x00394;</mi><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">g</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">t</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mo>max</mo><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">q</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></mrow></msub><mo>&#x02212;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">u</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">k</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub><mo>&#x0002C;</mo><mn>0</mn><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow></mrow></math></div>
 <p>Forecast:</p>
-<pre><code class="language-latex">\begin{aligned}
-N_{\mathrm{remaining}}&amp;=\frac{\Delta m_{\mathrm{target}}}{r_{\mathrm{tail}}}, \\
-T_{\mathrm{remaining}}&amp;=N_{\mathrm{remaining}}\cdot \bar{t}_{\mathrm{cycle}}
-\end{aligned}
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><msub><mi>N</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">g</mi></mrow></mrow></msub><mi>&</mi><mo>&#x0003D;</mo><mfrac><mrow><mi>&#x00394;</mi><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">g</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">t</mi></mrow></mrow></msub></mrow><mrow><msub><mi>r</mi><mrow><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">l</mi></mrow></mrow></msub></mrow></mfrac><mo>&#x0002C;</mo><mspace linebreak="newline" /><msub><mi>T</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">g</mi></mrow></mrow></msub><mi>&</mi><mo>&#x0003D;</mo><msub><mi>N</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">g</mi></mrow></mrow></msub><mo>&#x000B7;</mo><msub><mover><mrow><mi>t</mi></mrow><mo stretchy="true">&#x000AF;</mo></mover><mrow><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">y</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub></mrow></mrow></math></div>
 <h3 id="model-by-model-pathway-details">Model-by-model pathway details<a class="headerlink" href="#model-by-model-pathway-details" title="Permanent link">&para;</a></h3>
 <h4 id="debye-huckel-full">Debye-Huckel Full<a class="headerlink" href="#debye-huckel-full" title="Permanent link">&para;</a></h4>
 <ul>
 <li>Uses full ionic-strength-dependent Debye-Huckel activity correction.</li>
 <li>Predicted pH comes from equilibrium solve with activity-adjusted terms.</li>
-<li>Speciation uses \(\alpha_0,\alpha_1,\alpha_2\) with solved \(H^+\).</li>
+<li>Speciation uses <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003B1;</mi><mn>0</mn></msub><mo>&#x0002C;</mo><msub><mi>&#x003B1;</mi><mn>1</mn></msub><mo>&#x0002C;</mo><msub><mi>&#x003B1;</mi><mn>2</mn></msub></mrow></math></span> with solved <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msup><mi>H</mi><mo>&#x0002B;</mo></msup></mrow></math></span>.</li>
 <li>Required CO2 is still dashboard precedence-driven (guidance -&gt; calibration -&gt; planning), not a separate model-only requirement channel.</li>
 </ul>
 <h4 id="debye-huckel-capped">Debye-Huckel Capped<a class="headerlink" href="#debye-huckel-capped" title="Permanent link">&para;</a></h4>
@@ -1564,12 +1492,12 @@ T_{\mathrm{remaining}}&amp;=N_{\mathrm{remaining}}\cdot \bar{t}_{\mathrm{cycle}}
 <h4 id="davies-limited">Davies Limited<a class="headerlink" href="#davies-limited" title="Permanent link">&para;</a></h4>
 <ul>
 <li>Uses Davies activity equation in limited ionic-strength regime.</li>
-<li>pH/speciation derive from charge/equilibrium solve under Davies \(\gamma_i\) corrections.</li>
+<li>pH/speciation derive from charge/equilibrium solve under Davies <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003B3;</mi><mi>i</mi></msub></mrow></math></span> corrections.</li>
 <li>Requirement/completion/forecast metrics are computed by shared summary logic after solve outputs are available.</li>
 </ul>
 <h4 id="pitzer-lite">Pitzer Lite<a class="headerlink" href="#pitzer-lite" title="Permanent link">&para;</a></h4>
 <ul>
-<li>Uses reduced Pitzer interaction terms (\(B_{ij}, C_{ij}\)-style virial interactions).</li>
+<li>Uses reduced Pitzer interaction terms (<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>B</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>&#x0002C;</mo><msub><mi>C</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub></mrow></math></span>-style virial interactions).</li>
 <li>pH/speciation are produced with interaction-adjusted activities.</li>
 <li>Requirement/forecast use the same precedence and tile equations as other models.</li>
 </ul>
@@ -1582,15 +1510,9 @@ T_{\mathrm{remaining}}&amp;=N_{\mathrm{remaining}}\cdot \bar{t}_{\mathrm{cycle}}
 <h4 id="naoh-co2-pitzer-hmw-deepest-detail">NaOH-CO2 Pitzer HMW (deepest detail)<a class="headerlink" href="#naoh-co2-pitzer-hmw-deepest-detail" title="Permanent link">&para;</a></h4>
 <p>This is the deepest and most traceable model path in the viewer/manual.</p>
 <p>Context normalization:</p>
-<pre><code class="language-latex">\begin{aligned}
-kg_{\mathrm{water}} &amp;= \frac{m_{\mathrm{water}}}{1000}, \\
-m_{\mathrm{NaT}} &amp;= \frac{m_{\mathrm{NaOH}}/MW_{\mathrm{NaOH}}}{kg_{\mathrm{water}}}, \\
-m_{CT} &amp;= \frac{m_{\mathrm{CO_2}}/MW_{\mathrm{CO_2}}}{kg_{\mathrm{water}}}
-\end{aligned}
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mi>k</mi><msub><mi>g</mi><mrow><mrow><mi mathvariant="normal">w</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi></mrow></mrow></msub><mi>&</mi><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">w</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi></mrow></mrow></msub></mrow><mrow><mn>1000</mn></mrow></mfrac><mo>&#x0002C;</mo><mspace linebreak="newline" /><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">T</mi></mrow></mrow></msub><mi>&</mi><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow></msub><mo>&#x0002F;</mo><mi>M</mi><msub><mi>W</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow></msub></mrow><mrow><mi>k</mi><msub><mi>g</mi><mrow><mrow><mi mathvariant="normal">w</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi></mrow></mrow></msub></mrow></mfrac><mo>&#x0002C;</mo><mspace linebreak="newline" /><msub><mi>m</mi><mrow><mi>C</mi><mi>T</mi></mrow></msub><mi>&</mi><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow></mrow></msub><mo>&#x0002F;</mo><mi>M</mi><msub><mi>W</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow></mrow></msub></mrow><mrow><mi>k</mi><msub><mi>g</mi><mrow><mrow><mi mathvariant="normal">w</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi></mrow></mrow></msub></mrow></mfrac></mrow></mrow></math></div>
 <p>Core solve outputs surfaced:</p>
-<pre><code class="language-latex">C_T=[H_2CO_3]+[HCO_3^-]+[CO_3^{2-}]
-</code></pre>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>C</mi><mi>T</mi></msub><mo>&#x0003D;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msub><mi>H</mi><mn>2</mn></msub><mi>C</mi><msub><mi>O</mi><mn>3</mn></msub><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0002B;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mi>H</mi><mi>C</mi><msubsup><mi>O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0002B;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mi>C</mi><msubsup><mi>O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></div>
 <p>Runtime path gating:<br>
 - Rust path is used only when backend health/payload/parity guards pass.<br>
 - Python fallback is fail-closed and remains authoritative when Rust is unavailable/incompatible/unhealthy.<br>
@@ -1625,47 +1547,47 @@ m_{CT} &amp;= \frac{m_{\mathrm{CO_2}}/MW_{\mathrm{CO_2}}}{kg_{\mathrm{water}}}
 </thead>
 <tbody>
 <tr>
-<td>\( \mathrm{pH}=-\log_{10}[H^+] \) and model solve</td>
+<td><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">H</mi></mrow><mo>&#x0003D;</mo><mo>&#x02212;</mo><msub><mi>log</mi><mrow><mn>10</mn></mrow></msub><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span> and model solve</td>
 <td><code>Equilibrium pH (Guidance)</code>, Speciation Snapshot pH lines</td>
 <td><code>equilibrium_ph</code>, <code>latest_*_ph</code> channels</td>
 </tr>
 <tr>
-<td>\( \alpha_i \) fraction equations</td>
+<td><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003B1;</mi><mi>i</mi></msub></mrow></math></span> fraction equations</td>
 <td>Speciation Snapshot fractions, cycle-table fraction columns</td>
 <td><code>fractions</code>, <code>latest_corrected_fractions</code></td>
 </tr>
 <tr>
-<td>\( C_T=[H_2CO_3]+[HCO_3^-]+[CO_3^{2-}] \)</td>
+<td><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>C</mi><mi>T</mi></msub><mo>&#x0003D;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msub><mi>H</mi><mn>2</mn></msub><mi>C</mi><msub><mi>O</mi><mn>3</mn></msub><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0002B;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mi>H</mi><mi>C</mi><msubsup><mi>O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0002B;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mi>C</mi><msubsup><mi>O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span></td>
 <td>NaOH Pitzer detail, speciation diagnostics</td>
 <td>model concentrations payload</td>
 </tr>
 <tr>
-<td>Requirement precedence + \(m_{\mathrm{required}}\)</td>
+<td>Requirement precedence + <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">q</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></mrow></msub></mrow></math></span></td>
 <td>Target Gap &amp; CO2 Needed tile, Forecast tile, summary text</td>
 <td><code>co2_requirement_source</code>, <code>co2_required_for_target_ph_g</code></td>
 </tr>
 <tr>
-<td>\( \Delta m_{\mathrm{target}}=\max(m_{\mathrm{required}}-m_{\mathrm{uptake}},0) \)</td>
+<td><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x00394;</mi><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">g</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">t</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mo>max</mo><mo stretchy="false">&#x00028;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">q</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></mrow></msub><mo>&#x02212;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">u</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">k</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub><mo>&#x0002C;</mo><mn>0</mn><mo stretchy="false">&#x00029;</mo></mrow></math></span></td>
 <td><code>CO2 left to target</code> / gap bars</td>
 <td><code>additional_co2_required_g</code></td>
 </tr>
 <tr>
-<td>\( C_{\mathrm{raw}}, C_{\mathrm{corr}} \)</td>
+<td><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>C</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">w</mi></mrow></mrow></msub><mo>&#x0002C;</mo><msub><mi>C</mi><mrow><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">r</mi></mrow></mrow></msub></mrow></math></span></td>
 <td>Completion gauges and reaction-progress text</td>
 <td><code>planning_completion_pct</code>, <code>corrected_planning_completion_pct</code></td>
 </tr>
 <tr>
-<td>\( C_{\mathrm{eq}} \)</td>
+<td><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>C</mi><mrow><mrow><mi mathvariant="normal">e</mi><mi mathvariant="normal">q</mi></mrow></mrow></msub></mrow></math></span></td>
 <td>Equivalence progress metrics</td>
 <td><code>equivalence_completion_pct</code>, <code>corrected_equivalence_completion_pct</code></td>
 </tr>
 <tr>
-<td>\(N_{\mathrm{remaining}}, T_{\mathrm{remaining}}\)</td>
+<td><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>N</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">g</mi></mrow></mrow></msub><mo>&#x0002C;</mo><msub><mi>T</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">g</mi></mrow></mrow></msub></mrow></math></span></td>
 <td>Forecast to Target tile</td>
 <td><code>forecast_remaining_cycles</code>, <code>forecast_remaining_time_x</code>, <code>forecast_tail_rate_g_per_cycle</code></td>
 </tr>
 <tr>
-<td>Cycle dose conversion \( \Delta m = \Delta n \cdot MW \)</td>
+<td>Cycle dose conversion <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x00394;</mi><mi>m</mi><mo>&#x0003D;</mo><mi>&#x00394;</mi><mi>n</mi><mo>&#x000B7;</mo><mi>M</mi><mi>W</mi></mrow></math></span></td>
 <td>Cycle-Level Derivations entries</td>
 <td>per-cycle <code>co2_moles</code>, <code>co2_g</code>, <code>co2_total_moles</code></td>
 </tr>
@@ -2050,7 +1972,6 @@ m_{CT} &amp;= \frac{m_{\mathrm{CO_2}}/MW_{\mathrm{CO_2}}}{kg_{\mathrm{water}}}
     (function () {
       const filterInput = document.getElementById("toc-filter");
       const tocNav = document.getElementById("toc-nav");
-      const manualContent = document.getElementById("manual-content");
       const tocLinks = Array.from(tocNav.querySelectorAll("a[href^='#']"));
       const headingMap = new Map();
       const headingNodes = Array.from(document.querySelectorAll("#manual-content h2, #manual-content h3, #manual-content h4"));
@@ -2078,140 +1999,6 @@ m_{CT} &amp;= \frac{m_{\mathrm{CO_2}}/MW_{\mathrm{CO_2}}}{kg_{\mathrm{water}}}
         filterInput.addEventListener("input", applyFilter);
       }
       applyFilter();
-
-      function prepareLatexDisplayBlocks() {
-        if (!manualContent) {
-          return [];
-        }
-        const latexCodeNodes = Array.from(
-          manualContent.querySelectorAll("pre > code.language-latex")
-        );
-        const prepared = [];
-        for (const codeNode of latexCodeNodes) {
-          const preNode = codeNode.closest("pre");
-          if (!preNode || !preNode.parentNode) {
-            continue;
-          }
-          const latexRaw = String(codeNode.textContent || "").trim();
-          if (!latexRaw) {
-            continue;
-          }
-          const displayNode = document.createElement("div");
-          displayNode.className = "math-display-block";
-          displayNode.textContent = `\\[\n${latexRaw}\n\\]`;
-          preNode.parentNode.insertBefore(displayNode, preNode);
-          preNode.classList.add("latex-fallback");
-          preNode.removeAttribute("data-math-render-status");
-          prepared.push({ displayNode, fallbackNode: preNode, warningNode: null });
-        }
-        return prepared;
-      }
-
-      function setMathRenderFailure(entry, reason) {
-        if (entry.displayNode && entry.displayNode.parentNode) {
-          entry.displayNode.parentNode.removeChild(entry.displayNode);
-        }
-        if (!entry.warningNode && entry.fallbackNode.parentNode) {
-          const warningNode = document.createElement("div");
-          warningNode.className = "math-render-warning";
-          entry.fallbackNode.parentNode.insertBefore(warningNode, entry.fallbackNode);
-          entry.warningNode = warningNode;
-        }
-        if (entry.warningNode) {
-          entry.warningNode.textContent = reason;
-        }
-        entry.fallbackNode.classList.remove("math-fallback-hidden");
-        entry.fallbackNode.setAttribute("data-math-render-status", "failed");
-      }
-
-      function loadScript(src) {
-        return new Promise(function (resolve, reject) {
-          const script = document.createElement("script");
-          script.src = src;
-          script.async = true;
-          script.onload = function () {
-            resolve(src);
-          };
-          script.onerror = function () {
-            reject(new Error("Failed to load " + src));
-          };
-          document.head.appendChild(script);
-        });
-      }
-
-      function loadMathJaxDualMode() {
-        if (window.MathJax && typeof window.MathJax.typesetPromise === "function") {
-          return Promise.resolve("existing");
-        }
-        window.MathJax = {
-          tex: {
-            inlineMath: [["\\(", "\\)"], ["$", "$"]],
-            displayMath: [["\\[", "\\]"]],
-            processEscapes: true
-          },
-          options: {
-            skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"]
-          }
-        };
-        const mathJaxSources = [
-          "mathjax/es5/tex-mml-chtml.js",
-          "../mathjax/es5/tex-mml-chtml.js",
-          "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js",
-          "https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-mml-chtml.js"
-        ];
-        let index = 0;
-        function tryLoadNextSource() {
-          if (index >= mathJaxSources.length) {
-            return Promise.reject(new Error("No MathJax source could be loaded."));
-          }
-          const source = mathJaxSources[index];
-          index += 1;
-          return loadScript(source).catch(function () {
-            return tryLoadNextSource();
-          });
-        }
-        return tryLoadNextSource();
-      }
-
-      function initializeMathRendering() {
-        const prepared = prepareLatexDisplayBlocks();
-        if (!prepared.length) {
-          return;
-        }
-        loadMathJaxDualMode()
-          .then(function () {
-            if (!(window.MathJax && typeof window.MathJax.typesetPromise === "function")) {
-              throw new Error("MathJax unavailable after script load.");
-            }
-            const renderTasks = prepared.map(function (entry) {
-              return window.MathJax.typesetPromise([entry.displayNode])
-                .then(function () {
-                  if (entry.warningNode && entry.warningNode.parentNode) {
-                    entry.warningNode.parentNode.removeChild(entry.warningNode);
-                  }
-                  entry.warningNode = null;
-                  entry.fallbackNode.removeAttribute("data-math-render-status");
-                  entry.fallbackNode.classList.add("math-fallback-hidden");
-                })
-                .catch(function () {
-                  setMathRenderFailure(
-                    entry,
-                    "Math rendering failed for this block. Showing raw LaTeX."
-                  );
-                });
-            });
-            return Promise.all(renderTasks);
-          })
-          .catch(function () {
-            for (const entry of prepared) {
-              setMathRenderFailure(
-                entry,
-                "MathJax could not be loaded. Showing raw LaTeX."
-              );
-            }
-          });
-      }
-      initializeMathRendering();
 
       const lightbox = document.getElementById("image-lightbox");
       const lightboxImage = document.getElementById("lightbox-image");

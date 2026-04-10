@@ -1,4 +1,4 @@
-"""Regression tests for docs HTML math-render runtime shell behavior."""
+"""Regression tests for deterministic docs MathML build contracts."""
 
 from __future__ import annotations
 
@@ -71,116 +71,23 @@ def build_docs_html(script_name: str, module_name: str) -> str:
 @pytest.mark.parametrize(
     ("script_name", "module_name"),
     [
-        ("build_user_manual.py", "build_user_manual_render_test"),
-        ("build_equilibrium_walkthrough.py", "build_equilibrium_render_test"),
-    ],
-)
-def test_mathjax_source_priority_order(script_name: str, module_name: str) -> None:
-    """Verify MathJax source list exists and preserves required priority order.
-
-    Purpose:
-    - Ensure docs shells attempt local paths before CDN fallbacks consistently.
-    Why:
-    - Source-order regressions can break offline and relative-path workflows.
-    Inputs:
-    - ``script_name`` and ``module_name`` from parametrized test cases.
-    Outputs:
-    - None.
-    Side effects:
-    - Reads source markdown via script ``build_once()``.
-    Exceptions:
-    - Raises assertions when required source entries are missing or reordered.
-    """
-
-    html = build_docs_html(script_name, module_name)
-    expected_sources = [
-        "mathjax/es5/tex-mml-chtml.js",
-        "../mathjax/es5/tex-mml-chtml.js",
-        "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js",
-        "https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-mml-chtml.js",
-    ]
-    indices = [html.find(source) for source in expected_sources]
-    assert all(index >= 0 for index in indices)
-    assert indices == sorted(indices)
-
-
-@pytest.mark.parametrize(
-    ("script_name", "module_name"),
-    [
-        ("build_user_manual.py", "build_user_manual_typeset_test"),
-        ("build_equilibrium_walkthrough.py", "build_equilibrium_typeset_test"),
-    ],
-)
-def test_per_block_typeset_contract(script_name: str, module_name: str) -> None:
-    """Ensure fenced-LaTeX rendering is per-block rather than batch all-or-nothing.
-
-    Purpose:
-    - Lock in block-level MathJax typesetting behavior for resiliency.
-    Why:
-    - One invalid fenced block must not prevent other valid blocks from rendering.
-    Inputs:
-    - ``script_name`` and ``module_name`` from parametrized test cases.
-    Outputs:
-    - None.
-    Side effects:
-    - Reads source markdown via script ``build_once()``.
-    Exceptions:
-    - Raises assertions when batch-only typesetting contract reappears.
-    """
-
-    html = build_docs_html(script_name, module_name)
-    assert "window.MathJax.typesetPromise([entry.displayNode])" in html
-    assert "window.MathJax.typesetPromise(displayNodes)" not in html
-
-
-@pytest.mark.parametrize(
-    ("script_name", "module_name"),
-    [
-        ("build_user_manual.py", "build_user_manual_warning_test"),
-        ("build_equilibrium_walkthrough.py", "build_equilibrium_warning_test"),
-    ],
-)
-def test_failure_warning_contract(script_name: str, module_name: str) -> None:
-    """Validate per-block failure warning and fallback status annotations exist.
-
-    Purpose:
-    - Enforce explicit user-visible fallback behavior on math-render failures.
-    Why:
-    - Operators need clear diagnostics when one LaTeX block cannot be typeset.
-    Inputs:
-    - ``script_name`` and ``module_name`` from parametrized test cases.
-    Outputs:
-    - None.
-    Side effects:
-    - Reads source markdown via script ``build_once()``.
-    Exceptions:
-    - Raises assertions when failure-warning contract markers are missing.
-    """
-
-    html = build_docs_html(script_name, module_name)
-    assert 'data-math-render-status="failed"' in html
-    assert "math-render-warning" in html
-    assert "Math rendering failed for this block. Showing raw LaTeX." in html
-    assert "MathJax could not be loaded. Showing raw LaTeX." in html
-
-
-@pytest.mark.parametrize(
-    ("script_name", "module_name"),
-    [
-        ("build_user_manual.py", "build_user_manual_single_bootstrap_test"),
+        ("build_user_manual.py", "build_user_manual_mathml_contract_test"),
         (
             "build_equilibrium_walkthrough.py",
-            "build_equilibrium_single_bootstrap_test",
+            "build_equilibrium_mathml_contract_test",
         ),
     ],
 )
-def test_single_math_bootstrap_pipeline(script_name: str, module_name: str) -> None:
-    """Ensure each generated shell emits one canonical math bootstrap pipeline.
+def test_mathml_contract_no_runtime_mathjax(
+    script_name: str,
+    module_name: str,
+) -> None:
+    """Ensure generated docs shells contain MathML and no runtime MathJax hooks.
 
     Purpose:
-    - Guard against duplicated MathJax bootstrap blocks in generated docs shells.
+    - Lock in deterministic build-time math rendering contract.
     Why:
-    - Duplicate bootstrap paths can race each other and cause unstable LaTeX output.
+    - Runtime MathJax loaders can fail on offline/restricted environments.
     Inputs:
     - ``script_name`` and ``module_name`` from parametrized test cases.
     Outputs:
@@ -188,12 +95,96 @@ def test_single_math_bootstrap_pipeline(script_name: str, module_name: str) -> N
     Side effects:
     - Reads source markdown via script ``build_once()``.
     Exceptions:
-    - Raises assertions when canonical math helper functions are duplicated.
+    - Raises assertions when runtime MathJax bootstrap paths reappear.
     """
 
     html = build_docs_html(script_name, module_name)
-    assert html.count("function prepareLatexDisplayBlocks()") == 1
-    assert html.count("function setMathRenderFailure(entry, reason)") == 1
-    assert html.count("function loadScript(src)") == 1
-    assert html.count("function loadMathJaxDualMode()") == 1
-    assert html.count("function initializeMathRendering()") == 1
+    assert "<math" in html
+    assert "window.MathJax" not in html
+    assert "loadMathJaxDualMode" not in html
+    assert "typesetPromise" not in html
+
+
+@pytest.mark.parametrize(
+    ("script_name", "module_name"),
+    [
+        ("build_user_manual.py", "build_user_manual_no_fenced_latex_test"),
+        (
+            "build_equilibrium_walkthrough.py",
+            "build_equilibrium_no_fenced_latex_test",
+        ),
+    ],
+)
+def test_no_fenced_latex_code_blocks_in_output(
+    script_name: str,
+    module_name: str,
+) -> None:
+    """Ensure generated output contains no raw fenced-LaTeX code blocks.
+
+    Purpose:
+    - Confirm fenced `````latex```` payloads are converted to MathML at build time.
+    Why:
+    - Shipping raw LaTeX blocks would indicate conversion regressions.
+    Inputs:
+    - ``script_name`` and ``module_name`` from parametrized test cases.
+    Outputs:
+    - None.
+    Side effects:
+    - Reads source markdown via script ``build_once()``.
+    Exceptions:
+    - Raises assertions when fenced-LaTeX code blocks remain in output.
+    """
+
+    html = build_docs_html(script_name, module_name)
+    assert 'class="language-latex"' not in html
+    assert "<code class=\"language-latex\">" not in html
+    assert 'data-math-origin="latex-fence"' in html
+
+
+@pytest.mark.parametrize(
+    ("script_name", "module_name"),
+    [
+        ("build_user_manual.py", "build_user_manual_fail_fast_test"),
+        ("build_equilibrium_walkthrough.py", "build_equilibrium_fail_fast_test"),
+    ],
+)
+def test_mathml_conversion_fail_fast_contract(
+    script_name: str,
+    module_name: str,
+) -> None:
+    """Ensure conversion failures raise immediately with actionable diagnostics.
+
+    Purpose:
+    - Lock strict fail-fast behavior for docs math conversion.
+    Why:
+    - Broken equations must fail builds instead of shipping stale/raw math.
+    Inputs:
+    - ``script_name`` and ``module_name`` from parametrized test cases.
+    Outputs:
+    - None.
+    Side effects:
+    - Temporarily patches conversion callable inside loaded script module.
+    Exceptions:
+    - Raises assertions when conversion failures are swallowed.
+    """
+
+    module = load_script_module(script_name, module_name)
+    render_mathml_html = module.render_mathml_html
+    assert callable(render_mathml_html)
+
+    original_converter = module.latex_to_mathml
+
+    def fail_converter(*_args, **_kwargs) -> str:
+        """Force converter failure to validate build failure behavior."""
+
+        raise RuntimeError("forced conversion failure")
+
+    module.latex_to_mathml = fail_converter
+    try:
+        with pytest.raises(ValueError, match="failed to convert LaTeX"):
+            render_mathml_html(
+                '<pre><code class="language-latex">x^2</code></pre>',
+                source_label=f"{script_name} forced failure",
+            )
+    finally:
+        module.latex_to_mathml = original_converter

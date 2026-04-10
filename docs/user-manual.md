@@ -6,6 +6,8 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Generated artifact: `docs/user-manual.html`
 - Build command: `python scripts/build_user_manual.py`
 - Validation command: `python scripts/build_user_manual.py --check`
+- Browser smoke setup: `python -m playwright install chromium`
+- Browser smoke test: `python -m pytest -q tests/test_docs_math_runtime_playwright.py`
 
 Current release: `v4.14.2`
 
@@ -60,8 +62,9 @@ Define the operating contract for this manual so future updates remain complete 
 1. Update this Markdown file when any user-facing behavior, workflow, or UI control changes.
 2. Run `python scripts/build_user_manual.py` to regenerate HTML.
 3. Run `python scripts/build_user_manual.py --check` to confirm generated HTML is current.
-4. Ensure screenshot references resolve and correspond to current UI behavior.
-5. Confirm `README.md` continues to point users to canonical docs in `docs/`.
+4. Run `python -m pytest -q tests/test_docs_math_runtime_playwright.py` to verify browser math rendering contracts.
+5. Ensure screenshot references resolve and correspond to current UI behavior.
+6. Confirm `README.md` continues to point users to canonical docs in `docs/`.
 
 ### Expected outputs
 - A synchronized pair: `docs/user-manual.md` and `docs/user-manual.html`.

@@ -22,10 +22,13 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
+import re
 import sys
 from pathlib import Path
 
 import markdown
+from latex2mathml.converter import convert as latex_to_mathml
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
@@ -36,6 +39,21 @@ INLINE_MATH_SENTINELS = (
     (r"\)", "GL260EQMATHCLOSEPARENZXCV"),
     (r"\[", "GL260EQMATHOPENBRACKETZXCV"),
     (r"\]", "GL260EQMATHCLOSEBRACKETZXCV"),
+)
+LATEX_CODE_BLOCK_PATTERN = re.compile(
+    r"(?is)<pre[^>]*>\s*<code(?P<attrs>[^>]*)>(?P<latex>.*?)</code>\s*</pre>"
+)
+LANGUAGE_LATEX_CLASS_PATTERN = re.compile(
+    r"""class\s*=\s*(["'])[^"']*\blanguage-latex\b[^"']*\1""",
+    re.IGNORECASE,
+)
+PROTECTED_HTML_BLOCK_PATTERN = re.compile(
+    r"(?is)<pre\b.*?</pre>|<code\b.*?</code>|<script\b.*?</script>|<style\b.*?</style>"
+)
+INLINE_PAREN_MATH_PATTERN = re.compile(r"\\\((.+?)\\\)", re.DOTALL)
+INLINE_BRACKET_MATH_PATTERN = re.compile(r"\\\[(.+?)\\\]", re.DOTALL)
+CONCENTRATION_BRACKET_PATTERN = re.compile(
+    r"(?<!\\left)\[(\s*(?:\\mathrm\{[^{}\n]+\}|[A-Za-z0-9\\^_+\-{}]+)\s*)\](?!\s*\\right)"
 )
 
 
@@ -140,7 +158,7 @@ def _protect_inline_math_delimiters(markdown_text: str) -> str:
     Purpose:
         Preserve escaped math delimiters that Python-Markdown may unescape.
     Why:
-        LaTeX delimiters must survive conversion for runtime MathJax rendering.
+        LaTeX delimiters must survive conversion for build-time MathML rendering.
     Inputs:
         markdown_text: Source Markdown payload.
     Outputs:
@@ -163,7 +181,7 @@ def _restore_inline_math_delimiters(rendered_text: str) -> str:
     Purpose:
         Replace temporary sentinel tokens with original math delimiters.
     Why:
-        Final HTML requires canonical delimiters for MathJax parsing.
+        Final HTML requires canonical delimiters for MathML conversion.
     Inputs:
         rendered_text: Converted HTML fragment.
     Outputs:
@@ -180,13 +198,235 @@ def _restore_inline_math_delimiters(rendered_text: str) -> str:
     return restored_text
 
 
+def _convert_latex_fragment(
+    *,
+    latex_source: str,
+    display_mode: str,
+    context_label: str,
+) -> str:
+    """Convert one LaTeX fragment to MathML with fail-fast diagnostics.
+
+    Purpose:
+        Produce deterministic MathML output from one raw LaTeX expression.
+    Why:
+        Build-time conversion removes runtime MathJax/CDN dependencies and keeps
+        rendered walkthrough output stable across environments.
+    Inputs:
+        latex_source: Raw LaTeX expression text.
+        display_mode: Target layout mode (`inline` or `block`).
+        context_label: Source context used in conversion error messages.
+    Outputs:
+        MathML fragment string emitted by ``latex2mathml``.
+    Side Effects:
+        None.
+    Exceptions:
+        Raises ``ValueError`` when conversion fails or source is empty.
+    """
+
+    normalized_latex = str(latex_source or "").strip()
+    if not normalized_latex:
+        raise ValueError(f"{context_label}: empty LaTeX expression.")
+    # latex2mathml is strict about concentration bracket notation like `[H^+]`.
+    normalized_latex = CONCENTRATION_BRACKET_PATTERN.sub(
+        r"\\left[\1\\right]",
+        normalized_latex,
+    )
+    try:
+        return latex_to_mathml(normalized_latex, display=display_mode)
+    except TypeError as exc:
+        # Keep compatibility with converter builds that do not expose `display`.
+        if "display" not in str(exc):
+            preview = normalized_latex.replace("\n", " ")[:120]
+            raise ValueError(
+                f"{context_label}: failed to convert LaTeX `{preview}` ({exc})."
+            ) from exc
+        try:
+            converted = latex_to_mathml(normalized_latex)
+        except Exception as fallback_exc:  # pragma: no cover - safety path
+            preview = normalized_latex.replace("\n", " ")[:120]
+            raise ValueError(
+                f"{context_label}: failed to convert LaTeX `{preview}` ({fallback_exc})."
+            ) from fallback_exc
+        if display_mode == "block" and "display=" not in converted:
+            converted = converted.replace("<math", '<math display="block"', 1)
+        return converted
+    except Exception as exc:
+        preview = normalized_latex.replace("\n", " ")[:120]
+        raise ValueError(
+            f"{context_label}: failed to convert LaTeX `{preview}` ({exc})."
+        ) from exc
+
+
+def _replace_latex_fence_blocks(rendered_html: str, *, source_label: str) -> str:
+    """Replace fenced LaTeX code blocks with build-time MathML wrappers.
+
+    Purpose:
+        Convert `````latex```` fence output from Markdown into rendered MathML.
+    Why:
+        Fenced equations are the primary math payload in this walkthrough and must
+        not rely on runtime JavaScript typesetting.
+    Inputs:
+        rendered_html: HTML emitted by Markdown conversion.
+        source_label: Source file label for conversion diagnostics.
+    Outputs:
+        HTML string with fenced LaTeX blocks replaced by MathML containers.
+    Side Effects:
+        None.
+    Exceptions:
+        Raises ``ValueError`` when any fenced LaTeX block fails conversion.
+    """
+
+    block_index = 0
+
+    def replace_match(match: re.Match[str]) -> str:
+        nonlocal block_index
+        block_index += 1
+        attrs = str(match.group("attrs") or "")
+        if LANGUAGE_LATEX_CLASS_PATTERN.search(attrs) is None:
+            return str(match.group(0))
+        latex_raw = html.unescape(str(match.group("latex") or ""))
+        mathml = _convert_latex_fragment(
+            latex_source=latex_raw,
+            display_mode="block",
+            context_label=f"{source_label} fenced block #{block_index}",
+        )
+        return (
+            '<div class="math-display-block" data-math-origin="latex-fence">'
+            f"{mathml}"
+            "</div>"
+        )
+
+    return LATEX_CODE_BLOCK_PATTERN.sub(replace_match, rendered_html)
+
+
+def _replace_inline_latex_in_segment(segment_text: str, *, source_label: str) -> str:
+    """Convert inline LaTeX delimiters within one HTML text segment.
+
+    Purpose:
+        Render ``\\(...\\)`` and ``\\[...\\]`` expressions into MathML wrappers.
+    Why:
+        Inline equations appear in walkthrough prose and need deterministic output
+        without runtime MathJax dependency.
+    Inputs:
+        segment_text: HTML text that does not include protected code/script tags.
+        source_label: Source file label for conversion diagnostics.
+    Outputs:
+        Updated segment text with inline LaTeX replaced by MathML wrappers.
+    Side Effects:
+        None.
+    Exceptions:
+        Raises ``ValueError`` when any inline LaTeX expression fails conversion.
+    """
+
+    inline_index = 0
+    display_index = 0
+
+    def replace_bracket(match: re.Match[str]) -> str:
+        nonlocal display_index
+        display_index += 1
+        latex_raw = html.unescape(str(match.group(1) or ""))
+        mathml = _convert_latex_fragment(
+            latex_source=latex_raw,
+            display_mode="block",
+            context_label=f"{source_label} inline-display #{display_index}",
+        )
+        return (
+            '<span class="math-inline math-inline-display" '
+            'data-math-origin="inline-display">'
+            f"{mathml}"
+            "</span>"
+        )
+
+    converted = INLINE_BRACKET_MATH_PATTERN.sub(replace_bracket, segment_text)
+
+    def replace_paren(match: re.Match[str]) -> str:
+        nonlocal inline_index
+        inline_index += 1
+        latex_raw = html.unescape(str(match.group(1) or ""))
+        mathml = _convert_latex_fragment(
+            latex_source=latex_raw,
+            display_mode="inline",
+            context_label=f"{source_label} inline #{inline_index}",
+        )
+        return (
+            '<span class="math-inline" data-math-origin="inline">'
+            f"{mathml}"
+            "</span>"
+        )
+
+    return INLINE_PAREN_MATH_PATTERN.sub(replace_paren, converted)
+
+
+def _replace_inline_latex_blocks(rendered_html: str, *, source_label: str) -> str:
+    """Convert inline LaTeX delimiters outside protected code/script blocks.
+
+    Purpose:
+        Apply inline LaTeX conversion only where prose text is rendered.
+    Why:
+        Code snippets and scripts may contain backslash patterns that should never
+        be treated as math expressions.
+    Inputs:
+        rendered_html: HTML containing prose and structured nodes.
+        source_label: Source file label for conversion diagnostics.
+    Outputs:
+        HTML with inline LaTeX delimiters replaced by MathML wrappers.
+    Side Effects:
+        None.
+    Exceptions:
+        Raises ``ValueError`` when inline conversion fails.
+    """
+
+    output_parts: list[str] = []
+    cursor = 0
+    # Process only gaps between protected blocks so code/script text is untouched.
+    for match in PROTECTED_HTML_BLOCK_PATTERN.finditer(rendered_html):
+        segment = rendered_html[cursor : match.start()]
+        output_parts.append(
+            _replace_inline_latex_in_segment(segment, source_label=source_label)
+        )
+        output_parts.append(str(match.group(0)))
+        cursor = match.end()
+    output_parts.append(
+        _replace_inline_latex_in_segment(rendered_html[cursor:], source_label=source_label)
+    )
+    return "".join(output_parts)
+
+
+def render_mathml_html(rendered_html: str, *, source_label: str) -> str:
+    """Render fenced and inline LaTeX in one HTML fragment to MathML.
+
+    Purpose:
+        Run the full deterministic build-time math conversion pass.
+    Why:
+        Walkthrough output must render equations without any runtime script fetch.
+    Inputs:
+        rendered_html: HTML fragment produced by Markdown conversion.
+        source_label: Source file label for conversion diagnostics.
+    Outputs:
+        HTML fragment with LaTeX expressions replaced by MathML wrappers.
+    Side Effects:
+        None.
+    Exceptions:
+        Raises ``ValueError`` when any LaTeX expression fails conversion.
+    """
+
+    with_fences_converted = _replace_latex_fence_blocks(
+        rendered_html,
+        source_label=source_label,
+    )
+    return _replace_inline_latex_blocks(
+        with_fences_converted,
+        source_label=source_label,
+    )
+
+
 def render_markdown(markdown_text: str) -> tuple[str, str]:
     """Render source Markdown into body and TOC HTML.
 
     Purpose:
-        Convert source Markdown into semantic HTML plus table of contents.
+        Convert source Markdown into semantic HTML, table of contents, and MathML.
     Why:
-        The walkthrough needs both structured content and quick navigation.
+        The walkthrough needs deterministic math rendering without runtime scripts.
     Inputs:
         markdown_text: Source Markdown text.
     Outputs:
@@ -211,9 +451,17 @@ def render_markdown(markdown_text: str) -> tuple[str, str]:
         extension_configs={"toc": {"permalink": False, "toc_depth": "2-4"}},
         output_format="html5",
     )
-    body_html = _restore_inline_math_delimiters(md.convert(protected))
-    toc_html = _restore_inline_math_delimiters(
+    restored_body_html = _restore_inline_math_delimiters(md.convert(protected))
+    restored_toc_html = _restore_inline_math_delimiters(
         md.toc or "<ul><li>No headings detected</li></ul>"
+    )
+    body_html = render_mathml_html(
+        restored_body_html,
+        source_label="docs/equilibrium-walkthrough.md body",
+    )
+    toc_html = render_mathml_html(
+        restored_toc_html,
+        source_label="docs/equilibrium-walkthrough.md toc",
     )
     return body_html, toc_html
 
@@ -222,10 +470,10 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     """Wrap rendered content in a standalone interactive HTML shell.
 
     Purpose:
-        Apply layout, styling, TOC filtering, and LaTeX rendering bootstrap.
+        Apply layout, styling, TOC filtering, and deterministic math presentation.
     Why:
         Presentation use needs an immediately readable artifact with reliable
-        math rendering and graceful fallback behavior.
+        build-time MathML rendering and no runtime script dependency.
     Inputs:
         body_html: Rendered content fragment.
         toc_html: Table-of-contents fragment.
@@ -545,10 +793,10 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     .content th {{ background: #edf7fc; color: #163547; font-family: var(--heading-font); text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.85rem; }}
     .content tr:nth-child(even) td {{ background: #f9fdff; }}
     .math-display-block {{ border: 1px solid #d5e5ef; border-radius: 10px; background: #f8fcff; margin: 0.2rem 0; overflow-x: auto; padding: 0.6rem 0.7rem; }}
-    .content pre.latex-fallback {{ margin-top: 0.5rem; }}
-    .content pre.latex-fallback.math-fallback-hidden {{ display: none; }}
-    .math-render-warning {{ border: 1px solid #d8a652; background: #fff4e3; color: #7a4f00; border-radius: 8px; padding: 0.42rem 0.62rem; margin-top: 0.38rem; font-size: 0.85rem; font-weight: 700; }}
-    .content pre.latex-fallback[data-math-render-status="failed"] {{ display: block; border-color: #8d3a3a; box-shadow: inset 0 0 0 1px rgba(198, 86, 86, 0.25); }}
+    .content .math-inline {{ display: inline-block; max-width: 100%; vertical-align: middle; }}
+    .content .math-inline-display {{ display: block; margin: 0.2rem 0; overflow-x: auto; }}
+    .content .math-display-block math,
+    .content .math-inline math {{ max-width: 100%; }}
     .pco2-sweep-chart-mount {{ margin: 0.9rem 0 1.2rem; border: 1px solid #d6e8f2; border-radius: 12px; background: #fcfeff; padding: 10px; min-width: 0; display: grid; gap: 8px; overflow: hidden; }}
     .pco2-sweep-chart-mount .inline-chart-title {{ margin: 0; color: #19384a; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.84rem; font-family: var(--heading-font); }}
     .pco2-sweep-chart-mount .chart-viewport {{ height: clamp(220px, 28vw, 320px); min-height: 220px; max-height: 320px; }}
@@ -600,9 +848,6 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       .control-bar,
       .rail,
       .progress-track,
-      .math-render-warning {{
-        display: none !important;
-      }}
       .shell {{
         display: block !important;
         width: auto !important;
@@ -951,7 +1196,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
 
       function markRevealNodes() {{
         const revealNodes = Array.from(
-          content.querySelectorAll("h2, h3, p, ul, ol, blockquote, table, pre, .math-display-block")
+          content.querySelectorAll("h2, h3, p, ul, ol, blockquote, table, pre, .math-display-block, .math-inline-display")
         );
         for (const node of revealNodes) {{
           node.classList.add("reveal-node");
@@ -990,141 +1235,6 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             revealObserver.observe(node);
           }}
         }}
-      }}
-
-      function prepareLatexDisplayBlocks() {{
-        const latexCodeNodes = Array.from(
-          content.querySelectorAll("pre > code.language-latex")
-        );
-        const prepared = [];
-        for (const codeNode of latexCodeNodes) {{
-          const preNode = closestByTagName(codeNode, "PRE");
-          if (!preNode || !preNode.parentNode) {{
-            continue;
-          }}
-          if (preNode.getAttribute("data-math-prepared") === "true") {{
-            continue;
-          }}
-          const latexRaw = String(codeNode.textContent || "").trim();
-          if (!latexRaw) {{
-            continue;
-          }}
-          const displayNode = document.createElement("div");
-          displayNode.className = "math-display-block";
-          displayNode.textContent = "\\\\[\\n" + latexRaw + "\\n\\\\]";
-          preNode.parentNode.insertBefore(displayNode, preNode);
-          preNode.setAttribute("data-math-prepared", "true");
-          preNode.classList.add("latex-fallback");
-          preNode.classList.add("math-fallback-hidden");
-          preNode.removeAttribute("data-math-render-status");
-          prepared.push({{ displayNode, fallbackNode: preNode, warningNode: null }});
-        }}
-        return prepared;
-      }}
-
-      function setMathRenderFailure(entry, reason) {{
-        if (entry.displayNode && entry.displayNode.parentNode) {{
-          entry.displayNode.parentNode.removeChild(entry.displayNode);
-        }}
-        if (!entry.warningNode && entry.fallbackNode.parentNode) {{
-          const warningNode = document.createElement("div");
-          warningNode.className = "math-render-warning";
-          entry.fallbackNode.parentNode.insertBefore(warningNode, entry.fallbackNode);
-          entry.warningNode = warningNode;
-        }}
-        if (entry.warningNode) {{
-          entry.warningNode.textContent = reason;
-        }}
-        entry.fallbackNode.classList.remove("math-fallback-hidden");
-        entry.fallbackNode.setAttribute("data-math-render-status", "failed");
-      }}
-
-      function loadScript(src) {{
-        return new Promise(function (resolve, reject) {{
-          const script = document.createElement("script");
-          script.src = src;
-          script.async = true;
-          script.onload = function () {{
-            resolve(src);
-          }};
-          script.onerror = function () {{
-            reject(new Error("Failed to load " + src));
-          }};
-          document.head.appendChild(script);
-        }});
-      }}
-
-      function loadMathJaxDualMode() {{
-        if (window.MathJax && typeof window.MathJax.typesetPromise === "function") {{
-          return Promise.resolve("existing");
-        }}
-        window.MathJax = {{
-          tex: {{
-            inlineMath: [["\\\\(", "\\\\)"], ["$", "$"]],
-            displayMath: [["\\\\[", "\\\\]"]],
-            processEscapes: true
-          }},
-          options: {{
-            skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"]
-          }}
-        }};
-        const mathJaxSources = [
-          "mathjax/es5/tex-mml-chtml.js",
-          "../mathjax/es5/tex-mml-chtml.js",
-          "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js",
-          "https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-mml-chtml.js"
-        ];
-        let index = 0;
-        function tryLoadNextSource() {{
-          if (index >= mathJaxSources.length) {{
-            return Promise.reject(new Error("No MathJax source could be loaded."));
-          }}
-          const source = mathJaxSources[index];
-          index += 1;
-          return loadScript(source).catch(function () {{
-            return tryLoadNextSource();
-          }});
-        }}
-        return tryLoadNextSource();
-      }}
-
-      function initializeMathRendering() {{
-        const prepared = prepareLatexDisplayBlocks();
-        if (!prepared.length) {{
-          return;
-        }}
-        loadMathJaxDualMode()
-          .then(function () {{
-            if (!(window.MathJax && typeof window.MathJax.typesetPromise === "function")) {{
-              throw new Error("MathJax unavailable after script load.");
-            }}
-            const renderTasks = prepared.map(function (entry) {{
-              return window.MathJax.typesetPromise([entry.displayNode])
-                .then(function () {{
-                  if (entry.warningNode && entry.warningNode.parentNode) {{
-                    entry.warningNode.parentNode.removeChild(entry.warningNode);
-                  }}
-                  entry.warningNode = null;
-                  entry.fallbackNode.removeAttribute("data-math-render-status");
-                  entry.fallbackNode.classList.add("math-fallback-hidden");
-                }})
-                .catch(function () {{
-                  setMathRenderFailure(
-                    entry,
-                    "Math rendering failed for this block. Showing raw LaTeX."
-                  );
-                }});
-            }});
-            return Promise.all(renderTasks);
-          }})
-          .catch(function () {{
-            for (const entry of prepared) {{
-              setMathRenderFailure(
-                entry,
-                "MathJax could not be loaded. Showing raw LaTeX."
-              );
-            }}
-          }});
       }}
 
       function parseNumericCell(value) {{
@@ -1900,7 +2010,6 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         initializePresentationControls();
       }}
 
-      runPhase("math", initializeMathRendering);
       runPhase("layout", initializeLayoutPhase);
       runPhase("charts", initializeCharts);
       runPhase("presentation-controls", initializePresentationPhase);

@@ -49,6 +49,12 @@ python scripts/build_user_manual.py
 python scripts/build_user_manual.py --check
 ```
 
+Docs math-runtime smoke prerequisites:
+```powershell
+python -m playwright install chromium
+python -m pytest -q tests/test_docs_math_runtime_playwright.py
+```
+
 ## Table of Contents
 - [Part I - Complete User Manual](#part-i---complete-user-manual)
   - [Program Overview and Philosophy](#program-overview-and-philosophy)
