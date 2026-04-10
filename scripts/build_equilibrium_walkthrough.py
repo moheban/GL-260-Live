@@ -497,6 +497,20 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
+    @font-face {{
+      font-family: "XITS Math";
+      src: url("assets/fonts/XITSMath-Regular.otf") format("opentype");
+      font-weight: 400;
+      font-style: normal;
+      font-display: swap;
+    }}
+    @font-face {{
+      font-family: "XITS Math";
+      src: url("assets/fonts/XITSMath-Bold.otf") format("opentype");
+      font-weight: 700;
+      font-style: normal;
+      font-display: swap;
+    }}
     :root {{
       --bg-0: #07131d;
       --bg-1: #0d2231;
@@ -513,6 +527,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       --heading-font: "Space Grotesk", "Segoe UI", sans-serif;
       --body-font: "Source Sans 3", "Segoe UI", sans-serif;
       --mono-font: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      --math-font: "XITS Math", "STIX Two Math", "Cambria Math", "Latin Modern Math", serif;
     }}
     * {{ box-sizing: border-box; }}
     html, body {{ margin: 0; padding: 0; }}
@@ -767,6 +782,23 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     .chart-panel {{ padding: 15px 17px 17px; min-width: 0; }}
     .chart-panel h2 {{ margin: 0; font-family: var(--heading-font); color: #102839; }}
     .chart-panel p {{ margin: 6px 0 0; color: #345468; }}
+    .content .chart-panel.chart-panel-inline {{
+      margin: 1rem 0 1.3rem;
+      border: 1px solid #d6e8f2;
+      border-radius: 12px;
+      background: #fcfeff;
+      box-shadow: none;
+      padding: 12px;
+    }}
+    .content .chart-panel.chart-panel-inline h2 {{
+      margin: 0;
+      border-top: 0;
+      padding-top: 0;
+      font-size: 1.05rem;
+      color: #16384a;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }}
     .chart-module {{ margin-top: 12px; border: 1px solid #d6e8f2; border-radius: 12px; background: #fcfeff; padding: 10px; min-width: 0; overflow: hidden; }}
     .chart-tabs {{ display: inline-flex; gap: 6px; border: 1px solid #d0e3ed; border-radius: 999px; padding: 4px; background: #eef7fb; }}
     .chart-tab {{ border: 0; border-radius: 999px; background: transparent; color: #2b4a5d; padding: 7px 12px; font-family: var(--heading-font); font-size: 0.83rem; cursor: pointer; }}
@@ -792,11 +824,106 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     .content th, .content td {{ border: 1px solid #d6e6f0; padding: 0.55rem; text-align: left; }}
     .content th {{ background: #edf7fc; color: #163547; font-family: var(--heading-font); text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.85rem; }}
     .content tr:nth-child(even) td {{ background: #f9fdff; }}
+    .content table.reaction-map {{
+      display: table;
+      table-layout: fixed;
+      width: 100%;
+      max-width: 100%;
+      overflow-x: visible;
+      border-collapse: separate;
+      border-spacing: 0;
+      margin: 0.8rem 0 1.2rem;
+      border: 1px solid #cfe2ee;
+      border-radius: 12px;
+    }}
+    .content table.reaction-map th,
+    .content table.reaction-map td {{
+      width: 50%;
+      vertical-align: top;
+      padding: 0.65rem 0.7rem;
+      background: #fafdff;
+    }}
+    .content table.reaction-map tbody tr:nth-child(even) td {{
+      background: #f2f9ff;
+    }}
+    .content table.reaction-map td .math-inline-display {{
+      margin: 0;
+    }}
+    .content table.reaction-map td br + .math-inline-display {{
+      margin-top: 0.32rem;
+    }}
     .math-display-block {{ border: 1px solid #d5e5ef; border-radius: 10px; background: #f8fcff; margin: 0.2rem 0; overflow-x: auto; padding: 0.6rem 0.7rem; }}
     .content .math-inline {{ display: inline-block; max-width: 100%; vertical-align: middle; }}
     .content .math-inline-display {{ display: block; margin: 0.2rem 0; overflow-x: auto; }}
     .content .math-display-block math,
-    .content .math-inline math {{ max-width: 100%; }}
+    .content .math-inline math {{
+      max-width: 100%;
+      font-family: var(--math-font);
+      font-style: normal;
+    }}
+    .content .admonition {{
+      margin: 0.9rem 0 1rem;
+      border: 1px solid #c9ddec;
+      border-radius: 12px;
+      background: linear-gradient(180deg, #f5fbff 0%, #eef7fe 100%);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+      padding: 0.75rem 0.9rem 0.8rem;
+    }}
+    .content .admonition .admonition-title {{
+      margin: 0 0 0.35rem;
+      font-family: var(--heading-font);
+      font-size: 0.84rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #0f4a62;
+    }}
+    .content .admonition ul,
+    .content .admonition ol {{ margin: 0.3rem 0 0.2rem 1.05rem; }}
+    .content .admonition p {{ margin: 0.25rem 0; }}
+    .content .admonition li code {{
+      border-radius: 999px;
+      padding: 0.05rem 0.42rem;
+      background: #ddf2ff;
+      border-color: #badcf1;
+      font-size: 0.84rem;
+    }}
+    .content .admonition.info {{
+      border-left: 5px solid #22adc0;
+      background: linear-gradient(180deg, #f2fdff 0%, #ebf9fe 100%);
+    }}
+    .content .admonition.note {{
+      border-left: 5px solid #2f85c9;
+      background: linear-gradient(180deg, #f3f8ff 0%, #eef5fe 100%);
+    }}
+    .content .admonition.tip {{
+      border-left: 5px solid #2b9f69;
+      background: linear-gradient(180deg, #f2fff9 0%, #ebfbf3 100%);
+    }}
+    .inline-chart-anchor {{ display: block; margin: 0; }}
+    .inline-chart-mount {{
+      margin: 0.9rem 0 1.2rem;
+      border: 1px solid #d6e8f2;
+      border-radius: 12px;
+      background: #fcfeff;
+      padding: 10px;
+      min-width: 0;
+      display: grid;
+      gap: 8px;
+      overflow: hidden;
+    }}
+    .inline-chart-mount .inline-chart-title {{
+      margin: 0;
+      color: #19384a;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-size: 0.84rem;
+      font-family: var(--heading-font);
+    }}
+    .inline-chart-mount .inline-chart-copy {{
+      margin: 0;
+      color: #375a6e;
+      font-size: 0.94rem;
+    }}
     .pco2-sweep-chart-mount {{ margin: 0.9rem 0 1.2rem; border: 1px solid #d6e8f2; border-radius: 12px; background: #fcfeff; padding: 10px; min-width: 0; display: grid; gap: 8px; overflow: hidden; }}
     .pco2-sweep-chart-mount .inline-chart-title {{ margin: 0; color: #19384a; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.84rem; font-family: var(--heading-font); }}
     .pco2-sweep-chart-mount .chart-viewport {{ height: clamp(220px, 28vw, 320px); min-height: 220px; max-height: 320px; }}
@@ -826,6 +953,29 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       .hero-metrics {{ grid-template-columns: 1fr; }}
       .chart-stack {{ height: clamp(200px, 52vw, 260px); min-height: 200px; max-height: 260px; }}
       .pco2-sweep-chart-mount .chart-viewport {{ height: clamp(200px, 52vw, 260px); min-height: 200px; max-height: 260px; }}
+      .content table.reaction-map {{
+        display: block;
+        border: 0;
+        border-radius: 0;
+      }}
+      .content table.reaction-map thead {{
+        display: none;
+      }}
+      .content table.reaction-map tbody,
+      .content table.reaction-map tr,
+      .content table.reaction-map td {{
+        display: block;
+        width: 100%;
+      }}
+      .content table.reaction-map tr {{
+        margin: 0 0 0.85rem;
+        border: 1px solid #cfe2ee;
+        border-radius: 11px;
+        overflow: hidden;
+      }}
+      .content table.reaction-map td + td {{
+        border-top: 1px solid #dceaf3;
+      }}
       .control-bar {{ padding: 8px; gap: 6px; }}
       .control-primary,
       .control-secondary {{
@@ -938,7 +1088,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         {body_html}
         <div class="footer">Source fingerprint: <code>{source_hash}</code></div>
       </article>
-      <section class="surface chart-panel" aria-label="Cycle trend highlights">
+      <section id="cycle-trend-panel" class="surface chart-panel" aria-label="Cycle trend highlights">
         <h2>Cycle Trend Highlights</h2>
         <p>After equilibrium and pCO2 framing, use these tabs for cycle-level pH and fraction trends from the worked simulation table in Section 8.</p>
         <div class="chart-module" id="cycle-chart-module">
@@ -972,6 +1122,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       const filterInput = document.getElementById("toc-filter");
       const content = document.getElementById("walkthrough-content");
       const progressBar = document.getElementById("scroll-progress");
+      const cycleTrendPanel = document.getElementById("cycle-trend-panel");
       const chartFallback = document.getElementById("chart-fallback");
       const startWalkthrough = document.getElementById("start-walkthrough");
       const motionToggle = document.getElementById("motion");
@@ -992,6 +1143,9 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       let phChart = null;
       let fractionChart = null;
       let pco2Chart = null;
+      let stoichChart = null;
+      let uptakeLoadingChart = null;
+      let anchorResidualChart = null;
       let chartsInitialized = false;
       let autoAdvanceTimer = null;
       let revealObserver = null;
@@ -1054,6 +1208,95 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
           cursor = cursor.parentNode;
         }}
         return null;
+      }}
+
+      function findInlineChartAnchor(name) {{
+        return content.querySelector('[data-inline-chart="' + String(name || "") + '"]');
+      }}
+
+      function buildInlineChartMount(config) {{
+        const anchor = config && config.anchor ? config.anchor : null;
+        if (!anchor || String(anchor.tagName || "").toUpperCase() !== "DIV") {{
+          return null;
+        }}
+        const canvasId = config && config.canvasId ? String(config.canvasId) : "";
+        if (!canvasId) {{
+          return null;
+        }}
+        const existingCanvas = document.getElementById(canvasId);
+        if (existingCanvas) {{
+          return existingCanvas;
+        }}
+        const mount = document.createElement("section");
+        mount.className = "inline-chart-mount";
+        mount.setAttribute("aria-label", config.ariaLabel || "Inline chart");
+        const title = document.createElement("p");
+        title.className = "inline-chart-title";
+        title.textContent = config.title || "Trend View";
+        mount.appendChild(title);
+        if (config.copy) {{
+          const copy = document.createElement("p");
+          copy.className = "inline-chart-copy";
+          copy.textContent = config.copy;
+          mount.appendChild(copy);
+        }}
+        const viewport = document.createElement("div");
+        viewport.className = "chart-viewport";
+        const canvas = document.createElement("canvas");
+        canvas.id = canvasId;
+        canvas.setAttribute("aria-label", config.canvasAria || (config.title || "Inline chart"));
+        viewport.appendChild(canvas);
+        mount.appendChild(viewport);
+        anchor.replaceWith(mount);
+        return canvas;
+      }}
+
+      function ensureCycleTrendPanelInline() {{
+        if (!cycleTrendPanel) {{
+          return;
+        }}
+        const anchor = findInlineChartAnchor("cycle-trend-highlights");
+        if (!(anchor && anchor.parentNode)) {{
+          return;
+        }}
+        cycleTrendPanel.classList.add("chart-panel-inline");
+        anchor.replaceWith(cycleTrendPanel);
+      }}
+
+      function ensureStoichChartMount() {{
+        const anchor = findInlineChartAnchor("stoich-impact");
+        return buildInlineChartMount({{
+          anchor: anchor,
+            canvasId: "stoich-impact-chart",
+            title: "Stoichiometric Endpoint Impact",
+            copy: "These landmarks show how quickly required CO2 mass rises from carbonate endpoint to bicarbonate endpoint.",
+            ariaLabel: "Stoichiometric endpoint impact chart",
+            canvasAria: "Stoichiometric endpoint impact chart",
+        }});
+      }}
+
+      function ensureUptakeLoadingChartMount() {{
+        const anchor = findInlineChartAnchor("uptake-loading");
+        return buildInlineChartMount({{
+          anchor: anchor,
+            canvasId: "uptake-loading-chart",
+            title: "Cycle Uptake and Cumulative Loading",
+            copy: "Per-cycle uptake events are converted to cumulative loading, which drives the state update each cycle.",
+            ariaLabel: "Cycle uptake and cumulative loading chart",
+            canvasAria: "Cycle uptake and cumulative loading chart",
+        }});
+      }}
+
+      function ensureAnchorResidualChartMount() {{
+        const anchor = findInlineChartAnchor("anchor-residuals");
+        return buildInlineChartMount({{
+          anchor: anchor,
+            canvasId: "anchor-residual-chart",
+            title: "Anchor Residual Impact",
+            copy: "Measured-vs-baseline anchor gaps define the direction and magnitude of correction before ML residual smoothing.",
+            ariaLabel: "Anchor residual impact chart",
+            canvasAria: "Anchor residual impact chart",
+        }});
       }}
 
       function setActiveCycleTab(tabKey) {{
@@ -1183,6 +1426,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       }}
 
       function initializeLayoutPhase() {{
+        ensureCycleTrendPanelInline();
         if (filterInput) {{
           filterInput.addEventListener("input", applyFilter);
         }}
@@ -1196,7 +1440,9 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
 
       function markRevealNodes() {{
         const revealNodes = Array.from(
-          content.querySelectorAll("h2, h3, p, ul, ol, blockquote, table, pre, .math-display-block, .math-inline-display")
+          content.querySelectorAll(
+            "h2, h3, p, ul, ol, blockquote, table, pre, .admonition, .math-display-block, .math-inline-display, .inline-chart-mount, .chart-panel-inline"
+          )
         );
         for (const node of revealNodes) {{
           node.classList.add("reveal-node");
@@ -1260,6 +1506,9 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         const rows = Array.from(targetTable.querySelectorAll("tr")).slice(1);
         const series = {{
           cycle: [],
+          delta: [],
+          cumulative: [],
+          ct: [],
           ph: [],
           h2co3: [],
           hco3: [],
@@ -1271,12 +1520,18 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             continue;
           }}
           const cycleValue = parseNumericCell(cells[0].textContent);
+          const deltaValue = parseNumericCell(cells[1].textContent);
+          const cumulativeValue = parseNumericCell(cells[2].textContent);
+          const ctValue = parseNumericCell(cells[3].textContent);
           const phValue = parseNumericCell(cells[4].textContent);
           const h2co3Value = parseNumericCell(cells[6].textContent);
           const hco3Value = parseNumericCell(cells[7].textContent);
           const co3Value = parseNumericCell(cells[8].textContent);
           if (
             cycleValue === null ||
+            deltaValue === null ||
+            cumulativeValue === null ||
+            ctValue === null ||
             phValue === null ||
             h2co3Value === null ||
             hco3Value === null ||
@@ -1285,6 +1540,9 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             continue;
           }}
           series.cycle.push(cycleValue);
+          series.delta.push(deltaValue);
+          series.cumulative.push(cumulativeValue);
+          series.ct.push(ctValue);
           series.ph.push(phValue);
           series.h2co3.push(h2co3Value);
           series.hco3.push(hco3Value);
@@ -1345,6 +1603,17 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         if (existingCanvas) {{
           return existingCanvas;
         }}
+        const inlineAnchor = findInlineChartAnchor("pco2-sensitivity");
+        if (inlineAnchor) {{
+          return buildInlineChartMount({{
+            anchor: inlineAnchor,
+            canvasId: "pco2-sweep-chart",
+            title: "pCO2 Sensitivity Trend",
+            copy: "As pCO2 rises, bicarbonate fraction increases while carbonate fraction drops across the same chemistry basis.",
+            ariaLabel: "pCO2 sensitivity chart",
+            canvasAria: "pCO2 sensitivity chart",
+          }});
+        }}
         const tables = Array.from(content.querySelectorAll("table"));
         const targetTable = tables.find(function (tableNode) {{
           const headers = Array.from(tableNode.querySelectorAll("th")).map(function (header) {{
@@ -1361,11 +1630,15 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         }}
         const mount = document.createElement("div");
         mount.id = "pco2-sweep-chart-mount";
-        mount.className = "pco2-sweep-chart-mount";
+        mount.className = "inline-chart-mount pco2-sweep-chart-mount";
         mount.setAttribute("aria-label", "pCO2 sensitivity chart");
         const title = document.createElement("p");
         title.className = "inline-chart-title";
         title.textContent = "pCO2 Sensitivity Trend";
+        const copy = document.createElement("p");
+        copy.className = "inline-chart-copy";
+        copy.textContent =
+          "As pCO2 rises, bicarbonate fraction increases while carbonate fraction drops across the same chemistry basis.";
         const viewport = document.createElement("div");
         viewport.className = "chart-viewport";
         const canvas = document.createElement("canvas");
@@ -1373,6 +1646,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         canvas.setAttribute("aria-label", "pCO2 sensitivity chart");
         viewport.appendChild(canvas);
         mount.appendChild(title);
+        mount.appendChild(copy);
         mount.appendChild(viewport);
         targetTable.insertAdjacentElement("afterend", mount);
         return canvas;
@@ -1413,6 +1687,9 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         if (!(window.Chart && series)) {{
           return;
         }}
+        const stoichCanvas = ensureStoichChartMount();
+        const uptakeCanvas = ensureUptakeLoadingChartMount();
+        const anchorCanvas = ensureAnchorResidualChartMount();
         const phCanvas = document.getElementById("ph-trend-chart");
         const fractionCanvas = document.getElementById("fraction-trend-chart");
         if (!(phCanvas && fractionCanvas)) {{
@@ -1422,6 +1699,9 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         const fractionViewport = closestByClass(fractionCanvas, "chart-viewport");
         const pco2Canvas = ensurePco2ChartMount();
         const pco2Viewport = pco2Canvas ? closestByClass(pco2Canvas, "chart-viewport") : null;
+        const stoichViewport = stoichCanvas ? closestByClass(stoichCanvas, "chart-viewport") : null;
+        const uptakeViewport = uptakeCanvas ? closestByClass(uptakeCanvas, "chart-viewport") : null;
+        const anchorViewport = anchorCanvas ? closestByClass(anchorCanvas, "chart-viewport") : null;
         if (!(phViewport && fractionViewport)) {{
           throw new Error("Chart viewport containers are missing.");
         }}
@@ -1438,6 +1718,21 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             throw new Error("pCO2 chart viewport has invalid dimensions.");
           }}
         }}
+        if (stoichCanvas && stoichViewport) {{
+          if (stoichViewport.clientWidth <= 0 || stoichViewport.clientHeight <= 0) {{
+            throw new Error("Stoichiometric chart viewport has invalid dimensions.");
+          }}
+        }}
+        if (uptakeCanvas && uptakeViewport) {{
+          if (uptakeViewport.clientWidth <= 0 || uptakeViewport.clientHeight <= 0) {{
+            throw new Error("Uptake chart viewport has invalid dimensions.");
+          }}
+        }}
+        if (anchorCanvas && anchorViewport) {{
+          if (anchorViewport.clientWidth <= 0 || anchorViewport.clientHeight <= 0) {{
+            throw new Error("Anchor residual chart viewport has invalid dimensions.");
+          }}
+        }}
         if (phChart) {{
           phChart.destroy();
           phChart = null;
@@ -1449,6 +1744,18 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         if (pco2Chart) {{
           pco2Chart.destroy();
           pco2Chart = null;
+        }}
+        if (stoichChart) {{
+          stoichChart.destroy();
+          stoichChart = null;
+        }}
+        if (uptakeLoadingChart) {{
+          uptakeLoadingChart.destroy();
+          uptakeLoadingChart = null;
+        }}
+        if (anchorResidualChart) {{
+          anchorResidualChart.destroy();
+          anchorResidualChart = null;
         }}
         function buildChartOptions(yTitle) {{
           return {{
@@ -1490,6 +1797,58 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
                 }},
                 ticks: {{ color: "#32556a" }},
                 grid: {{ color: "rgba(87, 123, 146, 0.16)" }}
+              }}
+            }}
+          }};
+        }}
+        function buildDualAxisOptions(primaryTitle, secondaryTitle) {{
+          return {{
+            responsive: true,
+            maintainAspectRatio: false,
+            resizeDelay: 140,
+            animation: {{ duration: 260, easing: "easeOutCubic" }},
+            interaction: {{ mode: "index", intersect: false }},
+            plugins: {{
+              legend: {{
+                labels: {{
+                  boxWidth: 10,
+                  usePointStyle: true,
+                  color: "#17384c",
+                  font: {{ family: "Source Sans 3", size: 12 }}
+                }}
+              }}
+            }},
+            scales: {{
+              x: {{
+                title: {{
+                  display: true,
+                  text: "Cycle",
+                  color: "#2c4d61",
+                  font: {{ family: "Space Grotesk", size: 12 }}
+                }},
+                ticks: {{ color: "#32556a" }},
+                grid: {{ color: "rgba(87, 123, 146, 0.16)" }}
+              }},
+              y: {{
+                title: {{
+                  display: true,
+                  text: primaryTitle,
+                  color: "#2c4d61",
+                  font: {{ family: "Space Grotesk", size: 12 }}
+                }},
+                ticks: {{ color: "#32556a" }},
+                grid: {{ color: "rgba(87, 123, 146, 0.16)" }}
+              }},
+              y2: {{
+                position: "right",
+                title: {{
+                  display: true,
+                  text: secondaryTitle,
+                  color: "#2c4d61",
+                  font: {{ family: "Space Grotesk", size: 12 }}
+                }},
+                ticks: {{ color: "#32556a" }},
+                grid: {{ drawOnChartArea: false }}
               }}
             }}
           }};
@@ -1629,22 +1988,144 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             }}
           }});
         }}
-        if (
-          !Number.isFinite(phChart.width) ||
-          !Number.isFinite(phChart.height) ||
-          phChart.width <= 0 ||
-          phChart.height <= 0 ||
-          !Number.isFinite(fractionChart.width) ||
-          !Number.isFinite(fractionChart.height) ||
-          fractionChart.width <= 0 ||
-          fractionChart.height <= 0 ||
-          (pco2Chart &&
-            (!Number.isFinite(pco2Chart.width) ||
-              !Number.isFinite(pco2Chart.height) ||
-              pco2Chart.width <= 0 ||
-              pco2Chart.height <= 0))
-        ) {{
-          throw new Error("Chart instances reported invalid render dimensions.");
+        if (stoichCanvas) {{
+          stoichChart = new Chart(stoichCanvas.getContext("2d"), {{
+            type: "bar",
+            data: {{
+              labels: ["Stage 1 endpoint", "Stage 2 endpoint", "Worked total"],
+              datasets: [
+                {{
+                  label: "CO2 mass (g)",
+                  data: [385.1, 770.2, 900.0],
+                  borderColor: ["#3fa2ff", "#1eb46e", "#5568ff"],
+                  backgroundColor: [
+                    "rgba(63, 162, 255, 0.22)",
+                    "rgba(30, 180, 110, 0.22)",
+                    "rgba(85, 104, 255, 0.22)",
+                  ],
+                  borderWidth: 1.6,
+                }}
+              ]
+            }},
+            options: {{
+              responsive: true,
+              maintainAspectRatio: false,
+              resizeDelay: 140,
+              animation: {{ duration: 260, easing: "easeOutCubic" }},
+              plugins: {{
+                legend: {{ display: false }}
+              }},
+              scales: {{
+                x: {{
+                  ticks: {{ color: "#32556a" }},
+                  grid: {{ color: "rgba(87, 123, 146, 0.16)" }}
+                }},
+                y: {{
+                  title: {{
+                    display: true,
+                    text: "CO2 Mass (g)",
+                    color: "#2c4d61",
+                    font: {{ family: "Space Grotesk", size: 12 }}
+                  }},
+                  ticks: {{ color: "#32556a" }},
+                  grid: {{ color: "rgba(87, 123, 146, 0.16)" }}
+                }}
+              }}
+            }}
+          }});
+        }}
+        if (uptakeCanvas) {{
+          uptakeLoadingChart = new Chart(uptakeCanvas.getContext("2d"), {{
+            data: {{
+              labels: series.cycle,
+              datasets: [
+                {{
+                  type: "bar",
+                  label: "Delta CO2 (g)",
+                  data: series.delta,
+                  yAxisID: "y",
+                  borderColor: "#3fa2ff",
+                  backgroundColor: "rgba(63, 162, 255, 0.22)",
+                  borderWidth: 1.2,
+                }},
+                {{
+                  type: "line",
+                  label: "Cumulative CO2 (g)",
+                  data: series.cumulative,
+                  yAxisID: "y",
+                  borderColor: "#1eb46e",
+                  backgroundColor: "rgba(30, 180, 110, 0.14)",
+                  borderWidth: 2.2,
+                  pointRadius: 2.5,
+                  tension: 0.22,
+                }},
+                {{
+                  type: "line",
+                  label: "CT (mol/kg)",
+                  data: series.ct,
+                  yAxisID: "y2",
+                  borderColor: "#5568ff",
+                  backgroundColor: "rgba(85, 104, 255, 0.14)",
+                  borderWidth: 2.0,
+                  pointRadius: 2.4,
+                  tension: 0.22,
+                }},
+              ]
+            }},
+            options: buildDualAxisOptions("CO2 Mass (g)", "CT (mol/kg)")
+          }});
+        }}
+        if (anchorCanvas) {{
+          anchorResidualChart = new Chart(anchorCanvas.getContext("2d"), {{
+            data: {{
+              labels: [5, 8],
+              datasets: [
+                {{
+                  type: "line",
+                  label: "Baseline pH",
+                  data: [9.6257, 7.8538],
+                  yAxisID: "y",
+                  borderColor: "#5568ff",
+                  backgroundColor: "rgba(85, 104, 255, 0.14)",
+                  borderWidth: 2.1,
+                  pointRadius: 3,
+                  tension: 0.2,
+                }},
+                {{
+                  type: "line",
+                  label: "Measured pH",
+                  data: [9.45, 7.95],
+                  yAxisID: "y",
+                  borderColor: "#1eb46e",
+                  backgroundColor: "rgba(30, 180, 110, 0.14)",
+                  borderWidth: 2.1,
+                  pointRadius: 3,
+                  tension: 0.2,
+                }},
+                {{
+                  type: "bar",
+                  label: "Residual (pH)",
+                  data: [-0.1757, 0.0962],
+                  yAxisID: "y2",
+                  borderColor: "#0daec0",
+                  backgroundColor: "rgba(13, 174, 192, 0.22)",
+                  borderWidth: 1.2,
+                }},
+              ]
+            }},
+            options: buildDualAxisOptions("pH", "Residual (pH)")
+          }});
+        }}
+        const instances = [phChart, fractionChart, pco2Chart, stoichChart, uptakeLoadingChart, anchorResidualChart].filter(Boolean);
+        for (const chartInstance of instances) {{
+          if (
+            !Number.isFinite(chartInstance.width) ||
+            !Number.isFinite(chartInstance.height) ||
+            chartInstance.width <= 0 ||
+            chartInstance.height <= 0
+          ) {{
+            throw new Error("Chart instances reported invalid render dimensions.");
+          }}
         }}
       }}
 
@@ -1684,6 +2165,18 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             if (pco2Chart) {{
               pco2Chart.destroy();
               pco2Chart = null;
+            }}
+            if (stoichChart) {{
+              stoichChart.destroy();
+              stoichChart = null;
+            }}
+            if (uptakeLoadingChart) {{
+              uptakeLoadingChart.destroy();
+              uptakeLoadingChart = null;
+            }}
+            if (anchorResidualChart) {{
+              anchorResidualChart.destroy();
+              anchorResidualChart = null;
             }}
             showChartFallback(
               "Chart rendering is disabled for stability (" +

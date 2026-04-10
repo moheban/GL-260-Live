@@ -31,7 +31,26 @@ All values in this document are locked to one deterministic scenario so intermed
 ---
 
 ## 1) Basis Setup (700 g NaOH in 2,200 mL Water)
+
+!!! note "Calculation Legend"
+    - \(m_{\mathrm{NaOH}}\): NaOH mass charged to solution [`g`]
+    - \(MW_{\mathrm{NaOH}}\): NaOH molecular weight [\(g mol^{-1}\)]
+    - \(n_{\mathrm{NaOH}}\): NaOH amount [`mol`]
+    - \(V_{\mathrm{liq}}\): liquid volume [`L`]
+    - \(kg_{\mathrm{water}}\): water mass basis [`kg`]
+    - \(C_{\mathrm{NaOH}}\): NaOH molarity [\(mol L^{-1}\)]
+    - \(m_{\mathrm{NaT}}\): total sodium molality [\(mol kg^{-1}\)]
+    - \(n_{\mathrm{CO_2,eq1}}\), \(n_{\mathrm{CO_2,eq2}}\): CO2 mole endpoints [`mol`]
+    - \(m_{\mathrm{CO_2,eq1}}\), \(m_{\mathrm{CO_2,eq2}}\): CO2 mass endpoints [`g`]
+
 Converting mass to molar/molal basis defines the two stoichiometric landmarks used for later interpretation.
+
+!!! info "Derivation Walkthrough"
+    **Goal:** translate the charged NaOH mass into concentration terms that drive every later equilibrium equation.
+
+    **Step-by-step interpretation:** first compute \(n_{\mathrm{NaOH}}\), then normalize by liquid volume (\(C_{\mathrm{NaOH}}\)) and water mass (\(m_{\mathrm{NaT}}\)), then convert the two stoichiometric CO2 endpoints to grams.
+
+    **Why this changes operation:** these endpoint masses become operator-facing landmarks for when carbonate and bicarbonate dominance should be expected.
 
 ```latex
 m_{\mathrm{NaOH}} = 700\ \mathrm{g}
@@ -99,19 +118,12 @@ m_{\mathrm{CO_2,eq2}} = n_{\mathrm{CO_2,eq2}} \times MW_{\mathrm{CO_2}}
 m_{\mathrm{CO_2,eq2}} = 17.5\ \mathrm{mol} \times 44.01\ \mathrm{g\ mol^{-1}} \approx 770.2\ \mathrm{g}
 ```
 
-Calculation legend:
+!!! tip "Approximation Note"
+    Approximation note: \(kg_{\mathrm{water}} \approx 2.2\ \mathrm{kg}\) assumes pure-water density near \(1.0\ \mathrm{kg\ L^{-1}}\).
 
-- `m_{\mathrm{NaOH}}`: NaOH mass charged to solution [`g`]
-- `MW_{\mathrm{NaOH}}`: NaOH molecular weight [`g mol^{-1}`]
-- `n_{\mathrm{NaOH}}`: NaOH amount [`mol`]
-- `V_{\mathrm{liq}}`: liquid volume [`L`]
-- `kg_{\mathrm{water}}`: water mass basis [`kg`]
-- `C_{\mathrm{NaOH}}`: NaOH molarity [`mol L^{-1}`]
-- `m_{\mathrm{NaT}}`: total sodium molality [`mol kg^{-1}`]
-- `n_{\mathrm{CO_2,eq1}}`, `n_{\mathrm{CO_2,eq2}}`: CO2 mole endpoints [`mol`]
-- `m_{\mathrm{CO_2,eq1}}`, `m_{\mathrm{CO_2,eq2}}`: CO2 mass endpoints [`g`]
 
-Approximation note: `kg_{\mathrm{water}} \approx 2.2\ \mathrm{kg}` assumes pure-water density near `1.0\ \mathrm{kg\ L^{-1}}`.
+<div class="inline-chart-anchor" data-inline-chart="stoich-impact"></div>
+
 
 ---
 
@@ -120,29 +132,38 @@ These half-reactions and constants provide the thermodynamic constraints that al
 
 ### 2.1 Carbonate and Water Equilibrium Half-Reactions
 
-```latex
-\mathrm{CO_2^*} \rightleftharpoons \mathrm{H^+} + \mathrm{HCO_3^-}
-```
+!!! note "Calculation Legend"
+    - \(K_{a1}\), \(K_{a2}\), `K_w`: equilibrium constants in activity form `[-]`
+    - `a_i`: activity of species `i` `[-]`
+    - \(\gamma_i\): activity coefficient of species `i` `[-]`
+    - `m_i`: molality of species `i` [\(mol kg^{-1}\)]
+    - `K_H`: Henry constant in the convention used by the model [\(mol kg^{-1} atm^{-1}\)]
+    - \(p_{\mathrm{CO_2}}\): CO2 partial pressure [`atm`]
+    - \([\mathrm{CO_2^*}]\): dissolved molecular CO2 plus hydrated carbonic acid basis [\(mol kg^{-1}\)]
 
-```latex
-K_{a1} = \frac{a_{\mathrm{H^+}} \times a_{\mathrm{HCO_3^-}}}{a_{\mathrm{CO_2^*}}}
-```
 
-```latex
-\mathrm{HCO_3^-} \rightleftharpoons \mathrm{H^+} + \mathrm{CO_3^{2-}}
-```
-
-```latex
-K_{a2} = \frac{a_{\mathrm{H^+}} \times a_{\mathrm{CO_3^{2-}}}}{a_{\mathrm{HCO_3^-}}}
-```
-
-```latex
-\mathrm{H_2O} \rightleftharpoons \mathrm{H^+} + \mathrm{OH^-}
-```
-
-```latex
-K_w = a_{\mathrm{H^+}} \times a_{\mathrm{OH^-}}
-```
+<table class="reaction-map">
+<thead>
+<tr>
+<th>Half Reaction</th>
+<th>Equilibrium Expression</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>\[\mathrm{CO_2^*} \rightleftharpoons \mathrm{H^+} + \mathrm{HCO_3^-}\]</td>
+<td>\[K_{a1} = \frac{a_{\mathrm{H^+}} \times a_{\mathrm{HCO_3^-}}}{a_{\mathrm{CO_2^*}}}\]</td>
+</tr>
+<tr>
+<td>\[\mathrm{HCO_3^-} \rightleftharpoons \mathrm{H^+} + \mathrm{CO_3^{2-}}\]</td>
+<td>\[K_{a2} = \frac{a_{\mathrm{H^+}} \times a_{\mathrm{CO_3^{2-}}}}{a_{\mathrm{HCO_3^-}}}\]</td>
+</tr>
+<tr>
+<td>\[\mathrm{H_2O} \rightleftharpoons \mathrm{H^+} + \mathrm{OH^-}\]</td>
+<td>\[K_w = a_{\mathrm{H^+}} \times a_{\mathrm{OH^-}}\]</td>
+</tr>
+</tbody>
+</table>
 
 ```latex
 a_i = \gamma_i \times m_i
@@ -154,17 +175,13 @@ For fixed-headspace mode, dissolved CO2 boundary is constrained by Henry's law:
 [\mathrm{CO_2^*}] = K_H \times p_{\mathrm{CO_2}}
 ```
 
-Calculation legend:
-
-- `K_{a1}`, `K_{a2}`, `K_w`: equilibrium constants in activity form `[-]`
-- `a_i`: activity of species `i` `[-]`
-- `\gamma_i`: activity coefficient of species `i` `[-]`
-- `m_i`: molality of species `i` [`mol kg^{-1}`]
-- `K_H`: Henry constant in the convention used by the model [`mol kg^{-1} atm^{-1}`]
-- `p_{\mathrm{CO_2}}`: CO2 partial pressure [`atm`]
-- `[\mathrm{CO_2^*}]`: dissolved molecular CO2 plus hydrated carbonic acid basis [`mol kg^{-1}`]
-
 ### 2.2 Constants Used by the NaOH-CO2 Pitzer Example Path (25 C)
+
+!!! note "Calculation Legend"
+    - \(K_{a1}\): first dissociation constant of carbonic system `[-]`
+    - \(K_{a2}\): second dissociation constant of carbonic system `[-]`
+    - `K_w`: water autoionization constant `[-]`
+
 
 In `naoh_co2_pitzer_ph_model.py`:
 
@@ -180,54 +197,76 @@ K_{a2} = 10^{-10.3393}
 K_w \approx 10^{-14}
 ```
 
-Calculation legend:
-
-- `K_{a1}`: first dissociation constant of carbonic system `[-]`
-- `K_{a2}`: second dissociation constant of carbonic system `[-]`
-- `K_w`: water autoionization constant `[-]`
-
 ---
 
 ## 3) Complete Keq Expression
+
+!!! note "Calculation Legend"
+    - \(K_{b1}\), \(K_{b2}\): base-side equilibrium constants `[-]`
+    - \(K_{eq,\mathrm{overall}}\): overall equilibrium constant `[-]`
+    - \(a_{\mathrm{H_2O}}\): water activity `[-]`, often approximated as `1` in concentrated electrolyte simplifications
+
 The overall equilibrium relationship is explicitly tied to the half-reaction constants, enabling direct inspection of the chemistry contract.
+
+!!! info "Derivation Walkthrough"
+    **Goal:** show that the full carbonate neutralization contract is exactly the product of the two base-consumption half steps.
+
+    **Step-by-step interpretation:** define each half reaction, write \(K_{b1}\) and \(K_{b2}\) in activity form, then multiply them to recover the overall expression and map to \({K_{a1}, K_{a2}, K_w}\).
+
+    **Why this changes operation:** this is the bridge from chemistry theory to runtime validation checks; if half-step constants drift, overall reaction behavior drifts.
 
 GL-260's carbonate neutralization chemistry can be shown in two base-consumption half-steps:
 
-```latex
-\mathrm{CO_2^*} + \mathrm{OH^-} \rightleftharpoons \mathrm{HCO_3^-}
-```
+<table class="reaction-map">
+<thead>
+<tr>
+<th>Half Reaction</th>
+<th>Equilibrium Expression / Calculation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>\[\mathrm{CO_2^*} + \mathrm{OH^-} \rightleftharpoons \mathrm{HCO_3^-}\]</td>
+<td>\[K_{b1} = \frac{a_{\mathrm{HCO_3^-}}}{a_{\mathrm{CO_2^*}} \times a_{\mathrm{OH^-}}}\]<br>\[K_{b1} = \frac{K_{a1}}{K_w}\]</td>
+</tr>
+<tr>
+<td>\[\mathrm{HCO_3^-} + \mathrm{OH^-} \rightleftharpoons \mathrm{CO_3^{2-}} + \mathrm{H_2O}\]</td>
+<td>\[K_{b2} = \frac{a_{\mathrm{CO_3^{2-}}} \times a_{\mathrm{H_2O}}}{a_{\mathrm{HCO_3^-}} \times a_{\mathrm{OH^-}}}\]<br>\[K_{b2} \approx \frac{a_{\mathrm{CO_3^{2-}}}}{a_{\mathrm{HCO_3^-}} \times a_{\mathrm{OH^-}}}\]<br>\[K_{b2} = \frac{K_{a2}}{K_w}\]</td>
+</tr>
+</tbody>
+</table>
+
+### 3.1 Add Half Reactions to Recover the Overall Reaction
+The overall carbonate-neutralization chemistry is the direct sum of the two half reactions above.
+
+<table class="reaction-map">
+<thead>
+<tr>
+<th>Reaction Assembly</th>
+<th>Resulting Expression</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>\[\left(\mathrm{CO_2^*} + \mathrm{OH^-} \rightleftharpoons \mathrm{HCO_3^-}\right) + \left(\mathrm{HCO_3^-} + \mathrm{OH^-} \rightleftharpoons \mathrm{CO_3^{2-}} + \mathrm{H_2O}\right)\]</td>
+<td>Add the two half reactions and cancel the intermediate \(\mathrm{HCO_3^-}\) term.</td>
+</tr>
+<tr>
+<td>\[\mathrm{CO_2^*} + 2\mathrm{OH^-} \rightleftharpoons \mathrm{CO_3^{2-}} + \mathrm{H_2O}\]</td>
+<td>\[K_{eq,\mathrm{overall}} = K_{b1} \times K_{b2}\]</td>
+</tr>
+</tbody>
+</table>
+
+The equilibrium constants multiply when reactions are added:
 
 ```latex
-K_{b1} = \frac{a_{\mathrm{HCO_3^-}}}{a_{\mathrm{CO_2^*}} \times a_{\mathrm{OH^-}}}
+K_{eq,\mathrm{overall}}
+=
+\frac{a_{\mathrm{HCO_3^-}}}{a_{\mathrm{CO_2^*}} \times a_{\mathrm{OH^-}}}
+\times
+\frac{a_{\mathrm{CO_3^{2-}}} \times a_{\mathrm{H_2O}}}{a_{\mathrm{HCO_3^-}} \times a_{\mathrm{OH^-}}}
 ```
-
-```latex
-K_{b1} = \frac{K_{a1}}{K_w}
-```
-
-```latex
-\mathrm{HCO_3^-} + \mathrm{OH^-} \rightleftharpoons \mathrm{CO_3^{2-}} + \mathrm{H_2O}
-```
-
-```latex
-K_{b2} = \frac{a_{\mathrm{CO_3^{2-}}} \times a_{\mathrm{H_2O}}}{a_{\mathrm{HCO_3^-}} \times a_{\mathrm{OH^-}}}
-```
-
-```latex
-K_{b2} \approx \frac{a_{\mathrm{CO_3^{2-}}}}{a_{\mathrm{HCO_3^-}} \times a_{\mathrm{OH^-}}}
-```
-
-```latex
-K_{b2} = \frac{K_{a2}}{K_w}
-```
-
-Overall equilibrium reaction:
-
-```latex
-\mathrm{CO_2^*} + 2\mathrm{OH^-} \rightleftharpoons \mathrm{CO_3^{2-}} + \mathrm{H_2O}
-```
-
-Complete equilibrium constant expression:
 
 ```latex
 K_{eq,\mathrm{overall}} = \frac{a_{\mathrm{CO_3^{2-}}} \times a_{\mathrm{H_2O}}}{a_{\mathrm{CO_2^*}} \times a_{\mathrm{OH^-}}^2}
@@ -235,30 +274,38 @@ K_{eq,\mathrm{overall}} = \frac{a_{\mathrm{CO_3^{2-}}} \times a_{\mathrm{H_2O}}}
 
 ```latex
 K_{eq,\mathrm{overall}} \approx \frac{a_{\mathrm{CO_3^{2-}}}}{a_{\mathrm{CO_2^*}} \times a_{\mathrm{OH^-}}^2}
+\quad\text{when}\quad a_{\mathrm{H_2O}} \approx 1
 ```
 
 In terms of acid and water constants:
 
 ```latex
-K_{eq,\mathrm{overall}} = K_{b1} \times K_{b2}
-```
-
-```latex
 K_{eq,\mathrm{overall}} = \frac{K_{a1} \times K_{a2}}{K_w^2}
 ```
 
-Calculation legend:
+!!! tip "Approximation Note"
+    Approximation note: terms with \(\approx\) follow the common \(a_{\mathrm{H_2O}} \approx 1\) simplification used for interpretability.
 
-- `K_{b1}`, `K_{b2}`: base-side equilibrium constants `[-]`
-- `K_{eq,\mathrm{overall}}`: overall equilibrium constant `[-]`
-- `a_{\mathrm{H_2O}}`: water activity `[-]`, often approximated as `1` in concentrated electrolyte simplifications
-
-Approximation note: terms with `\approx` follow the common `a_{\mathrm{H_2O}} \approx 1` simplification used for interpretability.
 
 ---
 
 ## 4) Speciation and pH Derivation Used in GL-260
+
+!!! note "Calculation Legend"
+    - \([H^+]\), \([\mathrm{OH^-}]\), \([\mathrm{CO_2^*}]\), \([\mathrm{HCO_3^-}]\), \([\mathrm{CO_3^{2-}}]\), \([\mathrm{Na^+}]\): concentration/molarity-like model terms [\(mol L^{-1}\) or model-consistent concentration basis]
+    - `C_T`: total inorganic carbon concentration on the same basis as reconstructed species
+    - \(\alpha_0\), \(\alpha_1\), \(\alpha_2\): species fractions `[-]`
+    - `D`: shared denominator in alpha-fraction identities
+    - `R_q`: charge-balance residual on concentration basis (target is zero)
+
 GL-260 solves charge balance to recover `[H+]`, then reconstructs species fractions and pH consistently from that solution.
+
+!!! info "Derivation Walkthrough"
+    **Goal:** recover all carbonate species and pH from one consistent solution variable (\([H^+]\)).
+
+    **Step-by-step interpretation:** compute the shared denominator `D`, derive \(\alpha_0/\alpha_1/\alpha_2\), reconstruct species with `C_T`, then close with charge-balance residual `R_q = 0`.
+
+    **Why this changes operation:** the dashboard pH/fraction channels are only trustworthy when the same solved state satisfies both speciation and charge closure.
 
 Denominator and alpha fractions:
 
@@ -314,36 +361,45 @@ Solver target:
 R_q = 0
 ```
 
-Calculation legend:
-
-- `[H^+]`, `[\mathrm{OH^-}]`, `[\mathrm{CO_2^*}]`, `[\mathrm{HCO_3^-}]`, `[\mathrm{CO_3^{2-}}]`, `[\mathrm{Na^+}]`: concentration/molarity-like model terms [`mol L^{-1}` or model-consistent concentration basis]
-- `C_T`: total inorganic carbon concentration on the same basis as reconstructed species
-- `\alpha_0`, `\alpha_1`, `\alpha_2`: species fractions `[-]`
-- `D`: shared denominator in alpha-fraction identities
-- `R_q`: charge-balance residual on concentration basis (target is zero)
-
 ---
 
 ## 5) Why Bicarbonate Purity Is Hard and Why pCO2 Is the Control Lever
+
+!!! note "Calculation Legend"
+    - \(\frac{a_{\mathrm{HCO_3^-}}}{a_{\mathrm{CO_3^{2-}}}}\): bicarbonate-to-carbonate activity ratio `[-]`
+    - \(a_{\mathrm{OH^-}}\): hydroxide activity `[-]`
+    - \(K_{a2}\), `K_w`, \(K_{b2}\): equilibrium constants `[-]`
+    - \(p_{\mathrm{CO_2}}\): headspace CO2 partial pressure [`atm`]
+
 At high alkalinity, carbonate is strongly favored unless dissolved CO2 is driven high enough to consume free hydroxide and shift the distribution back toward bicarbonate.
+
+!!! info "Derivation Walkthrough"
+    **Goal:** make the bicarbonate-to-carbonate ratio dependence explicit in terms of hydroxide activity and pCO2.
+
+    **Step-by-step interpretation:** start with the second base equilibrium, rearrange into \(a_{\mathrm{HCO_3^-}}/a_{\mathrm{CO_3^{2-}}}\), then substitute Henry's law to connect dissolved CO2 directly to \(p_{\mathrm{CO_2}}\).
+
+    **Why this changes operation:** increasing \(p_{\mathrm{CO_2}}\) is the practical control lever that suppresses carbonate carryover and expands the bicarbonate operating window.
 
 Using the same half-reaction constants:
 
-```latex
-\mathrm{CO_2^*} + \mathrm{OH^-} \rightleftharpoons \mathrm{HCO_3^-}
-```
-
-```latex
-K_{b1} = \frac{K_{a1}}{K_w}
-```
-
-```latex
-\mathrm{HCO_3^-} + \mathrm{OH^-} \rightleftharpoons \mathrm{CO_3^{2-}} + \mathrm{H_2O}
-```
-
-```latex
-K_{b2} = \frac{K_{a2}}{K_w}
-```
+<table class="reaction-map">
+<thead>
+<tr>
+<th>Half Reaction</th>
+<th>Equilibrium Expression</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>\[\mathrm{CO_2^*} + \mathrm{OH^-} \rightleftharpoons \mathrm{HCO_3^-}\]</td>
+<td>\[K_{b1} = \frac{K_{a1}}{K_w}\]</td>
+</tr>
+<tr>
+<td>\[\mathrm{HCO_3^-} + \mathrm{OH^-} \rightleftharpoons \mathrm{CO_3^{2-}} + \mathrm{H_2O}\]</td>
+<td>\[K_{b2} = \frac{K_{a2}}{K_w}\]</td>
+</tr>
+</tbody>
+</table>
 
 From the second equilibrium:
 
@@ -373,21 +429,26 @@ Under the locked walkthrough assumptions (25 C, 700 g NaOH, 2,200 mL water), a c
 | 2.00 | 9.05 | 0.0086 | 0.8409 | 0.1505 |
 | 4.00 | 8.65 | 0.0272 | 0.8952 | 0.0776 |
 
+<div class="inline-chart-anchor" data-inline-chart="pco2-sensitivity"></div>
+
 The trend is the key operational point: higher `pCO2` materially suppresses carbonate fraction and widens the bicarbonate-dominant operating window.
-
-Calculation legend:
-
-- `\frac{a_{\mathrm{HCO_3^-}}}{a_{\mathrm{CO_3^{2-}}}}`: bicarbonate-to-carbonate activity ratio `[-]`
-- `a_{\mathrm{OH^-}}`: hydroxide activity `[-]`
-- `K_{a2}`, `K_w`, `K_{b2}`: equilibrium constants `[-]`
-- `p_{\mathrm{CO_2}}`: headspace CO2 partial pressure [`atm`]
 
 ---
 
 ## 6) NaOH-CO2 Pitzer (HMW-Focused) Calculation Path
+
+!!! note "Calculation Legend"
+    - `I`: ionic strength [\(mol kg^{-1}\)]
+    - `m_i`, `m_j`, `m_k`: species molalities [\(mol kg^{-1}\)]
+    - `z_i`: ion charge number `[-]`
+    - \(\gamma_i\): activity coefficient `[-]`
+    - \(B_{ij}\), \(C_{ij}\), \(\Psi_{ijk}\), `F(I)`, `Z`: Pitzer-model terms used in the focused implementation
+    - `r_1`, \(r_{23}\): dimensionless species ratio identities `[-]`
+    - \(m_{CT}\): total inorganic carbon molality [\(mol kg^{-1}\)]
+
 The NaOH-focused Pitzer path adds activity corrections at high ionic strength while preserving charge and carbon closures each cycle.
 
-The NaOH Pitzer path uses activity-corrected species balances and charge balance with focused Pitzer interactions (`Na+` with `OH-`, `HCO3-`, `CO3^2-`, plus selected `THETA/PSI` terms).
+The NaOH Pitzer path uses activity-corrected species balances and charge balance with focused Pitzer interactions (`Na+` with `OH-`, `HCO3-`, \(CO3^2-\), plus selected `THETA/PSI` terms).
 
 Ionic strength:
 
@@ -427,22 +488,27 @@ m_{CT} = m_{\mathrm{CO_2^*}} + m_{\mathrm{HCO_3^-}} + m_{\mathrm{CO_3^{2-}}}
 
 and charge-balance closure solved iteratively each cycle.
 
-Calculation legend:
-
-- `I`: ionic strength [`mol kg^{-1}`]
-- `m_i`, `m_j`, `m_k`: species molalities [`mol kg^{-1}`]
-- `z_i`: ion charge number `[-]`
-- `\gamma_i`: activity coefficient `[-]`
-- `B_{ij}`, `C_{ij}`, `\Psi_{ijk}`, `F(I)`, `Z`: Pitzer-model terms used in the focused implementation
-- `r_1`, `r_{23}`: dimensionless species ratio identities `[-]`
-- `m_{CT}`: total inorganic carbon molality [`mol kg^{-1}`]
-
 ---
 
 ## 7) Cycle Uptake Math
 Cycle-level uptake is converted into cumulative carbon loading, which becomes the cycle-by-cycle driver of equilibrium state updates.
 
+!!! info "Derivation Walkthrough"
+    **Goal:** convert per-cycle CO2 mass events into cumulative loading terms used by the equilibrium solver.
+
+    **Step-by-step interpretation:** define cycle delta mass, accumulate to cumulative mass, then convert cumulative mass to molality (\(m_{CT,k}\)) using molecular weight and water basis.
+
+    **Why this changes operation:** this conversion is where raw plant measurements become chemistry-state inputs; errors here propagate into every downstream pH/fraction output.
+
 ### 7.1 Primary (Locked) Synthetic Cycle Uptake Sequence
+
+!!! note "Calculation Legend"
+    - \(\Delta m_{\mathrm{CO_2},i}\): CO2 mass uptake during cycle `i` [`g`]
+    - \(m_{\mathrm{CO_2,cum},k}\): cumulative CO2 mass through cycle `k` [`g`]
+    - \(MW_{\mathrm{CO_2}}\): CO2 molecular weight [\(g mol^{-1}\)]
+    - \(m_{CT,k}\): total inorganic carbon molality at cycle `k` [\(mol kg^{-1}\)]
+    - \(kg_{\mathrm{water}}\): water mass basis [`kg`]
+
 
 ```latex
 \Delta m_{\mathrm{CO_2},i}\ (\mathrm{g}) = [80,90,100,110,120,130,130,140]
@@ -456,15 +522,18 @@ m_{\mathrm{CO_2,cum},k} = \sum_{i=1}^{k} \Delta m_{\mathrm{CO_2},i}
 m_{CT,k} = \frac{\left(m_{\mathrm{CO_2,cum},k} / MW_{\mathrm{CO_2}}\right)}{kg_{\mathrm{water}}}
 ```
 
-Calculation legend:
+<div class="inline-chart-anchor" data-inline-chart="uptake-loading"></div>
 
-- `\Delta m_{\mathrm{CO_2},i}`: CO2 mass uptake during cycle `i` [`g`]
-- `m_{\mathrm{CO_2,cum},k}`: cumulative CO2 mass through cycle `k` [`g`]
-- `MW_{\mathrm{CO_2}}`: CO2 molecular weight [`g mol^{-1}`]
-- `m_{CT,k}`: total inorganic carbon molality at cycle `k` [`mol kg^{-1}`]
-- `kg_{\mathrm{water}}`: water mass basis [`kg`]
 
 ### 7.2 Operational Reference: Pressure-Derived Uptake
+
+!!! note "Calculation Legend"
+    - \(\Delta P_{\mathrm{psi}}\), \(\Delta P_{\mathrm{atm}}\): pressure drop per cycle [`psi`, `atm`]
+    - \(V_{\mathrm{headspace}}\): headspace volume [`L`]
+    - `R`: ideal gas constant [\(L atm mol^{-1} K^{-1}\)]
+    - `T`: absolute temperature [`K`]
+    - \(n_{\mathrm{CO_2},i}\): inferred moles of CO2 transferred in cycle `i` [`mol`]
+
 
 When uptake is inferred from pressure-drop per cycle:
 
@@ -480,7 +549,7 @@ n_{\mathrm{CO_2},i} = \frac{\Delta P_{\mathrm{atm}} \times V_{\mathrm{headspace}
 \Delta m_{\mathrm{CO_2},i} = n_{\mathrm{CO_2},i} \times MW_{\mathrm{CO_2}}
 ```
 
-Example (`\Delta P = 25 psi`, `V_headspace = 15 L`, `T = 298.15 K`):
+Example (\(\Delta P = 25 psi\), `V_headspace = 15 L`, `T = 298.15 K`):
 
 ```latex
 \Delta P_{\mathrm{atm}} = \frac{25\ \mathrm{psi}}{14.6959\ \mathrm{psi\ atm^{-1}}} = 1.7012\ \mathrm{atm}
@@ -494,17 +563,15 @@ n_{\mathrm{CO_2},i} = \frac{1.7012\ \mathrm{atm} \times 15\ \mathrm{L}}{0.082057
 \Delta m_{\mathrm{CO_2},i} = 1.0430\ \mathrm{mol} \times 44.01\ \mathrm{g\ mol^{-1}} = 45.90\ \mathrm{g}
 ```
 
-Calculation legend:
-
-- `\Delta P_{\mathrm{psi}}`, `\Delta P_{\mathrm{atm}}`: pressure drop per cycle [`psi`, `atm`]
-- `V_{\mathrm{headspace}}`: headspace volume [`L`]
-- `R`: ideal gas constant [`L atm mol^{-1} K^{-1}`]
-- `T`: absolute temperature [`K`]
-- `n_{\mathrm{CO_2},i}`: inferred moles of CO2 transferred in cycle `i` [`mol`]
-
 ---
 
 ## 8) Worked NaOH-Pitzer Simulation Table (Synthetic Cycles to 900 g)
+
+!!! note "Calculation Legend"
+    - `CT`: total inorganic carbon molality [\(mol kg^{-1}\)]
+    - `m_OH`: hydroxide molality [\(mol kg^{-1}\)]
+    - `H2CO3* frac`, `HCO3- frac`, \(CO3^2- frac\): species fractions `[-]`
+
 The worked table is the concrete numerical bridge between theory and the dashboard-facing channels used in the app.
 
 Computed with the same NaOH-CO2 Pitzer core pathway used by the app example model file.
@@ -521,23 +588,30 @@ Computed with the same NaOH-CO2 Pitzer core pathway used by the app example mode
 | 7 | 130 | 760 | 7.8495 | 8.2255 | 0.000001 | 0.0028 | 0.9810 | 0.0162 |
 | 8 | 140 | 900 | 9.2954 | 7.8538 | 0.000000 | 0.0066 | 0.9867 | 0.0066 |
 
+<div class="inline-chart-anchor" data-inline-chart="cycle-trend-highlights"></div>
+
 Interpretation:
 
 - Around `~385 g` cumulative CO2, the system approaches Stage-1 equivalence (NaOH mostly consumed).
 - By late cycles, bicarbonate dominates and pH approaches the bicarbonate-buffer region.
-
-Calculation legend:
-
-- `CT`: total inorganic carbon molality [`mol kg^{-1}`]
-- `m_OH`: hydroxide molality [`mol kg^{-1}`]
-- `H2CO3* frac`, `HCO3- frac`, `CO3^2- frac`: species fractions `[-]`
 
 ---
 
 ## 9) Measured-pH Calibration + Hybrid ML Correction (Analysis Mode)
 Measured anchors reshape the baseline simulation, and ML residual correction is only accepted when anchor quality is preserved.
 
+!!! info "Derivation Walkthrough"
+    **Goal:** combine anchor-grounded correction with optional ML residual learning without degrading anchor quality.
+
+    **Step-by-step interpretation:** compute anchor residuals, optimize baseline piecewise objective, fit ridge residual model on normalized features, then apply fail-closed anchor checks.
+
+    **Why this changes operation:** the hybrid path improves predictive smoothness while preserving anchor trustworthiness; if trust degrades, fallback keeps outputs safe.
+
 ### 9.1 Locked Multi-Anchor Example
+
+!!! note "Calculation Legend"
+    - `r_5`, `r_8`: anchor residuals (`measured - baseline`) in pH units
+
 
 - Anchor A: cycle 5 measured pH = `9.45`
 - Anchor B: cycle 8 measured pH = `7.95`
@@ -557,11 +631,19 @@ r_{5} = 9.45 - 9.6257 = -0.1757\ \mathrm{pH}
 r_{8} = 7.95 - 7.8538 = +0.0962\ \mathrm{pH}
 ```
 
-Calculation legend:
+<div class="inline-chart-anchor" data-inline-chart="anchor-residuals"></div>
 
-- `r_5`, `r_8`: anchor residuals (`measured - baseline`) in pH units
 
 ### 9.2 Baseline Piecewise Calibration Objective
+
+!!! note "Calculation Legend"
+    - `J(s)`: objective value used to score scale factor `s` `[-]`
+    - \(\hat pH_{\mathrm{anchor}}(s)\): model-predicted pH at an anchor after scale `s`
+    - \(pH_{\mathrm{measured}}\): measured anchor pH
+    - \(\lambda_{\mathrm{reg}}\), \(\lambda_{\mathrm{smooth}}\), \(w_{\mathrm{term}}\): penalty weights `[-]`
+    - \(\Pi_{\mathrm{terminal}}\): terminal-band penalty function `[-]`
+    - \(s_{\mathrm{prev}}\): previous segment scale value `[-]`
+
 
 Per-anchor segment scale search minimizes:
 
@@ -606,16 +688,17 @@ This stage outputs:
 - corrected pH series,
 - corrected fractions series.
 
-Calculation legend:
-
-- `J(s)`: objective value used to score scale factor `s` `[-]`
-- `\hat pH_{\mathrm{anchor}}(s)`: model-predicted pH at an anchor after scale `s`
-- `pH_{\mathrm{measured}}`: measured anchor pH
-- `\lambda_{\mathrm{reg}}`, `\lambda_{\mathrm{smooth}}`, `w_{\mathrm{term}}`: penalty weights `[-]`
-- `\Pi_{\mathrm{terminal}}`: terminal-band penalty function `[-]`
-- `s_{\mathrm{prev}}`: previous segment scale value `[-]`
-
 ### 9.3 Residual ML Ridge Correction Stage
+
+!!! note "Calculation Legend"
+    - \(\mathbf{x}\): raw feature vector for one cycle
+    - \(\boldsymbol\mu\), \(\boldsymbol\sigma\): feature means and standard deviations
+    - \(\mathbf{x}'\): normalized feature vector `[-]`
+    - `X'`: normalized design matrix
+    - \(\mathbf{y}\): residual target vector (anchor-informed) in pH units
+    - \(\boldsymbol\beta\), \(\beta_0\): ridge regression coefficients/intercept
+    - \(\hat r\): predicted residual correction in pH units
+
 
 After baseline anchor calibration, Analysis can learn residual structure using the feature vector:
 
@@ -658,17 +741,12 @@ pH_{\mathrm{ML\ corrected}} = \mathrm{clamp}(pH_{\mathrm{baseline\ corrected}} +
 
 Fractions are then recomputed from corrected pH using equilibrium-consistent fallback mapping.
 
-Calculation legend:
-
-- `\mathbf{x}`: raw feature vector for one cycle
-- `\boldsymbol\mu`, `\boldsymbol\sigma`: feature means and standard deviations
-- `\mathbf{x}'`: normalized feature vector `[-]`
-- `X'`: normalized design matrix
-- `\mathbf{y}`: residual target vector (anchor-informed) in pH units
-- `\boldsymbol\beta`, `\beta_0`: ridge regression coefficients/intercept
-- `\hat r`: predicted residual correction in pH units
-
 ### 9.4 Fail-Closed Anchor Guard (Apply/Reject Logic)
+
+!!! note "Calculation Legend"
+    - \(\mathrm{MAE}_{\mathrm{ML,anchors}}\), \(\mathrm{MAE}_{\mathrm{baseline,anchors}}\): anchor MAE values in pH units
+    - `0.10`: default per-anchor absolute error tolerance in pH units
+
 
 ML-corrected pH is applied only if anchor quality is not degraded:
 
@@ -684,27 +762,38 @@ and each anchor remains within tolerance (`default = 0.10 pH`):
 
 If either check fails, runtime status is fail-closed to baseline corrected series.
 
-Calculation legend:
-
-- `\mathrm{MAE}_{\mathrm{ML,anchors}}`, `\mathrm{MAE}_{\mathrm{baseline,anchors}}`: anchor MAE values in pH units
-- `0.10`: default per-anchor absolute error tolerance in pH units
-
 ---
 
 ## 10) How Dashboard Values Are Computed
 Dashboard metrics follow strict precedence and clamp logic so operator-facing status remains consistent with analysis outputs.
 
+!!! info "Derivation Walkthrough"
+    **Goal:** make dashboard KPIs deterministic by strict precedence, gap math, and clamped completion.
+
+    **Step-by-step interpretation:** resolve required CO2 source by precedence, compute target gap, then compute baseline/corrected completion percentages with guardrail clamps.
+
+    **Why this changes operation:** operators receive consistent status semantics even when multiple modeling channels are present.
+
 ### 10.1 Required CO2 Source Precedence
+
+!!! note "Calculation Legend"
+    - Arrow direction indicates strict precedence order for the required CO2 source channel.
+
 
 ```latex
 \text{guidance\_model} \rightarrow \text{measured\_ph\_calibration} \rightarrow \text{planning\_reference}
 ```
 
-Calculation legend:
-
-- Arrow direction indicates strict precedence order for the required CO2 source channel.
-
 ### 10.2 Target Gap and Completion
+
+!!! note "Calculation Legend"
+    - \(m_{\mathrm{required}}\): required CO2 mass target [`g`]
+    - \(m_{\mathrm{uptake}}\): currently achieved CO2 uptake [`g`]
+    - \(\Delta m_{\mathrm{target}}\): remaining CO2 mass target gap [`g`]
+    - \(C_{\mathrm{required}}\), \(C_{\mathrm{corr}}\): completion percentage [%]
+    - \(m_{\mathrm{corrected\ uptake}}\): corrected uptake basis [`g`]
+    - \(m_{\mathrm{planning\ reference}}\): planning reference uptake basis [`g`]
+
 
 ```latex
 \Delta m_{\mathrm{target}} = \max(m_{\mathrm{required}} - m_{\mathrm{uptake}}, 0)
@@ -719,15 +808,6 @@ Corrected planning completion:
 ```latex
 C_{\mathrm{corr}} = \mathrm{clamp}\left(\frac{m_{\mathrm{corrected\ uptake}}}{m_{\mathrm{planning\ reference}}}, 0, 1\right)\times 100
 ```
-
-Calculation legend:
-
-- `m_{\mathrm{required}}`: required CO2 mass target [`g`]
-- `m_{\mathrm{uptake}}`: currently achieved CO2 uptake [`g`]
-- `\Delta m_{\mathrm{target}}`: remaining CO2 mass target gap [`g`]
-- `C_{\mathrm{required}}`, `C_{\mathrm{corr}}`: completion percentage [%]
-- `m_{\mathrm{corrected\ uptake}}`: corrected uptake basis [`g`]
-- `m_{\mathrm{planning\ reference}}`: planning reference uptake basis [`g`]
 
 ### 10.3 Corrected vs Baseline pH Channels
 
