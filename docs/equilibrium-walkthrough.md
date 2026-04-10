@@ -50,7 +50,7 @@ Converting mass to molar/molal basis defines the two stoichiometric landmarks us
 
     **Step-by-step interpretation:** first compute \(n_{\mathrm{NaOH}}\), then normalize by liquid volume (\(C_{\mathrm{NaOH}}\)) and water mass (\(m_{\mathrm{NaT}}\)), then convert the two stoichiometric CO2 endpoints to grams.
 
-    **Why this changes operation:** these endpoint masses become operator-facing landmarks for when carbonate and bicarbonate dominance should be expected.
+    **Why this changes operation:** these endpoint masses define where bicarbonate formation can be maximized versus where carbonate carryover or leftover caustic are expected, so they are the first control landmarks for high-purity NaHCO3.
 
 ```latex
 m_{\mathrm{NaOH}} = 700\ \mathrm{g}
@@ -213,7 +213,7 @@ The overall equilibrium relationship is explicitly tied to the half-reaction con
 
     **Step-by-step interpretation:** define each half reaction, write \(K_{b1}\) and \(K_{b2}\) in activity form, then multiply them to recover the overall expression and map to \({K_{a1}, K_{a2}, K_w}\).
 
-    **Why this changes operation:** this is the bridge from chemistry theory to runtime validation checks; if half-step constants drift, overall reaction behavior drifts.
+    **Why this changes operation:** this is the control bridge from chemistry theory to bicarbonate purity; if either half-step is unintentionally over-driven, the net pathway shifts away from NaHCO3 and toward carbonate.
 
 GL-260's carbonate neutralization chemistry can be shown in two base-consumption half-steps:
 
@@ -257,6 +257,8 @@ The overall carbonate-neutralization chemistry is the direct sum of the two half
 </tr>
 </tbody>
 </table>
+
+Operational implication for bicarbonate purity: the \(\mathrm{HCO_3^-}\) term cancels in the algebra because it is an intermediate produced in the first half-step and consumed in the second. This means bicarbonate quality is controlled by how strongly each half-step is driven in practice: we want to favor \(\mathrm{CO_2^*} + \mathrm{OH^-} \rightarrow \mathrm{HCO_3^-}\) while suppressing \(\mathrm{HCO_3^-} + \mathrm{OH^-} \rightarrow \mathrm{CO_3^{2-}} + \mathrm{H_2O}\), achieved by increasing dissolved CO2 (\(p_{\mathrm{CO_2}}\)), reducing effective \(\mathrm{OH^-}\) through loading stage progression, and avoiding excessive residual alkalinity.
 
 The equilibrium constants multiply when reactions are added:
 
@@ -305,7 +307,7 @@ GL-260 solves charge balance to recover `[H+]`, then reconstructs species fracti
 
     **Step-by-step interpretation:** compute the shared denominator `D`, derive \(\alpha_0/\alpha_1/\alpha_2\), reconstruct species with `C_T`, then close with charge-balance residual `R_q = 0`.
 
-    **Why this changes operation:** the dashboard pH/fraction channels are only trustworthy when the same solved state satisfies both speciation and charge closure.
+    **Why this changes operation:** bicarbonate-control decisions are only trustworthy when one solved state satisfies both speciation and charge closure; otherwise purity guidance can point to the wrong operating region.
 
 Denominator and alpha fractions:
 
@@ -378,7 +380,7 @@ At high alkalinity, carbonate is strongly favored unless dissolved CO2 is driven
 
     **Step-by-step interpretation:** start with the second base equilibrium, rearrange into \(a_{\mathrm{HCO_3^-}}/a_{\mathrm{CO_3^{2-}}}\), then substitute Henry's law to connect dissolved CO2 directly to \(p_{\mathrm{CO_2}}\).
 
-    **Why this changes operation:** increasing \(p_{\mathrm{CO_2}}\) is the practical control lever that suppresses carbonate carryover and expands the bicarbonate operating window.
+    **Why this changes operation:** increasing \(p_{\mathrm{CO_2}}\) is the practical purity lever because it promotes bicarbonate-forming chemistry and suppresses the over-conversion pathway that creates excess carbonate.
 
 Using the same half-reaction constants:
 
@@ -498,7 +500,7 @@ Cycle-level uptake is converted into cumulative carbon loading, which becomes th
 
     **Step-by-step interpretation:** define cycle delta mass, accumulate to cumulative mass, then convert cumulative mass to molality (\(m_{CT,k}\)) using molecular weight and water basis.
 
-    **Why this changes operation:** this conversion is where raw plant measurements become chemistry-state inputs; errors here propagate into every downstream pH/fraction output.
+    **Why this changes operation:** this conversion maps real cycle operation to carbonate chemistry state, so accurate loading is required to keep the process in the bicarbonate-dominant region needed for purer NaHCO3.
 
 ### 7.1 Primary (Locked) Synthetic Cycle Uptake Sequence
 
@@ -574,6 +576,13 @@ n_{\mathrm{CO_2},i} = \frac{1.7012\ \mathrm{atm} \times 15\ \mathrm{L}}{0.082057
 
 The worked table is the concrete numerical bridge between theory and the dashboard-facing channels used in the app.
 
+!!! info "Derivation Walkthrough"
+    **Goal:** show where the cycle trajectory moves from caustic/carbonate-dominant behavior into bicarbonate-dominant behavior.
+
+    **Step-by-step interpretation:** track cumulative loading, pH decline, hydroxide depletion, and fraction crossover together across cycles.
+
+    **Why this changes operation:** this table is the operating map for bicarbonate purity because it identifies when control levers have reduced residual alkalinity enough to hold most carbon as \(\mathrm{HCO_3^-}\).
+
 Computed with the same NaOH-CO2 Pitzer core pathway used by the app example model file.
 
 | Cycle | Delta CO2 (g) | Cum CO2 (g) | CT (mol/kg) | pH | m_OH (mol/kg) | H2CO3* frac | HCO3- frac | CO3^2- frac |
@@ -605,7 +614,7 @@ Measured anchors reshape the baseline simulation, and ML residual correction is 
 
     **Step-by-step interpretation:** compute anchor residuals, optimize baseline piecewise objective, fit ridge residual model on normalized features, then apply fail-closed anchor checks.
 
-    **Why this changes operation:** the hybrid path improves predictive smoothness while preserving anchor trustworthiness; if trust degrades, fallback keeps outputs safe.
+    **Why this changes operation:** the hybrid path improves predictive smoothness without sacrificing bicarbonate-control trust; if anchor fidelity degrades, fail-closed fallback prevents purity decisions from being driven by unstable corrections.
 
 ### 9.1 Locked Multi-Anchor Example
 

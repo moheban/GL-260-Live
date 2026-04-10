@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="equilibrium-walkthrough-source-sha256" content="8b12f2181b85f2be8b0aece52cdb128f7f75c3dbbe56ebf8f362267dd9b75fed">
+  <meta name="equilibrium-walkthrough-source-sha256" content="36fd63893235e1e52d188491d6ba7ae507023419b7c6ab377737c7676e98cdb3">
   <title>GL-260 Equilibrium Walkthrough</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -684,7 +684,7 @@
 <p class="admonition-title">Derivation Walkthrough</p>
 <p><strong>Goal:</strong> translate the charged NaOH mass into concentration terms that drive every later equilibrium equation.</p>
 <p><strong>Step-by-step interpretation:</strong> first compute <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>n</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow></msub></mrow></math></span>, then normalize by liquid volume (<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>C</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow></msub></mrow></math></span>) and water mass (<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">T</mi></mrow></mrow></msub></mrow></math></span>), then convert the two stoichiometric CO2 endpoints to grams.</p>
-<p><strong>Why this changes operation:</strong> these endpoint masses become operator-facing landmarks for when carbonate and bicarbonate dominance should be expected.</p>
+<p><strong>Why this changes operation:</strong> these endpoint masses define where bicarbonate formation can be maximized versus where carbonate carryover or leftover caustic are expected, so they are the first control landmarks for high-purity NaHCO3.</p>
 </div>
 <div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mn>700</mn><mtext>&#x000A0;</mtext><mi>&#x00067;</mi></mrow></math></div>
 <div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>M</mi><msub><mi>W</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mn>40.00</mn><mtext>&#x000A0;</mtext><mrow><mi mathvariant="normal">g</mi><mtext>&#x000A0;</mtext><mi mathvariant="normal">m</mi><mi mathvariant="normal">o</mi><msup><mi mathvariant="normal">l</mi><mrow><mo>&#x02212;</mo><mn>1</mn></mrow></msup></mrow></mrow></math></div>
@@ -779,7 +779,7 @@
 <p class="admonition-title">Derivation Walkthrough</p>
 <p><strong>Goal:</strong> show that the full carbonate neutralization contract is exactly the product of the two base-consumption half steps.</p>
 <p><strong>Step-by-step interpretation:</strong> define each half reaction, write <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>K</mi><mrow><mi>b</mi><mn>1</mn></mrow></msub></mrow></math></span> and <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>K</mi><mrow><mi>b</mi><mn>2</mn></mrow></msub></mrow></math></span> in activity form, then multiply them to recover the overall expression and map to <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mo>&#x0002C;</mo><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub><mo>&#x0002C;</mo><msub><mi>K</mi><mi>w</mi></msub></mrow></mrow></math></span>.</p>
-<p><strong>Why this changes operation:</strong> this is the bridge from chemistry theory to runtime validation checks; if half-step constants drift, overall reaction behavior drifts.</p>
+<p><strong>Why this changes operation:</strong> this is the control bridge from chemistry theory to bicarbonate purity; if either half-step is unintentionally over-driven, the net pathway shifts away from NaHCO3 and toward carbonate.</p>
 </div>
 <p>GL-260's carbonate neutralization chemistry can be shown in two base-consumption half-steps:</p>
 <table class="reaction-map">
@@ -822,6 +822,7 @@
 </tbody>
 </table>
 
+<p>Operational implication for bicarbonate purity: the <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></math></span> term cancels in the algebra because it is an intermediate produced in the first half-step and consumed in the second. This means bicarbonate quality is controlled by how strongly each half-step is driven in practice: we want to favor <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow><mo>&#x0002B;</mo><mrow><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow><mo>&#x02192;</mo><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></math></span> while suppressing <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow><mo>&#x0002B;</mo><mrow><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow><mo>&#x02192;</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow><mo>&#x0002B;</mo><mrow><msub><mi mathvariant="normal">H</mi><mn>2</mn></msub><mi mathvariant="normal">O</mi></mrow></mrow></math></span>, achieved by increasing dissolved CO2 (<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>p</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow></mrow></msub></mrow></math></span>), reducing effective <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow></mrow></math></span> through loading stage progression, and avoiding excessive residual alkalinity.</p>
 <p>The equilibrium constants multiply when reactions are added:</p>
 <div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>K</mi><mrow><mi>e</mi><mi>q</mi><mo>&#x0002C;</mo><mrow><mi mathvariant="normal">o</mi><mi mathvariant="normal">v</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">l</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>a</mi><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></msub></mrow><mrow><msub><mi>a</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow></mrow></msub><mo>&#x000D7;</mo><msub><mi>a</mi><mrow><mrow><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow></mrow></msub></mrow></mfrac><mo>&#x000D7;</mo><mfrac><mrow><msub><mi>a</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow></mrow></msub><mo>&#x000D7;</mo><msub><mi>a</mi><mrow><mrow><msub><mi mathvariant="normal">H</mi><mn>2</mn></msub><mi mathvariant="normal">O</mi></mrow></mrow></msub></mrow><mrow><msub><mi>a</mi><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></msub><mo>&#x000D7;</mo><msub><mi>a</mi><mrow><mrow><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow></mrow></msub></mrow></mfrac></mrow></math></div>
 <div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>K</mi><mrow><mi>e</mi><mi>q</mi><mo>&#x0002C;</mo><mrow><mi mathvariant="normal">o</mi><mi mathvariant="normal">v</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">l</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>a</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow></mrow></msub><mo>&#x000D7;</mo><msub><mi>a</mi><mrow><mrow><msub><mi mathvariant="normal">H</mi><mn>2</mn></msub><mi mathvariant="normal">O</mi></mrow></mrow></msub></mrow><mrow><msub><mi>a</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow></mrow></msub><mo>&#x000D7;</mo><msubsup><mi>a</mi><mrow><mrow><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow></mrow><mn>2</mn></msubsup></mrow></mfrac></mrow></math></div>
@@ -849,7 +850,7 @@
 <p class="admonition-title">Derivation Walkthrough</p>
 <p><strong>Goal:</strong> recover all carbonate species and pH from one consistent solution variable (<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>).</p>
 <p><strong>Step-by-step interpretation:</strong> compute the shared denominator <code>D</code>, derive <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003B1;</mi><mn>0</mn></msub><mo>&#x0002F;</mo><msub><mi>&#x003B1;</mi><mn>1</mn></msub><mo>&#x0002F;</mo><msub><mi>&#x003B1;</mi><mn>2</mn></msub></mrow></math></span>, reconstruct species with <code>C_T</code>, then close with charge-balance residual <code>R_q = 0</code>.</p>
-<p><strong>Why this changes operation:</strong> the dashboard pH/fraction channels are only trustworthy when the same solved state satisfies both speciation and charge closure.</p>
+<p><strong>Why this changes operation:</strong> bicarbonate-control decisions are only trustworthy when one solved state satisfies both speciation and charge closure; otherwise purity guidance can point to the wrong operating region.</p>
 </div>
 <p>Denominator and alpha fractions:</p>
 <div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>D</mi><mo>&#x0003D;</mo><msup><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mn>2</mn></msup><mo>&#x0002B;</mo><mo stretchy="false">&#x00028;</mo><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mo>&#x000D7;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo stretchy="false">&#x00029;</mo><mo>&#x0002B;</mo><mo stretchy="false">&#x00028;</mo><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mo>&#x000D7;</mo><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub><mo stretchy="false">&#x00029;</mo></mrow></math></div>
@@ -883,7 +884,7 @@
 <p class="admonition-title">Derivation Walkthrough</p>
 <p><strong>Goal:</strong> make the bicarbonate-to-carbonate ratio dependence explicit in terms of hydroxide activity and pCO2.</p>
 <p><strong>Step-by-step interpretation:</strong> start with the second base equilibrium, rearrange into <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>a</mi><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></msub><mo>&#x0002F;</mo><msub><mi>a</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow></mrow></msub></mrow></math></span>, then substitute Henry's law to connect dissolved CO2 directly to <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>p</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow></mrow></msub></mrow></math></span>.</p>
-<p><strong>Why this changes operation:</strong> increasing <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>p</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow></mrow></msub></mrow></math></span> is the practical control lever that suppresses carbonate carryover and expands the bicarbonate operating window.</p>
+<p><strong>Why this changes operation:</strong> increasing <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>p</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow></mrow></msub></mrow></math></span> is the practical purity lever because it promotes bicarbonate-forming chemistry and suppresses the over-conversion pathway that creates excess carbonate.</p>
 </div>
 <p>Using the same half-reaction constants:</p>
 <table class="reaction-map">
@@ -998,7 +999,7 @@
 <p class="admonition-title">Derivation Walkthrough</p>
 <p><strong>Goal:</strong> convert per-cycle CO2 mass events into cumulative loading terms used by the equilibrium solver.</p>
 <p><strong>Step-by-step interpretation:</strong> define cycle delta mass, accumulate to cumulative mass, then convert cumulative mass to molality (<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>m</mi><mrow><mi>C</mi><mi>T</mi><mo>&#x0002C;</mo><mi>k</mi></mrow></msub></mrow></math></span>) using molecular weight and water basis.</p>
-<p><strong>Why this changes operation:</strong> this conversion is where raw plant measurements become chemistry-state inputs; errors here propagate into every downstream pH/fraction output.</p>
+<p><strong>Why this changes operation:</strong> this conversion maps real cycle operation to carbonate chemistry state, so accurate loading is required to keep the process in the bicarbonate-dominant region needed for purer NaHCO3.</p>
 </div>
 <h3 id="71-primary-locked-synthetic-cycle-uptake-sequence">7.1 Primary (Locked) Synthetic Cycle Uptake Sequence</h3>
 <div class="admonition note">
@@ -1046,6 +1047,12 @@
 </ul>
 </div>
 <p>The worked table is the concrete numerical bridge between theory and the dashboard-facing channels used in the app.</p>
+<div class="admonition info">
+<p class="admonition-title">Derivation Walkthrough</p>
+<p><strong>Goal:</strong> show where the cycle trajectory moves from caustic/carbonate-dominant behavior into bicarbonate-dominant behavior.</p>
+<p><strong>Step-by-step interpretation:</strong> track cumulative loading, pH decline, hydroxide depletion, and fraction crossover together across cycles.</p>
+<p><strong>Why this changes operation:</strong> this table is the operating map for bicarbonate purity because it identifies when control levers have reduced residual alkalinity enough to hold most carbon as <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></math></span>.</p>
+</div>
 <p>Computed with the same NaOH-CO2 Pitzer core pathway used by the app example model file.</p>
 <table>
 <thead>
@@ -1177,7 +1184,7 @@
 <p class="admonition-title">Derivation Walkthrough</p>
 <p><strong>Goal:</strong> combine anchor-grounded correction with optional ML residual learning without degrading anchor quality.</p>
 <p><strong>Step-by-step interpretation:</strong> compute anchor residuals, optimize baseline piecewise objective, fit ridge residual model on normalized features, then apply fail-closed anchor checks.</p>
-<p><strong>Why this changes operation:</strong> the hybrid path improves predictive smoothness while preserving anchor trustworthiness; if trust degrades, fallback keeps outputs safe.</p>
+<p><strong>Why this changes operation:</strong> the hybrid path improves predictive smoothness without sacrificing bicarbonate-control trust; if anchor fidelity degrades, fail-closed fallback prevents purity decisions from being driven by unstable corrections.</p>
 </div>
 <h3 id="91-locked-multi-anchor-example">9.1 Locked Multi-Anchor Example</h3>
 <div class="admonition note">
@@ -1312,27 +1319,34 @@
 python scripts/build_equilibrium_walkthrough.py --check
 </code></pre>
 <p>This walkthrough is documentation-only and does not change runtime chemistry behavior.</p>
-        <div class="footer">Source fingerprint: <code>8b12f2181b85f2be8b0aece52cdb128f7f75c3dbbe56ebf8f362267dd9b75fed</code></div>
+        <div class="footer">Source fingerprint: <code>36fd63893235e1e52d188491d6ba7ae507023419b7c6ab377737c7676e98cdb3</code></div>
       </article>
       <section id="cycle-trend-panel" class="surface chart-panel" aria-label="Cycle trend highlights">
         <h2>Cycle Trend Highlights</h2>
-        <p>After equilibrium and pCO2 framing, use these tabs for cycle-level pH and fraction trends from the worked simulation table in Section 8.</p>
+        <p>Use these tabs to inspect how loading, hydroxide depletion, and fraction crossover control bicarbonate formation through the Section 8 worked table.</p>
         <div class="chart-module" id="cycle-chart-module">
           <div class="chart-tabs" role="tablist" aria-label="Cycle trend chart views">
-            <button id="cycle-tab-ph" class="chart-tab" type="button" role="tab" aria-selected="true" aria-controls="cycle-chart-view-ph">pH vs Cycle</button>
+            <button id="cycle-tab-ph" class="chart-tab" type="button" role="tab" aria-selected="true" aria-controls="cycle-chart-view-ph">pH + m_OH</button>
             <button id="cycle-tab-fraction" class="chart-tab" type="button" role="tab" aria-selected="false" aria-controls="cycle-chart-view-fraction">Carbonate Fractions</button>
+            <button id="cycle-tab-loading" class="chart-tab" type="button" role="tab" aria-selected="false" aria-controls="cycle-chart-view-loading">Loading + CT</button>
           </div>
           <div class="chart-stack">
             <section id="cycle-chart-view-ph" class="chart-view is-active" role="tabpanel" aria-labelledby="cycle-tab-ph">
-              <h3>pH by Cycle</h3>
+              <h3>pH and Hydroxide by Cycle</h3>
               <div class="chart-viewport">
-                <canvas id="ph-trend-chart" aria-label="pH by cycle chart"></canvas>
+                <canvas id="ph-trend-chart" aria-label="pH and hydroxide by cycle chart"></canvas>
               </div>
             </section>
             <section id="cycle-chart-view-fraction" class="chart-view" role="tabpanel" aria-labelledby="cycle-tab-fraction">
               <h3>Carbonate Fractions by Cycle</h3>
               <div class="chart-viewport">
                 <canvas id="fraction-trend-chart" aria-label="Carbonate fraction by cycle chart"></canvas>
+              </div>
+            </section>
+            <section id="cycle-chart-view-loading" class="chart-view" role="tabpanel" aria-labelledby="cycle-tab-loading">
+              <h3>Cycle Loading and CT</h3>
+              <div class="chart-viewport">
+                <canvas id="cycle-loading-chart" aria-label="Cycle loading and CT chart"></canvas>
               </div>
             </section>
           </div>
@@ -1364,10 +1378,13 @@ python scripts/build_equilibrium_walkthrough.py --check
       const sectionSelector = document.getElementById("section-selector");
       const cycleTabPh = document.getElementById("cycle-tab-ph");
       const cycleTabFraction = document.getElementById("cycle-tab-fraction");
+      const cycleTabLoading = document.getElementById("cycle-tab-loading");
       const cycleViewPh = document.getElementById("cycle-chart-view-ph");
       const cycleViewFraction = document.getElementById("cycle-chart-view-fraction");
+      const cycleViewLoading = document.getElementById("cycle-chart-view-loading");
       let phChart = null;
       let fractionChart = null;
+      let cycleLoadingChart = null;
       let pco2Chart = null;
       let stoichChart = null;
       let uptakeLoadingChart = null;
@@ -1526,18 +1543,28 @@ python scripts/build_equilibrium_walkthrough.py --check
       }
 
       function setActiveCycleTab(tabKey) {
-        const showingPh = tabKey !== "fraction";
+        const activeTabKey =
+          tabKey === "fraction" || tabKey === "loading" ? tabKey : "ph";
+        const showingPh = activeTabKey === "ph";
+        const showingFraction = activeTabKey === "fraction";
+        const showingLoading = activeTabKey === "loading";
         if (cycleTabPh) {
           cycleTabPh.setAttribute("aria-selected", String(showingPh));
         }
         if (cycleTabFraction) {
-          cycleTabFraction.setAttribute("aria-selected", String(!showingPh));
+          cycleTabFraction.setAttribute("aria-selected", String(showingFraction));
+        }
+        if (cycleTabLoading) {
+          cycleTabLoading.setAttribute("aria-selected", String(showingLoading));
         }
         if (cycleViewPh) {
           cycleViewPh.classList.toggle("is-active", showingPh);
         }
         if (cycleViewFraction) {
-          cycleViewFraction.classList.toggle("is-active", !showingPh);
+          cycleViewFraction.classList.toggle("is-active", showingFraction);
+        }
+        if (cycleViewLoading) {
+          cycleViewLoading.classList.toggle("is-active", showingLoading);
         }
       }
 
@@ -1550,6 +1577,11 @@ python scripts/build_equilibrium_walkthrough.py --check
         if (cycleTabFraction) {
           cycleTabFraction.addEventListener("click", function () {
             setActiveCycleTab("fraction");
+          });
+        }
+        if (cycleTabLoading) {
+          cycleTabLoading.addEventListener("click", function () {
+            setActiveCycleTab("loading");
           });
         }
         setActiveCycleTab("ph");
@@ -1736,6 +1768,7 @@ python scripts/build_equilibrium_walkthrough.py --check
           cumulative: [],
           ct: [],
           ph: [],
+          moh: [],
           h2co3: [],
           hco3: [],
           co3: [],
@@ -1750,6 +1783,7 @@ python scripts/build_equilibrium_walkthrough.py --check
           const cumulativeValue = parseNumericCell(cells[2].textContent);
           const ctValue = parseNumericCell(cells[3].textContent);
           const phValue = parseNumericCell(cells[4].textContent);
+          const mohValue = parseNumericCell(cells[5].textContent);
           const h2co3Value = parseNumericCell(cells[6].textContent);
           const hco3Value = parseNumericCell(cells[7].textContent);
           const co3Value = parseNumericCell(cells[8].textContent);
@@ -1759,6 +1793,7 @@ python scripts/build_equilibrium_walkthrough.py --check
             cumulativeValue === null ||
             ctValue === null ||
             phValue === null ||
+            mohValue === null ||
             h2co3Value === null ||
             hco3Value === null ||
             co3Value === null
@@ -1770,6 +1805,7 @@ python scripts/build_equilibrium_walkthrough.py --check
           series.cumulative.push(cumulativeValue);
           series.ct.push(ctValue);
           series.ph.push(phValue);
+          series.moh.push(mohValue);
           series.h2co3.push(h2co3Value);
           series.hco3.push(hco3Value);
           series.co3.push(co3Value);
@@ -1795,6 +1831,7 @@ python scripts/build_equilibrium_walkthrough.py --check
         const rows = Array.from(targetTable.querySelectorAll("tr")).slice(1);
         const series = {
           pco2: [],
+          ph: [],
           h2co3: [],
           hco3: [],
           co3: [],
@@ -1805,11 +1842,13 @@ python scripts/build_equilibrium_walkthrough.py --check
             continue;
           }
           const pco2Value = parseNumericCell(cells[0].textContent);
+          const phValue = parseNumericCell(cells[1].textContent);
           const h2co3Value = parseNumericCell(cells[2].textContent);
           const hco3Value = parseNumericCell(cells[3].textContent);
           const co3Value = parseNumericCell(cells[4].textContent);
           if (
             pco2Value === null ||
+            phValue === null ||
             h2co3Value === null ||
             hco3Value === null ||
             co3Value === null
@@ -1817,6 +1856,7 @@ python scripts/build_equilibrium_walkthrough.py --check
             continue;
           }
           series.pco2.push(pco2Value);
+          series.ph.push(phValue);
           series.h2co3.push(h2co3Value);
           series.hco3.push(hco3Value);
           series.co3.push(co3Value);
@@ -1835,7 +1875,7 @@ python scripts/build_equilibrium_walkthrough.py --check
             anchor: inlineAnchor,
             canvasId: "pco2-sweep-chart",
             title: "pCO2 Sensitivity Trend",
-            copy: "As pCO2 rises, bicarbonate fraction increases while carbonate fraction drops across the same chemistry basis.",
+            copy: "Higher pCO2 shifts chemistry toward bicarbonate while suppressing carbonate over-conversion, improving NaHCO3 purity control.",
             ariaLabel: "pCO2 sensitivity chart",
             canvasAria: "pCO2 sensitivity chart",
           });
@@ -1864,7 +1904,7 @@ python scripts/build_equilibrium_walkthrough.py --check
         const copy = document.createElement("p");
         copy.className = "inline-chart-copy";
         copy.textContent =
-          "As pCO2 rises, bicarbonate fraction increases while carbonate fraction drops across the same chemistry basis.";
+          "Higher pCO2 shifts chemistry toward bicarbonate while suppressing carbonate over-conversion, improving NaHCO3 purity control.";
         const viewport = document.createElement("div");
         viewport.className = "chart-viewport";
         const canvas = document.createElement("canvas");
@@ -1884,6 +1924,53 @@ python scripts/build_equilibrium_walkthrough.py --check
         }
         chartFallback.textContent = message;
         chartFallback.classList.add("visible");
+      }
+
+      function loadScript(source) {
+        const url = String(source || "").trim();
+        return new Promise(function (resolve, reject) {
+          if (!url) {
+            reject(new Error("Chart source URL is empty."));
+            return;
+          }
+          const existingScript = document.querySelector(
+            'script[data-chart-lib="' + url + '"]'
+          );
+          if (existingScript) {
+            if (window.Chart) {
+              resolve("existing");
+              return;
+            }
+            existingScript.addEventListener(
+              "load",
+              function () {
+                resolve("loaded-existing");
+              },
+              { once: true }
+            );
+            existingScript.addEventListener(
+              "error",
+              function () {
+                reject(new Error("Failed to load chart source: " + url));
+              },
+              { once: true }
+            );
+            return;
+          }
+          const script = document.createElement("script");
+          script.src = url;
+          script.async = true;
+          script.defer = true;
+          script.setAttribute("data-chart-lib", url);
+          script.onload = function () {
+            resolve(url);
+          };
+          script.onerror = function () {
+            script.remove();
+            reject(new Error("Failed to load chart source: " + url));
+          };
+          document.head.appendChild(script);
+        });
       }
 
       function loadChartLibrary() {
@@ -1918,24 +2005,28 @@ python scripts/build_equilibrium_walkthrough.py --check
         const anchorCanvas = ensureAnchorResidualChartMount();
         const phCanvas = document.getElementById("ph-trend-chart");
         const fractionCanvas = document.getElementById("fraction-trend-chart");
-        if (!(phCanvas && fractionCanvas)) {
-          return;
+        const loadingCanvas = document.getElementById("cycle-loading-chart");
+        if (!(phCanvas && fractionCanvas && loadingCanvas)) {
+          throw new Error("Cycle trend chart canvases are missing.");
         }
         const phViewport = closestByClass(phCanvas, "chart-viewport");
         const fractionViewport = closestByClass(fractionCanvas, "chart-viewport");
+        const loadingViewport = closestByClass(loadingCanvas, "chart-viewport");
         const pco2Canvas = ensurePco2ChartMount();
         const pco2Viewport = pco2Canvas ? closestByClass(pco2Canvas, "chart-viewport") : null;
         const stoichViewport = stoichCanvas ? closestByClass(stoichCanvas, "chart-viewport") : null;
         const uptakeViewport = uptakeCanvas ? closestByClass(uptakeCanvas, "chart-viewport") : null;
         const anchorViewport = anchorCanvas ? closestByClass(anchorCanvas, "chart-viewport") : null;
-        if (!(phViewport && fractionViewport)) {
+        if (!(phViewport && fractionViewport && loadingViewport)) {
           throw new Error("Chart viewport containers are missing.");
         }
         if (
           phViewport.clientWidth <= 0 ||
           phViewport.clientHeight <= 0 ||
           fractionViewport.clientWidth <= 0 ||
-          fractionViewport.clientHeight <= 0
+          fractionViewport.clientHeight <= 0 ||
+          loadingViewport.clientWidth <= 0 ||
+          loadingViewport.clientHeight <= 0
         ) {
           throw new Error("Chart viewport has invalid dimensions.");
         }
@@ -1966,6 +2057,10 @@ python scripts/build_equilibrium_walkthrough.py --check
         if (fractionChart) {
           fractionChart.destroy();
           fractionChart = null;
+        }
+        if (cycleLoadingChart) {
+          cycleLoadingChart.destroy();
+          cycleLoadingChart = null;
         }
         if (pco2Chart) {
           pco2Chart.destroy();
@@ -2027,7 +2122,7 @@ python scripts/build_equilibrium_walkthrough.py --check
             }
           };
         }
-        function buildDualAxisOptions(primaryTitle, secondaryTitle) {
+        function buildDualAxisOptions(primaryTitle, secondaryTitle, xTitle) {
           return {
             responsive: true,
             maintainAspectRatio: false,
@@ -2048,7 +2143,7 @@ python scripts/build_equilibrium_walkthrough.py --check
               x: {
                 title: {
                   display: true,
-                  text: "Cycle",
+                  text: xTitle || "Cycle",
                   color: "#2c4d61",
                   font: { family: "Space Grotesk", size: 12 }
                 },
@@ -2083,19 +2178,33 @@ python scripts/build_equilibrium_walkthrough.py --check
           type: "line",
           data: {
             labels: series.cycle,
-            datasets: [{
-              label: "pH",
-              data: series.ph,
-              borderColor: "#0daec0",
-              backgroundColor: "rgba(13, 174, 192, 0.18)",
-              borderWidth: 2.3,
-              pointRadius: 3,
-              pointHoverRadius: 4,
-              tension: 0.28,
-              fill: true
-            }]
+            datasets: [
+              {
+                label: "pH",
+                data: series.ph,
+                yAxisID: "y",
+                borderColor: "#0daec0",
+                backgroundColor: "rgba(13, 174, 192, 0.18)",
+                borderWidth: 2.3,
+                pointRadius: 3,
+                pointHoverRadius: 4,
+                tension: 0.28,
+                fill: true
+              },
+              {
+                label: "m_OH (mol/kg)",
+                data: series.moh,
+                yAxisID: "y2",
+                borderColor: "#5568ff",
+                backgroundColor: "rgba(85, 104, 255, 0.14)",
+                borderWidth: 2.1,
+                pointRadius: 2.8,
+                tension: 0.2,
+                fill: false
+              },
+            ]
           },
-          options: buildChartOptions("pH")
+          options: buildDualAxisOptions("pH", "m_OH (mol/kg)", "Cycle")
         });
         fractionChart = new Chart(fractionCanvas.getContext("2d"), {
           type: "line",
@@ -2133,7 +2242,49 @@ python scripts/build_equilibrium_walkthrough.py --check
           },
           options: buildChartOptions("Fraction")
         });
+        cycleLoadingChart = new Chart(loadingCanvas.getContext("2d"), {
+          data: {
+            labels: series.cycle,
+            datasets: [
+              {
+                type: "bar",
+                label: "Delta CO2 (g)",
+                data: series.delta,
+                yAxisID: "y",
+                borderColor: "#3fa2ff",
+                backgroundColor: "rgba(63, 162, 255, 0.22)",
+                borderWidth: 1.2,
+              },
+              {
+                type: "line",
+                label: "Cumulative CO2 (g)",
+                data: series.cumulative,
+                yAxisID: "y",
+                borderColor: "#1eb46e",
+                backgroundColor: "rgba(30, 180, 110, 0.14)",
+                borderWidth: 2.2,
+                pointRadius: 2.5,
+                tension: 0.22,
+              },
+              {
+                type: "line",
+                label: "CT (mol/kg)",
+                data: series.ct,
+                yAxisID: "y2",
+                borderColor: "#5568ff",
+                backgroundColor: "rgba(85, 104, 255, 0.14)",
+                borderWidth: 2.0,
+                pointRadius: 2.4,
+                tension: 0.22,
+              },
+            ]
+          },
+          options: buildDualAxisOptions("CO2 Mass (g)", "CT (mol/kg)", "Cycle")
+        });
         if (pco2Canvas && pco2Series) {
+          const pco2Options = buildDualAxisOptions("Fraction", "pH", "pCO2 (atm)");
+          pco2Options.scales.y.min = 0;
+          pco2Options.scales.y.max = 1;
           pco2Chart = new Chart(pco2Canvas.getContext("2d"), {
             type: "line",
             data: {
@@ -2165,53 +2316,20 @@ python scripts/build_equilibrium_walkthrough.py --check
                   borderWidth: 2,
                   tension: 0.25,
                   pointRadius: 2.4
+                },
+                {
+                  label: "pH",
+                  data: pco2Series.ph,
+                  yAxisID: "y2",
+                  borderColor: "#0daec0",
+                  backgroundColor: "rgba(13, 174, 192, 0.16)",
+                  borderWidth: 2.2,
+                  tension: 0.2,
+                  pointRadius: 2.8
                 }
               ]
             },
-            options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              resizeDelay: 140,
-              animation: {
-                duration: 260,
-                easing: "easeOutCubic"
-              },
-              interaction: { mode: "index", intersect: false },
-              plugins: {
-                legend: {
-                  labels: {
-                    boxWidth: 10,
-                    usePointStyle: true,
-                    color: "#17384c",
-                    font: { family: "Source Sans 3", size: 12 }
-                  }
-                }
-              },
-              scales: {
-                x: {
-                  title: {
-                    display: true,
-                    text: "pCO2 (atm)",
-                    color: "#2c4d61",
-                    font: { family: "Space Grotesk", size: 12 }
-                  },
-                  ticks: { color: "#32556a" },
-                  grid: { color: "rgba(87, 123, 146, 0.16)" }
-                },
-                y: {
-                  title: {
-                    display: true,
-                    text: "Fraction",
-                    color: "#2c4d61",
-                    font: { family: "Space Grotesk", size: 12 }
-                  },
-                  min: 0,
-                  max: 1,
-                  ticks: { color: "#32556a" },
-                  grid: { color: "rgba(87, 123, 146, 0.16)" }
-                }
-              }
-            }
+            options: pco2Options
           });
         }
         if (stoichCanvas) {
@@ -2342,7 +2460,7 @@ python scripts/build_equilibrium_walkthrough.py --check
             options: buildDualAxisOptions("pH", "Residual (pH)")
           });
         }
-        const instances = [phChart, fractionChart, pco2Chart, stoichChart, uptakeLoadingChart, anchorResidualChart].filter(Boolean);
+        const instances = [phChart, fractionChart, cycleLoadingChart, pco2Chart, stoichChart, uptakeLoadingChart, anchorResidualChart].filter(Boolean);
         for (const chartInstance of instances) {
           if (
             !Number.isFinite(chartInstance.width) ||
@@ -2371,7 +2489,18 @@ python scripts/build_equilibrium_walkthrough.py --check
           showChartFallback("Simulation table data was not detected, so chart rendering was skipped.");
           return;
         }
-        loadChartLibrary()
+        let chartLoadPromise = null;
+        try {
+          chartLoadPromise = loadChartLibrary();
+        } catch (error) {
+          showChartFallback(
+            "Chart rendering is disabled for stability (" +
+              (error && error.message ? error.message : "unknown error") +
+              "). The walkthrough table remains available."
+          );
+          return;
+        }
+        chartLoadPromise
           .then(function () {
             if (!window.Chart) {
               throw new Error("Chart library unavailable after script load.");
@@ -2387,6 +2516,10 @@ python scripts/build_equilibrium_walkthrough.py --check
             if (fractionChart) {
               fractionChart.destroy();
               fractionChart = null;
+            }
+            if (cycleLoadingChart) {
+              cycleLoadingChart.destroy();
+              cycleLoadingChart = null;
             }
             if (pco2Chart) {
               pco2Chart.destroy();

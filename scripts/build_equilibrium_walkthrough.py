@@ -1090,23 +1090,30 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       </article>
       <section id="cycle-trend-panel" class="surface chart-panel" aria-label="Cycle trend highlights">
         <h2>Cycle Trend Highlights</h2>
-        <p>After equilibrium and pCO2 framing, use these tabs for cycle-level pH and fraction trends from the worked simulation table in Section 8.</p>
+        <p>Use these tabs to inspect how loading, hydroxide depletion, and fraction crossover control bicarbonate formation through the Section 8 worked table.</p>
         <div class="chart-module" id="cycle-chart-module">
           <div class="chart-tabs" role="tablist" aria-label="Cycle trend chart views">
-            <button id="cycle-tab-ph" class="chart-tab" type="button" role="tab" aria-selected="true" aria-controls="cycle-chart-view-ph">pH vs Cycle</button>
+            <button id="cycle-tab-ph" class="chart-tab" type="button" role="tab" aria-selected="true" aria-controls="cycle-chart-view-ph">pH + m_OH</button>
             <button id="cycle-tab-fraction" class="chart-tab" type="button" role="tab" aria-selected="false" aria-controls="cycle-chart-view-fraction">Carbonate Fractions</button>
+            <button id="cycle-tab-loading" class="chart-tab" type="button" role="tab" aria-selected="false" aria-controls="cycle-chart-view-loading">Loading + CT</button>
           </div>
           <div class="chart-stack">
             <section id="cycle-chart-view-ph" class="chart-view is-active" role="tabpanel" aria-labelledby="cycle-tab-ph">
-              <h3>pH by Cycle</h3>
+              <h3>pH and Hydroxide by Cycle</h3>
               <div class="chart-viewport">
-                <canvas id="ph-trend-chart" aria-label="pH by cycle chart"></canvas>
+                <canvas id="ph-trend-chart" aria-label="pH and hydroxide by cycle chart"></canvas>
               </div>
             </section>
             <section id="cycle-chart-view-fraction" class="chart-view" role="tabpanel" aria-labelledby="cycle-tab-fraction">
               <h3>Carbonate Fractions by Cycle</h3>
               <div class="chart-viewport">
                 <canvas id="fraction-trend-chart" aria-label="Carbonate fraction by cycle chart"></canvas>
+              </div>
+            </section>
+            <section id="cycle-chart-view-loading" class="chart-view" role="tabpanel" aria-labelledby="cycle-tab-loading">
+              <h3>Cycle Loading and CT</h3>
+              <div class="chart-viewport">
+                <canvas id="cycle-loading-chart" aria-label="Cycle loading and CT chart"></canvas>
               </div>
             </section>
           </div>
@@ -1138,10 +1145,13 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       const sectionSelector = document.getElementById("section-selector");
       const cycleTabPh = document.getElementById("cycle-tab-ph");
       const cycleTabFraction = document.getElementById("cycle-tab-fraction");
+      const cycleTabLoading = document.getElementById("cycle-tab-loading");
       const cycleViewPh = document.getElementById("cycle-chart-view-ph");
       const cycleViewFraction = document.getElementById("cycle-chart-view-fraction");
+      const cycleViewLoading = document.getElementById("cycle-chart-view-loading");
       let phChart = null;
       let fractionChart = null;
+      let cycleLoadingChart = null;
       let pco2Chart = null;
       let stoichChart = null;
       let uptakeLoadingChart = null;
@@ -1300,18 +1310,28 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       }}
 
       function setActiveCycleTab(tabKey) {{
-        const showingPh = tabKey !== "fraction";
+        const activeTabKey =
+          tabKey === "fraction" || tabKey === "loading" ? tabKey : "ph";
+        const showingPh = activeTabKey === "ph";
+        const showingFraction = activeTabKey === "fraction";
+        const showingLoading = activeTabKey === "loading";
         if (cycleTabPh) {{
           cycleTabPh.setAttribute("aria-selected", String(showingPh));
         }}
         if (cycleTabFraction) {{
-          cycleTabFraction.setAttribute("aria-selected", String(!showingPh));
+          cycleTabFraction.setAttribute("aria-selected", String(showingFraction));
+        }}
+        if (cycleTabLoading) {{
+          cycleTabLoading.setAttribute("aria-selected", String(showingLoading));
         }}
         if (cycleViewPh) {{
           cycleViewPh.classList.toggle("is-active", showingPh);
         }}
         if (cycleViewFraction) {{
-          cycleViewFraction.classList.toggle("is-active", !showingPh);
+          cycleViewFraction.classList.toggle("is-active", showingFraction);
+        }}
+        if (cycleViewLoading) {{
+          cycleViewLoading.classList.toggle("is-active", showingLoading);
         }}
       }}
 
@@ -1324,6 +1344,11 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         if (cycleTabFraction) {{
           cycleTabFraction.addEventListener("click", function () {{
             setActiveCycleTab("fraction");
+          }});
+        }}
+        if (cycleTabLoading) {{
+          cycleTabLoading.addEventListener("click", function () {{
+            setActiveCycleTab("loading");
           }});
         }}
         setActiveCycleTab("ph");
@@ -1510,6 +1535,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
           cumulative: [],
           ct: [],
           ph: [],
+          moh: [],
           h2co3: [],
           hco3: [],
           co3: [],
@@ -1524,6 +1550,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
           const cumulativeValue = parseNumericCell(cells[2].textContent);
           const ctValue = parseNumericCell(cells[3].textContent);
           const phValue = parseNumericCell(cells[4].textContent);
+          const mohValue = parseNumericCell(cells[5].textContent);
           const h2co3Value = parseNumericCell(cells[6].textContent);
           const hco3Value = parseNumericCell(cells[7].textContent);
           const co3Value = parseNumericCell(cells[8].textContent);
@@ -1533,6 +1560,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             cumulativeValue === null ||
             ctValue === null ||
             phValue === null ||
+            mohValue === null ||
             h2co3Value === null ||
             hco3Value === null ||
             co3Value === null
@@ -1544,6 +1572,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
           series.cumulative.push(cumulativeValue);
           series.ct.push(ctValue);
           series.ph.push(phValue);
+          series.moh.push(mohValue);
           series.h2co3.push(h2co3Value);
           series.hco3.push(hco3Value);
           series.co3.push(co3Value);
@@ -1569,6 +1598,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         const rows = Array.from(targetTable.querySelectorAll("tr")).slice(1);
         const series = {{
           pco2: [],
+          ph: [],
           h2co3: [],
           hco3: [],
           co3: [],
@@ -1579,11 +1609,13 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             continue;
           }}
           const pco2Value = parseNumericCell(cells[0].textContent);
+          const phValue = parseNumericCell(cells[1].textContent);
           const h2co3Value = parseNumericCell(cells[2].textContent);
           const hco3Value = parseNumericCell(cells[3].textContent);
           const co3Value = parseNumericCell(cells[4].textContent);
           if (
             pco2Value === null ||
+            phValue === null ||
             h2co3Value === null ||
             hco3Value === null ||
             co3Value === null
@@ -1591,6 +1623,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             continue;
           }}
           series.pco2.push(pco2Value);
+          series.ph.push(phValue);
           series.h2co3.push(h2co3Value);
           series.hco3.push(hco3Value);
           series.co3.push(co3Value);
@@ -1609,7 +1642,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             anchor: inlineAnchor,
             canvasId: "pco2-sweep-chart",
             title: "pCO2 Sensitivity Trend",
-            copy: "As pCO2 rises, bicarbonate fraction increases while carbonate fraction drops across the same chemistry basis.",
+            copy: "Higher pCO2 shifts chemistry toward bicarbonate while suppressing carbonate over-conversion, improving NaHCO3 purity control.",
             ariaLabel: "pCO2 sensitivity chart",
             canvasAria: "pCO2 sensitivity chart",
           }});
@@ -1638,7 +1671,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         const copy = document.createElement("p");
         copy.className = "inline-chart-copy";
         copy.textContent =
-          "As pCO2 rises, bicarbonate fraction increases while carbonate fraction drops across the same chemistry basis.";
+          "Higher pCO2 shifts chemistry toward bicarbonate while suppressing carbonate over-conversion, improving NaHCO3 purity control.";
         const viewport = document.createElement("div");
         viewport.className = "chart-viewport";
         const canvas = document.createElement("canvas");
@@ -1658,6 +1691,53 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         }}
         chartFallback.textContent = message;
         chartFallback.classList.add("visible");
+      }}
+
+      function loadScript(source) {{
+        const url = String(source || "").trim();
+        return new Promise(function (resolve, reject) {{
+          if (!url) {{
+            reject(new Error("Chart source URL is empty."));
+            return;
+          }}
+          const existingScript = document.querySelector(
+            'script[data-chart-lib="' + url + '"]'
+          );
+          if (existingScript) {{
+            if (window.Chart) {{
+              resolve("existing");
+              return;
+            }}
+            existingScript.addEventListener(
+              "load",
+              function () {{
+                resolve("loaded-existing");
+              }},
+              {{ once: true }}
+            );
+            existingScript.addEventListener(
+              "error",
+              function () {{
+                reject(new Error("Failed to load chart source: " + url));
+              }},
+              {{ once: true }}
+            );
+            return;
+          }}
+          const script = document.createElement("script");
+          script.src = url;
+          script.async = true;
+          script.defer = true;
+          script.setAttribute("data-chart-lib", url);
+          script.onload = function () {{
+            resolve(url);
+          }};
+          script.onerror = function () {{
+            script.remove();
+            reject(new Error("Failed to load chart source: " + url));
+          }};
+          document.head.appendChild(script);
+        }});
       }}
 
       function loadChartLibrary() {{
@@ -1692,24 +1772,28 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         const anchorCanvas = ensureAnchorResidualChartMount();
         const phCanvas = document.getElementById("ph-trend-chart");
         const fractionCanvas = document.getElementById("fraction-trend-chart");
-        if (!(phCanvas && fractionCanvas)) {{
-          return;
+        const loadingCanvas = document.getElementById("cycle-loading-chart");
+        if (!(phCanvas && fractionCanvas && loadingCanvas)) {{
+          throw new Error("Cycle trend chart canvases are missing.");
         }}
         const phViewport = closestByClass(phCanvas, "chart-viewport");
         const fractionViewport = closestByClass(fractionCanvas, "chart-viewport");
+        const loadingViewport = closestByClass(loadingCanvas, "chart-viewport");
         const pco2Canvas = ensurePco2ChartMount();
         const pco2Viewport = pco2Canvas ? closestByClass(pco2Canvas, "chart-viewport") : null;
         const stoichViewport = stoichCanvas ? closestByClass(stoichCanvas, "chart-viewport") : null;
         const uptakeViewport = uptakeCanvas ? closestByClass(uptakeCanvas, "chart-viewport") : null;
         const anchorViewport = anchorCanvas ? closestByClass(anchorCanvas, "chart-viewport") : null;
-        if (!(phViewport && fractionViewport)) {{
+        if (!(phViewport && fractionViewport && loadingViewport)) {{
           throw new Error("Chart viewport containers are missing.");
         }}
         if (
           phViewport.clientWidth <= 0 ||
           phViewport.clientHeight <= 0 ||
           fractionViewport.clientWidth <= 0 ||
-          fractionViewport.clientHeight <= 0
+          fractionViewport.clientHeight <= 0 ||
+          loadingViewport.clientWidth <= 0 ||
+          loadingViewport.clientHeight <= 0
         ) {{
           throw new Error("Chart viewport has invalid dimensions.");
         }}
@@ -1740,6 +1824,10 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         if (fractionChart) {{
           fractionChart.destroy();
           fractionChart = null;
+        }}
+        if (cycleLoadingChart) {{
+          cycleLoadingChart.destroy();
+          cycleLoadingChart = null;
         }}
         if (pco2Chart) {{
           pco2Chart.destroy();
@@ -1801,7 +1889,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             }}
           }};
         }}
-        function buildDualAxisOptions(primaryTitle, secondaryTitle) {{
+        function buildDualAxisOptions(primaryTitle, secondaryTitle, xTitle) {{
           return {{
             responsive: true,
             maintainAspectRatio: false,
@@ -1822,7 +1910,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
               x: {{
                 title: {{
                   display: true,
-                  text: "Cycle",
+                  text: xTitle || "Cycle",
                   color: "#2c4d61",
                   font: {{ family: "Space Grotesk", size: 12 }}
                 }},
@@ -1857,19 +1945,33 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
           type: "line",
           data: {{
             labels: series.cycle,
-            datasets: [{{
-              label: "pH",
-              data: series.ph,
-              borderColor: "#0daec0",
-              backgroundColor: "rgba(13, 174, 192, 0.18)",
-              borderWidth: 2.3,
-              pointRadius: 3,
-              pointHoverRadius: 4,
-              tension: 0.28,
-              fill: true
-            }}]
+            datasets: [
+              {{
+                label: "pH",
+                data: series.ph,
+                yAxisID: "y",
+                borderColor: "#0daec0",
+                backgroundColor: "rgba(13, 174, 192, 0.18)",
+                borderWidth: 2.3,
+                pointRadius: 3,
+                pointHoverRadius: 4,
+                tension: 0.28,
+                fill: true
+              }},
+              {{
+                label: "m_OH (mol/kg)",
+                data: series.moh,
+                yAxisID: "y2",
+                borderColor: "#5568ff",
+                backgroundColor: "rgba(85, 104, 255, 0.14)",
+                borderWidth: 2.1,
+                pointRadius: 2.8,
+                tension: 0.2,
+                fill: false
+              }},
+            ]
           }},
-          options: buildChartOptions("pH")
+          options: buildDualAxisOptions("pH", "m_OH (mol/kg)", "Cycle")
         }});
         fractionChart = new Chart(fractionCanvas.getContext("2d"), {{
           type: "line",
@@ -1907,7 +2009,49 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
           }},
           options: buildChartOptions("Fraction")
         }});
+        cycleLoadingChart = new Chart(loadingCanvas.getContext("2d"), {{
+          data: {{
+            labels: series.cycle,
+            datasets: [
+              {{
+                type: "bar",
+                label: "Delta CO2 (g)",
+                data: series.delta,
+                yAxisID: "y",
+                borderColor: "#3fa2ff",
+                backgroundColor: "rgba(63, 162, 255, 0.22)",
+                borderWidth: 1.2,
+              }},
+              {{
+                type: "line",
+                label: "Cumulative CO2 (g)",
+                data: series.cumulative,
+                yAxisID: "y",
+                borderColor: "#1eb46e",
+                backgroundColor: "rgba(30, 180, 110, 0.14)",
+                borderWidth: 2.2,
+                pointRadius: 2.5,
+                tension: 0.22,
+              }},
+              {{
+                type: "line",
+                label: "CT (mol/kg)",
+                data: series.ct,
+                yAxisID: "y2",
+                borderColor: "#5568ff",
+                backgroundColor: "rgba(85, 104, 255, 0.14)",
+                borderWidth: 2.0,
+                pointRadius: 2.4,
+                tension: 0.22,
+              }},
+            ]
+          }},
+          options: buildDualAxisOptions("CO2 Mass (g)", "CT (mol/kg)", "Cycle")
+        }});
         if (pco2Canvas && pco2Series) {{
+          const pco2Options = buildDualAxisOptions("Fraction", "pH", "pCO2 (atm)");
+          pco2Options.scales.y.min = 0;
+          pco2Options.scales.y.max = 1;
           pco2Chart = new Chart(pco2Canvas.getContext("2d"), {{
             type: "line",
             data: {{
@@ -1939,53 +2083,20 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
                   borderWidth: 2,
                   tension: 0.25,
                   pointRadius: 2.4
+                }},
+                {{
+                  label: "pH",
+                  data: pco2Series.ph,
+                  yAxisID: "y2",
+                  borderColor: "#0daec0",
+                  backgroundColor: "rgba(13, 174, 192, 0.16)",
+                  borderWidth: 2.2,
+                  tension: 0.2,
+                  pointRadius: 2.8
                 }}
               ]
             }},
-            options: {{
-              responsive: true,
-              maintainAspectRatio: false,
-              resizeDelay: 140,
-              animation: {{
-                duration: 260,
-                easing: "easeOutCubic"
-              }},
-              interaction: {{ mode: "index", intersect: false }},
-              plugins: {{
-                legend: {{
-                  labels: {{
-                    boxWidth: 10,
-                    usePointStyle: true,
-                    color: "#17384c",
-                    font: {{ family: "Source Sans 3", size: 12 }}
-                  }}
-                }}
-              }},
-              scales: {{
-                x: {{
-                  title: {{
-                    display: true,
-                    text: "pCO2 (atm)",
-                    color: "#2c4d61",
-                    font: {{ family: "Space Grotesk", size: 12 }}
-                  }},
-                  ticks: {{ color: "#32556a" }},
-                  grid: {{ color: "rgba(87, 123, 146, 0.16)" }}
-                }},
-                y: {{
-                  title: {{
-                    display: true,
-                    text: "Fraction",
-                    color: "#2c4d61",
-                    font: {{ family: "Space Grotesk", size: 12 }}
-                  }},
-                  min: 0,
-                  max: 1,
-                  ticks: {{ color: "#32556a" }},
-                  grid: {{ color: "rgba(87, 123, 146, 0.16)" }}
-                }}
-              }}
-            }}
+            options: pco2Options
           }});
         }}
         if (stoichCanvas) {{
@@ -2116,7 +2227,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             options: buildDualAxisOptions("pH", "Residual (pH)")
           }});
         }}
-        const instances = [phChart, fractionChart, pco2Chart, stoichChart, uptakeLoadingChart, anchorResidualChart].filter(Boolean);
+        const instances = [phChart, fractionChart, cycleLoadingChart, pco2Chart, stoichChart, uptakeLoadingChart, anchorResidualChart].filter(Boolean);
         for (const chartInstance of instances) {{
           if (
             !Number.isFinite(chartInstance.width) ||
@@ -2145,7 +2256,18 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
           showChartFallback("Simulation table data was not detected, so chart rendering was skipped.");
           return;
         }}
-        loadChartLibrary()
+        let chartLoadPromise = null;
+        try {{
+          chartLoadPromise = loadChartLibrary();
+        }} catch (error) {{
+          showChartFallback(
+            "Chart rendering is disabled for stability (" +
+              (error && error.message ? error.message : "unknown error") +
+              "). The walkthrough table remains available."
+          );
+          return;
+        }}
+        chartLoadPromise
           .then(function () {{
             if (!window.Chart) {{
               throw new Error("Chart library unavailable after script load.");
@@ -2161,6 +2283,10 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             if (fractionChart) {{
               fractionChart.destroy();
               fractionChart = null;
+            }}
+            if (cycleLoadingChart) {{
+              cycleLoadingChart.destroy();
+              cycleLoadingChart = null;
             }}
             if (pco2Chart) {{
               pco2Chart.destroy();
