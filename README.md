@@ -1,22 +1,21 @@
-# GL-260 Data Analysis and Plotter (v4.14.2)
+# GL-260 Data Analysis and Plotter (v4.14.4)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.14.2`:
-- Added drop-time workspace collision resolution so drag/resize edits no longer snap back or leave overlapping panels.
-- Expanded the shared output workspace with dense analytics panels:
-  - KPI Status Strip
-  - Residual And Quality Analytics
-  - Distribution Diagnostics
-- Added persisted dense-analytics visibility scope (`analysis_only` or `all_workflows`) in shared workspace settings.
-- Improved Analysis table usability with horizontal scrollbars, **Fit All Visible** actions, separator double-click autofit, and profile/workflow-context column width persistence.
-- Preserved existing freeform panel editing, stacked preset behavior, layout persistence precedence, and solver chemistry behavior.
-- Added targeted regressions for collision resolution, scope toggle behavior, panel registry coverage, table usability wiring, and width persistence flows.
+Latest workflow highlights in `v4.14.4`:
+- Implemented round-one low-risk performance optimizations for Data, Columns, Plot Settings, and Cycle Analysis tabs.
+- Added workbook sheet-name caching keyed by absolute path + file signature to reduce repeated workbook-open overhead during rescan/startup refresh.
+- Reduced multi-sheet list refresh churn by skipping redundant Data-tab listbox rebuilds when source/selection state is unchanged.
+- Optimized multi-sheet Columns apply payload preparation with per-sheet/per-column numeric conversion caching and one-read-per-sheet fallback loading.
+- Debounced trace-driven Auto Title preview recomputation and cached full-dataset datetime bounds used by Plot Settings Auto Title token generation.
+- Fixed Cycle Analysis recompute settings-key mismatch so canonical `dev_enable_parallel_compute` is honored with legacy `dev_parallel_compute` fallback compatibility.
+- Fixed profile-scoping bug in Analysis persisted-result restore lifecycle so profile-load hydration uses the load target profile identity and no longer cross-hydrates payloads from another profile.
+- Added targeted regressions for profile-scoped Analysis restore, cycle parallel control key resolution, and stitched-series parity for cached multi-sheet apply paths.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.14.2`
-- `APP_VERSION = "v4.14.2"`
+- `# Version: v4.14.4`
+- `APP_VERSION = "v4.14.4"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -542,6 +541,34 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.14.4 Round 1 Performance Optimization + Profile-Scoped Analysis Restore
+- Implemented round-one performance work for:
+  - Data tab
+  - Columns tab
+  - Plot Settings tab
+  - Cycle Analysis tab
+- Data tab performance:
+  - Added workbook sheet-name caching keyed by workbook identity (`abs path + stat signature`) to reduce repeated workbook-open overhead.
+  - Added multi-sheet listbox refresh signature checks to skip redundant rebuild churn when workbook/sheet-selection state is unchanged.
+- Columns tab performance:
+  - Added stitched-series bundle preparation for multi-sheet apply operations with per-sheet/per-column numeric conversion caching.
+  - Reduced fallback workbook reads to one read per missing sheet per apply operation instead of one read per variable per sheet.
+  - Preserved stitched output parity, including separator-row behavior and per-sheet mapping overrides.
+- Plot Settings performance:
+  - Debounced trace-driven Auto Title preview refreshes to avoid recompute bursts while typing.
+  - Cached full-dataset datetime bounds used for Auto Title token generation, with invalidation on data/column changes.
+- Cycle Analysis reliability/performance controls:
+  - Recompute path now reads canonical `dev_enable_parallel_compute` setting.
+  - Legacy `dev_parallel_compute` remains read as compatibility fallback when canonical key is absent.
+- Fixed Analysis profile-scoping restore bug:
+  - Added profile-load target context override so restore-time Analysis hydration evaluates against the profile being loaded.
+  - Prevented cross-profile persisted Analysis payload hydration during profile-load lifecycle.
+- Added targeted regressions for:
+  - profile-scoped Analysis restore context during profile load,
+  - cycle parallel control key resolution (canonical + legacy fallback),
+  - multi-sheet stitched-series parity under cached conversion path.
+- Updated application version metadata to `v4.14.4` in script header and `APP_VERSION`, and synchronized README/user-manual release references.
 
 ### v4.14.2 Advanced Speciation Analysis UX Reliability + Dense Analytics
 - Added drop-time collision resolution for shared output workspace panel drag/resize interactions, with snap-grid normalization and non-overlap guarantees on release.

@@ -9,7 +9,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Browser smoke setup: `python -m playwright install chromium`
 - Browser smoke test: `python -m pytest -q tests/test_docs_math_runtime_playwright.py`
 
-Current release: `v4.14.2`
+Current release: `v4.14.4`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
@@ -600,6 +600,29 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.14.4 Release Note (Round 1 Performance Optimization + Profile-Scoped Analysis Restore)
+- Implemented round-one low-risk performance optimization for:
+  - **Data**
+  - **Columns**
+  - **Plot Settings**
+  - **Cycle Analysis**
+- Data-tab performance updates:
+  - workbook sheet-name cache keyed by workbook identity (`absolute path + file stat signature`),
+  - reduced redundant multi-sheet listbox rebuild churn when source and selection state are unchanged.
+- Columns-tab performance updates:
+  - multi-sheet apply now reuses per-sheet/per-column numeric conversions,
+  - missing-sheet fallback reads occur at most once per sheet per apply operation.
+- Plot Settings Auto Title updates:
+  - trace-driven preview recomputation now debounced for keystroke/event bursts,
+  - full-dataset datetime bounds are cached and invalidated on data/column changes.
+- Cycle Analysis developer-control update:
+  - canonical key `dev_enable_parallel_compute` is now used consistently in recompute paths,
+  - legacy `dev_parallel_compute` is still read only as compatibility fallback.
+- Analysis persistence restore fix:
+  - restore matching now respects profile-load target identity during profile load lifecycle,
+  - persisted Analysis payloads from another profile no longer hydrate when loading a different profile.
+- Existing chemistry/model behavior remains unchanged aside from corrected profile-scoped restore behavior.
 
 ### v4.14.2 Release Note (Advanced Speciation Analysis UX Reliability + Dense Analytics)
 - Added drop-time collision resolution to shared output workspace panel editing:

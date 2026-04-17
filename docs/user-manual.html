@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="53c68aa1a51d2c397758a0303ec4bcb3bf153e4f7c28c230fd31776b5b40f78c">
+  <meta name="manual-source-sha256" content="b60cde4ba22b84206a07e64310ad196f3ace7d968af48e059f15f4da6aa48eb8">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -266,7 +266,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>53c68aa1a51d2c39</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>b60cde4ba22b8420</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -382,6 +382,7 @@
 <li><a href="#inputs_10">Inputs</a></li>
 <li><a href="#step-by-step-actions_10">Step-by-step actions</a></li>
 <li><a href="#expected-outputs_10">Expected outputs</a></li>
+<li><a href="#v4144-release-note-round-1-performance-optimization-profile-scoped-analysis-restore">v4.14.4 Release Note (Round 1 Performance Optimization + Profile-Scoped Analysis Restore)</a></li>
 <li><a href="#v4142-release-note-advanced-speciation-analysis-ux-reliability-dense-analytics">v4.14.2 Release Note (Advanced Speciation Analysis UX Reliability + Dense Analytics)</a></li>
 <li><a href="#v4140-release-note-analysis-input-redesign-shared-freeform-output-workspace">v4.14.0 Release Note (Analysis Input Redesign + Shared Freeform Output Workspace)</a></li>
 <li><a href="#v4136-release-note-calculation-transparency-upgrade">v4.13.6 Release Note (Calculation Transparency Upgrade)</a></li>
@@ -502,7 +503,7 @@
 <li>Browser smoke setup: <code>python -m playwright install chromium</code></li>
 <li>Browser smoke test: <code>python -m pytest -q tests/test_docs_math_runtime_playwright.py</code></li>
 </ul>
-<p>Current release: <code>v4.14.2</code></p>
+<p>Current release: <code>v4.14.4</code></p>
 <p>Analysis timeline pH terminology:<br>
 - <code>Equilibrium pH (Guidance)</code>: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.<br>
 - <code>Corrected pH</code>: measured-anchor calibrated pH overlay used for Analysis alignment diagnostics.<br>
@@ -1116,6 +1117,30 @@
 <li>Measured-pH anchor editor rows persist globally in <code>solubility_inputs</code> and restore on Analysis tab build/restart.</li>
 <li>Latest Analysis run payload restores after restart when workspace context/signatures match persisted <code>sol_analysis_last_result_v2</code> metadata.</li>
 <li>Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.</li>
+</ul>
+<h3 id="v4144-release-note-round-1-performance-optimization-profile-scoped-analysis-restore">v4.14.4 Release Note (Round 1 Performance Optimization + Profile-Scoped Analysis Restore)<a class="headerlink" href="#v4144-release-note-round-1-performance-optimization-profile-scoped-analysis-restore" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Implemented round-one low-risk performance optimization for:</li>
+<li><strong>Data</strong></li>
+<li><strong>Columns</strong></li>
+<li><strong>Plot Settings</strong></li>
+<li><strong>Cycle Analysis</strong></li>
+<li>Data-tab performance updates:</li>
+<li>workbook sheet-name cache keyed by workbook identity (<code>absolute path + file stat signature</code>),</li>
+<li>reduced redundant multi-sheet listbox rebuild churn when source and selection state are unchanged.</li>
+<li>Columns-tab performance updates:</li>
+<li>multi-sheet apply now reuses per-sheet/per-column numeric conversions,</li>
+<li>missing-sheet fallback reads occur at most once per sheet per apply operation.</li>
+<li>Plot Settings Auto Title updates:</li>
+<li>trace-driven preview recomputation now debounced for keystroke/event bursts,</li>
+<li>full-dataset datetime bounds are cached and invalidated on data/column changes.</li>
+<li>Cycle Analysis developer-control update:</li>
+<li>canonical key <code>dev_enable_parallel_compute</code> is now used consistently in recompute paths,</li>
+<li>legacy <code>dev_parallel_compute</code> is still read only as compatibility fallback.</li>
+<li>Analysis persistence restore fix:</li>
+<li>restore matching now respects profile-load target identity during profile load lifecycle,</li>
+<li>persisted Analysis payloads from another profile no longer hydrate when loading a different profile.</li>
+<li>Existing chemistry/model behavior remains unchanged aside from corrected profile-scoped restore behavior.</li>
 </ul>
 <h3 id="v4142-release-note-advanced-speciation-analysis-ux-reliability-dense-analytics">v4.14.2 Release Note (Advanced Speciation Analysis UX Reliability + Dense Analytics)<a class="headerlink" href="#v4142-release-note-advanced-speciation-analysis-ux-reliability-dense-analytics" title="Permanent link">&para;</a></h3>
 <ul>
