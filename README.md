@@ -1,21 +1,20 @@
-# GL-260 Data Analysis and Plotter (v4.14.4)
+# GL-260 Data Analysis and Plotter (v4.15.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.14.4`:
-- Implemented round-one low-risk performance optimizations for Data, Columns, Plot Settings, and Cycle Analysis tabs.
-- Added workbook sheet-name caching keyed by absolute path + file signature to reduce repeated workbook-open overhead during rescan/startup refresh.
-- Reduced multi-sheet list refresh churn by skipping redundant Data-tab listbox rebuilds when source/selection state is unchanged.
-- Optimized multi-sheet Columns apply payload preparation with per-sheet/per-column numeric conversion caching and one-read-per-sheet fallback loading.
-- Debounced trace-driven Auto Title preview recomputation and cached full-dataset datetime bounds used by Plot Settings Auto Title token generation.
-- Fixed Cycle Analysis recompute settings-key mismatch so canonical `dev_enable_parallel_compute` is honored with legacy `dev_parallel_compute` fallback compatibility.
-- Fixed profile-scoping bug in Analysis persisted-result restore lifecycle so profile-load hydration uses the load target profile identity and no longer cross-hydrates payloads from another profile.
-- Added targeted regressions for profile-scoped Analysis restore, cycle parallel control key resolution, and stitched-series parity for cached multi-sheet apply paths.
+Latest workflow highlights in `v4.15.0`:
+- Hardened startup responsiveness by gating splash close on interactive tab readiness and deferring heavy warmup/policy prewarm to post-reveal background stages.
+- Added startup readiness memoization + heavy-check throttling to reduce repeated expensive splash-poll probes.
+- Added low-priority queue backpressure controls and shared bounded executors to reduce thread churn and prevent non-critical work from starving UI-critical callbacks.
+- Optimized Advanced Speciation runtime payload shaping with bounded caches for timeline-normalized rows and runtime payload fragments.
+- Added Final Report page-build cache reuse, Compare render-context caching, and Ledger sort/filter index caching with chunked Treeview repaints for large row sets.
+- Preserved strict Rust/Python parity policy with fail-closed fallback routing and bounded startup policy prewarm probes.
+- Added repeatable performance harness tooling and artifacts under `scripts/perf/` and `docs/perf/`.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.14.4`
-- `APP_VERSION = "v4.14.4"`
+- `# Version: v4.15.0`
+- `APP_VERSION = "v4.15.0"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -541,6 +540,30 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.15.0 Remaining Heavy Tabs + Startup Performance Hardening
+- Startup and scheduling hardening:
+  - Splash close now gates on interactive startup readiness while heavy warmup and Rust policy prewarm continue after reveal.
+  - Added readiness-signature memoization and heavy-check throttling to reduce repeated expensive startup probes.
+  - Added low-priority task queue backpressure controls to reduce UI starvation during non-critical background prefetch/warmup.
+  - Replaced ad-hoc hot-path thread-pool creation with shared bounded executors where safe.
+- Advanced Speciation and Equilibrium Engine performance updates:
+  - Added bounded cache reuse for timeline-normalized rows and full analysis runtime payload fragments.
+  - Added explicit cache invalidation hooks on workspace clear/reset pathways.
+  - Preserved strict deterministic fallback behavior when Rust kernels are unavailable or unhealthy.
+- Final Report / Compare / Ledger performance updates:
+  - Final Report now reuses page-build intermediates keyed by report-state hash to avoid unnecessary full rebuilds.
+  - Compare async refresh now reuses prepared render contexts and avoids repeated deep-copy-heavy bundle prep.
+  - Ledger now reuses cached sort/filter indices keyed by data/filter/sort signature and applies chunked Treeview repainting to keep the UI responsive on large row sets.
+- Rust policy routing updates:
+  - Added bounded startup/background prewarm probes for auto-policy decisions using capped synthetic/sampled payloads.
+  - Maintained strict parity checks and fail-closed Python fallback on mismatch/unhealthy conditions.
+- Added repeatable performance harness:
+  - `scripts/perf/run_startup_import_profile.py`
+  - `scripts/perf/run_hotspot_bench.py`
+  - `scripts/perf/generate_flamegraph.py`
+  - `docs/perf/README.md` + generated `docs/perf/*latest*` artifacts.
+- Updated application version metadata to `v4.15.0` in script header and `APP_VERSION`, and synchronized README/user-manual release references.
 
 ### v4.14.4 Round 1 Performance Optimization + Profile-Scoped Analysis Restore
 - Implemented round-one performance work for:

@@ -1,0 +1,41 @@
+{
+  "timestamp": "2026-04-17T16:38:58",
+  "python": "3.14.0 (tags/v3.14.0:ebf955d, Oct  7 2025, 10:15:03) [MSC v.1944 64 bit (AMD64)]",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "iterations": 30,
+  "warmup": 5,
+  "cases": {
+    "final_report_cycle_stats_rows_core_python": {
+      "mean_ms": 0.04787999884380648,
+      "median_ms": 0.047100002120714635,
+      "min_ms": 0.04490000719670206,
+      "max_ms": 0.052499992307275534,
+      "p95_ms": 0.052100003813393414,
+      "iterations": 30.0
+    },
+    "final_report_cycle_timeline_rows_core_python": {
+      "mean_ms": 0.06118666691084703,
+      "median_ms": 0.060699996538460255,
+      "min_ms": 0.058900011936202645,
+      "max_ms": 0.06659999780822545,
+      "p95_ms": 0.06389999180100858,
+      "iterations": 30.0
+    },
+    "compare_aligned_cycle_rows_core_python": {
+      "mean_ms": 0.15961333313801637,
+      "median_ms": 0.15759999951114878,
+      "min_ms": 0.1537000061944127,
+      "max_ms": 0.20879998919554055,
+      "p95_ms": 0.1647000026423484,
+      "iterations": 30.0
+    },
+    "ledger_sort_filter_indices_core_python": {
+      "mean_ms": 0.05209333418558041,
+      "median_ms": 0.045000000682193786,
+      "min_ms": 0.04270000499673188,
+      "max_ms": 0.12749999586958438,
+      "p95_ms": 0.11219999578315765,
+      "iterations": 30.0
+    }
+  }
+}

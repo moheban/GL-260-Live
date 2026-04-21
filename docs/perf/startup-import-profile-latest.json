@@ -1,0 +1,146 @@
+{
+  "timestamp": "2026-04-17T16:37:53",
+  "python": "3.14.0 (tags/v3.14.0:ebf955d, Oct  7 2025, 10:15:03) [MSC v.1944 64 bit (AMD64)]",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "command": [
+    "C:\\Users\\mmoheban\\AppData\\Local\\Programs\\Python\\Python314\\python.exe",
+    "-X",
+    "importtime",
+    "C:\\Users\\mmoheban\\Local Documents\\Python\\Code Template Files\\Code Master Files\\Codex GL-260 Processing Application\\GL-260\\GL-260 Data Analysis and Plotter.py",
+    "--benchmark",
+    "--points=1000",
+    "--cycles=4",
+    "--noise=0.2"
+  ],
+  "returncode": 0,
+  "elapsed_ms": 57842.311000000336,
+  "top_imports": [
+    {
+      "module": "scipy.optimize",
+      "self_us": 57580,
+      "cumulative_us": 13053668
+    },
+    {
+      "module": "matplotlib.pyplot",
+      "self_us": 121459,
+      "cumulative_us": 12128807
+    },
+    {
+      "module": "pandas",
+      "self_us": 31845,
+      "cumulative_us": 9998437
+    },
+    {
+      "module": "scipy.optimize._optimize",
+      "self_us": 36256,
+      "cumulative_us": 9254561
+    },
+    {
+      "module": "scipy.linalg",
+      "self_us": 29842,
+      "cumulative_us": 7441266
+    },
+    {
+      "module": "matplotlib",
+      "self_us": 181673,
+      "cumulative_us": 6928560
+    },
+    {
+      "module": "pandas.core.api",
+      "self_us": 2585,
+      "cumulative_us": 6734099
+    },
+    {
+      "module": "scipy.signal",
+      "self_us": 51218,
+      "cumulative_us": 6281336
+    },
+    {
+      "module": "scipy.signal._support_alternative_backends",
+      "self_us": 26834,
+      "cumulative_us": 5963947
+    },
+    {
+      "module": "scipy.signal._signal_api",
+      "self_us": 19899,
+      "cumulative_us": 5935382
+    },
+    {
+      "module": "scipy.linalg._cythonized_array_utils",
+      "self_us": 218231,
+      "cumulative_us": 5496109
+    },
+    {
+      "module": "scipy._lib._util",
+      "self_us": 4062,
+      "cumulative_us": 5271181
+    },
+    {
+      "module": "scipy._lib._array_api",
+      "self_us": 3811,
+      "cumulative_us": 5267120
+    },
+    {
+      "module": "scipy._lib.array_api_compat.numpy",
+      "self_us": 48579,
+      "cumulative_us": 5052053
+    },
+    {
+      "module": "scipy.signal._peak_finding",
+      "self_us": 46692,
+      "cumulative_us": 4333593
+    },
+    {
+      "module": "matplotlib.backends.backend_pdf",
+      "self_us": 84621,
+      "cumulative_us": 4230619
+    },
+    {
+      "module": "scipy.stats",
+      "self_us": 46220,
+      "cumulative_us": 4225703
+    },
+    {
+      "module": "matplotlib.backends._backend_pdf_ps",
+      "self_us": 44362,
+      "cumulative_us": 4069357
+    },
+    {
+      "module": "numpy.f2py",
+      "self_us": 1529,
+      "cumulative_us": 3989397
+    },
+    {
+      "module": "fontTools.subset",
+      "self_us": 45820,
+      "cumulative_us": 3978090
+    },
+    {
+      "module": "numpy.f2py.f2py2e",
+      "self_us": 39122,
+      "cumulative_us": 3952770
+    },
+    {
+      "module": "matplotlib.cbook",
+      "self_us": 93962,
+      "cumulative_us": 3738024
+    },
+    {
+      "module": "numpy",
+      "self_us": 44329,
+      "cumulative_us": 3619240
+    },
+    {
+      "module": "numpy.f2py.capi_maps",
+      "self_us": 62317,
+      "cumulative_us": 3587194
+    },
+    {
+      "module": "numpy.f2py.crackfortran",
+      "self_us": 108646,
+      "cumulative_us": 3400242
+    }
+  ],
+  "stdout_excerpt": "Running synthetic multi-threaded benchmark with parameters: {'num_points': 1000, 'cycles': 4, 'noise': 0.2}\nInputs used\nMode: Auto\nValid cycles: 4\nThreshold: min dP = 5.00 PSI\nTotal uptake: dP_total = 336.86 PSI\nPeak detection: prominence=1.00, distance=1, width=1, smoothing=15, refine=15\nMarker sources: auto P/T=0/0, manual add P/T=0/0, manual remove P/T=0/0\nTemp basis: Internal Reactor Temperature (no defaults used)\n\nGas model inputs used\nPreset: CO\u00e2\u201a\u201a (a=3.592, b=0.0427)\nVessel volume: 1.000 L\nVDW a: 1.3900, b: 0.0391\nGas MW: 45.0020 g/mol (override)\nVDW preset override: a/b\nSciPy available: Yes\nVDW computed: Yes\n\nGas uptake totals",
+  "stderr_excerpt": "import time: self [us] | cumulative | imported package\nimport time:       265 |        265 | winreg\nimport time:       594 |        594 |   _io\nimport time:       101 |        101 |   marshal\nimport time:       540 |        540 |   nt\nimport time:      1871 |       3104 | _frozen_importlib_external\nimport time:      1725 |       1725 |   time\nimport time:       691 |       2415 | zipimport\nimport time:       172 |        172 |     _codecs\nimport time:      1604 |       1776 |   codecs\nimport time:     35975 |      35975 |   encodings.aliases\nimport time:       979 |        979 |   encodings._win_cp_codecs\nimport time:      5334 |      44063 | encodings\nimport time:      1948 |       1948 | encodings.utf_8\nimport time:       142 |        142 | _signal\nimport time:       133 |        133 |       _abc\nimport time:       535 |        668 |     abc\nimport time:       182 |        182 |       _stat\nimport time:       467 |        649 |     stat\nimport time:      2613 |       2613 |     _collections_abc\nimport time:       389 |        389 |       genericpath\nimport time:       728 |        728 |       _winapi\nimport time:       926 |       2043 |     ntpath\nimport time:      1514 |       7484 |   os\nimport time:       284 |        284 |   _sitebuiltins\nimport time:       166 |        166 |   errno\nimport time:      3797 |       3797 |   sitecustomize\nimport time:      8588 |       8588 |   usercustomize\nimport time:      2672 |      22989 | site\nimport time:       134 |        134 |     _contextvars\nimport time:       136 |        136 |         _types\nimport time:      1272 |       1408 |       types\nimport time:      1170 |       2578 |     _weakrefset\nimport time:       307 |        307 |     itertools\nimport time:       145 |        145 |     _collections\nimport time:      2273 |       5434 |   threading\nimport time:      4348 |       9781 | sysconfig\nimport time:      4051 |       4051 |     enum\nimport time:       187 |        187 |       _sre\nimport time:      1211 |       1211 |         re._constants"
+}

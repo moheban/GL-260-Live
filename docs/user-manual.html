@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="b60cde4ba22b84206a07e64310ad196f3ace7d968af48e059f15f4da6aa48eb8">
+  <meta name="manual-source-sha256" content="2964350f11080ad659087dc1a4b88826b5bfbba73b51fe58a7e0cfb0c9297aa9">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -266,7 +266,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>b60cde4ba22b8420</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>2964350f11080ad6</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -382,6 +382,7 @@
 <li><a href="#inputs_10">Inputs</a></li>
 <li><a href="#step-by-step-actions_10">Step-by-step actions</a></li>
 <li><a href="#expected-outputs_10">Expected outputs</a></li>
+<li><a href="#v4150-release-note-remaining-heavy-tabs-startup-performance-hardening">v4.15.0 Release Note (Remaining Heavy Tabs + Startup Performance Hardening)</a></li>
 <li><a href="#v4144-release-note-round-1-performance-optimization-profile-scoped-analysis-restore">v4.14.4 Release Note (Round 1 Performance Optimization + Profile-Scoped Analysis Restore)</a></li>
 <li><a href="#v4142-release-note-advanced-speciation-analysis-ux-reliability-dense-analytics">v4.14.2 Release Note (Advanced Speciation Analysis UX Reliability + Dense Analytics)</a></li>
 <li><a href="#v4140-release-note-analysis-input-redesign-shared-freeform-output-workspace">v4.14.0 Release Note (Analysis Input Redesign + Shared Freeform Output Workspace)</a></li>
@@ -503,7 +504,7 @@
 <li>Browser smoke setup: <code>python -m playwright install chromium</code></li>
 <li>Browser smoke test: <code>python -m pytest -q tests/test_docs_math_runtime_playwright.py</code></li>
 </ul>
-<p>Current release: <code>v4.14.4</code></p>
+<p>Current release: <code>v4.15.0</code></p>
 <p>Analysis timeline pH terminology:<br>
 - <code>Equilibrium pH (Guidance)</code>: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.<br>
 - <code>Corrected pH</code>: measured-anchor calibrated pH overlay used for Analysis alignment diagnostics.<br>
@@ -1117,6 +1118,31 @@
 <li>Measured-pH anchor editor rows persist globally in <code>solubility_inputs</code> and restore on Analysis tab build/restart.</li>
 <li>Latest Analysis run payload restores after restart when workspace context/signatures match persisted <code>sol_analysis_last_result_v2</code> metadata.</li>
 <li>Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.</li>
+</ul>
+<h3 id="v4150-release-note-remaining-heavy-tabs-startup-performance-hardening">v4.15.0 Release Note (Remaining Heavy Tabs + Startup Performance Hardening)<a class="headerlink" href="#v4150-release-note-remaining-heavy-tabs-startup-performance-hardening" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Startup responsiveness hardening:</li>
+<li>splash close now targets interactive tab readiness (Data/Columns/Plot path) instead of waiting on heavy tab warmup completion,</li>
+<li>heavy warmup and Rust policy prewarm continue in bounded post-reveal background stages.</li>
+<li>Startup polling/perf controls:</li>
+<li>readiness checks now use short-lived memoization and heavy-check throttling to reduce repeated expensive probes,</li>
+<li>low-priority queue backpressure controls reduce callback starvation during non-critical warmup/prefetch workloads.</li>
+<li>Advanced Speciation runtime-path optimization:</li>
+<li>analysis runtime payload and timeline normalization now reuse bounded caches keyed by workflow/profile/data signatures,</li>
+<li>explicit invalidation hooks clear these caches on workspace reset/clear paths.</li>
+<li>Final Report / Compare / Ledger optimization:</li>
+<li>Final Report reuses page-build intermediates keyed by report-state hashes to avoid full rebuilds on navigation-only changes,</li>
+<li>Compare reuses prepared render contexts in async refresh paths,</li>
+<li>Ledger reuses sort/filter indices and performs chunked table repaints for improved responsiveness on large row sets.</li>
+<li>Rust integration policy:</li>
+<li>startup/background prewarm now probes kernels using bounded synthetic/capped-sample payloads,</li>
+<li>strict parity checks remain enforced with immediate Python fallback on unhealthy/mismatch outcomes.</li>
+<li>Added repeatable profiling harness assets:</li>
+<li><code>scripts/perf/run_startup_import_profile.py</code></li>
+<li><code>scripts/perf/run_hotspot_bench.py</code></li>
+<li><code>scripts/perf/generate_flamegraph.py</code></li>
+<li><code>docs/perf/README.md</code> and latest generated artifacts.</li>
+<li>Scientific/model output contracts remain unchanged; optimization scope is startup scheduling, memory-aware caching, and UI/worker orchestration.</li>
 </ul>
 <h3 id="v4144-release-note-round-1-performance-optimization-profile-scoped-analysis-restore">v4.14.4 Release Note (Round 1 Performance Optimization + Profile-Scoped Analysis Restore)<a class="headerlink" href="#v4144-release-note-round-1-performance-optimization-profile-scoped-analysis-restore" title="Permanent link">&para;</a></h3>
 <ul>

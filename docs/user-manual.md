@@ -9,7 +9,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Browser smoke setup: `python -m playwright install chromium`
 - Browser smoke test: `python -m pytest -q tests/test_docs_math_runtime_playwright.py`
 
-Current release: `v4.14.4`
+Current release: `v4.15.0`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
@@ -600,6 +600,30 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.15.0 Release Note (Remaining Heavy Tabs + Startup Performance Hardening)
+- Startup responsiveness hardening:
+  - splash close now targets interactive tab readiness (Data/Columns/Plot path) instead of waiting on heavy tab warmup completion,
+  - heavy warmup and Rust policy prewarm continue in bounded post-reveal background stages.
+- Startup polling/perf controls:
+  - readiness checks now use short-lived memoization and heavy-check throttling to reduce repeated expensive probes,
+  - low-priority queue backpressure controls reduce callback starvation during non-critical warmup/prefetch workloads.
+- Advanced Speciation runtime-path optimization:
+  - analysis runtime payload and timeline normalization now reuse bounded caches keyed by workflow/profile/data signatures,
+  - explicit invalidation hooks clear these caches on workspace reset/clear paths.
+- Final Report / Compare / Ledger optimization:
+  - Final Report reuses page-build intermediates keyed by report-state hashes to avoid full rebuilds on navigation-only changes,
+  - Compare reuses prepared render contexts in async refresh paths,
+  - Ledger reuses sort/filter indices and performs chunked table repaints for improved responsiveness on large row sets.
+- Rust integration policy:
+  - startup/background prewarm now probes kernels using bounded synthetic/capped-sample payloads,
+  - strict parity checks remain enforced with immediate Python fallback on unhealthy/mismatch outcomes.
+- Added repeatable profiling harness assets:
+  - `scripts/perf/run_startup_import_profile.py`
+  - `scripts/perf/run_hotspot_bench.py`
+  - `scripts/perf/generate_flamegraph.py`
+  - `docs/perf/README.md` and latest generated artifacts.
+- Scientific/model output contracts remain unchanged; optimization scope is startup scheduling, memory-aware caching, and UI/worker orchestration.
 
 ### v4.14.4 Release Note (Round 1 Performance Optimization + Profile-Scoped Analysis Restore)
 - Implemented round-one low-risk performance optimization for:
