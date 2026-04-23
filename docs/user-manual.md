@@ -9,7 +9,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Browser smoke setup: `python -m playwright install chromium`
 - Browser smoke test: `python -m pytest -q tests/test_docs_math_runtime_playwright.py`
 
-Current release: `v4.15.0`
+Current release: `v4.15.2`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
@@ -600,6 +600,27 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.15.2 Release Note (Startup Error Fix + Startup/Rust Guard Regression Hardening)
+- Fixed startup warmup-budget error handling in startup tab warmup resolution.
+- Added targeted startup regressions for:
+  - shadowed startup warmup-budget attribute handling,
+  - splash clear behavior that must skip post-reveal tab warmup.
+- Updated rust capability readiness-warning regression coverage to keep backend readiness while surfacing toolchain warnings.
+- Scientific/model output contracts remain unchanged; scope is startup reliability hardening.
+
+### v4.15.1 Release Note (Advanced Plotting Wizard + Interactive HTML Final Report Refactors)
+- Refactored Advanced Plotting Wizard helpers and rendering pathways, including:
+  - metric-id derivation and metric-part extraction helpers,
+  - deterministic layer payload normalization for mixed-layer rendering.
+- Added targeted Advanced Plotting Wizard regressions for:
+  - v1-to-v2 spec migration renderability,
+  - mixed-layer validation/render smoke,
+  - metric-catalog field coverage and deterministic layer-state ordering.
+- Refactored interactive HTML Final Report dashboard output path and added targeted regressions for:
+  - interactive dashboard contract coverage,
+  - non-tight page-embedding render behavior.
+- Scientific/model output contracts remain unchanged; scope is refactor reliability and rendering-contract hardening.
 
 ### v4.15.0 Release Note (Remaining Heavy Tabs + Startup Performance Hardening)
 - Startup responsiveness hardening:

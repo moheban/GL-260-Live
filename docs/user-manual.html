@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="2964350f11080ad659087dc1a4b88826b5bfbba73b51fe58a7e0cfb0c9297aa9">
+  <meta name="manual-source-sha256" content="0670e58280d52ea84b33155efb54590597c3bf10698c85ad5399763383f40822">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -266,7 +266,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>2964350f11080ad6</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>0670e58280d52ea8</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -382,6 +382,8 @@
 <li><a href="#inputs_10">Inputs</a></li>
 <li><a href="#step-by-step-actions_10">Step-by-step actions</a></li>
 <li><a href="#expected-outputs_10">Expected outputs</a></li>
+<li><a href="#v4152-release-note-startup-error-fix-startuprust-guard-regression-hardening">v4.15.2 Release Note (Startup Error Fix + Startup/Rust Guard Regression Hardening)</a></li>
+<li><a href="#v4151-release-note-advanced-plotting-wizard-interactive-html-final-report-refactors">v4.15.1 Release Note (Advanced Plotting Wizard + Interactive HTML Final Report Refactors)</a></li>
 <li><a href="#v4150-release-note-remaining-heavy-tabs-startup-performance-hardening">v4.15.0 Release Note (Remaining Heavy Tabs + Startup Performance Hardening)</a></li>
 <li><a href="#v4144-release-note-round-1-performance-optimization-profile-scoped-analysis-restore">v4.14.4 Release Note (Round 1 Performance Optimization + Profile-Scoped Analysis Restore)</a></li>
 <li><a href="#v4142-release-note-advanced-speciation-analysis-ux-reliability-dense-analytics">v4.14.2 Release Note (Advanced Speciation Analysis UX Reliability + Dense Analytics)</a></li>
@@ -504,7 +506,7 @@
 <li>Browser smoke setup: <code>python -m playwright install chromium</code></li>
 <li>Browser smoke test: <code>python -m pytest -q tests/test_docs_math_runtime_playwright.py</code></li>
 </ul>
-<p>Current release: <code>v4.15.0</code></p>
+<p>Current release: <code>v4.15.2</code></p>
 <p>Analysis timeline pH terminology:<br>
 - <code>Equilibrium pH (Guidance)</code>: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.<br>
 - <code>Corrected pH</code>: measured-anchor calibrated pH overlay used for Analysis alignment diagnostics.<br>
@@ -1118,6 +1120,29 @@
 <li>Measured-pH anchor editor rows persist globally in <code>solubility_inputs</code> and restore on Analysis tab build/restart.</li>
 <li>Latest Analysis run payload restores after restart when workspace context/signatures match persisted <code>sol_analysis_last_result_v2</code> metadata.</li>
 <li>Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.</li>
+</ul>
+<h3 id="v4152-release-note-startup-error-fix-startuprust-guard-regression-hardening">v4.15.2 Release Note (Startup Error Fix + Startup/Rust Guard Regression Hardening)<a class="headerlink" href="#v4152-release-note-startup-error-fix-startuprust-guard-regression-hardening" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Fixed startup warmup-budget error handling in startup tab warmup resolution.</li>
+<li>Added targeted startup regressions for:</li>
+<li>shadowed startup warmup-budget attribute handling,</li>
+<li>splash clear behavior that must skip post-reveal tab warmup.</li>
+<li>Updated rust capability readiness-warning regression coverage to keep backend readiness while surfacing toolchain warnings.</li>
+<li>Scientific/model output contracts remain unchanged; scope is startup reliability hardening.</li>
+</ul>
+<h3 id="v4151-release-note-advanced-plotting-wizard-interactive-html-final-report-refactors">v4.15.1 Release Note (Advanced Plotting Wizard + Interactive HTML Final Report Refactors)<a class="headerlink" href="#v4151-release-note-advanced-plotting-wizard-interactive-html-final-report-refactors" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Refactored Advanced Plotting Wizard helpers and rendering pathways, including:</li>
+<li>metric-id derivation and metric-part extraction helpers,</li>
+<li>deterministic layer payload normalization for mixed-layer rendering.</li>
+<li>Added targeted Advanced Plotting Wizard regressions for:</li>
+<li>v1-to-v2 spec migration renderability,</li>
+<li>mixed-layer validation/render smoke,</li>
+<li>metric-catalog field coverage and deterministic layer-state ordering.</li>
+<li>Refactored interactive HTML Final Report dashboard output path and added targeted regressions for:</li>
+<li>interactive dashboard contract coverage,</li>
+<li>non-tight page-embedding render behavior.</li>
+<li>Scientific/model output contracts remain unchanged; scope is refactor reliability and rendering-contract hardening.</li>
 </ul>
 <h3 id="v4150-release-note-remaining-heavy-tabs-startup-performance-hardening">v4.15.0 Release Note (Remaining Heavy Tabs + Startup Performance Hardening)<a class="headerlink" href="#v4150-release-note-remaining-heavy-tabs-startup-performance-hardening" title="Permanent link">&para;</a></h3>
 <ul>

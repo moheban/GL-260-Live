@@ -1,20 +1,17 @@
-# GL-260 Data Analysis and Plotter (v4.15.0)
+# GL-260 Data Analysis and Plotter (v4.15.2)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.15.0`:
-- Hardened startup responsiveness by gating splash close on interactive tab readiness and deferring heavy warmup/policy prewarm to post-reveal background stages.
-- Added startup readiness memoization + heavy-check throttling to reduce repeated expensive splash-poll probes.
-- Added low-priority queue backpressure controls and shared bounded executors to reduce thread churn and prevent non-critical work from starving UI-critical callbacks.
-- Optimized Advanced Speciation runtime payload shaping with bounded caches for timeline-normalized rows and runtime payload fragments.
-- Added Final Report page-build cache reuse, Compare render-context caching, and Ledger sort/filter index caching with chunked Treeview repaints for large row sets.
-- Preserved strict Rust/Python parity policy with fail-closed fallback routing and bounded startup policy prewarm probes.
-- Added repeatable performance harness tooling and artifacts under `scripts/perf/` and `docs/perf/`.
+Latest workflow highlights in `v4.15.2`:
+- `v4.15.2`: Fixed startup error handling in warmup-budget resolution and added targeted startup/rust-guard regression coverage.
+- `v4.15.1`: Refactored Advanced Plotting Wizard layer/metric normalization and rendering support paths.
+- `v4.15.1`: Refactored interactive HTML Final Report dashboard output with targeted contract regressions.
+- `v4.15.0`: Preserved startup performance hardening, bounded caching, and heavy-tab optimization baseline.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.15.0`
-- `APP_VERSION = "v4.15.0"`
+- `# Version: v4.15.2`
+- `APP_VERSION = "v4.15.2"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -540,6 +537,26 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.15.2 Startup Error Fix + Startup/Rust Guard Regression Hardening
+- Fixed startup warmup-budget error handling in startup tab warmup resolution.
+- Added targeted startup regressions for:
+  - shadowed startup warmup-budget attribute handling,
+  - splash clear behavior that must skip post-reveal tab warmup.
+- Updated rust capability readiness-warning regression coverage to keep backend readiness while surfacing toolchain warnings.
+- Updated application version metadata to `v4.15.2` in script header and `APP_VERSION`, and synchronized README/user-manual release references.
+
+### v4.15.1 Advanced Plotting Wizard + Interactive HTML Final Report Refactors
+- Refactored Advanced Plotting Wizard helpers and rendering pathways, including:
+  - metric-id derivation and metric-part extraction helpers,
+  - deterministic layer payload normalization for mixed-layer rendering.
+- Added targeted Advanced Plotting Wizard regressions for:
+  - v1-to-v2 spec migration renderability,
+  - mixed-layer validation/render smoke,
+  - metric-catalog field coverage and deterministic layer-state ordering.
+- Refactored interactive HTML Final Report dashboard output path and added targeted regressions for:
+  - interactive dashboard contract coverage,
+  - non-tight page-embedding render behavior.
 
 ### v4.15.0 Remaining Heavy Tabs + Startup Performance Hardening
 - Startup and scheduling hardening:
