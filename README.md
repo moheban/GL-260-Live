@@ -1,17 +1,18 @@
-# GL-260 Data Analysis and Plotter (v4.15.2)
+# GL-260 Data Analysis and Plotter (v4.15.3)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.15.2`:
+Latest workflow highlights in `v4.15.3`:
+- `v4.15.3`: Added cycle timeline new-tab editing back-propagation to Advanced Speciation output, converted measured-anchor current-state overlay to Plot Elements-managed shadow text box, and added timeline bottom-subplot style controls in `Plot Settings...`.
 - `v4.15.2`: Fixed startup error handling in warmup-budget resolution and added targeted startup/rust-guard regression coverage.
 - `v4.15.1`: Refactored Advanced Plotting Wizard layer/metric normalization and rendering support paths.
 - `v4.15.1`: Refactored interactive HTML Final Report dashboard output with targeted contract regressions.
 - `v4.15.0`: Preserved startup performance hardening, bounded caching, and heavy-tab optimization baseline.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.15.2`
-- `APP_VERSION = "v4.15.2"`
+- `# Version: v4.15.3`
+- `APP_VERSION = "v4.15.3"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -537,6 +538,27 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.15.3 Cycle Timeline New-Tab Editing Sync + Styling Controls
+- Added generated cycle-timeline new-tab editing back-propagation so persistent timeline edits from:
+  - `Plot Settings...`
+  - `Data Trace Settings...`
+  - `Plot Elements...`
+  now propagate to the Advanced Speciation analysis-output timeline display.
+- Added generated timeline legend drag capture/sync wiring for top and bottom timeline legends so drag-release positions in the new tab apply back to the Advanced Speciation display timeline.
+- Converted measured-anchor corrected-state overlay text from hardcoded annotation into one Plot Elements-managed auto text element with stable ID and shadowed bbox styling, making it visible/drag-capable in the Plot Elements controller.
+- Added first-pass cycle-timeline bottom-subplot controls in `Plot Settings...` (`fig_cycle_timeline`):
+  - bar color
+  - bar alpha
+  - bar-label font size
+  - bar-label color
+- Applied those bottom-subplot style prefs in both the display timeline renderer and generated-tab/export figure builder paths.
+- Added targeted regressions for:
+  - auto current-state element upsert/remove lifecycle,
+  - timeline display sync helper replay behavior,
+  - generated timeline install legend-tracking registration,
+  - timeline subplot style normalization round-trip coverage.
+- Updated application version metadata to `v4.15.3` in script header and `APP_VERSION`, and synchronized README/user-manual release references.
 
 ### v4.15.2 Startup Error Fix + Startup/Rust Guard Regression Hardening
 - Fixed startup warmup-budget error handling in startup tab warmup resolution.

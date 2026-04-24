@@ -9,7 +9,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Browser smoke setup: `python -m playwright install chromium`
 - Browser smoke test: `python -m pytest -q tests/test_docs_math_runtime_playwright.py`
 
-Current release: `v4.15.2`
+Current release: `v4.15.3`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
@@ -600,6 +600,21 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.15.3 Release Note (Cycle Timeline New-Tab Editing Sync + Styling Controls)
+- Added persistent edit back-propagation from **Cycle Timeline (new tab)** to the Advanced Speciation in-tab timeline output for:
+  - `Plot Settings...`
+  - `Data Trace Settings...`
+  - `Plot Elements...`
+- Added generated timeline top/bottom legend drag tracking so legend drag-release positions in the new tab update the Advanced Speciation timeline display.
+- Converted measured-anchor corrected-state overlay text from a hardcoded annotation into one Plot Elements-managed auto text element with shadowed text-box styling, stable ID tracking, and drag support in Plot Elements workflows.
+- Added bottom subplot styling controls in `Plot Settings...` for `fig_cycle_timeline`:
+  - bar color
+  - bar alpha
+  - bar-label font size
+  - bar-label color
+- Top subplot trace visual tuning remains in `Data Trace Settings...` for timeline traces.
+- Timeline sync scope remains persistent edits only; transient toolbar pan/zoom viewport state does not propagate.
 
 ### v4.15.2 Release Note (Startup Error Fix + Startup/Rust Guard Regression Hardening)
 - Fixed startup warmup-budget error handling in startup tab warmup resolution.
