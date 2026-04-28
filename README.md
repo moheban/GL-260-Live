@@ -1,9 +1,10 @@
-# GL-260 Data Analysis and Plotter (v4.15.3)
+# GL-260 Data Analysis and Plotter (v4.15.4)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.15.3`:
+Latest workflow highlights in `v4.15.4`:
+- `v4.15.4`: Fixed Cycle Timeline current-state textbox drag persistence/x-axis drift, added layout-only reset, x-axis range controls, and fixed centered bottom-legend mode.
 - `v4.15.3`: Added cycle timeline new-tab editing back-propagation to Advanced Speciation output, converted measured-anchor current-state overlay to Plot Elements-managed shadow text box, and added timeline bottom-subplot style controls in `Plot Settings...`.
 - `v4.15.2`: Fixed startup error handling in warmup-budget resolution and added targeted startup/rust-guard regression coverage.
 - `v4.15.1`: Refactored Advanced Plotting Wizard layer/metric normalization and rendering support paths.
@@ -11,8 +12,8 @@ Latest workflow highlights in `v4.15.3`:
 - `v4.15.0`: Preserved startup performance hardening, bounded caching, and heavy-tab optimization baseline.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.15.3`
-- `APP_VERSION = "v4.15.3"`
+- `# Version: v4.15.4`
+- `APP_VERSION = "v4.15.4"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -538,6 +539,15 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.15.4 Cycle Timeline Layout Fixes
+- Fixed measured-anchor corrected-state textbox placement so Plot Elements drag edits persist across Cycle Timeline refreshes instead of snapping back to the auto marker offset.
+- Prevented Plot Elements handles/textbox drag affordances from expanding Cycle Timeline x-axis limits and creating blank cycles to the right.
+- Added `Cycle x-min` and `Cycle x-max` fields to Cycle Timeline `Plot Settings...`; blank fields keep automatic bounds, one-sided fields use data-derived opposite bounds, and invalid ranges fall back to auto.
+- Added a fixed **Center bottom legend below x-axis label** option while keeping the top subplot legend draggable.
+- Added `Reset plot layout` for layout-only recovery of legend/textbox placement and layout-manager overrides without changing axis ranges, title, trace styles, or legend visibility settings.
+- Added targeted regressions for current-state textbox drag persistence, x-limit stability, layout-only reset scope, fixed centered bottom legend behavior, and timeline x-axis range preference handling.
+- Updated application version metadata to `v4.15.4` in script header and `APP_VERSION`, and synchronized README/user-manual release references.
 
 ### v4.15.3 Cycle Timeline New-Tab Editing Sync + Styling Controls
 - Added generated cycle-timeline new-tab editing back-propagation so persistent timeline edits from:

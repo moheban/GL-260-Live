@@ -9,7 +9,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Browser smoke setup: `python -m playwright install chromium`
 - Browser smoke test: `python -m pytest -q tests/test_docs_math_runtime_playwright.py`
 
-Current release: `v4.15.3`
+Current release: `v4.15.4`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
@@ -566,6 +566,9 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
    - interactive row: **Plot Preview**, **Open Plot in New Tab**, **Layout Manager...**, **Add Plot Elements...**, **Expand Timeline**
    - export/navigation row: **Export Timeline CSV**, **Export To Workbook**, **Export Timeline Plot**, **Export Timeline Table**, **Export Options...**, **Workbook Export Options...**, **Scroll to Latest**
 11. Use **Open Plot in New Tab** to render cycle timeline in the main plot notebook with combined-style generated-tab controls (Refresh/Close/Plot Settings/Data Trace Settings/Plot Elements/Save As/Plot Preview/format toggles). Re-opening refreshes/reuses the same timeline tab.
+   - In **Plot Settings...**, set optional `Cycle x-min` / `Cycle x-max` to limit the plotted cycle range; leave either field blank for automatic bounds.
+   - Use **Center bottom legend below x-axis label (fixed)** to keep the bottom subplot legend centered below the shared x-axis label while the top legend remains draggable.
+   - Use **Reset plot layout** to clear dragged legend/textbox placement and layout-manager overrides without changing axis ranges, title, trace styles, or legend visibility.
 12. Use cycle selector tools to inspect cycle-specific behavior.
 13. Export outputs:
    - summary PNG
@@ -600,6 +603,13 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.15.4 Release Note (Cycle Timeline Layout Fixes)
+- Fixed measured-anchor corrected-state textbox drag persistence so refreshes keep the manually placed text box instead of snapping back to the auto marker offset.
+- Prevented Plot Elements drag handles from expanding Cycle Timeline x-axis bounds and adding blank cycles to the right.
+- Added Cycle Timeline `Plot Settings...` controls for `Cycle x-min` and `Cycle x-max`.
+- Added a fixed centered bottom-legend mode below the x-axis label while preserving top legend drag behavior.
+- Added **Reset plot layout** as a layout-only recovery action for legend/textbox placement and layout-manager overrides.
 
 ### v4.15.3 Release Note (Cycle Timeline New-Tab Editing Sync + Styling Controls)
 - Added persistent edit back-propagation from **Cycle Timeline (new tab)** to the Advanced Speciation in-tab timeline output for:
