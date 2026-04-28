@@ -545,6 +545,8 @@ Apache-2.0. See `LICENSE`.
 - Prevented Plot Elements handles/textbox drag affordances from expanding Cycle Timeline x-axis limits and creating blank cycles to the right.
 - Added `Cycle x-min` and `Cycle x-max` fields to Cycle Timeline `Plot Settings...`; blank fields keep automatic bounds, one-sided fields use data-derived opposite bounds, and invalid ranges fall back to auto.
 - Added a fixed **Center bottom legend below x-axis label** option while keeping the top subplot legend draggable.
+- Added Cycle Timeline top/bottom legend row and wrapping controls in both timeline settings surfaces, with generated-tab Plot Settings preserving Data Trace visibility, title, axis-range, and layout preferences on Apply.
+- Synced Cycle Timeline Plot Preview close behavior with the generated new-tab surface so dragged legends and Plot Elements changes propagate back to both visible timeline views.
 - Added `Reset plot layout` for layout-only recovery of legend/textbox placement and layout-manager overrides without changing axis ranges, title, trace styles, or legend visibility settings.
 - Added targeted regressions for current-state textbox drag persistence, x-limit stability, layout-only reset scope, fixed centered bottom legend behavior, and timeline x-axis range preference handling.
 - Updated application version metadata to `v4.15.4` in script header and `APP_VERSION`, and synchronized README/user-manual release references.

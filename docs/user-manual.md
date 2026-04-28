@@ -568,6 +568,8 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 11. Use **Open Plot in New Tab** to render cycle timeline in the main plot notebook with combined-style generated-tab controls (Refresh/Close/Plot Settings/Data Trace Settings/Plot Elements/Save As/Plot Preview/format toggles). Re-opening refreshes/reuses the same timeline tab.
    - In **Plot Settings...**, set optional `Cycle x-min` / `Cycle x-max` to limit the plotted cycle range; leave either field blank for automatic bounds.
    - Use **Center bottom legend below x-axis label (fixed)** to keep the bottom subplot legend centered below the shared x-axis label while the top legend remains draggable.
+   - Use the top/bottom legend row and wrapping controls to match the combined triple-axis legend layout behavior without resetting Data Trace visibility.
+   - Plot Preview close syncs dragged legends and Plot Elements edits back to both the Advanced Speciation timeline and the generated new-tab timeline when it is open.
    - Use **Reset plot layout** to clear dragged legend/textbox placement and layout-manager overrides without changing axis ranges, title, trace styles, or legend visibility.
 12. Use cycle selector tools to inspect cycle-specific behavior.
 13. Export outputs:
