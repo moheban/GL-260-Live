@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="bd15ff5ff1ed0f6f7a31872bb14c14e4a2d8e5f04fe3db36130907f2fa9bf9f8">
+  <meta name="manual-source-sha256" content="c7624b4561e11ef149f236c97e8c00f3b62018b3b90d533e8e1f189bcce3d472">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -266,7 +266,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>bd15ff5ff1ed0f6f</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>c7624b4561e11ef1</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -382,6 +382,7 @@
 <li><a href="#inputs_10">Inputs</a></li>
 <li><a href="#step-by-step-actions_10">Step-by-step actions</a></li>
 <li><a href="#expected-outputs_10">Expected outputs</a></li>
+<li><a href="#v4156-release-note-multi-reactor-trace-import-downstream-integration">v4.15.6 Release Note (Multi-Reactor Trace Import + Downstream Integration)</a></li>
 <li><a href="#v4155-release-note-cycle-timeline-legend-multi-trace-columns">v4.15.5 Release Note (Cycle Timeline Legend + Multi-Trace Columns)</a></li>
 <li><a href="#v4154-release-note-cycle-timeline-layout-fixes">v4.15.4 Release Note (Cycle Timeline Layout Fixes)</a></li>
 <li><a href="#v4153-release-note-cycle-timeline-new-tab-editing-sync-styling-controls">v4.15.3 Release Note (Cycle Timeline New-Tab Editing Sync + Styling Controls)</a></li>
@@ -509,7 +510,7 @@
 <li>Browser smoke setup: <code>python -m playwright install chromium</code></li>
 <li>Browser smoke test: <code>python -m pytest -q tests/test_docs_math_runtime_playwright.py</code></li>
 </ul>
-<p>Current release: <code>v4.15.5</code></p>
+<p>Current release: <code>v4.15.6</code></p>
 <p>Analysis timeline pH terminology:<br>
 - <code>Equilibrium pH (Guidance)</code>: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.<br>
 - <code>Corrected pH</code>: measured-anchor calibrated pH overlay used for Analysis alignment diagnostics.<br>
@@ -1128,6 +1129,14 @@
 <li>Measured-pH anchor editor rows persist globally in <code>solubility_inputs</code> and restore on Analysis tab build/restart.</li>
 <li>Latest Analysis run payload restores after restart when workspace context/signatures match persisted <code>sol_analysis_last_result_v2</code> metadata.</li>
 <li>Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.</li>
+</ul>
+<h3 id="v4156-release-note-multi-reactor-trace-import-downstream-integration">v4.15.6 Release Note (Multi-Reactor Trace Import + Downstream Integration)<a class="headerlink" href="#v4156-release-note-multi-reactor-trace-import-downstream-integration" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CSV Import now supports multiple Reactor Pressure mappings in one import.</li>
+<li>Single-reactor imports keep the legacy <code>Reactor Pressure (PSI)</code> and derivative output names; multi-reactor imports use numbered pressure labels and source-qualified derivative labels.</li>
+<li>Derivative, smoothed derivative, and moving-average derivative columns are generated for every imported reactor pressure trace and mapped manifold pressure trace.</li>
+<li>Columns, combined/core plot legends, and Data Trace Settings label duplicate reactor traces with role and ordinal text so two <code>Primary Y (Reactor, PSI)</code> traces remain easy to distinguish.</li>
+<li>Imported multi-reactor workbooks seed grouped Columns mappings immediately so downstream plotting/settings workflows can access the extra traces before the first render.</li>
 </ul>
 <h3 id="v4155-release-note-cycle-timeline-legend-multi-trace-columns">v4.15.5 Release Note (Cycle Timeline Legend + Multi-Trace Columns)<a class="headerlink" href="#v4155-release-note-cycle-timeline-legend-multi-trace-columns" title="Permanent link">&para;</a></h3>
 <ul>

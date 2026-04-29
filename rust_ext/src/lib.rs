@@ -32,10 +32,10 @@ const PITZER_KA1: f64 = 4.5983285677e-7;
 const PITZER_KA2: f64 = 4.5782552279169414e-11;
 const PITZER_KW: f64 = 1e-14;
 const RUST_BACKEND_INTERFACE_ID: &str = "gl260_rust_backend";
-const RUST_BACKEND_INTERFACE_VERSION: &str = "2";
+const RUST_BACKEND_INTERFACE_VERSION: &str = "3";
 const RUST_BACKEND_MODULE_NAME: &str = env!("CARGO_PKG_NAME");
 const RUST_BACKEND_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
-const RUST_EXPORTED_KERNELS: [&str; 23] = [
+const RUST_EXPORTED_KERNELS: [&str; 24] = [
     "simulate_reaction_state_with_accounting",
     "analyze_bicarbonate_core",
     "carbonate_state_core",
@@ -59,6 +59,7 @@ const RUST_EXPORTED_KERNELS: [&str; 23] = [
     "compare_aligned_cycle_rows_core",
     "ledger_sort_filter_indices_core",
     "ledger_prefill_metrics_core",
+    "csv_pressure_derivatives_core",
 ];
 
 #[derive(Clone, Copy)]
@@ -4736,6 +4737,80 @@ fn cycle_overlay_points_core(
 }
 
 #[pyfunction]
+#[pyo3(signature = (elapsed_hours, pressure_columns, dampening, window))]
+/// Compute CSV import derivatives for one or more pressure traces.
+///
+/// The function mirrors the Python fallback used by CSV import: invalid time
+/// deltas or pressure values yield zero derivatives, smoothing follows the
+/// existing dampening recurrence, and moving averages emit NaN until the window
+/// is full.
+fn csv_pressure_derivatives_core(
+    py: Python<'_>,
+    elapsed_hours: Vec<f64>,
+    pressure_columns: Vec<Vec<f64>>,
+    dampening: f64,
+    window: usize,
+) -> PyResult<Py<PyList>> {
+    let row_count = elapsed_hours.len();
+    let damp = if dampening.is_finite() {
+        dampening.clamp(0.0, 0.999999)
+    } else {
+        0.98
+    };
+    let alpha = 1.0 - damp;
+    let window_size = window.max(1);
+    let output = PyList::empty(py);
+    for source in pressure_columns {
+        let mut pressure = vec![f64::NAN; row_count];
+        for idx in 0..row_count.min(source.len()) {
+            pressure[idx] = source[idx];
+        }
+        let mut derivative = vec![0.0_f64; row_count];
+        for idx in 1..row_count {
+            let dt_hours = elapsed_hours[idx] - elapsed_hours[idx - 1];
+            if !dt_hours.is_finite() || dt_hours <= 0.0 {
+                derivative[idx] = 0.0;
+                continue;
+            }
+            let prev_val = pressure[idx - 1];
+            let curr_val = pressure[idx];
+            if !prev_val.is_finite() || !curr_val.is_finite() {
+                derivative[idx] = 0.0;
+                continue;
+            }
+            derivative[idx] = (curr_val - prev_val) / dt_hours;
+        }
+        let mut smoothed = vec![0.0_f64; row_count];
+        if row_count > 0 {
+            smoothed[0] = derivative[0];
+        }
+        if row_count > 1 {
+            smoothed[1] = derivative[0];
+        }
+        for idx in 2..row_count {
+            smoothed[idx] = alpha * derivative[idx - 1] + damp * smoothed[idx - 1];
+        }
+        let mut moving_average = vec![f64::NAN; row_count];
+        let mut rolling_sum = 0.0_f64;
+        for idx in 0..row_count {
+            rolling_sum += smoothed[idx];
+            if idx >= window_size {
+                rolling_sum -= smoothed[idx - window_size];
+            }
+            if idx + 1 >= window_size {
+                moving_average[idx] = rolling_sum / window_size as f64;
+            }
+        }
+        let row = PyDict::new(py);
+        row.set_item("derivative", derivative)?;
+        row.set_item("smoothed", smoothed)?;
+        row.set_item("moving_average", moving_average)?;
+        output.append(row)?;
+    }
+    Ok(output.unbind())
+}
+
+#[pyfunction]
 #[pyo3(signature = (y_values, mask, auto_peaks, auto_troughs, add_peaks, add_troughs, rm_peaks, rm_troughs, min_cycle_drop, ignore_min_drop=false, manual_only=false))]
 fn cycle_segmentation_core(
     py: Python<'_>,
@@ -5126,5 +5201,6 @@ fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
         module
     )?)?;
     module.add_function(wrap_pyfunction!(ledger_prefill_metrics_core, module)?)?;
+    module.add_function(wrap_pyfunction!(csv_pressure_derivatives_core, module)?)?;
     Ok(())
 }

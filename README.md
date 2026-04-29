@@ -1,9 +1,10 @@
-# GL-260 Data Analysis and Plotter (v4.15.5)
+# GL-260 Data Analysis and Plotter (v4.15.6)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.15.5`:
+Latest workflow highlights in `v4.15.6`:
+- `v4.15.6`: Added repeatable Reactor Pressure CSV import mappings, numbered multi-reactor pressure/derivative outputs, grouped Columns/Data Trace labels for duplicate reactor traces, and Rust/Python parity routing for CSV pressure derivatives.
 - `v4.15.5`: Fixed Cycle Timeline centered bottom legend parity across notebook/new-tab/preview/export surfaces, added multi-trace Columns groups with a designated calculation trace, and kept combined/core plotting compatible with extra traces.
 - `v4.15.4`: Fixed Cycle Timeline current-state textbox drag persistence/x-axis drift, added layout-only reset, x-axis range controls, and fixed centered bottom-legend mode.
 - `v4.15.3`: Added cycle timeline new-tab editing back-propagation to Advanced Speciation output, converted measured-anchor current-state overlay to Plot Elements-managed shadow text box, and added timeline bottom-subplot style controls in `Plot Settings...`.
@@ -13,8 +14,8 @@ Latest workflow highlights in `v4.15.5`:
 - `v4.15.0`: Preserved startup performance hardening, bounded caching, and heavy-tab optimization baseline.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.15.5`
-- `APP_VERSION = "v4.15.5"`
+- `# Version: v4.15.6`
+- `APP_VERSION = "v4.15.6"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -540,6 +541,14 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.15.6 Multi-Reactor Trace Import + Downstream Integration
+- Added repeatable Reactor Pressure mappings to CSV Import while preserving legacy single-reactor settings and output names.
+- Multi-reactor imports now output numbered `Reactor Pressure 1 (PSI)`, `Reactor Pressure 2 (PSI)`, etc., and generate derivative, smoothed derivative, and moving-average derivative columns for every reactor/manifold pressure trace.
+- Columns, combined/core legends, and Data Trace Settings now show duplicate trace roles with role + ordinal labels such as `Primary Y (Reactor, PSI) 2: Reactor Pressure 2 (PSI)`.
+- CSV import completion seeds grouped Columns mappings from imported output columns so additional traces are available downstream before the first plot render.
+- Added Rust-backed CSV pressure derivative batch generation with Python fallback and targeted regressions for mapping normalization, output schema, derivative generation, Data Trace keys, and combined legend labels.
+- Updated application version metadata to `v4.15.6` in script header and `APP_VERSION`, and synchronized README/user-manual release references.
 
 ### v4.15.5 Cycle Timeline Legend + Multi-Trace Columns
 - Fixed Cycle Timeline centered bottom legend placement so notebook display, generated new tab, Plot Preview, and export all re-apply the below-x-axis-label position after final layout sizing.

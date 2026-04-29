@@ -9,7 +9,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Browser smoke setup: `python -m playwright install chromium`
 - Browser smoke test: `python -m pytest -q tests/test_docs_math_runtime_playwright.py`
 
-Current release: `v4.15.5`
+Current release: `v4.15.6`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
@@ -605,6 +605,13 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.15.6 Release Note (Multi-Reactor Trace Import + Downstream Integration)
+- CSV Import now supports multiple Reactor Pressure mappings in one import.
+- Single-reactor imports keep the legacy `Reactor Pressure (PSI)` and derivative output names; multi-reactor imports use numbered pressure labels and source-qualified derivative labels.
+- Derivative, smoothed derivative, and moving-average derivative columns are generated for every imported reactor pressure trace and mapped manifold pressure trace.
+- Columns, combined/core plot legends, and Data Trace Settings label duplicate reactor traces with role and ordinal text so two `Primary Y (Reactor, PSI)` traces remain easy to distinguish.
+- Imported multi-reactor workbooks seed grouped Columns mappings immediately so downstream plotting/settings workflows can access the extra traces before the first render.
 
 ### v4.15.5 Release Note (Cycle Timeline Legend + Multi-Trace Columns)
 - Cycle Timeline centered bottom legends now re-apply their below-x-axis-label placement after final notebook, new-tab, Plot Preview, and export layout passes.
