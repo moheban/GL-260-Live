@@ -1,9 +1,10 @@
-# GL-260 Data Analysis and Plotter (v4.15.4)
+# GL-260 Data Analysis and Plotter (v4.15.5)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.15.4`:
+Latest workflow highlights in `v4.15.5`:
+- `v4.15.5`: Fixed Cycle Timeline centered bottom legend parity across notebook/new-tab/preview/export surfaces, added multi-trace Columns groups with a designated calculation trace, and kept combined/core plotting compatible with extra traces.
 - `v4.15.4`: Fixed Cycle Timeline current-state textbox drag persistence/x-axis drift, added layout-only reset, x-axis range controls, and fixed centered bottom-legend mode.
 - `v4.15.3`: Added cycle timeline new-tab editing back-propagation to Advanced Speciation output, converted measured-anchor current-state overlay to Plot Elements-managed shadow text box, and added timeline bottom-subplot style controls in `Plot Settings...`.
 - `v4.15.2`: Fixed startup error handling in warmup-budget resolution and added targeted startup/rust-guard regression coverage.
@@ -12,8 +13,8 @@ Latest workflow highlights in `v4.15.4`:
 - `v4.15.0`: Preserved startup performance hardening, bounded caching, and heavy-tab optimization baseline.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.15.4`
-- `APP_VERSION = "v4.15.4"`
+- `# Version: v4.15.5`
+- `APP_VERSION = "v4.15.5"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -539,6 +540,13 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.15.5 Cycle Timeline Legend + Multi-Trace Columns
+- Fixed Cycle Timeline centered bottom legend placement so notebook display, generated new tab, Plot Preview, and export all re-apply the below-x-axis-label position after final layout sizing.
+- Added ordered multi-trace Columns groups for Primary Y, Manifold Y, Derivative, Internal Temperature, and External Temperature while preserving legacy first-trace column settings.
+- Added a designated calculation trace so cycle detection, Estimated Consumption, and downstream chemistry summaries continue to use one explicit pressure basis while extra traces render as visual overlays.
+- Updated combined/core plot rendering and auto-range calculations to include all selected grouped traces.
+- Updated application version metadata to `v4.15.5` in script header and `APP_VERSION`, and synchronized README/user-manual release references.
 
 ### v4.15.4 Cycle Timeline Layout Fixes
 - Fixed measured-anchor corrected-state textbox placement so Plot Elements drag edits persist across Cycle Timeline refreshes instead of snapping back to the auto marker offset.

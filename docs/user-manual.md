@@ -9,7 +9,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Browser smoke setup: `python -m playwright install chromium`
 - Browser smoke test: `python -m pytest -q tests/test_docs_math_runtime_playwright.py`
 
-Current release: `v4.15.4`
+Current release: `v4.15.5`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
@@ -605,6 +605,12 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.15.5 Release Note (Cycle Timeline Legend + Multi-Trace Columns)
+- Cycle Timeline centered bottom legends now re-apply their below-x-axis-label placement after final notebook, new-tab, Plot Preview, and export layout passes.
+- The Columns tab now supports ordered multi-trace groups for pressure, derivative, and temperature roles.
+- A Calculation trace selector identifies the single pressure trace used for cycle detection, Estimated Consumption, and downstream chemistry calculations while additional traces remain plotted overlays.
+- Combined/core plot rendering and auto-range calculations include all selected grouped traces.
 
 ### v4.15.4 Release Note (Cycle Timeline Layout Fixes)
 - Fixed measured-anchor corrected-state textbox drag persistence so refreshes keep the manually placed text box instead of snapping back to the auto marker offset.
