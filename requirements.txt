@@ -19,3 +19,4 @@ great_tables
 tk
 tcl
 customtkinter
+chempy

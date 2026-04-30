@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="c7624b4561e11ef149f236c97e8c00f3b62018b3b90d533e8e1f189bcce3d472">
+  <meta name="manual-source-sha256" content="3d9676874e967bd489f32e776444d1c482c84e2527596a4eef4e984ca2b5c1ae">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -266,7 +266,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>c7624b4561e11ef1</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>3d9676874e967bd4</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -376,12 +376,26 @@
 <li><a href="#related-exportsartifacts_9">Related exports/artifacts</a></li>
 </ul>
 </li>
-<li><a href="#advanced-speciation-and-equilibrium-workflows">Advanced Speciation and Equilibrium Workflows</a><ul>
+<li><a href="#reaction-dashboard-workflow">Reaction Dashboard Workflow</a><ul>
 <li><a href="#purpose_10">Purpose</a></li>
 <li><a href="#preconditions_10">Preconditions</a></li>
 <li><a href="#inputs_10">Inputs</a></li>
 <li><a href="#step-by-step-actions_10">Step-by-step actions</a></li>
+<li><a href="#template-manager-usage">Template manager usage</a></li>
+<li><a href="#sodium-methoxide-co-starter-template">Sodium methoxide / CO starter template</a></li>
+<li><a href="#phequilibrium-behavior">pH/equilibrium behavior</a></li>
 <li><a href="#expected-outputs_10">Expected outputs</a></li>
+<li><a href="#common-errors-and-recovery_10">Common errors and recovery</a></li>
+<li><a href="#related-exportsartifacts_10">Related exports/artifacts</a></li>
+</ul>
+</li>
+<li><a href="#advanced-speciation-and-equilibrium-workflows">Advanced Speciation and Equilibrium Workflows</a><ul>
+<li><a href="#purpose_11">Purpose</a></li>
+<li><a href="#preconditions_11">Preconditions</a></li>
+<li><a href="#inputs_11">Inputs</a></li>
+<li><a href="#step-by-step-actions_11">Step-by-step actions</a></li>
+<li><a href="#expected-outputs_11">Expected outputs</a></li>
+<li><a href="#v4157-release-note-reaction-dashboard-template-driven-reaction-metrics">v4.15.7 Release Note (Reaction Dashboard + Template-Driven Reaction Metrics)</a></li>
 <li><a href="#v4156-release-note-multi-reactor-trace-import-downstream-integration">v4.15.6 Release Note (Multi-Reactor Trace Import + Downstream Integration)</a></li>
 <li><a href="#v4155-release-note-cycle-timeline-legend-multi-trace-columns">v4.15.5 Release Note (Cycle Timeline Legend + Multi-Trace Columns)</a></li>
 <li><a href="#v4154-release-note-cycle-timeline-layout-fixes">v4.15.4 Release Note (Cycle Timeline Layout Fixes)</a></li>
@@ -408,8 +422,8 @@
 <li><a href="#v486-release-note-analysis-dashboard-consolidation-forecasting">v4.8.6 Release Note (Analysis Dashboard Consolidation + Forecasting)</a></li>
 <li><a href="#v485-release-note-timeline-title-commit-job-information-default">v4.8.5 Release Note (Timeline Title Commit + Job Information Default)</a></li>
 <li><a href="#v484-release-note-timeline-preview-legend-sync">v4.8.4 Release Note (Timeline Preview Legend Sync)</a></li>
-<li><a href="#common-errors-and-recovery_10">Common errors and recovery</a></li>
-<li><a href="#related-exportsartifacts_10">Related exports/artifacts</a></li>
+<li><a href="#common-errors-and-recovery_11">Common errors and recovery</a></li>
+<li><a href="#related-exportsartifacts_11">Related exports/artifacts</a></li>
 </ul>
 </li>
 <li><a href="#calculation-overview">Calculation Overview</a><ul>
@@ -436,16 +450,6 @@
 </ul>
 </li>
 <li><a href="#compare-profiles-workflow">Compare Profiles Workflow</a><ul>
-<li><a href="#purpose_11">Purpose</a></li>
-<li><a href="#preconditions_11">Preconditions</a></li>
-<li><a href="#inputs_11">Inputs</a></li>
-<li><a href="#step-by-step-actions_11">Step-by-step actions</a></li>
-<li><a href="#expected-outputs_11">Expected outputs</a></li>
-<li><a href="#common-errors-and-recovery_11">Common errors and recovery</a></li>
-<li><a href="#related-exportsartifacts_11">Related exports/artifacts</a></li>
-</ul>
-</li>
-<li><a href="#ledger-workflow">Ledger Workflow</a><ul>
 <li><a href="#purpose_12">Purpose</a></li>
 <li><a href="#preconditions_12">Preconditions</a></li>
 <li><a href="#inputs_12">Inputs</a></li>
@@ -455,7 +459,7 @@
 <li><a href="#related-exportsartifacts_12">Related exports/artifacts</a></li>
 </ul>
 </li>
-<li><a href="#final-report-workflow">Final Report Workflow</a><ul>
+<li><a href="#ledger-workflow">Ledger Workflow</a><ul>
 <li><a href="#purpose_13">Purpose</a></li>
 <li><a href="#preconditions_13">Preconditions</a></li>
 <li><a href="#inputs_13">Inputs</a></li>
@@ -465,7 +469,7 @@
 <li><a href="#related-exportsartifacts_13">Related exports/artifacts</a></li>
 </ul>
 </li>
-<li><a href="#profiles-and-settings-persistence">Profiles and Settings Persistence</a><ul>
+<li><a href="#final-report-workflow">Final Report Workflow</a><ul>
 <li><a href="#purpose_14">Purpose</a></li>
 <li><a href="#preconditions_14">Preconditions</a></li>
 <li><a href="#inputs_14">Inputs</a></li>
@@ -475,19 +479,29 @@
 <li><a href="#related-exportsartifacts_14">Related exports/artifacts</a></li>
 </ul>
 </li>
-<li><a href="#troubleshooting-and-recovery-matrix">Troubleshooting and Recovery Matrix</a><ul>
+<li><a href="#profiles-and-settings-persistence">Profiles and Settings Persistence</a><ul>
 <li><a href="#purpose_15">Purpose</a></li>
+<li><a href="#preconditions_15">Preconditions</a></li>
+<li><a href="#inputs_15">Inputs</a></li>
+<li><a href="#step-by-step-actions_15">Step-by-step actions</a></li>
+<li><a href="#expected-outputs_15">Expected outputs</a></li>
+<li><a href="#common-errors-and-recovery_15">Common errors and recovery</a></li>
 <li><a href="#related-exportsartifacts_15">Related exports/artifacts</a></li>
 </ul>
 </li>
-<li><a href="#advanced-power-user-appendix">Advanced / Power User Appendix</a><ul>
+<li><a href="#troubleshooting-and-recovery-matrix">Troubleshooting and Recovery Matrix</a><ul>
 <li><a href="#purpose_16">Purpose</a></li>
+<li><a href="#related-exportsartifacts_16">Related exports/artifacts</a></li>
+</ul>
+</li>
+<li><a href="#advanced-power-user-appendix">Advanced / Power User Appendix</a><ul>
+<li><a href="#purpose_17">Purpose</a></li>
 <li><a href="#included-advanced-topics">Included advanced topics</a></li>
 <li><a href="#recommended-advanced-workflow">Recommended advanced workflow</a></li>
 </ul>
 </li>
 <li><a href="#screenshot-contract-and-asset-index">Screenshot Contract and Asset Index</a><ul>
-<li><a href="#purpose_17">Purpose</a></li>
+<li><a href="#purpose_18">Purpose</a></li>
 <li><a href="#contract">Contract</a></li>
 <li><a href="#asset-index">Asset index</a></li>
 <li><a href="#related-maintenance-rules">Related maintenance rules</a></li>
@@ -510,7 +524,7 @@
 <li>Browser smoke setup: <code>python -m playwright install chromium</code></li>
 <li>Browser smoke test: <code>python -m pytest -q tests/test_docs_math_runtime_playwright.py</code></li>
 </ul>
-<p>Current release: <code>v4.15.6</code></p>
+<p>Current release: <code>v4.15.7</code></p>
 <p>Analysis timeline pH terminology:<br>
 - <code>Equilibrium pH (Guidance)</code>: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.<br>
 - <code>Corrected pH</code>: measured-anchor calibrated pH overlay used for Analysis alignment diagnostics.<br>
@@ -530,6 +544,7 @@
 <li><a href="#plot-elements-and-annotation-workflow">Plot Elements and Annotation Workflow</a></li>
 <li><a href="#cycle-analysis-workflow-automatic-and-manual">Cycle Analysis Workflow (Automatic and Manual)</a></li>
 <li><a href="#plot-and-cycle-export-workflows">Plot and Cycle Export Workflows</a></li>
+<li><a href="#reaction-dashboard-workflow">Reaction Dashboard Workflow</a></li>
 <li><a href="#advanced-speciation-and-equilibrium-workflows">Advanced Speciation and Equilibrium Workflows</a></li>
 <li><a href="#calculation-overview">Calculation Overview</a></li>
 <li><a href="#compare-profiles-workflow">Compare Profiles Workflow</a></li>
@@ -594,7 +609,7 @@
 <h3 id="inputs_1">Inputs<a class="headerlink" href="#inputs_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Top menu: <code>File</code>, <code>View</code>, <code>Profiles</code>, <code>Tools</code>, <code>General Plotter</code>.</li>
-<li>Primary tabs: <code>Data</code>, <code>Columns</code>, <code>Plot Settings</code>, <code>Cycle Analysis</code>, <code>Compare</code>, <code>Ledger</code>, <code>Advanced Solubility</code>, <code>Final Report</code>.</li>
+<li>Primary tabs: <code>Data</code>, <code>Columns</code>, <code>Plot Settings</code>, <code>Cycle Analysis</code>, <code>Reaction Dashboard</code>, <code>Compare</code>, <code>Ledger</code>, <code>Advanced Solubility</code>, <code>Final Report</code>.</li>
 </ul>
 <h3 id="step-by-step-actions_1">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_1" title="Permanent link">&para;</a></h3>
 <ol>
@@ -602,7 +617,8 @@
 <li>Move to <strong>Columns</strong> tab to map traces and required fields.</li>
 <li>Use <strong>Plot Settings</strong> to configure axes, ranges, legend behavior, and export defaults.</li>
 <li>Open <strong>Cycle Analysis</strong> for marker detection, manual marker editing, and cycle metrics.</li>
-<li>Use <strong>Advanced Solubility</strong> for speciation/equilibrium workflows and cycle timeline analysis.</li>
+<li>Use <strong>Reaction Dashboard</strong> for template-driven gas uptake, reaction completion, yield, and optional pH/equilibrium metrics.</li>
+<li>Use <strong>Advanced Solubility</strong> for bicarbonate speciation/equilibrium workflows and cycle timeline analysis.</li>
 <li>Use <strong>Compare</strong> to evaluate two profiles side-by-side.</li>
 <li>Use <strong>Ledger</strong> to consolidate run-level metrics and export business-facing tables.</li>
 <li>Use <strong>Final Report</strong> to compose and export PDF/PNG/HTML deliverables.</li>
@@ -651,7 +667,8 @@
 <li>Generate core plots and the <strong>Combined Triple-Axis</strong> plot.</li>
 <li>Open <strong>Cycle Analysis</strong> and run marker detection.</li>
 <li>Manually adjust peaks/troughs if needed, then confirm cycle summary.</li>
-<li>Open <strong>Advanced Solubility</strong> and send cycle payload for equilibrium analysis.</li>
+<li>Open <strong>Reaction Dashboard</strong> when a non-bicarbonate reaction template should compute gas uptake, completion, yield, or optional pH/equilibrium metrics.</li>
+<li>Open <strong>Advanced Solubility</strong> and send cycle payload for bicarbonate equilibrium analysis.</li>
 <li>Optionally open <strong>Compare</strong> for profile-to-profile analysis.</li>
 <li>Add/validate entries in <strong>Ledger</strong>.</li>
 <li>Configure sections in <strong>Final Report</strong> and generate PDF/PNG/HTML output.</li>
@@ -968,7 +985,7 @@
 <ul>
 <li>Marker exports (<code>JSON/CSV</code>)</li>
 <li>Cycle results CSV</li>
-<li>Cycle payloads consumed by Advanced Solubility and Final Report</li>
+<li>Cycle payloads consumed by Reaction Dashboard, Advanced Solubility, and Final Report</li>
 </ul>
 <p><img alt="Cycle analysis automatic and manual workflow" src="assets/screenshots/07-cycle-analysis-auto-manual.png"><br>
 <em>Figure 7. Cycle Analysis tab including auto-detect and manual marker editing.</em></p>
@@ -1018,16 +1035,117 @@
 <li>Cycle summary and CSV exports</li>
 </ul>
 <hr>
+<p><a id="reaction-dashboard-workflow"></a></p>
+<h2 id="reaction-dashboard-workflow">Reaction Dashboard Workflow<a class="headerlink" href="#reaction-dashboard-workflow" title="Permanent link">&para;</a></h2>
+<h3 id="purpose_10">Purpose<a class="headerlink" href="#purpose_10" title="Permanent link">&para;</a></h3>
+<p>Compute template-driven reaction gas uptake, linked-step completion, intermediate carryover, final yield, and optional pH/equilibrium estimates for reactions beyond the bicarbonate-specific Advanced Speciation engine.</p>
+<h3 id="preconditions_10">Preconditions<a class="headerlink" href="#preconditions_10" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Columns and Cycle Analysis are complete when using cycle-derived uptake.</li>
+<li>The <strong>Reaction Dashboard</strong> tab is visible in tab settings.</li>
+<li><code>chempy</code> is installed when pH/equilibrium mode will be enabled.</li>
+<li>Optional Rust backend is healthy for accelerated compute; Python fallback remains available.</li>
+</ul>
+<h3 id="inputs_10">Inputs<a class="headerlink" href="#inputs_10" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Reaction Template selector:</li>
+<li>built-in read-only templates</li>
+<li>duplicated/custom editable templates</li>
+<li>Template editor sections:</li>
+<li>species rows with formula, phase, role, molar mass, and initial moles</li>
+<li>stoichiometric step JSON with negative consumed coefficients and positive produced coefficients</li>
+<li>template JSON editor for full input-field, yield-basis, equilibrium, KPI, and plot definitions</li>
+<li>Uptake source selector:</li>
+<li><strong>Imported Cycle Analysis payload</strong></li>
+<li><strong>Reactor pressure delta</strong></li>
+<li><strong>Cylinder mass loss</strong></li>
+<li><strong>Manual gas mass / moles</strong></li>
+<li>Template-required condition fields, including reactor volume, temperature, reactant charges, isolated product mass, and solution volume when applicable.</li>
+<li>Optional <strong>Enable pH/equilibrium engine</strong> toggle.</li>
+</ul>
+<h3 id="step-by-step-actions_10">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_10" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Open <strong>Reaction Dashboard</strong>.</li>
+<li>Select a Reaction Template.</li>
+<li>Review the species table and stoichiometric step JSON.</li>
+<li>For a built-in template, click <strong>Duplicate Template</strong> before editing chemistry-specific details.</li>
+<li>Select the uptake source:<br>
+   - use <strong>Import from Cycle Analysis</strong> after Cycle Analysis has produced uptake data<br>
+   - use pressure/mass/manual fields when source data is external to cycle markers</li>
+<li>Enter required reactor, cylinder, gas, reactant, product, and condition fields.</li>
+<li>Enable pH/equilibrium mode only when the active template has equilibrium rows and the run needs pH output.</li>
+<li>Click <strong>Run Reaction Dashboard</strong>.</li>
+<li>Review KPI tiles, backend status, warnings, step extents, limiting species, final inventory, theoretical yield, actual yield, and completion.</li>
+<li>Click <strong>Open Plot in New Tab</strong> to send the dashboard plot to the generated plot-tab pipeline.</li>
+<li>Use the generated plot tab controls for refresh, export, Plot Settings, Data Trace Settings, Plot Elements, and Plot Preview.</li>
+</ol>
+<h3 id="template-manager-usage">Template manager usage<a class="headerlink" href="#template-manager-usage" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Built-in templates are immutable. They provide stable defaults and can be restored by selecting the built-in row again.</li>
+<li>Custom templates are created by <strong>Duplicate Template</strong> or by editing the JSON payload and saving under a custom template id.</li>
+<li>A valid template must define:</li>
+<li>at least one gas species</li>
+<li>all stoichiometric species ids used by every reaction step</li>
+<li>a yield-basis product species</li>
+<li>molar masses for mass/yield calculations</li>
+<li>Use JSON editing for advanced template changes such as required input fields, pH/equilibrium equations, KPI labels, and default plots.</li>
+</ul>
+<h3 id="sodium-methoxide-co-starter-template">Sodium methoxide / CO starter template<a class="headerlink" href="#sodium-methoxide-co-starter-template" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The built-in starter template models two linked steps:<br>
+  1. Sodium methoxide + CO -&gt; methyl formate.<br>
+  2. Methyl formate + NaOH -&gt; sodium formate + methanol.</li>
+<li>The primary KPI is sodium formate final yield.</li>
+<li>Methyl formate is shown as an intermediate/carryover KPI.</li>
+<li>CO uptake can come from Cycle Analysis, pressure deltas, cylinder mass loss, or manual gas entry.</li>
+</ul>
+<h3 id="phequilibrium-behavior">pH/equilibrium behavior<a class="headerlink" href="#phequilibrium-behavior" title="Permanent link">&para;</a></h3>
+<ul>
+<li>pH/equilibrium is optional per template and optional per run.</li>
+<li>When enabled, the dashboard lazily imports ChemPy and evaluates the template equilibrium rows.</li>
+<li>If ChemPy is unavailable, the template has invalid equilibrium rows, or the solve fails, pH is marked unavailable and warnings are shown.</li>
+<li>Uptake, extent, completion, inventory, and yield results still render when pH is unavailable.</li>
+</ul>
+<h3 id="expected-outputs_10">Expected outputs<a class="headerlink" href="#expected-outputs_10" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Gas uptake in moles and grams.</li>
+<li>Per-step stoichiometric extent and limiting species.</li>
+<li>Intermediate carryover and final species inventory.</li>
+<li>Theoretical final product yield.</li>
+<li>Actual yield percent when isolated product mass is entered.</li>
+<li>Completion percent based on the template yield basis.</li>
+<li>Optional pH/equilibrium summary.</li>
+<li>Generated Reaction Dashboard plot tab with existing plot-toolbar/export behavior.</li>
+</ul>
+<h3 id="common-errors-and-recovery_10">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_10" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Error: Cycle Analysis source reports unavailable payload.</li>
+<li>Recovery: run Cycle Analysis first, then click <strong>Import from Cycle Analysis</strong> again.</li>
+<li>Error: custom template is not saved.</li>
+<li>Recovery: verify every species id used in step JSON exists in the species table and the yield product species id is valid.</li>
+<li>Error: pH unavailable.</li>
+<li>Recovery: confirm <code>chempy</code> is installed and verify the template equilibrium equations and initial concentration rows.</li>
+<li>Error: yield is missing.</li>
+<li>Recovery: provide molar mass for the yield species and ensure the linked stoichiometry produces that species.</li>
+</ul>
+<h3 id="related-exportsartifacts_10">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_10" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Generated Reaction Dashboard plot tab.</li>
+<li>Plot exports from the generated tab pipeline.</li>
+<li>Persisted custom templates in application settings.</li>
+<li>Cycle Analysis payloads used as gas-uptake source input.</li>
+</ul>
+<hr>
 <p><a id="advanced-speciation-and-equilibrium-workflows"></a></p>
 <h2 id="advanced-speciation-and-equilibrium-workflows">Advanced Speciation and Equilibrium Workflows<a class="headerlink" href="#advanced-speciation-and-equilibrium-workflows" title="Permanent link">&para;</a></h2>
-<h3 id="purpose_10">Purpose<a class="headerlink" href="#purpose_10" title="Permanent link">&para;</a></h3>
+<h3 id="purpose_11">Purpose<a class="headerlink" href="#purpose_11" title="Permanent link">&para;</a></h3>
 <p>Perform chemistry-driven analyses including cycle-to-speciation projections, planning guidance, and equilibrium summaries.</p>
-<h3 id="preconditions_10">Preconditions<a class="headerlink" href="#preconditions_10" title="Permanent link">&para;</a></h3>
+<h3 id="preconditions_11">Preconditions<a class="headerlink" href="#preconditions_11" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Cycle analysis has completed or manual cycle payload is defined.</li>
 <li>Advanced Solubility tab is available and initialized.</li>
 </ul>
-<h3 id="inputs_10">Inputs<a class="headerlink" href="#inputs_10" title="Permanent link">&para;</a></h3>
+<h3 id="inputs_11">Inputs<a class="headerlink" href="#inputs_11" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Advanced Solubility controls:</li>
 <li>send cycle to solubility</li>
@@ -1036,7 +1154,7 @@
 <li>model mode and diagnostics controls</li>
 <li>export actions (PNG/CSV/JSON/timeline artifacts)</li>
 </ul>
-<h3 id="step-by-step-actions_10">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_10" title="Permanent link">&para;</a></h3>
+<h3 id="step-by-step-actions_11">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_11" title="Permanent link">&para;</a></h3>
 <ol>
 <li>Open <strong>Advanced Solubility</strong> tab.</li>
 <li>Send cycle payload from Cycle Analysis.</li>
@@ -1122,13 +1240,23 @@
    - <code>analysis_only</code>: show dense analytics panels only while the Analysis workflow tab is active.<br>
    - <code>all_workflows</code>: keep dense analytics panels visible in Planning and Reprocessing as well.</li>
 </ol>
-<h3 id="expected-outputs_10">Expected outputs<a class="headerlink" href="#expected-outputs_10" title="Permanent link">&para;</a></h3>
+<h3 id="expected-outputs_11">Expected outputs<a class="headerlink" href="#expected-outputs_11" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Speciation/equilibrium summaries tied to cycle-level data.</li>
 <li>Timeline artifacts and dashboard metrics suitable for compare/report/ledger.</li>
 <li>Measured-pH anchor editor rows persist globally in <code>solubility_inputs</code> and restore on Analysis tab build/restart.</li>
 <li>Latest Analysis run payload restores after restart when workspace context/signatures match persisted <code>sol_analysis_last_result_v2</code> metadata.</li>
 <li>Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.</li>
+</ul>
+<h3 id="v4157-release-note-reaction-dashboard-template-driven-reaction-metrics">v4.15.7 Release Note (Reaction Dashboard + Template-Driven Reaction Metrics)<a class="headerlink" href="#v4157-release-note-reaction-dashboard-template-driven-reaction-metrics" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Added a top-level <strong>Reaction Dashboard</strong> tab after Cycle Analysis.</li>
+<li>Added reusable Reaction Templates for species, stoichiometric steps, gas species, required inputs, yield basis, optional pH/equilibrium rows, KPI labels, and default plots.</li>
+<li>Added the first built-in template for sodium methoxide / CO carbonylation to methyl formate followed by hydrolysis to sodium formate.</li>
+<li>Added uptake source modes for imported Cycle Analysis payloads, reactor pressure deltas, cylinder mass loss, and manual gas mass/moles.</li>
+<li>Added optional ChemPy pH/equilibrium support that fails independently from uptake/yield calculations.</li>
+<li>Added Rust-backed reaction kernels with Python fallback for gas uptake, extent, completion, carryover, and yield metrics.</li>
+<li>Registered Reaction Dashboard plots with the generated new-tab plot pipeline.</li>
 </ul>
 <h3 id="v4156-release-note-multi-reactor-trace-import-downstream-integration">v4.15.6 Release Note (Multi-Reactor Trace Import + Downstream Integration)<a class="headerlink" href="#v4156-release-note-multi-reactor-trace-import-downstream-integration" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1489,7 +1617,7 @@
 <li>Closing Timeline Plot Preview now applies the dragged preview legend position to the displayed timeline legend.</li>
 <li>Timeline plot exports now honor the current in-session timeline legend location captured from preview drag actions.</li>
 </ul>
-<h3 id="common-errors-and-recovery_10">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_10" title="Permanent link">&para;</a></h3>
+<h3 id="common-errors-and-recovery_11">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_11" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Error: solver/model unavailable.</li>
 <li>Recovery: verify optional dependencies and fallback behavior; re-run in supported mode.</li>
@@ -1530,7 +1658,7 @@
 <li>Error: dragged bottom legend in Cycle Timeline preview is clipped or does not sync on close.</li>
 <li>Recovery: update to <code>v4.11.1+</code>; timeline preview now captures role-specific drag state reliably and reruns bounded layout verification after close-time legend apply.</li>
 </ul>
-<h3 id="related-exportsartifacts_10">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_10" title="Permanent link">&para;</a></h3>
+<h3 id="related-exportsartifacts_11">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_11" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Solubility summary PNG</li>
 <li>Solubility CSV/JSON</li>
@@ -1720,20 +1848,20 @@
 <hr>
 <p><a id="compare-profiles-workflow"></a></p>
 <h2 id="compare-profiles-workflow">Compare Profiles Workflow<a class="headerlink" href="#compare-profiles-workflow" title="Permanent link">&para;</a></h2>
-<h3 id="purpose_11">Purpose<a class="headerlink" href="#purpose_11" title="Permanent link">&para;</a></h3>
+<h3 id="purpose_12">Purpose<a class="headerlink" href="#purpose_12" title="Permanent link">&para;</a></h3>
 <p>Compare two profile runs side-by-side and quantify differential cycle/yield behavior.</p>
-<h3 id="preconditions_11">Preconditions<a class="headerlink" href="#preconditions_11" title="Permanent link">&para;</a></h3>
+<h3 id="preconditions_12">Preconditions<a class="headerlink" href="#preconditions_12" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Two valid profiles exist with usable cycle/analysis context.</li>
 </ul>
-<h3 id="inputs_11">Inputs<a class="headerlink" href="#inputs_11" title="Permanent link">&para;</a></h3>
+<h3 id="inputs_12">Inputs<a class="headerlink" href="#inputs_12" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Compare tab profile selection controls.</li>
 <li>Side-specific plot settings and optional plot elements.</li>
 <li>Compare cycle table export controls.</li>
 <li><code>Open In Cycle Analysis</code> action for side-specific marker review.</li>
 </ul>
-<h3 id="step-by-step-actions_11">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_11" title="Permanent link">&para;</a></h3>
+<h3 id="step-by-step-actions_12">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_12" title="Permanent link">&para;</a></h3>
 <ol>
 <li>Open <strong>Compare</strong> tab.</li>
 <li>Assign profile A and profile B.</li>
@@ -1744,11 +1872,11 @@
 <li>Export compare cycle table CSV when needed.</li>
 <li>Optionally export compare interactive HTML if used in your reporting flow.</li>
 </ol>
-<h3 id="expected-outputs_11">Expected outputs<a class="headerlink" href="#expected-outputs_11" title="Permanent link">&para;</a></h3>
+<h3 id="expected-outputs_12">Expected outputs<a class="headerlink" href="#expected-outputs_12" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Side-by-side visual and table-based comparison evidence.</li>
 </ul>
-<h3 id="common-errors-and-recovery_11">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_11" title="Permanent link">&para;</a></h3>
+<h3 id="common-errors-and-recovery_12">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_12" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Error: one side blank or stale.</li>
 <li>Recovery: re-load profile bundle and re-render selected side.</li>
@@ -1757,7 +1885,7 @@
 <li>Error: compare table empty.</li>
 <li>Recovery: ensure both profiles contain cycle outputs and cycle analysis completed.</li>
 </ul>
-<h3 id="related-exportsartifacts_11">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_11" title="Permanent link">&para;</a></h3>
+<h3 id="related-exportsartifacts_12">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_12" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Compare cycle table CSV</li>
 <li>Compare interactive HTML/report artifacts (if enabled in workflow)</li>
@@ -1767,13 +1895,13 @@
 <hr>
 <p><a id="ledger-workflow"></a></p>
 <h2 id="ledger-workflow">Ledger Workflow<a class="headerlink" href="#ledger-workflow" title="Permanent link">&para;</a></h2>
-<h3 id="purpose_12">Purpose<a class="headerlink" href="#purpose_12" title="Permanent link">&para;</a></h3>
+<h3 id="purpose_13">Purpose<a class="headerlink" href="#purpose_13" title="Permanent link">&para;</a></h3>
 <p>Capture cross-run metrics, support manual and prefilled entries, and export consolidated records.</p>
-<h3 id="preconditions_12">Preconditions<a class="headerlink" href="#preconditions_12" title="Permanent link">&para;</a></h3>
+<h3 id="preconditions_13">Preconditions<a class="headerlink" href="#preconditions_13" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Optional profile/speciation outputs ready for prefill.</li>
 </ul>
-<h3 id="inputs_12">Inputs<a class="headerlink" href="#inputs_12" title="Permanent link">&para;</a></h3>
+<h3 id="inputs_13">Inputs<a class="headerlink" href="#inputs_13" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Ledger tab controls:</li>
 <li>add/edit/remove rows</li>
@@ -1782,7 +1910,7 @@
 <li>custom columns/formula fields</li>
 <li>CSV export</li>
 </ul>
-<h3 id="step-by-step-actions_12">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_12" title="Permanent link">&para;</a></h3>
+<h3 id="step-by-step-actions_13">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_13" title="Permanent link">&para;</a></h3>
 <ol>
 <li>Open <strong>Ledger</strong> tab.</li>
 <li>Add a new line manually or use profile/speciation prefill flow.</li>
@@ -1792,11 +1920,11 @@
 <li>Validate formula/custom-column outputs if configured.</li>
 <li>Export visible ledger rows to CSV.</li>
 </ol>
-<h3 id="expected-outputs_12">Expected outputs<a class="headerlink" href="#expected-outputs_12" title="Permanent link">&para;</a></h3>
+<h3 id="expected-outputs_13">Expected outputs<a class="headerlink" href="#expected-outputs_13" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Auditable run-level ledger entries suitable for operational tracking.</li>
 </ul>
-<h3 id="common-errors-and-recovery_12">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_12" title="Permanent link">&para;</a></h3>
+<h3 id="common-errors-and-recovery_13">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_13" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Error: prefill values missing.</li>
 <li>Recovery: ensure source profile contains cycle/speciation payloads and rerun prefill.</li>
@@ -1805,7 +1933,7 @@
 <li>Error: export file empty.</li>
 <li>Recovery: clear filters or ensure rows are visible before export.</li>
 </ul>
-<h3 id="related-exportsartifacts_12">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_12" title="Permanent link">&para;</a></h3>
+<h3 id="related-exportsartifacts_13">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_13" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Ledger CSV export</li>
 <li>Profile metadata + cycle/speciation metrics snapshots</li>
@@ -1815,14 +1943,14 @@
 <hr>
 <p><a id="final-report-workflow"></a></p>
 <h2 id="final-report-workflow">Final Report Workflow<a class="headerlink" href="#final-report-workflow" title="Permanent link">&para;</a></h2>
-<h3 id="purpose_13">Purpose<a class="headerlink" href="#purpose_13" title="Permanent link">&para;</a></h3>
+<h3 id="purpose_14">Purpose<a class="headerlink" href="#purpose_14" title="Permanent link">&para;</a></h3>
 <p>Assemble and export final, shareable reporting packages using selected sections and layout rules.</p>
-<h3 id="preconditions_13">Preconditions<a class="headerlink" href="#preconditions_13" title="Permanent link">&para;</a></h3>
+<h3 id="preconditions_14">Preconditions<a class="headerlink" href="#preconditions_14" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Required columns applied.</li>
 <li>Plot/cycle/speciation inputs available for selected report sections.</li>
 </ul>
-<h3 id="inputs_13">Inputs<a class="headerlink" href="#inputs_13" title="Permanent link">&para;</a></h3>
+<h3 id="inputs_14">Inputs<a class="headerlink" href="#inputs_14" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Final Report tab controls:</li>
 <li>title and narrative fields</li>
@@ -1832,7 +1960,7 @@
 <li>template save/load actions</li>
 <li>generation actions (<code>PDF</code>, <code>PNG</code>, <code>HTML</code>, combined)</li>
 </ul>
-<h3 id="step-by-step-actions_13">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_13" title="Permanent link">&para;</a></h3>
+<h3 id="step-by-step-actions_14">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_14" title="Permanent link">&para;</a></h3>
 <ol>
 <li>Open <strong>Final Report</strong> tab.</li>
 <li>Enter report title and required narrative metadata.</li>
@@ -1847,11 +1975,11 @@
    - combined multi-format generation</li>
 <li>Verify generated outputs and pagination/caption correctness.</li>
 </ol>
-<h3 id="expected-outputs_13">Expected outputs<a class="headerlink" href="#expected-outputs_13" title="Permanent link">&para;</a></h3>
+<h3 id="expected-outputs_14">Expected outputs<a class="headerlink" href="#expected-outputs_14" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Report artifacts matching configured structure and styling.</li>
 </ul>
-<h3 id="common-errors-and-recovery_13">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_13" title="Permanent link">&para;</a></h3>
+<h3 id="common-errors-and-recovery_14">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_14" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Error: report generation blocked by stale columns.</li>
 <li>Recovery: run <strong>Apply Column Selection</strong> again and retry.</li>
@@ -1860,7 +1988,7 @@
 <li>Error: HTML preview opens but missing pages.</li>
 <li>Recovery: ensure selected sections produce renderable figures/tables.</li>
 </ul>
-<h3 id="related-exportsartifacts_13">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_13" title="Permanent link">&para;</a></h3>
+<h3 id="related-exportsartifacts_14">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_14" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Final report PDF pages</li>
 <li>Final report PNG summary</li>
@@ -1871,18 +1999,18 @@
 <hr>
 <p><a id="profiles-and-settings-persistence"></a></p>
 <h2 id="profiles-and-settings-persistence">Profiles and Settings Persistence<a class="headerlink" href="#profiles-and-settings-persistence" title="Permanent link">&para;</a></h2>
-<h3 id="purpose_14">Purpose<a class="headerlink" href="#purpose_14" title="Permanent link">&para;</a></h3>
+<h3 id="purpose_15">Purpose<a class="headerlink" href="#purpose_15" title="Permanent link">&para;</a></h3>
 <p>Store and restore repeatable analysis state across sessions and datasets.</p>
-<h3 id="preconditions_14">Preconditions<a class="headerlink" href="#preconditions_14" title="Permanent link">&para;</a></h3>
+<h3 id="preconditions_15">Preconditions<a class="headerlink" href="#preconditions_15" title="Permanent link">&para;</a></h3>
 <ul>
 <li>A valid configuration has been created in one session.</li>
 </ul>
-<h3 id="inputs_14">Inputs<a class="headerlink" href="#inputs_14" title="Permanent link">&para;</a></h3>
+<h3 id="inputs_15">Inputs<a class="headerlink" href="#inputs_15" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Profiles menu actions.</li>
 <li>Settings persistence behavior (<code>settings.json</code> and <code>profiles/</code> payloads).</li>
 </ul>
-<h3 id="step-by-step-actions_14">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_14" title="Permanent link">&para;</a></h3>
+<h3 id="step-by-step-actions_15">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_15" title="Permanent link">&para;</a></h3>
 <ol>
 <li>Configure tabs and workflows for the current run.</li>
 <li>Save profile from Profiles menu.</li>
@@ -1894,18 +2022,18 @@
    - compare and final report preferences</li>
 <li>Export selected profile when needed for transfer/sharing.</li>
 </ol>
-<h3 id="expected-outputs_14">Expected outputs<a class="headerlink" href="#expected-outputs_14" title="Permanent link">&para;</a></h3>
+<h3 id="expected-outputs_15">Expected outputs<a class="headerlink" href="#expected-outputs_15" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Consistent reproducibility for recurring workflows.</li>
 </ul>
-<h3 id="common-errors-and-recovery_14">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_14" title="Permanent link">&para;</a></h3>
+<h3 id="common-errors-and-recovery_15">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_15" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Error: profile restore incomplete.</li>
 <li>Recovery: confirm profile schema fields and re-save from current app version.</li>
 <li>Error: settings corruption symptoms.</li>
 <li>Recovery: inspect/reset <code>settings.json</code>, then reload known-good profile.</li>
 </ul>
-<h3 id="related-exportsartifacts_14">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_14" title="Permanent link">&para;</a></h3>
+<h3 id="related-exportsartifacts_15">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_15" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>profiles/*.json</code></li>
 <li><code>settings.json</code></li>
@@ -1913,7 +2041,7 @@
 <hr>
 <p><a id="troubleshooting-and-recovery-matrix"></a></p>
 <h2 id="troubleshooting-and-recovery-matrix">Troubleshooting and Recovery Matrix<a class="headerlink" href="#troubleshooting-and-recovery-matrix" title="Permanent link">&para;</a></h2>
-<h3 id="purpose_15">Purpose<a class="headerlink" href="#purpose_15" title="Permanent link">&para;</a></h3>
+<h3 id="purpose_16">Purpose<a class="headerlink" href="#purpose_16" title="Permanent link">&para;</a></h3>
 <p>Provide actionable recovery paths for common user-impacting issues.</p>
 <table>
 <thead>
@@ -1966,7 +2094,7 @@
 </tr>
 </tbody>
 </table>
-<h3 id="related-exportsartifacts_15">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_15" title="Permanent link">&para;</a></h3>
+<h3 id="related-exportsartifacts_16">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_16" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Debug logs: <code>gl260_debug.log*</code></li>
 <li>Validation helper: <code>scripts/validate_rust_backend.py</code></li>
@@ -1974,7 +2102,7 @@
 <hr>
 <p><a id="advanced--power-user-appendix"></a></p>
 <h2 id="advanced-power-user-appendix">Advanced / Power User Appendix<a class="headerlink" href="#advanced-power-user-appendix" title="Permanent link">&para;</a></h2>
-<h3 id="purpose_16">Purpose<a class="headerlink" href="#purpose_16" title="Permanent link">&para;</a></h3>
+<h3 id="purpose_17">Purpose<a class="headerlink" href="#purpose_17" title="Permanent link">&para;</a></h3>
 <p>Document optional runtime controls and diagnostics without interrupting core user flow.</p>
 <h3 id="included-advanced-topics">Included advanced topics<a class="headerlink" href="#included-advanced-topics" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1996,7 +2124,7 @@
 <hr>
 <p><a id="screenshot-contract-and-asset-index"></a></p>
 <h2 id="screenshot-contract-and-asset-index">Screenshot Contract and Asset Index<a class="headerlink" href="#screenshot-contract-and-asset-index" title="Permanent link">&para;</a></h2>
-<h3 id="purpose_17">Purpose<a class="headerlink" href="#purpose_17" title="Permanent link">&para;</a></h3>
+<h3 id="purpose_18">Purpose<a class="headerlink" href="#purpose_18" title="Permanent link">&para;</a></h3>
 <p>Define required structure and quality criteria for screenshot-driven documentation.</p>
 <h3 id="contract">Contract<a class="headerlink" href="#contract" title="Permanent link">&para;</a></h3>
 <ul>

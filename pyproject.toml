@@ -26,6 +26,7 @@ dependencies = [
   "ruff",
   "black",
   "isort",
+  "chempy",
 ]
 
 [project.optional-dependencies]

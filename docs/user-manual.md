@@ -9,7 +9,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Browser smoke setup: `python -m playwright install chromium`
 - Browser smoke test: `python -m pytest -q tests/test_docs_math_runtime_playwright.py`
 
-Current release: `v4.15.6`
+Current release: `v4.15.7`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
@@ -32,15 +32,16 @@ Analysis timeline pH terminology:
 8. [Plot Elements and Annotation Workflow](#plot-elements-and-annotation-workflow)
 9. [Cycle Analysis Workflow (Automatic and Manual)](#cycle-analysis-workflow-automatic-and-manual)
 10. [Plot and Cycle Export Workflows](#plot-and-cycle-export-workflows)
-11. [Advanced Speciation and Equilibrium Workflows](#advanced-speciation-and-equilibrium-workflows)
-12. [Calculation Overview](#calculation-overview)
-13. [Compare Profiles Workflow](#compare-profiles-workflow)
-14. [Ledger Workflow](#ledger-workflow)
-15. [Final Report Workflow](#final-report-workflow)
-16. [Profiles and Settings Persistence](#profiles-and-settings-persistence)
-17. [Troubleshooting and Recovery Matrix](#troubleshooting-and-recovery-matrix)
-18. [Advanced / Power User Appendix](#advanced--power-user-appendix)
-19. [Screenshot Contract and Asset Index](#screenshot-contract-and-asset-index)
+11. [Reaction Dashboard Workflow](#reaction-dashboard-workflow)
+12. [Advanced Speciation and Equilibrium Workflows](#advanced-speciation-and-equilibrium-workflows)
+13. [Calculation Overview](#calculation-overview)
+14. [Compare Profiles Workflow](#compare-profiles-workflow)
+15. [Ledger Workflow](#ledger-workflow)
+16. [Final Report Workflow](#final-report-workflow)
+17. [Profiles and Settings Persistence](#profiles-and-settings-persistence)
+18. [Troubleshooting and Recovery Matrix](#troubleshooting-and-recovery-matrix)
+19. [Advanced / Power User Appendix](#advanced--power-user-appendix)
+20. [Screenshot Contract and Asset Index](#screenshot-contract-and-asset-index)
 
 ---
 
@@ -94,17 +95,18 @@ Provide a high-level map of tabs, menus, and workflow order.
 
 ### Inputs
 - Top menu: `File`, `View`, `Profiles`, `Tools`, `General Plotter`.
-- Primary tabs: `Data`, `Columns`, `Plot Settings`, `Cycle Analysis`, `Compare`, `Ledger`, `Advanced Solubility`, `Final Report`.
+- Primary tabs: `Data`, `Columns`, `Plot Settings`, `Cycle Analysis`, `Reaction Dashboard`, `Compare`, `Ledger`, `Advanced Solubility`, `Final Report`.
 
 ### Step-by-step actions
 1. Start in **Data** tab to load source files and choose sheet context.
 2. Move to **Columns** tab to map traces and required fields.
 3. Use **Plot Settings** to configure axes, ranges, legend behavior, and export defaults.
 4. Open **Cycle Analysis** for marker detection, manual marker editing, and cycle metrics.
-5. Use **Advanced Solubility** for speciation/equilibrium workflows and cycle timeline analysis.
-6. Use **Compare** to evaluate two profiles side-by-side.
-7. Use **Ledger** to consolidate run-level metrics and export business-facing tables.
-8. Use **Final Report** to compose and export PDF/PNG/HTML deliverables.
+5. Use **Reaction Dashboard** for template-driven gas uptake, reaction completion, yield, and optional pH/equilibrium metrics.
+6. Use **Advanced Solubility** for bicarbonate speciation/equilibrium workflows and cycle timeline analysis.
+7. Use **Compare** to evaluate two profiles side-by-side.
+8. Use **Ledger** to consolidate run-level metrics and export business-facing tables.
+9. Use **Final Report** to compose and export PDF/PNG/HTML deliverables.
 
 ### Expected outputs
 - Correct workflow progression from raw data to publication-ready report outputs.
@@ -148,10 +150,11 @@ Give an end-to-end baseline path from input data to final report.
 4. Generate core plots and the **Combined Triple-Axis** plot.
 5. Open **Cycle Analysis** and run marker detection.
 6. Manually adjust peaks/troughs if needed, then confirm cycle summary.
-7. Open **Advanced Solubility** and send cycle payload for equilibrium analysis.
-8. Optionally open **Compare** for profile-to-profile analysis.
-9. Add/validate entries in **Ledger**.
-10. Configure sections in **Final Report** and generate PDF/PNG/HTML output.
+7. Open **Reaction Dashboard** when a non-bicarbonate reaction template should compute gas uptake, completion, yield, or optional pH/equilibrium metrics.
+8. Open **Advanced Solubility** and send cycle payload for bicarbonate equilibrium analysis.
+9. Optionally open **Compare** for profile-to-profile analysis.
+10. Add/validate entries in **Ledger**.
+11. Configure sections in **Final Report** and generate PDF/PNG/HTML output.
 
 ### Expected outputs
 - Validated cycle metrics.
@@ -449,7 +452,7 @@ Detect cycles, compute cycle metrics/moles uptake, and support manual correction
 ### Related exports/artifacts
 - Marker exports (`JSON/CSV`)
 - Cycle results CSV
-- Cycle payloads consumed by Advanced Solubility and Final Report
+- Cycle payloads consumed by Reaction Dashboard, Advanced Solubility, and Final Report
 
 ![Cycle analysis automatic and manual workflow](assets/screenshots/07-cycle-analysis-auto-manual.png)
 *Figure 7. Cycle Analysis tab including auto-detect and manual marker editing.*
@@ -495,6 +498,101 @@ Export reproducible plot and cycle artifacts for validation, reporting, and exte
 ### Related exports/artifacts
 - Plot file set (`PNG/PDF/SVG`)
 - Cycle summary and CSV exports
+
+---
+
+<a id="reaction-dashboard-workflow"></a>
+## Reaction Dashboard Workflow
+
+### Purpose
+Compute template-driven reaction gas uptake, linked-step completion, intermediate carryover, final yield, and optional pH/equilibrium estimates for reactions beyond the bicarbonate-specific Advanced Speciation engine.
+
+### Preconditions
+- Columns and Cycle Analysis are complete when using cycle-derived uptake.
+- The **Reaction Dashboard** tab is visible in tab settings.
+- `chempy` is installed when pH/equilibrium mode will be enabled.
+- Optional Rust backend is healthy for accelerated compute; Python fallback remains available.
+
+### Inputs
+- Reaction Template selector:
+  - built-in read-only templates
+  - duplicated/custom editable templates
+- Template editor sections:
+  - species rows with formula, phase, role, molar mass, and initial moles
+  - stoichiometric step JSON with negative consumed coefficients and positive produced coefficients
+  - template JSON editor for full input-field, yield-basis, equilibrium, KPI, and plot definitions
+- Uptake source selector:
+  - **Imported Cycle Analysis payload**
+  - **Reactor pressure delta**
+  - **Cylinder mass loss**
+  - **Manual gas mass / moles**
+- Template-required condition fields, including reactor volume, temperature, reactant charges, isolated product mass, and solution volume when applicable.
+- Optional **Enable pH/equilibrium engine** toggle.
+
+### Step-by-step actions
+1. Open **Reaction Dashboard**.
+2. Select a Reaction Template.
+3. Review the species table and stoichiometric step JSON.
+4. For a built-in template, click **Duplicate Template** before editing chemistry-specific details.
+5. Select the uptake source:
+   - use **Import from Cycle Analysis** after Cycle Analysis has produced uptake data
+   - use pressure/mass/manual fields when source data is external to cycle markers
+6. Enter required reactor, cylinder, gas, reactant, product, and condition fields.
+7. Enable pH/equilibrium mode only when the active template has equilibrium rows and the run needs pH output.
+8. Click **Run Reaction Dashboard**.
+9. Review KPI tiles, backend status, warnings, step extents, limiting species, final inventory, theoretical yield, actual yield, and completion.
+10. Click **Open Plot in New Tab** to send the dashboard plot to the generated plot-tab pipeline.
+11. Use the generated plot tab controls for refresh, export, Plot Settings, Data Trace Settings, Plot Elements, and Plot Preview.
+
+### Template manager usage
+- Built-in templates are immutable. They provide stable defaults and can be restored by selecting the built-in row again.
+- Custom templates are created by **Duplicate Template** or by editing the JSON payload and saving under a custom template id.
+- A valid template must define:
+  - at least one gas species
+  - all stoichiometric species ids used by every reaction step
+  - a yield-basis product species
+  - molar masses for mass/yield calculations
+- Use JSON editing for advanced template changes such as required input fields, pH/equilibrium equations, KPI labels, and default plots.
+
+### Sodium methoxide / CO starter template
+- The built-in starter template models two linked steps:
+  1. Sodium methoxide + CO -> methyl formate.
+  2. Methyl formate + NaOH -> sodium formate + methanol.
+- The primary KPI is sodium formate final yield.
+- Methyl formate is shown as an intermediate/carryover KPI.
+- CO uptake can come from Cycle Analysis, pressure deltas, cylinder mass loss, or manual gas entry.
+
+### pH/equilibrium behavior
+- pH/equilibrium is optional per template and optional per run.
+- When enabled, the dashboard lazily imports ChemPy and evaluates the template equilibrium rows.
+- If ChemPy is unavailable, the template has invalid equilibrium rows, or the solve fails, pH is marked unavailable and warnings are shown.
+- Uptake, extent, completion, inventory, and yield results still render when pH is unavailable.
+
+### Expected outputs
+- Gas uptake in moles and grams.
+- Per-step stoichiometric extent and limiting species.
+- Intermediate carryover and final species inventory.
+- Theoretical final product yield.
+- Actual yield percent when isolated product mass is entered.
+- Completion percent based on the template yield basis.
+- Optional pH/equilibrium summary.
+- Generated Reaction Dashboard plot tab with existing plot-toolbar/export behavior.
+
+### Common errors and recovery
+- Error: Cycle Analysis source reports unavailable payload.
+  - Recovery: run Cycle Analysis first, then click **Import from Cycle Analysis** again.
+- Error: custom template is not saved.
+  - Recovery: verify every species id used in step JSON exists in the species table and the yield product species id is valid.
+- Error: pH unavailable.
+  - Recovery: confirm `chempy` is installed and verify the template equilibrium equations and initial concentration rows.
+- Error: yield is missing.
+  - Recovery: provide molar mass for the yield species and ensure the linked stoichiometry produces that species.
+
+### Related exports/artifacts
+- Generated Reaction Dashboard plot tab.
+- Plot exports from the generated tab pipeline.
+- Persisted custom templates in application settings.
+- Cycle Analysis payloads used as gas-uptake source input.
 
 ---
 
@@ -605,6 +703,15 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.15.7 Release Note (Reaction Dashboard + Template-Driven Reaction Metrics)
+- Added a top-level **Reaction Dashboard** tab after Cycle Analysis.
+- Added reusable Reaction Templates for species, stoichiometric steps, gas species, required inputs, yield basis, optional pH/equilibrium rows, KPI labels, and default plots.
+- Added the first built-in template for sodium methoxide / CO carbonylation to methyl formate followed by hydrolysis to sodium formate.
+- Added uptake source modes for imported Cycle Analysis payloads, reactor pressure deltas, cylinder mass loss, and manual gas mass/moles.
+- Added optional ChemPy pH/equilibrium support that fails independently from uptake/yield calculations.
+- Added Rust-backed reaction kernels with Python fallback for gas uptake, extent, completion, carryover, and yield metrics.
+- Registered Reaction Dashboard plots with the generated new-tab plot pipeline.
 
 ### v4.15.6 Release Note (Multi-Reactor Trace Import + Downstream Integration)
 - CSV Import now supports multiple Reactor Pressure mappings in one import.

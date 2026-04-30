@@ -1,9 +1,10 @@
-# GL-260 Data Analysis and Plotter (v4.15.6)
+# GL-260 Data Analysis and Plotter (v4.15.7)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.15.6`:
+Latest workflow highlights in `v4.15.7`:
+- `v4.15.7`: Added the template-driven Reaction Dashboard, sodium methoxide / CO starter template, optional ChemPy pH/equilibrium solve path, and Rust/Python fallback reaction kernels.
 - `v4.15.6`: Added repeatable Reactor Pressure CSV import mappings, numbered multi-reactor pressure/derivative outputs, grouped Columns/Data Trace labels for duplicate reactor traces, and Rust/Python parity routing for CSV pressure derivatives.
 - `v4.15.5`: Fixed Cycle Timeline centered bottom legend parity across notebook/new-tab/preview/export surfaces, added multi-trace Columns groups with a designated calculation trace, and kept combined/core plotting compatible with extra traces.
 - `v4.15.4`: Fixed Cycle Timeline current-state textbox drag persistence/x-axis drift, added layout-only reset, x-axis range controls, and fixed centered bottom-legend mode.
@@ -14,8 +15,8 @@ Latest workflow highlights in `v4.15.6`:
 - `v4.15.0`: Preserved startup performance hardening, bounded caching, and heavy-tab optimization baseline.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.15.6`
-- `APP_VERSION = "v4.15.6"`
+- `# Version: v4.15.7`
+- `APP_VERSION = "v4.15.7"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -70,6 +71,7 @@ python -m pytest -q tests/test_docs_math_runtime_playwright.py
   - [Plot Elements and Annotations System](#plot-elements-and-annotations-system)
   - [Combined Triple-Axis Plot Technical Documentation](#combined-triple-axis-plot-technical-documentation)
   - [Interactive Cycle Analysis - Scientific and Operational Guide](#interactive-cycle-analysis---scientific-and-operational-guide)
+  - [Reaction Dashboard](#reaction-dashboard)
   - [Advanced Solubility and Equilibrium Engine](#advanced-solubility-and-equilibrium-engine)
   - [Compare Tab Workflow and Reporting](#compare-tab-workflow-and-reporting)
   - [Final Report System - Export and PDF Assembly](#final-report-system---export-and-pdf-assembly)
@@ -129,6 +131,7 @@ Required baseline dependencies for startup and core workflows:
 
 Optional or feature-gated dependencies:
 - `scipy`: enables SciPy-based peak detection and Van der Waals solve paths.
+- `chempy`: required when Reaction Dashboard pH/equilibrium mode is enabled.
 - `mplcursors`: optional cursor interactivity.
 - `great_tables`: required for timeline table export/view flows that depend on it.
 - `customtkinter`: optional enhanced styling; app falls back to ttk.
@@ -398,7 +401,7 @@ High-level pipeline:
 3. Build plot series and axis state.
 4. Run cycle analysis (automatic and/or manual marker workflow).
 5. Generate combined triple-axis plot and overlays.
-6. Run optional advanced solubility/speciation analysis.
+6. Run optional Reaction Dashboard or advanced solubility/speciation analysis.
 7. Review compare and ledger results.
 8. Export final reports and artifacts.
 
@@ -416,8 +419,9 @@ Recommended order:
 6. Configure Plot Settings and range policy.
 7. Run cycle detection and manual cleanup as needed.
 8. Generate combined plot and overlays.
-9. Run advanced solubility workflows when required.
-10. Build/export final report outputs.
+9. Run Reaction Dashboard templates for non-bicarbonate uptake/yield workflows when required.
+10. Run advanced solubility workflows when required.
+11. Build/export final report outputs.
 
 ### UI and Navigation Guide
 Primary tabs and purpose:
@@ -425,6 +429,7 @@ Primary tabs and purpose:
 - Columns: map pressure, temperature, derivative, and optional channels.
 - Plot: figure generation, axes settings, overlays, and combined-view controls.
 - Cycle: cycle marker detection/editing and moles summary.
+- Reaction Dashboard: template-driven reactant gas uptake, linked reaction completion, yield, and optional pH/equilibrium metrics.
 - Compare: side-by-side run comparisons.
 - Ledger: sortable/filterable cross-run metrics.
 - Advanced Solubility: planning/analysis/reprocessing chemistry workflows.
@@ -450,7 +455,15 @@ Primary tabs and purpose:
 - Automatic cycle detection uses configurable peak/trough thresholds.
 - Manual marker correction supports post-detection cleanup.
 - Cycle summaries include ideal-gas moles and optional Van der Waals paths when SciPy is present.
-- Results feed cycle summaries, compare workflows, ledger outputs, and report artifacts.
+- Results feed Reaction Dashboard imports, cycle summaries, compare workflows, ledger outputs, and report artifacts.
+
+### Reaction Dashboard
+- Template-driven reaction definitions cover species, stoichiometric steps, gas species, required fields, yield basis, optional equilibrium rows, KPI labels, and default plots.
+- Built-in templates are read-only; duplicate a template to create an editable custom copy.
+- The starter template covers sodium methoxide / CO carbonylation to methyl formate followed by hydrolysis to sodium formate.
+- Uptake source modes include imported Cycle Analysis payload, reactor pressure delta, cylinder mass loss, and manual gas mass/moles.
+- Optional ChemPy pH/equilibrium mode is per-template and per-run; pH failures are reported without blocking uptake, completion, and yield output.
+- **Open Plot in New Tab** registers the dashboard plot with the same generated plot-tab toolbar, refresh, export, layout, Plot Settings, Data Trace Settings, and Plot Elements behavior as other generated plots.
 
 ### Advanced Solubility and Equilibrium Engine
 - Includes planning, analysis, and reprocessing pathways.
@@ -541,6 +554,16 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.15.7 Reaction Dashboard + Template-Driven Reaction Metrics
+- Added a top-level **Reaction Dashboard** tab after Cycle Analysis with persisted visibility and tab-order behavior.
+- Added reusable Reaction Template definitions covering species, linked stoichiometric steps, gas species, required inputs, yield basis, optional equilibrium rows, KPI labels, and default plots.
+- Shipped the first built-in template for sodium methoxide / CO carbonylation to methyl formate followed by methyl formate hydrolysis to sodium formate, with sodium formate as the primary yield KPI and methyl formate as an intermediate KPI.
+- Added gas uptake source modes for Cycle Analysis imports, reactor pressure deltas, cylinder mass loss, and manual gas mass/moles entry.
+- Added optional ChemPy-backed pH/equilibrium mode; uptake, completion, and yield metrics still render when ChemPy is unavailable or the equilibrium solve fails.
+- Added Rust-backed template-neutral reaction kernels for uptake normalization, linked-step extent, limiting species, completion, carryover, and yield, with Python fallback and targeted parity regressions.
+- Registered Reaction Dashboard plots with the generated plot-tab pipeline so **Open Plot in New Tab** reuses existing refresh, toolbar, export, layout, Plot Settings, and Plot Elements behavior.
+- Updated application version metadata to `v4.15.7` in script header and `APP_VERSION`, and synchronized README/user-manual release references.
 
 ### v4.15.6 Multi-Reactor Trace Import + Downstream Integration
 - Added repeatable Reactor Pressure mappings to CSV Import while preserving legacy single-reactor settings and output names.

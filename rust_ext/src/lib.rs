@@ -35,7 +35,7 @@ const RUST_BACKEND_INTERFACE_ID: &str = "gl260_rust_backend";
 const RUST_BACKEND_INTERFACE_VERSION: &str = "3";
 const RUST_BACKEND_MODULE_NAME: &str = env!("CARGO_PKG_NAME");
 const RUST_BACKEND_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
-const RUST_EXPORTED_KERNELS: [&str; 24] = [
+const RUST_EXPORTED_KERNELS: [&str; 25] = [
     "simulate_reaction_state_with_accounting",
     "analyze_bicarbonate_core",
     "carbonate_state_core",
@@ -60,6 +60,7 @@ const RUST_EXPORTED_KERNELS: [&str; 24] = [
     "ledger_sort_filter_indices_core",
     "ledger_prefill_metrics_core",
     "csv_pressure_derivatives_core",
+    "reaction_dashboard_core",
 ];
 
 #[derive(Clone, Copy)]
@@ -3227,6 +3228,237 @@ fn final_report_cycle_stats_rows_core(
 }
 
 #[pyfunction]
+#[pyo3(signature = (species_rows, step_rows, gas_uptake_mol, gas_species_id, yield_species_id, target_reactant_species_id=None, actual_yield_mass_g=None))]
+/// Compute template-neutral Reaction Dashboard stoichiometry and yield metrics.
+///
+/// The kernel mirrors the Python fallback schema while keeping pH/ChemPy
+/// behavior in Python. Species rows provide initial moles and molar masses;
+/// step rows provide signed stoichiometry maps with negative reactants and
+/// positive products.
+fn reaction_dashboard_core(
+    py: Python<'_>,
+    species_rows: &Bound<'_, PyList>,
+    step_rows: &Bound<'_, PyList>,
+    gas_uptake_mol: f64,
+    gas_species_id: &str,
+    yield_species_id: &str,
+    target_reactant_species_id: Option<&str>,
+    actual_yield_mass_g: Option<f64>,
+) -> PyResult<Py<PyDict>> {
+    let mut inventory: BTreeMap<String, f64> = BTreeMap::new();
+    let mut initial_inventory: BTreeMap<String, f64> = BTreeMap::new();
+    let mut molar_masses: BTreeMap<String, f64> = BTreeMap::new();
+    let mut species_names: BTreeMap<String, String> = BTreeMap::new();
+    let warnings = PyList::empty(py);
+
+    for item in species_rows.iter() {
+        let Ok(row) = item.cast_into::<PyDict>() else {
+            continue;
+        };
+        let mut species_id = dict_string_value(&row, "species_id");
+        if species_id.is_empty() {
+            species_id = dict_string_value(&row, "id");
+        }
+        if species_id.is_empty() {
+            continue;
+        }
+        let initial = dict_optional_float_value(&row, "initial_moles")
+            .unwrap_or(0.0)
+            .max(0.0);
+        let molar_mass = dict_optional_float_value(&row, "molar_mass_g_mol")
+            .unwrap_or(0.0)
+            .max(0.0);
+        inventory.insert(species_id.clone(), initial);
+        initial_inventory.insert(species_id.clone(), initial);
+        molar_masses.insert(species_id.clone(), molar_mass);
+        let name = dict_string_value(&row, "name");
+        species_names.insert(
+            species_id.clone(),
+            if name.is_empty() {
+                species_id.clone()
+            } else {
+                name
+            },
+        );
+    }
+
+    let gas_id = gas_species_id.trim().to_string();
+    let gas_uptake = gas_uptake_mol.max(0.0);
+    if gas_id.is_empty() {
+        warnings.append("Template does not define a gas species.")?;
+    } else {
+        let next_value = inventory.get(&gas_id).copied().unwrap_or(0.0) + gas_uptake;
+        inventory.insert(gas_id.clone(), next_value);
+        let next_initial = initial_inventory.get(&gas_id).copied().unwrap_or(0.0) + gas_uptake;
+        initial_inventory.insert(gas_id.clone(), next_initial);
+    }
+
+    let step_results = PyList::empty(py);
+    for (idx, item) in step_rows.iter().enumerate() {
+        let Ok(step) = item.cast_into::<PyDict>() else {
+            continue;
+        };
+        let stoich_any = step.get_item("stoichiometry").ok().flatten();
+        let Some(stoich_dict) = stoich_any.and_then(|value| value.cast_into::<PyDict>().ok())
+        else {
+            warnings.append(format!(
+                "{} has no stoichiometry.",
+                dict_string_value(&step, "name")
+            ))?;
+            continue;
+        };
+        let mut stoich: BTreeMap<String, f64> = BTreeMap::new();
+        for (key, value) in stoich_dict.iter() {
+            let species_id = py_any_to_trimmed_string(&key);
+            if species_id.is_empty() {
+                continue;
+            }
+            let coeff = value.extract::<f64>().unwrap_or(0.0);
+            if coeff.is_finite() && coeff.abs() > 0.0 {
+                stoich.insert(species_id, coeff);
+            }
+        }
+        let mut limiting_species: Option<String> = None;
+        let mut extent = f64::INFINITY;
+        for (species_id, coeff) in stoich.iter() {
+            if *coeff >= 0.0 {
+                continue;
+            }
+            let candidate =
+                inventory.get(species_id).copied().unwrap_or(0.0) / coeff.abs().max(1e-30);
+            if candidate < extent {
+                extent = candidate.max(0.0);
+                limiting_species = Some(species_id.clone());
+            }
+        }
+        if !extent.is_finite() {
+            extent = 0.0;
+            warnings.append(format!(
+                "{} has no consumed species.",
+                dict_string_value(&step, "name")
+            ))?;
+        }
+        for (species_id, coeff) in stoich.iter() {
+            let current = inventory.get(species_id).copied().unwrap_or(0.0);
+            inventory.insert(species_id.clone(), (current + coeff * extent).max(0.0));
+        }
+        let step_row = PyDict::new(py);
+        let step_id = {
+            let value = dict_string_value(&step, "step_id");
+            if value.is_empty() {
+                dict_string_value(&step, "id")
+            } else {
+                value
+            }
+        };
+        step_row.set_item(
+            "step_id",
+            if step_id.is_empty() {
+                format!("{}", idx + 1)
+            } else {
+                step_id
+            },
+        )?;
+        let step_name = dict_string_value(&step, "name");
+        step_row.set_item(
+            "name",
+            if step_name.is_empty() {
+                format!("Step {}", idx + 1)
+            } else {
+                step_name
+            },
+        )?;
+        step_row.set_item("extent_mol", extent)?;
+        if let Some(limiting_id) = limiting_species {
+            step_row.set_item("limiting_species_id", limiting_id.clone())?;
+            step_row.set_item(
+                "limiting_species",
+                species_names.get(&limiting_id).cloned().unwrap_or_default(),
+            )?;
+        } else {
+            step_row.set_item("limiting_species_id", py.None())?;
+            step_row.set_item("limiting_species", "")?;
+        }
+        step_results.append(step_row)?;
+    }
+
+    let product_id = yield_species_id.trim().to_string();
+    let product_mol = inventory.get(&product_id).copied().unwrap_or(0.0);
+    let product_mw = molar_masses.get(&product_id).copied().unwrap_or(0.0);
+    let theoretical_yield_g = if product_mol >= 0.0 && product_mw > 0.0 {
+        Some(product_mol * product_mw)
+    } else {
+        None
+    };
+    let actual_yield_pct = match (actual_yield_mass_g, theoretical_yield_g) {
+        (Some(actual), Some(theoretical)) if actual.is_finite() && theoretical > 1e-12 => {
+            Some((actual.max(0.0) / theoretical) * 100.0)
+        }
+        _ => None,
+    };
+    let target_id = target_reactant_species_id.unwrap_or("").trim().to_string();
+    let target_initial = if target_id.is_empty() {
+        0.0
+    } else {
+        initial_inventory.get(&target_id).copied().unwrap_or(0.0)
+    };
+    let completion_pct = if target_initial > 1e-12 {
+        Some(((product_mol / target_initial) * 100.0).clamp(0.0, 100.0))
+    } else if let Some(actual_pct) = actual_yield_pct {
+        Some(actual_pct.clamp(0.0, 100.0))
+    } else if product_mol > 1e-12 {
+        Some(100.0)
+    } else {
+        None
+    };
+    let gas_mw = molar_masses.get(&gas_id).copied().unwrap_or(0.0);
+    let out = PyDict::new(py);
+    let initial_dict = PyDict::new(py);
+    for (key, value) in initial_inventory.iter() {
+        initial_dict.set_item(key, *value)?;
+    }
+    let final_dict = PyDict::new(py);
+    for (key, value) in inventory.iter() {
+        final_dict.set_item(key, *value)?;
+    }
+    out.set_item("backend", "rust")?;
+    out.set_item("gas_species_id", gas_id)?;
+    out.set_item("gas_uptake_mol", gas_uptake)?;
+    if gas_mw > 0.0 {
+        out.set_item("gas_uptake_g", gas_uptake * gas_mw)?;
+    } else {
+        out.set_item("gas_uptake_g", py.None())?;
+    }
+    out.set_item("initial_inventory_mol", initial_dict)?;
+    out.set_item("final_inventory_mol", final_dict)?;
+    out.set_item("step_results", step_results)?;
+    out.set_item("yield_species_id", product_id)?;
+    out.set_item("yield_species_moles", product_mol)?;
+    if let Some(value) = theoretical_yield_g {
+        out.set_item("theoretical_yield_g", value)?;
+    } else {
+        out.set_item("theoretical_yield_g", py.None())?;
+    }
+    if let Some(value) = actual_yield_mass_g {
+        out.set_item("actual_yield_mass_g", value)?;
+    } else {
+        out.set_item("actual_yield_mass_g", py.None())?;
+    }
+    if let Some(value) = actual_yield_pct {
+        out.set_item("actual_yield_pct", value)?;
+    } else {
+        out.set_item("actual_yield_pct", py.None())?;
+    }
+    if let Some(value) = completion_pct {
+        out.set_item("completion_pct", value)?;
+    } else {
+        out.set_item("completion_pct", py.None())?;
+    }
+    out.set_item("warnings", warnings)?;
+    Ok(out.unbind())
+}
+
+#[pyfunction]
 #[pyo3(signature = (timeline_rows))]
 /// Format Final Report timeline rows using the Rust speciation outputs.
 ///
@@ -5202,5 +5434,6 @@ fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
     )?)?;
     module.add_function(wrap_pyfunction!(ledger_prefill_metrics_core, module)?)?;
     module.add_function(wrap_pyfunction!(csv_pressure_derivatives_core, module)?)?;
+    module.add_function(wrap_pyfunction!(reaction_dashboard_core, module)?)?;
     Ok(())
 }
