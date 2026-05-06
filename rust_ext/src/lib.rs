@@ -35,7 +35,7 @@ const RUST_BACKEND_INTERFACE_ID: &str = "gl260_rust_backend";
 const RUST_BACKEND_INTERFACE_VERSION: &str = "3";
 const RUST_BACKEND_MODULE_NAME: &str = env!("CARGO_PKG_NAME");
 const RUST_BACKEND_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
-const RUST_EXPORTED_KERNELS: [&str; 25] = [
+const RUST_EXPORTED_KERNELS: [&str; 26] = [
     "simulate_reaction_state_with_accounting",
     "analyze_bicarbonate_core",
     "carbonate_state_core",
@@ -60,6 +60,7 @@ const RUST_EXPORTED_KERNELS: [&str; 25] = [
     "ledger_sort_filter_indices_core",
     "ledger_prefill_metrics_core",
     "csv_pressure_derivatives_core",
+    "reaction_solution_charge_core",
     "reaction_dashboard_core",
 ];
 
@@ -3227,6 +3228,97 @@ fn final_report_cycle_stats_rows_core(
     Ok(rows.unbind())
 }
 
+const REACTION_SODIUM_MOLAR_MASS_G_MOL: f64 = 22.989_769;
+const REACTION_WATER_MOLAR_MASS_G_MOL: f64 = 18.015_28;
+const REACTION_METHANOL_MOLAR_MASS_G_MOL: f64 = 32.042;
+const REACTION_NAOH_MOLAR_MASS_G_MOL: f64 = 39.997;
+
+fn nonnegative_charge_value(
+    value: Option<f64>,
+    label: &str,
+    warnings: &Bound<'_, PyList>,
+) -> PyResult<f64> {
+    let Some(raw) = value else {
+        warnings.append(format!("{label} is missing or invalid; using 0."))?;
+        return Ok(0.0);
+    };
+    if !raw.is_finite() {
+        warnings.append(format!("{label} is missing or invalid; using 0."))?;
+        return Ok(0.0);
+    }
+    if raw < 0.0 {
+        warnings.append(format!("{label} was negative; using 0."))?;
+        return Ok(0.0);
+    }
+    Ok(raw)
+}
+
+#[pyfunction]
+#[pyo3(signature = (sodium_metal_mass_g=None, methanol_mass_g=None, water_ppm_by_mass=None, explicit_naoh_mass_g=None))]
+/// Compute sodium/methanol charge availability for the Reaction Dashboard.
+///
+/// Water consumes sodium first and produces NaOH; remaining sodium forms sodium
+/// methoxide from dry methanol. The result schema mirrors the Python fallback.
+fn reaction_solution_charge_core(
+    py: Python<'_>,
+    sodium_metal_mass_g: Option<f64>,
+    methanol_mass_g: Option<f64>,
+    water_ppm_by_mass: Option<f64>,
+    explicit_naoh_mass_g: Option<f64>,
+) -> PyResult<Py<PyDict>> {
+    let warnings = PyList::empty(py);
+    let sodium_mass =
+        nonnegative_charge_value(sodium_metal_mass_g, "Sodium metal mass", &warnings)?;
+    let wet_methanol_mass =
+        nonnegative_charge_value(methanol_mass_g, "Methanol mass", &warnings)?;
+    let water_ppm =
+        nonnegative_charge_value(water_ppm_by_mass, "Methanol water ppm", &warnings)?;
+    let explicit_naoh_mass =
+        nonnegative_charge_value(explicit_naoh_mass_g, "Explicit NaOH mass", &warnings)?;
+
+    let water_mass_g = wet_methanol_mass * water_ppm / 1_000_000.0;
+    let dry_methanol_mass_g = (wet_methanol_mass - water_mass_g).max(0.0);
+    let sodium_mol = sodium_mass / REACTION_SODIUM_MOLAR_MASS_G_MOL;
+    let water_mol = water_mass_g / REACTION_WATER_MOLAR_MASS_G_MOL;
+    let methanol_mol = dry_methanol_mass_g / REACTION_METHANOL_MOLAR_MASS_G_MOL;
+    let explicit_naoh_mol = explicit_naoh_mass / REACTION_NAOH_MOLAR_MASS_G_MOL;
+    let sodium_consumed_by_water_mol = sodium_mol.min(water_mol);
+    let generated_naoh_mol = sodium_consumed_by_water_mol;
+    let sodium_after_water_mol = (sodium_mol - sodium_consumed_by_water_mol).max(0.0);
+    let sodium_methoxide_mol = sodium_after_water_mol.min(methanol_mol);
+    let remaining_methanol_mol = (methanol_mol - sodium_methoxide_mol).max(0.0);
+    let unreacted_sodium_mol = (sodium_after_water_mol - sodium_methoxide_mol).max(0.0);
+    let excess_water_mol = (water_mol - sodium_consumed_by_water_mol).max(0.0);
+    if excess_water_mol > 1e-12 {
+        warnings.append("Water exceeds sodium charge; sodium methoxide availability is zero.")?;
+    }
+    if unreacted_sodium_mol > 1e-12 {
+        warnings.append("Sodium exceeds available dry methanol; sodium remains unused.")?;
+    }
+    let total_naoh_mol = explicit_naoh_mol + generated_naoh_mol;
+
+    let out = PyDict::new(py);
+    out.set_item("backend", "rust")?;
+    out.set_item("sodium_metal_mass_g", sodium_mass)?;
+    out.set_item("methanol_mass_g", wet_methanol_mass)?;
+    out.set_item("water_ppm_by_mass", water_ppm)?;
+    out.set_item("water_mass_g", water_mass_g)?;
+    out.set_item("dry_methanol_mass_g", dry_methanol_mass_g)?;
+    out.set_item("sodium_mol", sodium_mol)?;
+    out.set_item("water_mol", water_mol)?;
+    out.set_item("methanol_initial_mol", methanol_mol)?;
+    out.set_item("sodium_consumed_by_water_mol", sodium_consumed_by_water_mol)?;
+    out.set_item("generated_naoh_mol", generated_naoh_mol)?;
+    out.set_item("explicit_naoh_mol", explicit_naoh_mol)?;
+    out.set_item("total_naoh_mol", total_naoh_mol)?;
+    out.set_item("sodium_methoxide_mol", sodium_methoxide_mol)?;
+    out.set_item("remaining_methanol_mol", remaining_methanol_mol)?;
+    out.set_item("unreacted_sodium_mol", unreacted_sodium_mol)?;
+    out.set_item("excess_water_mol", excess_water_mol)?;
+    out.set_item("warnings", warnings)?;
+    Ok(out.unbind())
+}
+
 #[pyfunction]
 #[pyo3(signature = (species_rows, step_rows, gas_uptake_mol, gas_species_id, yield_species_id, target_reactant_species_id=None, actual_yield_mass_g=None))]
 /// Compute template-neutral Reaction Dashboard stoichiometry and yield metrics.
@@ -5434,6 +5526,7 @@ fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
     )?)?;
     module.add_function(wrap_pyfunction!(ledger_prefill_metrics_core, module)?)?;
     module.add_function(wrap_pyfunction!(csv_pressure_derivatives_core, module)?)?;
+    module.add_function(wrap_pyfunction!(reaction_solution_charge_core, module)?)?;
     module.add_function(wrap_pyfunction!(reaction_dashboard_core, module)?)?;
     Ok(())
 }

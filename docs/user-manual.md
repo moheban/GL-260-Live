@@ -9,7 +9,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Browser smoke setup: `python -m playwright install chromium`
 - Browser smoke test: `python -m pytest -q tests/test_docs_math_runtime_playwright.py`
 
-Current release: `v4.15.7`
+Current release: `v4.15.8`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
@@ -517,6 +517,9 @@ Compute template-driven reaction gas uptake, linked-step completion, intermediat
 - Reaction Template selector:
   - built-in read-only templates
   - duplicated/custom editable templates
+- Interactive Reaction Equation:
+  - species tokens can be clicked to jump to related inputs
+  - species without direct inputs select the matching species row
 - Template editor sections:
   - species rows with formula, phase, role, molar mass, and initial moles
   - stoichiometric step JSON with negative consumed coefficients and positive produced coefficients
@@ -526,21 +529,27 @@ Compute template-driven reaction gas uptake, linked-step completion, intermediat
   - **Reactor pressure delta**
   - **Cylinder mass loss**
   - **Manual gas mass / moles**
-- Template-required condition fields, including reactor volume, temperature, reactant charges, isolated product mass, and solution volume when applicable.
+- Template-required condition fields are marked with `*` and include tooltips.
+- Sodium methoxide / CO starter charge-basis fields:
+  - sodium metal added, in grams
+  - methanol charge, in grams
+  - methanol water content, in ppm by mass
+  - explicit NaOH charge, in grams
+  - optional isolated sodium formate mass
 - Optional **Enable pH/equilibrium engine** toggle.
 
 ### Step-by-step actions
 1. Open **Reaction Dashboard**.
-2. Select a Reaction Template.
-3. Review the species table and stoichiometric step JSON.
+2. In **1. Reaction Map**, select a Reaction Template.
+3. Click species in the interactive equation to jump to the inputs or species row that control that species.
 4. For a built-in template, click **Duplicate Template** before editing chemistry-specific details.
-5. Select the uptake source:
+5. In **2. Charge Basis and Conditions**, enter all required fields marked with `*`.
+6. In **3. Gas Uptake**, select the uptake source:
    - use **Import from Cycle Analysis** after Cycle Analysis has produced uptake data
    - use pressure/mass/manual fields when source data is external to cycle markers
-6. Enter required reactor, cylinder, gas, reactant, product, and condition fields.
 7. Enable pH/equilibrium mode only when the active template has equilibrium rows and the run needs pH output.
 8. Click **Run Reaction Dashboard**.
-9. Review KPI tiles, backend status, warnings, step extents, limiting species, final inventory, theoretical yield, actual yield, and completion.
+9. Review **4. Results** for KPI tiles, charge-basis diagnostics, backend status, warnings, step extents, limiting species, final inventory, theoretical yield, actual yield, and completion.
 10. Click **Open Plot in New Tab** to send the dashboard plot to the generated plot-tab pipeline.
 11. Use the generated plot tab controls for refresh, export, Plot Settings, Data Trace Settings, Plot Elements, and Plot Preview.
 
@@ -561,6 +570,10 @@ Compute template-driven reaction gas uptake, linked-step completion, intermediat
 - The primary KPI is sodium formate final yield.
 - Methyl formate is shown as an intermediate/carryover KPI.
 - CO uptake can come from Cycle Analysis, pressure deltas, cylinder mass loss, or manual gas entry.
+- Sodium methoxide is computed from sodium metal added to methanol.
+- Methanol water content is treated as ppm by mass. Water consumes sodium first and produces generated NaOH 1:1.
+- Hydrolysis NaOH availability is explicit NaOH plus generated NaOH from the sodium/water side reaction.
+- Computed sodium methoxide, remaining methanol, and total NaOH feed the stoichiometric reaction core.
 
 ### pH/equilibrium behavior
 - pH/equilibrium is optional per template and optional per run.
@@ -703,6 +716,14 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.15.8 Release Note (Reaction Dashboard Visual Workflow + Charge Basis)
+- Reaction Dashboard is organized into a numbered workflow: Reaction Map, Charge Basis and Conditions, Gas Uptake, and Results.
+- The Reaction Equation is interactive; clicking a species jumps to its related input field or species row.
+- Required Reaction Dashboard fields are marked with `*` and include tooltips on labels and inputs.
+- The sodium methoxide / CO starter template now calculates sodium methoxide from sodium metal added to methanol, using methanol water ppm by mass to consume sodium before NaOMe formation.
+- Generated NaOH from sodium/water reaction is added to explicit NaOH for hydrolysis availability.
+- Added Rust/Python parity coverage for the charge-basis kernel and preserved Python fallback behavior.
 
 ### v4.15.7 Release Note (Reaction Dashboard + Template-Driven Reaction Metrics)
 - Added a top-level **Reaction Dashboard** tab after Cycle Analysis.

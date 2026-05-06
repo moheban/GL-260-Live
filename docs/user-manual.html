@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="3d9676874e967bd489f32e776444d1c482c84e2527596a4eef4e984ca2b5c1ae">
+  <meta name="manual-source-sha256" content="b717e5a1a001e26d73cb91af238b54d99d8e5b2d66c7b244dc402d9f43558a98">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -266,7 +266,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>3d9676874e967bd4</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>b717e5a1a001e26d</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -395,6 +395,7 @@
 <li><a href="#inputs_11">Inputs</a></li>
 <li><a href="#step-by-step-actions_11">Step-by-step actions</a></li>
 <li><a href="#expected-outputs_11">Expected outputs</a></li>
+<li><a href="#v4158-release-note-reaction-dashboard-visual-workflow-charge-basis">v4.15.8 Release Note (Reaction Dashboard Visual Workflow + Charge Basis)</a></li>
 <li><a href="#v4157-release-note-reaction-dashboard-template-driven-reaction-metrics">v4.15.7 Release Note (Reaction Dashboard + Template-Driven Reaction Metrics)</a></li>
 <li><a href="#v4156-release-note-multi-reactor-trace-import-downstream-integration">v4.15.6 Release Note (Multi-Reactor Trace Import + Downstream Integration)</a></li>
 <li><a href="#v4155-release-note-cycle-timeline-legend-multi-trace-columns">v4.15.5 Release Note (Cycle Timeline Legend + Multi-Trace Columns)</a></li>
@@ -524,7 +525,7 @@
 <li>Browser smoke setup: <code>python -m playwright install chromium</code></li>
 <li>Browser smoke test: <code>python -m pytest -q tests/test_docs_math_runtime_playwright.py</code></li>
 </ul>
-<p>Current release: <code>v4.15.7</code></p>
+<p>Current release: <code>v4.15.8</code></p>
 <p>Analysis timeline pH terminology:<br>
 - <code>Equilibrium pH (Guidance)</code>: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.<br>
 - <code>Corrected pH</code>: measured-anchor calibrated pH overlay used for Analysis alignment diagnostics.<br>
@@ -1051,6 +1052,9 @@
 <li>Reaction Template selector:</li>
 <li>built-in read-only templates</li>
 <li>duplicated/custom editable templates</li>
+<li>Interactive Reaction Equation:</li>
+<li>species tokens can be clicked to jump to related inputs</li>
+<li>species without direct inputs select the matching species row</li>
 <li>Template editor sections:</li>
 <li>species rows with formula, phase, role, molar mass, and initial moles</li>
 <li>stoichiometric step JSON with negative consumed coefficients and positive produced coefficients</li>
@@ -1060,22 +1064,28 @@
 <li><strong>Reactor pressure delta</strong></li>
 <li><strong>Cylinder mass loss</strong></li>
 <li><strong>Manual gas mass / moles</strong></li>
-<li>Template-required condition fields, including reactor volume, temperature, reactant charges, isolated product mass, and solution volume when applicable.</li>
+<li>Template-required condition fields are marked with <code>*</code> and include tooltips.</li>
+<li>Sodium methoxide / CO starter charge-basis fields:</li>
+<li>sodium metal added, in grams</li>
+<li>methanol charge, in grams</li>
+<li>methanol water content, in ppm by mass</li>
+<li>explicit NaOH charge, in grams</li>
+<li>optional isolated sodium formate mass</li>
 <li>Optional <strong>Enable pH/equilibrium engine</strong> toggle.</li>
 </ul>
 <h3 id="step-by-step-actions_10">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_10" title="Permanent link">&para;</a></h3>
 <ol>
 <li>Open <strong>Reaction Dashboard</strong>.</li>
-<li>Select a Reaction Template.</li>
-<li>Review the species table and stoichiometric step JSON.</li>
+<li>In <strong>1. Reaction Map</strong>, select a Reaction Template.</li>
+<li>Click species in the interactive equation to jump to the inputs or species row that control that species.</li>
 <li>For a built-in template, click <strong>Duplicate Template</strong> before editing chemistry-specific details.</li>
-<li>Select the uptake source:<br>
+<li>In <strong>2. Charge Basis and Conditions</strong>, enter all required fields marked with <code>*</code>.</li>
+<li>In <strong>3. Gas Uptake</strong>, select the uptake source:<br>
    - use <strong>Import from Cycle Analysis</strong> after Cycle Analysis has produced uptake data<br>
    - use pressure/mass/manual fields when source data is external to cycle markers</li>
-<li>Enter required reactor, cylinder, gas, reactant, product, and condition fields.</li>
 <li>Enable pH/equilibrium mode only when the active template has equilibrium rows and the run needs pH output.</li>
 <li>Click <strong>Run Reaction Dashboard</strong>.</li>
-<li>Review KPI tiles, backend status, warnings, step extents, limiting species, final inventory, theoretical yield, actual yield, and completion.</li>
+<li>Review <strong>4. Results</strong> for KPI tiles, charge-basis diagnostics, backend status, warnings, step extents, limiting species, final inventory, theoretical yield, actual yield, and completion.</li>
 <li>Click <strong>Open Plot in New Tab</strong> to send the dashboard plot to the generated plot-tab pipeline.</li>
 <li>Use the generated plot tab controls for refresh, export, Plot Settings, Data Trace Settings, Plot Elements, and Plot Preview.</li>
 </ol>
@@ -1098,6 +1108,10 @@
 <li>The primary KPI is sodium formate final yield.</li>
 <li>Methyl formate is shown as an intermediate/carryover KPI.</li>
 <li>CO uptake can come from Cycle Analysis, pressure deltas, cylinder mass loss, or manual gas entry.</li>
+<li>Sodium methoxide is computed from sodium metal added to methanol.</li>
+<li>Methanol water content is treated as ppm by mass. Water consumes sodium first and produces generated NaOH 1:1.</li>
+<li>Hydrolysis NaOH availability is explicit NaOH plus generated NaOH from the sodium/water side reaction.</li>
+<li>Computed sodium methoxide, remaining methanol, and total NaOH feed the stoichiometric reaction core.</li>
 </ul>
 <h3 id="phequilibrium-behavior">pH/equilibrium behavior<a class="headerlink" href="#phequilibrium-behavior" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1247,6 +1261,15 @@
 <li>Measured-pH anchor editor rows persist globally in <code>solubility_inputs</code> and restore on Analysis tab build/restart.</li>
 <li>Latest Analysis run payload restores after restart when workspace context/signatures match persisted <code>sol_analysis_last_result_v2</code> metadata.</li>
 <li>Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.</li>
+</ul>
+<h3 id="v4158-release-note-reaction-dashboard-visual-workflow-charge-basis">v4.15.8 Release Note (Reaction Dashboard Visual Workflow + Charge Basis)<a class="headerlink" href="#v4158-release-note-reaction-dashboard-visual-workflow-charge-basis" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Reaction Dashboard is organized into a numbered workflow: Reaction Map, Charge Basis and Conditions, Gas Uptake, and Results.</li>
+<li>The Reaction Equation is interactive; clicking a species jumps to its related input field or species row.</li>
+<li>Required Reaction Dashboard fields are marked with <code>*</code> and include tooltips on labels and inputs.</li>
+<li>The sodium methoxide / CO starter template now calculates sodium methoxide from sodium metal added to methanol, using methanol water ppm by mass to consume sodium before NaOMe formation.</li>
+<li>Generated NaOH from sodium/water reaction is added to explicit NaOH for hydrolysis availability.</li>
+<li>Added Rust/Python parity coverage for the charge-basis kernel and preserved Python fallback behavior.</li>
 </ul>
 <h3 id="v4157-release-note-reaction-dashboard-template-driven-reaction-metrics">v4.15.7 Release Note (Reaction Dashboard + Template-Driven Reaction Metrics)<a class="headerlink" href="#v4157-release-note-reaction-dashboard-template-driven-reaction-metrics" title="Permanent link">&para;</a></h3>
 <ul>

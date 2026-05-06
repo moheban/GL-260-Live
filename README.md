@@ -1,9 +1,10 @@
-# GL-260 Data Analysis and Plotter (v4.15.7)
+# GL-260 Data Analysis and Plotter (v4.15.8)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.15.7`:
+Latest workflow highlights in `v4.15.8`:
+- `v4.15.8`: Redesigned the Reaction Dashboard workflow with an interactive equation, clearer required-field labels/tooltips, and sodium + methanol + water-ppm charge-basis math with Rust/Python fallback parity.
 - `v4.15.7`: Added the template-driven Reaction Dashboard, sodium methoxide / CO starter template, optional ChemPy pH/equilibrium solve path, and Rust/Python fallback reaction kernels.
 - `v4.15.6`: Added repeatable Reactor Pressure CSV import mappings, numbered multi-reactor pressure/derivative outputs, grouped Columns/Data Trace labels for duplicate reactor traces, and Rust/Python parity routing for CSV pressure derivatives.
 - `v4.15.5`: Fixed Cycle Timeline centered bottom legend parity across notebook/new-tab/preview/export surfaces, added multi-trace Columns groups with a designated calculation trace, and kept combined/core plotting compatible with extra traces.
@@ -15,8 +16,8 @@ Latest workflow highlights in `v4.15.7`:
 - `v4.15.0`: Preserved startup performance hardening, bounded caching, and heavy-tab optimization baseline.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.15.7`
-- `APP_VERSION = "v4.15.7"`
+- `# Version: v4.15.8`
+- `APP_VERSION = "v4.15.8"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -461,6 +462,9 @@ Primary tabs and purpose:
 - Template-driven reaction definitions cover species, stoichiometric steps, gas species, required fields, yield basis, optional equilibrium rows, KPI labels, and default plots.
 - Built-in templates are read-only; duplicate a template to create an editable custom copy.
 - The starter template covers sodium methoxide / CO carbonylation to methyl formate followed by hydrolysis to sodium formate.
+- The dashboard uses a numbered visual workflow with an interactive equation; clicking a species jumps to its related inputs or species row.
+- Sodium methoxide availability is calculated from sodium metal added to methanol, methanol charge, and water ppm by mass. Generated NaOH from sodium/water reaction is added to explicit NaOH for hydrolysis.
+- Required operator inputs are marked and include tooltips on both labels and fields.
 - Uptake source modes include imported Cycle Analysis payload, reactor pressure delta, cylinder mass loss, and manual gas mass/moles.
 - Optional ChemPy pH/equilibrium mode is per-template and per-run; pH failures are reported without blocking uptake, completion, and yield output.
 - **Open Plot in New Tab** registers the dashboard plot with the same generated plot-tab toolbar, refresh, export, layout, Plot Settings, Data Trace Settings, and Plot Elements behavior as other generated plots.
@@ -554,6 +558,14 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.15.8 Reaction Dashboard Visual Workflow + Charge Basis
+- Redesigned the **Reaction Dashboard** into a numbered workflow: reaction map, sodium/methanol charge basis, gas uptake, and results.
+- Replaced the static equation text with an interactive equation surface so clicking a displayed species jumps to its related inputs or species row.
+- Added required-field markers and tooltips for Reaction Dashboard template/source inputs.
+- Added sodium metal + methanol + water-ppm-by-mass charge math so water consumes sodium first, generated NaOH is included with explicit NaOH, and computed sodium methoxide/methanol/NaOH moles feed the existing reaction core.
+- Added Rust/Python fallback parity coverage for the new charge-basis kernel while preserving the existing reaction-dashboard fallback behavior.
+- Updated application version metadata to `v4.15.8` in script header and `APP_VERSION`, and synchronized README/user-manual release references.
 
 ### v4.15.7 Reaction Dashboard + Template-Driven Reaction Metrics
 - Added a top-level **Reaction Dashboard** tab after Cycle Analysis with persisted visibility and tab-order behavior.
