@@ -9,7 +9,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Browser smoke setup: `python -m playwright install chromium`
 - Browser smoke test: `python -m pytest -q tests/test_docs_math_runtime_playwright.py`
 
-Current release: `v4.15.8`
+Current release: `v4.15.9`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
@@ -717,6 +717,13 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
 
+### v4.15.9 Release Note (CSV Import Multi-Trace Channel Names)
+- CSV Import now supports multiple Reactor Pressure, Manifold Pressure, External Reactor Temperature, and Internal Reactor Temperature mappings in one import.
+- Graphtec channel metadata before the `Data` section is parsed so dropdowns can show readable labels such as `CH7 - Formate 1 (PSI)` instead of raw channel IDs alone.
+- Imported workbook headers remain compatible with existing GL-260 workflows; roles use numbered output columns only when multiple traces are mapped.
+- Grouped Columns trace legend labels are seeded from CSV signal names so plots and Data Trace Settings can show labels such as `Formate 1` and `Cylinder 2 EXT TEMP`.
+- Cycle Analysis temperature selection remains explicit: imported temperature traces become selectable columns, but changing the calculation pressure trace does not silently switch the temperature source.
+
 ### v4.15.8 Release Note (Reaction Dashboard Visual Workflow + Charge Basis)
 - Reaction Dashboard is organized into a numbered workflow: Reaction Map, Charge Basis and Conditions, Gas Uptake, and Results.
 - The Reaction Equation is interactive; clicking a species jumps to its related input field or species row.
@@ -735,7 +742,7 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Registered Reaction Dashboard plots with the generated new-tab plot pipeline.
 
 ### v4.15.6 Release Note (Multi-Reactor Trace Import + Downstream Integration)
-- CSV Import now supports multiple Reactor Pressure mappings in one import.
+- CSV Import now supports multiple Reactor Pressure mappings in one import. In `v4.15.9+`, this repeatable mapping model also covers Manifold Pressure, External Reactor Temperature, and Internal Reactor Temperature.
 - Single-reactor imports keep the legacy `Reactor Pressure (PSI)` and derivative output names; multi-reactor imports use numbered pressure labels and source-qualified derivative labels.
 - Derivative, smoothed derivative, and moving-average derivative columns are generated for every imported reactor pressure trace and mapped manifold pressure trace.
 - Columns, combined/core plot legends, and Data Trace Settings label duplicate reactor traces with role and ordinal text so two `Primary Y (Reactor, PSI)` traces remain easy to distinguish.

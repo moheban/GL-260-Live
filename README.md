@@ -1,9 +1,10 @@
-# GL-260 Data Analysis and Plotter (v4.15.8)
+# GL-260 Data Analysis and Plotter (v4.15.9)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.15.8`:
+Latest workflow highlights in `v4.15.9`:
+- `v4.15.9`: Expanded CSV Import to support repeatable reactor, manifold, internal-temperature, and external-temperature mappings with Graphtec signal-name labels in selectors and grouped trace legends.
 - `v4.15.8`: Redesigned the Reaction Dashboard workflow with an interactive equation, clearer required-field labels/tooltips, and sodium + methanol + water-ppm charge-basis math with Rust/Python fallback parity.
 - `v4.15.7`: Added the template-driven Reaction Dashboard, sodium methoxide / CO starter template, optional ChemPy pH/equilibrium solve path, and Rust/Python fallback reaction kernels.
 - `v4.15.6`: Added repeatable Reactor Pressure CSV import mappings, numbered multi-reactor pressure/derivative outputs, grouped Columns/Data Trace labels for duplicate reactor traces, and Rust/Python parity routing for CSV pressure derivatives.
@@ -16,8 +17,8 @@ Latest workflow highlights in `v4.15.8`:
 - `v4.15.0`: Preserved startup performance hardening, bounded caching, and heavy-tab optimization baseline.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.15.8`
-- `APP_VERSION = "v4.15.8"`
+- `# Version: v4.15.9`
+- `APP_VERSION = "v4.15.9"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -558,6 +559,14 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.15.9 CSV Import Multi-Trace Channel Names
+- Expanded **Import GL-260 CSV...** so Reactor Pressure, Manifold Pressure, External Reactor Temperature, and Internal Reactor Temperature mappings can each accept multiple source traces.
+- Parsed Graphtec amplifier metadata before the `Data` section so mapping dropdowns show readable choices such as `CH7 - Formate 1 (PSI)` while import state keeps raw channel keys.
+- Preserved compatible workbook output headers, using numbered pressure/temperature columns only when a role has multiple mapped traces.
+- Seeded grouped Columns trace legend labels from CSV signal names so plots and Data Trace Settings show labels such as `Formate 1` and `Cylinder 2 EXT TEMP`.
+- Kept CSV pressure derivative generation batched through the existing Rust-first/Python-fallback route and added targeted regressions for metadata extraction, multi-role schema, and legend-label seeding.
+- Updated application version metadata to `v4.15.9` in script header and `APP_VERSION`, and synchronized README/user-manual release references.
 
 ### v4.15.8 Reaction Dashboard Visual Workflow + Charge Basis
 - Redesigned the **Reaction Dashboard** into a numbered workflow: reaction map, sodium/methanol charge basis, gas uptake, and results.
