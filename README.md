@@ -1,9 +1,10 @@
-# GL-260 Data Analysis and Plotter (v4.15.9)
+# GL-260 Data Analysis and Plotter (v4.15.10)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.15.9`:
+Latest workflow highlights in `v4.15.10`:
+- `v4.15.10`: Restored the global Plot Settings **Enable y=0 line** control, enforced disabled Data Trace visibility for all derivative traces, and added optional per-primary-trace Cycle Analysis legends when multiple Primary Y traces are loaded.
 - `v4.15.9`: Expanded CSV Import to support repeatable reactor, manifold, internal-temperature, and external-temperature mappings with Graphtec signal-name labels in selectors and grouped trace legends.
 - `v4.15.8`: Redesigned the Reaction Dashboard workflow with an interactive equation, clearer required-field labels/tooltips, and sodium + methanol + water-ppm charge-basis math with Rust/Python fallback parity.
 - `v4.15.7`: Added the template-driven Reaction Dashboard, sodium methoxide / CO starter template, optional ChemPy pH/equilibrium solve path, and Rust/Python fallback reaction kernels.
@@ -17,8 +18,8 @@ Latest workflow highlights in `v4.15.9`:
 - `v4.15.0`: Preserved startup performance hardening, bounded caching, and heavy-tab optimization baseline.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.15.9`
-- `APP_VERSION = "v4.15.9"`
+- `# Version: v4.15.10`
+- `APP_VERSION = "v4.15.10"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -559,6 +560,15 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.15.10 Plot Settings, Trace Visibility, and Multi-Trace Cycle Legends
+- Restored **Enable y=0 line** in generated plot **Plot Settings...** surfaces and kept it wired to the existing global `combined_include_zero_line` setting.
+- Applied the y=0 toggle consistently to combined triple-axis derivative reference lines and core Figure 2 pressure/derivative renders for display and export paths.
+- Preserved Data Trace Settings `enabled=False` overrides for canonical derivative series keys so disabled traces such as `y2` and `y2_2` do not render.
+- Added persisted `show_all_cycle_trace_legends` support, defaulting off, so legacy single active-trace cycle legend behavior remains unchanged.
+- Added a Plot Settings checkbox, visible only when multiple Cycle Analysis Primary Y traces are available, to show one cycle legend per loaded Primary Y trace.
+- Added targeted regressions for disabled derivative visibility, derivative zero-line gating, and multi-trace cycle legend payload gating.
+- Updated application version metadata to `v4.15.10` in script header and `APP_VERSION`, and synchronized README/user-manual release references.
 
 ### v4.15.9 CSV Import Multi-Trace Channel Names
 - Expanded **Import GL-260 CSV...** so Reactor Pressure, Manifold Pressure, External Reactor Temperature, and Internal Reactor Temperature mappings can each accept multiple source traces.

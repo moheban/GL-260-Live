@@ -9,7 +9,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Browser smoke setup: `python -m playwright install chromium`
 - Browser smoke test: `python -m pytest -q tests/test_docs_math_runtime_playwright.py`
 
-Current release: `v4.15.9`
+Current release: `v4.15.10`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
@@ -292,11 +292,15 @@ Control how plot figures render, including ranges, legends, fonts, cycle overlay
    - show/hide cycle markers on core plots
    - show/hide cycle legend
    - include/exclude moles info in legend
-7. Configure global export DPI and layout behavior.
-8. Generate or refresh plots and validate expected visual output.
+7. Configure rendering options:
+   - **Enable y=0 line** to show/hide the dashed derivative-axis zero reference line in combined and pressure/derivative plots.
+   - **Show cycle legends for all primary traces** when multiple Cycle Analysis Primary Y traces are available and each trace needs its own cycle summary legend.
+8. Configure global export DPI and layout behavior.
+9. Generate or refresh plots and validate expected visual output.
 
 ### Expected outputs
 - Plot visuals match configured ranges/style/legend policies.
+- Disabled traces in **Data Trace Settings** remain excluded from every generated plot, including all derivative traces.
 - Export behavior aligns with display intent.
 
 ### Common errors and recovery
@@ -336,10 +340,11 @@ Build and tune the combined figure that overlays pressure, temperature, and deri
 2. Enable or disable temperature and derivative axes as needed.
 3. Configure derivative axis offset and axis label overrides.
 4. Set combined legend behavior and cycle legend reference axis/corner.
-5. Generate **Figure 1+2: Combined Triple-Axis**.
-6. Validate alignment of axis scales and readability of overlays.
-7. Adjust layout margin profiles for display and export parity.
-8. Rebuild and verify that cycle overlays and legends remain stable.
+5. Use **Enable y=0 line** to show or suppress the derivative zero reference line.
+6. Generate **Figure 1+2: Combined Triple-Axis**.
+7. Validate alignment of axis scales and readability of overlays.
+8. Adjust layout margin profiles for display and export parity.
+9. Rebuild and verify that cycle overlays and legends remain stable.
 
 ### Expected outputs
 - A single combined plot with aligned x-axis context and readable multi-axis overlays.
@@ -434,8 +439,9 @@ Detect cycles, compute cycle metrics/moles uptake, and support manual correction
 5. Tune smoothing and snap/refine settings.
 6. Re-run analysis and compare summary changes.
 7. Validate cycle summary metrics and conversion/moles outputs.
-8. Export markers (`JSON/CSV`) and cycle results (`CSV`) when required.
-9. Push cycle payloads to Advanced Solubility workflows as needed.
+8. When multiple Primary Y traces are loaded, use generated plot **Plot Settings...** to optionally show a separate cycle legend for every Primary Y trace instead of only the active calculation trace.
+9. Export markers (`JSON/CSV`) and cycle results (`CSV`) when required.
+10. Push cycle payloads to Advanced Solubility workflows as needed.
 
 ### Expected outputs
 - Reliable cycle segmentation with vetted peak/trough markers.
@@ -716,6 +722,14 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.15.10 Release Note (Plot Settings, Trace Visibility, and Multi-Trace Cycle Legends)
+- **Enable y=0 line** is available again in generated plot **Plot Settings...** for combined and pressure/derivative plots.
+- The y=0 control applies consistently to combined triple-axis derivative reference lines and core Figure 2 display/export renders.
+- Data Trace Settings now guarantees that disabled traces are not plotted, including first and additional derivative traces such as `y2` and `y2_2`.
+- When multiple Cycle Analysis Primary Y traces are loaded, Plot Settings can show **Show cycle legends for all primary traces**.
+- The multi-trace cycle legend option is off by default; when off, only the active calculation trace contributes the cycle legend, preserving existing behavior.
+- When enabled, each loaded Primary Y trace gets its own trace-labeled cycle summary legend.
 
 ### v4.15.9 Release Note (CSV Import Multi-Trace Channel Names)
 - CSV Import now supports multiple Reactor Pressure, Manifold Pressure, External Reactor Temperature, and Internal Reactor Temperature mappings in one import.
