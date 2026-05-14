@@ -1,9 +1,10 @@
-# GL-260 Data Analysis and Plotter (v4.15.10)
+# GL-260 Data Analysis and Plotter (v4.15.11)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.15.10`:
+Latest workflow highlights in `v4.15.11`:
+- `v4.15.11`: Made Final Report cycle sections reactor-aware for multi-Primary-Y profiles, added current-profile reactor groups to the interactive HTML report viewer, and preserved Rust/Python cycle-stat fallback parity.
 - `v4.15.10`: Restored the global Plot Settings **Enable y=0 line** control, enforced disabled Data Trace visibility for all derivative traces, and added optional per-primary-trace Cycle Analysis legends when multiple Primary Y traces are loaded.
 - `v4.15.9`: Expanded CSV Import to support repeatable reactor, manifold, internal-temperature, and external-temperature mappings with Graphtec signal-name labels in selectors and grouped trace legends.
 - `v4.15.8`: Redesigned the Reaction Dashboard workflow with an interactive equation, clearer required-field labels/tooltips, and sodium + methanol + water-ppm charge-basis math with Rust/Python fallback parity.
@@ -18,8 +19,8 @@ Latest workflow highlights in `v4.15.10`:
 - `v4.15.0`: Preserved startup performance hardening, bounded caching, and heavy-tab optimization baseline.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.15.10`
-- `APP_VERSION = "v4.15.10"`
+- `# Version: v4.15.11`
+- `APP_VERSION = "v4.15.11"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -560,6 +561,13 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.15.11 Multi-Reactor Final Report
+- Final Report now detects multiple active Primary Y reactor traces and repeats the Cycle Analysis Plot, Cycle Analysis Summary, and Cycle Statistics Table for each usable reactor trace.
+- Per-reactor cycle report pages are titled with the respective reactor trace label while speciation, guidance, key metrics, and solubility sections remain profile-level.
+- The interactive HTML Final Report dashboard now receives current-profile reactor cycle groups and exposes reactor switching when more than one reactor trace is available.
+- Added report-only per-reactor cycle caching so preview/export/HTML generation reuse current-profile computations without switching the live Cycle Analysis selection.
+- Updated application version metadata to `v4.15.11` in script header and `APP_VERSION`, and synchronized README/user-manual release references.
 
 ### v4.15.10 Plot Settings, Trace Visibility, and Multi-Trace Cycle Legends
 - Restored **Enable y=0 line** in generated plot **Plot Settings...** surfaces and kept it wired to the existing global `combined_include_zero_line` setting.
