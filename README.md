@@ -164,9 +164,10 @@ Workflow 2 (fallback): GitHub ZIP download
 Verification checklist (after clone/extract):
 - `README.md` is present in the folder root.
 - `GL-260 Data Analysis and Plotter.py` is present in the folder root.
+- `install_gl260.py` is present in the folder root.
 - `scripts/install_gl260.py` is present under the `scripts/` folder.
 
-With the repo now in the target folder, run the installer script: `python scripts/install_gl260.py`.
+With the repo now in the target folder, run the installer script: `python install_gl260.py`.
 For the full first-run workflow, see [First-Time Setup with install_gl260.py (Recommended)](#first-time-setup-with-install_gl260py-recommended).
 
 #### First-Time Setup with install_gl260.py (Recommended)
@@ -180,14 +181,14 @@ Prerequisites:
 Step-by-step first run:
 1. Optional preview mode (no changes):
 ```powershell
-python scripts/install_gl260.py --dry-run
+python install_gl260.py --dry-run
 ```
 2. Run bootstrap installer:
 ```powershell
-python scripts/install_gl260.py
+python install_gl260.py
 ```
 3. Wait for setup summary and review these signals:
-   - `[ENV] standard: READY|NOT READY`
+   - `[ENV] standard: READY|NOT READY|SKIPPED`
    - `[ENV] free-threaded: READY|NOT READY`
    - `[RUST] READY|FALLBACK TO PYTHON|SKIPPED`
    - `RUN COMMAND: ...`
@@ -203,6 +204,7 @@ When to use installer flags:
 - `--python-std <path>`: set the exact interpreter used to create `.venv`.
 - `--python-ft <path>`: set the exact free-threaded interpreter used to create `.venv-314t`.
 - `--dry-run`: print the setup plan and command sequence without mutating repository environments.
+- `--with-standard-env`: create `.venv` even when `.venv-314t` is already ready.
 
 First-run recovery guidance:
 - Free-threaded interpreter not found:
@@ -221,13 +223,14 @@ For manual, non-installer setup, see fallback sections below.
 Primary bootstrap command:
 
 ```powershell
-python scripts/install_gl260.py
+python install_gl260.py
 ```
 
 Behavior summary:
 - Detects interpreter candidates automatically, with optional explicit overrides.
-- Creates/updates `.venv` and attempts `.venv-314t`.
-- Installs `requirements.txt` into each ready environment.
+- Creates/updates `.venv-314t` first when a free-threaded interpreter is available.
+- Creates/updates `.venv` only as fallback unless `--with-standard-env` is supplied.
+- Installs `requirements.txt` and validates required runtime imports in each provisioned environment.
 - Attempts user-scope Rust setup/build in the selected primary runtime.
 - Preserves app readiness by falling back to Python when Rust is unavailable.
 - Prints deterministic copy/paste launcher output as `RUN COMMAND: ...`.

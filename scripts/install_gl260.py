@@ -36,6 +36,31 @@ from pathlib import Path
 APP_ENTRY_SCRIPT = "GL-260 Data Analysis and Plotter.py"
 STD_ENV_DIRNAME = ".venv"
 FT_ENV_DIRNAME = ".venv-314t"
+GNU_TARGET = "x86_64-pc-windows-gnu"
+GNU_TOOLCHAIN = "stable-x86_64-pc-windows-gnu"
+MINGW_FALLBACK_BIN_DIR = Path.home() / "mingw64" / "bin"
+RUNTIME_IMPORT_PROBES = [
+    ("tkinter", "tkinter", "tk", True),
+    ("matplotlib", "matplotlib", "matplotlib", True),
+    (
+        "matplotlib Tk backend",
+        "matplotlib.backends.backend_tkagg",
+        "matplotlib",
+        True,
+    ),
+    ("numpy", "numpy", "numpy", True),
+    ("openpyxl", "openpyxl", "openpyxl", True),
+    ("pandas", "pandas", "pandas", True),
+    ("scipy", "scipy", "scipy", True),
+    ("markdown", "markdown", "markdown", False),
+    ("latex2mathml", "latex2mathml.converter", "latex2mathml", False),
+    ("mplcursors", "mplcursors", "mplcursors", False),
+    ("pypdf", "pypdf", "pypdf", False),
+    ("PyPDF2", "PyPDF2", "PyPDF2", False),
+    ("great_tables", "great_tables", "great_tables", False),
+    ("customtkinter", "customtkinter", "customtkinter", False),
+    ("chempy", "chempy", "chempy", False),
+]
 
 
 @dataclass
@@ -115,7 +140,9 @@ class EnvironmentProvisionResult:
     interpreter: str = ""
     resolved: bool = False
     ready: bool = False
+    skipped: bool = False
     error: str = ""
+    warnings: list[str] = field(default_factory=list)
     remediation_commands: list[str] = field(default_factory=list)
 
     @property
@@ -237,6 +264,8 @@ def _run_command(
             cwd=str(cwd),
             env=env,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             check=False,
         )
@@ -255,6 +284,96 @@ def _run_command(
         command=command,
         dry_run=False,
     )
+
+
+def _summarize_command_failure(result: CommandResult, *, limit: int = 1800) -> str:
+    """Return a concise command failure diagnostic.
+
+    Purpose:
+        Trim noisy tool output to the most actionable failure text.
+    Why:
+        Pip and build tools can emit hundreds of warning lines, which makes the
+        setup summary hard to use when a repair command is needed.
+    Inputs:
+        result: Command result to summarize.
+        limit: Maximum number of trailing characters to return.
+    Outputs:
+        Trimmed stdout/stderr diagnostic text.
+    Side Effects:
+        None.
+    Exceptions:
+        None.
+    """
+
+    text = str(result.stderr or result.stdout or "").strip()
+    if not text:
+        return f"Command exited with status {result.returncode}."
+    if len(text) <= limit:
+        return text
+    return "... " + text[-limit:]
+
+
+def _run_pip_install(
+    *,
+    python_path: Path,
+    pip_args: list[str],
+    cwd: Path,
+    env: dict[str, str] | None = None,
+    dry_run: bool,
+    description: str,
+) -> CommandResult:
+    """Run a pip install command with a resilient no-cache retry.
+
+    Purpose:
+        Install packages while recovering from corrupt pip cache entries and
+        transient network resets.
+    Why:
+        Fresh VS Code setup should be as painless as possible, and a single
+        interrupted wheel download should not permanently fail the installer.
+    Inputs:
+        python_path: Interpreter whose pip module should be used.
+        pip_args: Arguments after `python -m pip install`.
+        cwd: Command working directory.
+        env: Optional subprocess environment.
+        dry_run: True to print commands without executing.
+        description: User-facing setup step label.
+    Outputs:
+        CommandResult from the successful first attempt or the retry attempt.
+    Side Effects:
+        May install or upgrade packages in the target interpreter.
+    Exceptions:
+        Process startup failures are captured in CommandResult.
+    """
+
+    first = _run_command(
+        [str(python_path), "-m", "pip", "install", *pip_args],
+        cwd=cwd,
+        env=env,
+        dry_run=dry_run,
+        description=description,
+    )
+    if first.ok or dry_run:
+        return first
+
+    retry = _run_command(
+        [
+            str(python_path),
+            "-m",
+            "pip",
+            "install",
+            "--no-cache-dir",
+            "--retries",
+            "10",
+            "--timeout",
+            "60",
+            *pip_args,
+        ],
+        cwd=cwd,
+        env=env,
+        dry_run=dry_run,
+        description=f"Retry {description} without pip cache",
+    )
+    return retry if retry.ok else retry
 
 
 def _resolve_repo_root() -> Path:
@@ -461,6 +580,221 @@ def _build_run_command(env_dir_name: str) -> str:
     return f'{python_path} "{APP_ENTRY_SCRIPT}"'
 
 
+def _runtime_import_probe_script() -> str:
+    """Build the interpreter-side runtime dependency probe script.
+
+    Purpose:
+        Generate a compact Python command that checks the modules needed by
+        interactive GL-260 runtime workflows.
+    Why:
+        Fresh installs should fail before launch with clear missing-package
+        diagnostics instead of surfacing import errors inside the GUI startup.
+    Inputs:
+        None.
+    Outputs:
+        Python source string passed to the target environment interpreter.
+    Side Effects:
+        None.
+    Exceptions:
+        None.
+    """
+
+    probe_pairs = repr(RUNTIME_IMPORT_PROBES)
+    return (
+        "import importlib.util, sys\n"
+        f"required = {probe_pairs}\n"
+        "missing_required = []\n"
+        "missing_optional = []\n"
+        "missing_required_packages = []\n"
+        "missing_optional_packages = []\n"
+        "for label, module_name, package_name, is_required in required:\n"
+        "    try:\n"
+        "        spec = importlib.util.find_spec(module_name)\n"
+        "    except (ImportError, AttributeError, ValueError):\n"
+        "        spec = None\n"
+        "    if spec is None:\n"
+        "        target = missing_required if is_required else missing_optional\n"
+        "        package_target = (\n"
+        "            missing_required_packages\n"
+        "            if is_required\n"
+        "            else missing_optional_packages\n"
+        "        )\n"
+        "        target.append(f'{label} ({module_name})')\n"
+        "        package_target.append(package_name)\n"
+        "if missing_optional:\n"
+        "    print(\n"
+        "        'Optional runtime modules missing: '\n"
+        "        + ', '.join(missing_optional)\n"
+        "    )\n"
+        "    print(\n"
+        "        'GL260_MISSING_OPTIONAL_PIP_PACKAGES='\n"
+        "        + ','.join(sorted(set(missing_optional_packages)))\n"
+        "    )\n"
+        "if missing_required:\n"
+        "    print(\n"
+        "        'Missing required runtime modules: '\n"
+        "        + ', '.join(missing_required)\n"
+        "    )\n"
+        "    print(\n"
+        "        'GL260_MISSING_REQUIRED_PIP_PACKAGES='\n"
+        "        + ','.join(sorted(set(missing_required_packages)))\n"
+        "    )\n"
+        "    raise SystemExit(2)\n"
+        "print(f'Runtime module probe OK: {len(required)} modules available')\n"
+    )
+
+
+def _validate_runtime_imports(
+    *,
+    label: str,
+    python_path: Path,
+    repo_root: Path,
+    dry_run: bool,
+) -> CommandResult:
+    """Validate that a provisioned environment can resolve runtime modules.
+
+    Purpose:
+        Confirm installed packages cover the import surface GL-260 needs at
+        startup and for optional user-facing workflows.
+    Why:
+        `pip install -r requirements.txt` can report success while an expected
+        package is unavailable in the target interpreter, especially after PATH
+        or interpreter mismatches.
+    Inputs:
+        label: Human-readable environment label for command output.
+        python_path: Environment-local interpreter path to validate.
+        repo_root: Repository root for subprocess execution.
+        dry_run: True to print the probe without executing it.
+    Outputs:
+        CommandResult for the dependency probe.
+    Side Effects:
+        Launches the environment interpreter when not in dry-run mode.
+    Exceptions:
+        Process startup failures are captured in CommandResult.
+    """
+
+    return _run_command(
+        [str(python_path), "-c", _runtime_import_probe_script()],
+        cwd=repo_root,
+        dry_run=dry_run,
+        description=f"Validate runtime imports in {label} environment",
+    )
+
+
+def _extract_missing_runtime_packages(probe_result: CommandResult) -> list[str]:
+    """Extract pip package names from a failed runtime dependency probe.
+
+    Purpose:
+        Convert structured probe output into a targeted package install list.
+    Why:
+        If a bulk requirements install is interrupted, retrying only missing
+        runtime packages can salvage an otherwise usable environment faster.
+    Inputs:
+        probe_result: Result returned by `_validate_runtime_imports`.
+    Outputs:
+        Ordered package names that should be installed, with duplicates removed.
+    Side Effects:
+        None.
+    Exceptions:
+        Malformed probe output is ignored and returns an empty list.
+    """
+
+    marker = "GL260_MISSING_REQUIRED_PIP_PACKAGES="
+    packages: list[str] = []
+    seen: set[str] = set()
+    output = "\n".join([probe_result.stdout or "", probe_result.stderr or ""])
+    for line in output.splitlines():
+        if not line.startswith(marker):
+            continue
+        raw_packages = line.removeprefix(marker).split(",")
+        for raw_package in raw_packages:
+            package = raw_package.strip()
+            normalized = package.lower()
+            if not package or normalized in seen:
+                continue
+            packages.append(package)
+            seen.add(normalized)
+    return packages
+
+
+def _extract_optional_runtime_warnings(probe_result: CommandResult) -> list[str]:
+    """Extract optional-package warning lines from a runtime probe.
+
+    Purpose:
+        Preserve optional dependency visibility without failing a runnable app
+        environment.
+    Why:
+        Optional workflow packages such as `chempy` should be reported clearly
+        when unavailable, but a transient optional download failure should not
+        block basic GL-260 startup.
+    Inputs:
+        probe_result: Result returned by `_validate_runtime_imports`.
+    Outputs:
+        User-facing warning strings for final environment status output.
+    Side Effects:
+        None.
+    Exceptions:
+        None.
+    """
+
+    warnings: list[str] = []
+    output = "\n".join([probe_result.stdout or "", probe_result.stderr or ""])
+    for line in output.splitlines():
+        if line.startswith("Optional runtime modules missing: "):
+            warnings.append(line.strip())
+    return warnings
+
+
+def _install_missing_runtime_packages(
+    *,
+    label: str,
+    python_path: Path,
+    packages: list[str],
+    repo_root: Path,
+    dry_run: bool,
+) -> CommandResult:
+    """Install runtime packages individually after a bulk install failure.
+
+    Purpose:
+        Recover from interrupted batch downloads by installing only packages
+        still missing from the target environment.
+    Why:
+        Individual installs reduce repeated network work and make the installer
+        more resilient on unstable connections.
+    Inputs:
+        label: Human-readable environment label for command output.
+        python_path: Environment-local interpreter path.
+        packages: Pip package names to install.
+        repo_root: Repository root for subprocess execution.
+        dry_run: True to print commands without executing.
+    Outputs:
+        CommandResult for the first failed install or the final successful one.
+    Side Effects:
+        May install packages into the target environment.
+    Exceptions:
+        Process startup failures are captured in CommandResult.
+    """
+
+    last_result = CommandResult(
+        returncode=0,
+        stdout="",
+        stderr="",
+        command=[],
+        dry_run=dry_run,
+    )
+    for package in packages:
+        last_result = _run_pip_install(
+            python_path=python_path,
+            pip_args=[package],
+            cwd=repo_root,
+            dry_run=dry_run,
+            description=f"Install missing runtime package {package} in {label}",
+        )
+        if not last_result.ok:
+            return last_result
+    return last_result
+
+
 def _provision_environment(
     *,
     label: str,
@@ -560,8 +894,9 @@ def _provision_environment(
         )
         return result
 
-    pip_upgrade = _run_command(
-        [str(python_path), "-m", "pip", "install", "--upgrade", "pip"],
+    pip_upgrade = _run_pip_install(
+        python_path=python_path,
+        pip_args=["--upgrade", "pip"],
         cwd=repo_root,
         dry_run=dry_run,
         description=f"Upgrade pip in {label} environment",
@@ -569,24 +904,122 @@ def _provision_environment(
     if not pip_upgrade.ok:
         result.error = (
             f"Failed to upgrade pip in {label} environment: "
-            f"{pip_upgrade.stderr.strip()}"
+            f"{_summarize_command_failure(pip_upgrade)}"
         )
         return result
 
-    install_requirements = _run_command(
-        [str(python_path), "-m", "pip", "install", "-r", "requirements.txt"],
+    install_requirements = _run_pip_install(
+        python_path=python_path,
+        pip_args=["-r", "requirements.txt"],
         cwd=repo_root,
         dry_run=dry_run,
         description=f"Install requirements in {label} environment",
     )
     if not install_requirements.ok:
+        import_probe_after_failure = _validate_runtime_imports(
+            label=label,
+            python_path=python_path,
+            repo_root=repo_root,
+            dry_run=dry_run,
+        )
+        if import_probe_after_failure.ok:
+            result.warnings.extend(
+                _extract_optional_runtime_warnings(import_probe_after_failure)
+            )
+            result.ready = True
+            return result
+
+        missing_packages = _extract_missing_runtime_packages(import_probe_after_failure)
+        if missing_packages:
+            targeted_install = _install_missing_runtime_packages(
+                label=label,
+                python_path=python_path,
+                packages=missing_packages,
+                repo_root=repo_root,
+                dry_run=dry_run,
+            )
+            if targeted_install.ok:
+                final_probe = _validate_runtime_imports(
+                    label=label,
+                    python_path=python_path,
+                    repo_root=repo_root,
+                    dry_run=dry_run,
+                )
+                if final_probe.ok:
+                    result.warnings.extend(
+                        _extract_optional_runtime_warnings(final_probe)
+                    )
+                    result.ready = True
+                    return result
+                result.error = (
+                    "Runtime dependency validation failed after targeted "
+                    f"installs in {label} environment: "
+                    f"{_summarize_command_failure(final_probe)}"
+                )
+                return result
+            result.error = (
+                "Failed to install missing runtime packages in "
+                f"{label} environment: {_summarize_command_failure(targeted_install)}"
+            )
+            return result
+
         result.error = (
             "Failed to install requirements in "
-            f"{label} environment: {install_requirements.stderr.strip()}"
+            f"{label} environment: {_summarize_command_failure(install_requirements)}"
         )
         return result
 
+    import_probe = _validate_runtime_imports(
+        label=label,
+        python_path=python_path,
+        repo_root=repo_root,
+        dry_run=dry_run,
+    )
+    if not import_probe.ok:
+        result.error = (
+            "Runtime dependency validation failed in "
+            f"{label} environment: "
+            f"{_summarize_command_failure(import_probe)}"
+        )
+        result.remediation_commands.append(
+            f"{python_path} -m pip install -r requirements.txt"
+        )
+        return result
+
+    result.warnings.extend(_extract_optional_runtime_warnings(import_probe))
     result.ready = True
+    return result
+
+
+def _skipped_environment_result(
+    *,
+    label: str,
+    env_dir: Path,
+    reason: str,
+) -> EnvironmentProvisionResult:
+    """Create a status object for an intentionally skipped environment.
+
+    Purpose:
+        Report optimization decisions in the final installer summary.
+    Why:
+        Hybrid setup should avoid redundant package installs when `.venv-314t`
+        is ready, but users still need to know that `.venv` was skipped by
+        design instead of silently omitted.
+    Inputs:
+        label: Human-readable environment label.
+        env_dir: Target virtualenv directory path.
+        reason: User-facing explanation for skipping provisioning.
+    Outputs:
+        EnvironmentProvisionResult marked as skipped.
+    Side Effects:
+        None.
+    Exceptions:
+        None.
+    """
+
+    result = EnvironmentProvisionResult(label=label, env_dir=env_dir)
+    result.skipped = True
+    result.error = reason
     return result
 
 
@@ -617,6 +1050,208 @@ def _ensure_cargo_bin_on_path(base_env: dict[str, str]) -> dict[str, str]:
         normalized = {os.path.normcase(p) for p in parts}
         if os.path.normcase(prepend) not in normalized:
             env["PATH"] = prepend + (os.pathsep + current_path if current_path else "")
+    return env
+
+
+def _prepend_unique_path_entries(
+    base_path: str,
+    entries: list[Path],
+) -> str:
+    """Prepend existing path entries while preserving uniqueness.
+
+    Purpose:
+        Make known-good tool directories win executable resolution.
+    Why:
+        Fresh Windows shells can resolve Python package shims named `cargo.exe`
+        or `rustc.exe` before rustup-managed compiler tools.
+    Inputs:
+        base_path: Original PATH value.
+        entries: Candidate directories to prepend when they exist.
+    Outputs:
+        Updated PATH string.
+    Side Effects:
+        None.
+    Exceptions:
+        None.
+    """
+
+    existing = [chunk for chunk in str(base_path or "").split(os.pathsep) if chunk]
+    seen = {os.path.normcase(item.strip()) for item in existing if item.strip()}
+    prefix: list[str] = []
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        resolved = str(entry)
+        normalized = os.path.normcase(resolved)
+        if normalized in seen:
+            continue
+        prefix.append(resolved)
+        seen.add(normalized)
+    return os.pathsep.join(prefix + existing)
+
+
+def _resolve_rustup_tool_path(
+    *,
+    tool_name: str,
+    toolchain: str,
+    repo_root: Path,
+    env: dict[str, str],
+    dry_run: bool,
+) -> Path | None:
+    """Resolve a rustup-managed compiler tool path.
+
+    Purpose:
+        Locate the concrete `rustc` or `cargo` executable managed by rustup.
+    Why:
+        PATH can contain stale Python-side shims, so Rust setup should prefer
+        rustup's authoritative tool resolution before building the extension.
+    Inputs:
+        tool_name: Rust tool to resolve, such as `rustc` or `cargo`.
+        toolchain: Rustup toolchain token.
+        repo_root: Repository root for command execution.
+        env: Subprocess environment used for rustup resolution.
+        dry_run: True to skip filesystem-dependent resolution.
+    Outputs:
+        Resolved tool path, or None when unavailable.
+    Side Effects:
+        Executes `rustup which` when not in dry-run mode.
+    Exceptions:
+        None; resolution failures return None.
+    """
+
+    if dry_run:
+        return None
+    resolved = _run_command(
+        ["rustup", "which", "--toolchain", toolchain, tool_name],
+        cwd=repo_root,
+        env=env,
+        dry_run=False,
+        description=f"Resolve rustup-managed {tool_name}",
+    )
+    if not resolved.ok:
+        return None
+    lines = str(resolved.stdout or resolved.stderr or "").strip().splitlines()
+    if not lines:
+        return None
+    candidate = Path(lines[-1].strip())
+    return candidate if candidate.is_file() else None
+
+
+def _resolve_mingw_bin_dir() -> Path | None:
+    """Locate a MinGW bin directory usable for GNU Rust builds.
+
+    Purpose:
+        Find `gcc.exe` and related linker tools for the Windows GNU fallback.
+    Why:
+        Fresh VS Code installations do not include MSVC `link.exe`, so the
+        installer needs a non-MSVC backend build route when MinGW is present.
+    Inputs:
+        None.
+    Outputs:
+        Path to a MinGW bin directory, or None when unavailable.
+    Side Effects:
+        Reads PATH and the user-home fallback directory.
+    Exceptions:
+        None.
+    """
+
+    candidates: list[Path] = []
+    for raw_entry in str(os.environ.get("PATH", "") or "").split(os.pathsep):
+        cleaned = str(raw_entry or "").strip().strip('"')
+        if cleaned:
+            candidates.append(Path(cleaned))
+    candidates.append(MINGW_FALLBACK_BIN_DIR)
+
+    seen: set[str] = set()
+    for candidate_dir in candidates:
+        try:
+            resolved = candidate_dir.resolve()
+        except OSError:
+            continue
+        normalized = os.path.normcase(str(resolved))
+        if normalized in seen or not resolved.is_dir():
+            continue
+        seen.add(normalized)
+        if (resolved / "gcc.exe").is_file() and (resolved / "ld.exe").is_file():
+            return resolved
+    return None
+
+
+def _build_gnu_rust_env(
+    *,
+    base_env: dict[str, str],
+    repo_root: Path,
+    python_exe: Path,
+    dry_run: bool,
+) -> dict[str, str] | None:
+    """Build environment overrides for the Windows GNU Rust fallback.
+
+    Purpose:
+        Configure maturin/cargo to use rustup's GNU toolchain and MinGW linker.
+    Why:
+        This keeps Rust backend setup viable on machines with VS Code and MinGW
+        but without Visual Studio C++ Build Tools.
+    Inputs:
+        base_env: Source environment from the primary Rust setup attempt.
+        repo_root: Repository root for rustup tool resolution.
+        python_exe: Target virtualenv interpreter.
+        dry_run: True to skip filesystem-dependent resolution.
+    Outputs:
+        Environment dictionary for GNU build, or None when prerequisites are
+        unavailable.
+    Side Effects:
+        Executes rustup resolution probes when not in dry-run mode.
+    Exceptions:
+        None.
+    """
+
+    if os.name != "nt":
+        return None
+    mingw_bin = _resolve_mingw_bin_dir()
+    if not dry_run and mingw_bin is None:
+        return None
+
+    env = dict(base_env)
+    rustc_path = _resolve_rustup_tool_path(
+        tool_name="rustc",
+        toolchain=GNU_TOOLCHAIN,
+        repo_root=repo_root,
+        env=env,
+        dry_run=dry_run,
+    )
+    cargo_path = _resolve_rustup_tool_path(
+        tool_name="cargo",
+        toolchain=GNU_TOOLCHAIN,
+        repo_root=repo_root,
+        env=env,
+        dry_run=dry_run,
+    )
+    if not dry_run and (rustc_path is None or cargo_path is None):
+        return None
+
+    target_upper = GNU_TARGET.upper().replace("-", "_")
+    env["PYO3_PYTHON"] = str(python_exe)
+    env["VIRTUAL_ENV"] = str(python_exe.parents[1])
+    env["RUSTUP_TOOLCHAIN"] = GNU_TOOLCHAIN
+    env["CARGO_BUILD_TARGET"] = GNU_TARGET
+    if rustc_path:
+        env["RUSTC"] = str(rustc_path)
+    if cargo_path:
+        env["CARGO"] = str(cargo_path)
+    if mingw_bin:
+        env[f"CARGO_TARGET_{target_upper}_LINKER"] = str(mingw_bin / "gcc.exe")
+        env["CC_x86_64_pc_windows_gnu"] = str(mingw_bin / "gcc.exe")
+        env["CXX_x86_64_pc_windows_gnu"] = str(mingw_bin / "g++.exe")
+        env["AR_x86_64_pc_windows_gnu"] = str(mingw_bin / "ar.exe")
+
+    path_entries = [python_exe.parent]
+    if rustc_path:
+        path_entries.append(rustc_path.parent)
+    if cargo_path:
+        path_entries.append(cargo_path.parent)
+    if mingw_bin:
+        path_entries.append(mingw_bin)
+    env["PATH"] = _prepend_unique_path_entries(env.get("PATH", ""), path_entries)
     return env
 
 
@@ -725,15 +1360,45 @@ def _ensure_rust_backend(
     if not stable.ok and not rust.error:
         rust.error = "Failed to configure stable Rust toolchain."
 
+    rustc_path = _resolve_rustup_tool_path(
+        tool_name="rustc",
+        toolchain="stable",
+        repo_root=repo_root,
+        env=base_env,
+        dry_run=dry_run,
+    )
+    cargo_path = _resolve_rustup_tool_path(
+        tool_name="cargo",
+        toolchain="stable",
+        repo_root=repo_root,
+        env=base_env,
+        dry_run=dry_run,
+    )
+    if rustc_path and cargo_path:
+        base_env["RUSTC"] = str(rustc_path)
+        base_env["CARGO"] = str(cargo_path)
+        base_env["PYO3_PYTHON"] = str(python_exe)
+        base_env["VIRTUAL_ENV"] = str(python_exe.parents[1])
+        base_env["PATH"] = _prepend_unique_path_entries(
+            base_env.get("PATH", ""),
+            [python_exe.parent, rustc_path.parent, cargo_path.parent],
+        )
+
+    rustc_command = (
+        [str(rustc_path), "--version"] if rustc_path else ["rustc", "--version"]
+    )
+    cargo_command = (
+        [str(cargo_path), "--version"] if cargo_path else ["cargo", "--version"]
+    )
     rustc_ok = _run_command(
-        ["rustc", "--version"],
+        rustc_command,
         cwd=repo_root,
         env=base_env,
         dry_run=dry_run,
         description="Check rustc availability",
     )
     cargo_ok = _run_command(
-        ["cargo", "--version"],
+        cargo_command,
         cwd=repo_root,
         env=base_env,
         dry_run=dry_run,
@@ -753,8 +1418,9 @@ def _ensure_rust_backend(
         )
         return rust
 
-    maturin_install = _run_command(
-        [str(python_exe), "-m", "pip", "install", "maturin>=1.12,<2.0"],
+    maturin_install = _run_pip_install(
+        python_path=python_exe,
+        pip_args=["maturin>=1.12,<2.0"],
         cwd=repo_root,
         env=base_env,
         dry_run=dry_run,
@@ -782,17 +1448,82 @@ def _ensure_rust_backend(
         description="Build Rust backend with maturin",
     )
     if not build.ok:
+        gnu_env = _build_gnu_rust_env(
+            base_env=base_env,
+            repo_root=repo_root,
+            python_exe=python_exe,
+            dry_run=dry_run,
+        )
+        if gnu_env is not None:
+            gnu_build = _run_command(
+                [
+                    str(python_exe),
+                    "-m",
+                    "maturin",
+                    "develop",
+                    "--manifest-path",
+                    "rust_ext/Cargo.toml",
+                    "--target",
+                    GNU_TARGET,
+                ],
+                cwd=repo_root,
+                env=gnu_env,
+                dry_run=dry_run,
+                description="Build Rust backend with GNU/MinGW fallback",
+            )
+            if gnu_build.ok:
+                gnu_verify = _run_command(
+                    [
+                        str(python_exe),
+                        "-c",
+                        (
+                            "import gl260_rust_ext as pkg; "
+                            "import gl260_rust_ext.gl260_rust_ext as ext; "
+                            "print(getattr(ext, '__file__', "
+                            "getattr(pkg, '__file__', '')))"
+                        ),
+                    ],
+                    cwd=repo_root,
+                    env=gnu_env,
+                    dry_run=dry_run,
+                    description="Verify Rust backend import after GNU fallback",
+                )
+                if gnu_verify.ok:
+                    rust.ready = True
+                    return rust
+                rust.error = (
+                    "Rust GNU fallback import verification failed; continuing "
+                    f"with Python fallback. {_summarize_command_failure(gnu_verify)}"
+                )
+                return rust
+
         rust.error = "Rust backend build failed; continuing with Python fallback."
         rust.remediation_commands.extend(
             [
                 f"{python_exe} -m maturin develop --manifest-path rust_ext/Cargo.toml",
-                f'{python_exe} -c "import gl260_rust_ext as m; print(m.__file__)"',
+                (
+                    f"{python_exe} -m maturin develop --manifest-path "
+                    f"rust_ext/Cargo.toml --target {GNU_TARGET}"
+                ),
+                (
+                    f'{python_exe} -c "import gl260_rust_ext as pkg; '
+                    "import gl260_rust_ext.gl260_rust_ext as ext; "
+                    "print(ext.__file__)\""
+                ),
             ]
         )
         return rust
 
     verify = _run_command(
-        [str(python_exe), "-c", "import gl260_rust_ext as m; print(m.__file__)"],
+        [
+            str(python_exe),
+            "-c",
+            (
+                "import gl260_rust_ext as pkg; "
+                "import gl260_rust_ext.gl260_rust_ext as ext; "
+                "print(getattr(ext, '__file__', getattr(pkg, '__file__', '')))"
+            ),
+        ],
         cwd=repo_root,
         env=base_env,
         dry_run=dry_run,
@@ -805,7 +1536,11 @@ def _ensure_rust_backend(
         rust.remediation_commands.extend(
             [
                 f"{python_exe} -m maturin develop --manifest-path rust_ext/Cargo.toml",
-                f'{python_exe} -c "import gl260_rust_ext as m; print(m.__file__)"',
+                (
+                    f'{python_exe} -c "import gl260_rust_ext as pkg; '
+                    "import gl260_rust_ext.gl260_rust_ext as ext; "
+                    "print(ext.__file__)\""
+                ),
             ]
         )
         return rust
@@ -831,12 +1566,16 @@ def _print_environment_status(result: EnvironmentProvisionResult) -> None:
         None.
     """
 
-    status = "READY" if result.ready else "NOT READY"
+    status = (
+        "SKIPPED" if result.skipped else ("READY" if result.ready else "NOT READY")
+    )
     print(f"[ENV] {result.label}: {status}")
     if result.interpreter:
         print(f"      interpreter: {result.interpreter}")
     if result.error:
         print(f"      reason: {result.error}")
+    for warning in result.warnings:
+        print(f"      warning: {warning}")
     for command in result.remediation_commands:
         print(f"      repair: {command}")
 
@@ -908,6 +1647,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print planned setup commands without applying changes.",
     )
+    parser.add_argument(
+        "--with-standard-env",
+        action="store_true",
+        help=(
+            "Provision .venv even when the preferred .venv-314t environment "
+            "is ready."
+        ),
+    )
     return parser
 
 
@@ -950,16 +1697,8 @@ def main() -> int:
     if args.dry_run:
         print("[INFO] Dry-run enabled. No setup changes will be applied.")
 
-    std_interpreter = _resolve_standard_interpreter(args.python_std, cwd=repo_root)
     ft_interpreter = _resolve_free_threaded_interpreter(args.python_ft, cwd=repo_root)
 
-    std_result = _provision_environment(
-        label="standard",
-        env_dir=repo_root / STD_ENV_DIRNAME,
-        interpreter=std_interpreter,
-        repo_root=repo_root,
-        dry_run=args.dry_run,
-    )
     ft_result = _provision_environment(
         label="free-threaded",
         env_dir=repo_root / FT_ENV_DIRNAME,
@@ -967,6 +1706,27 @@ def main() -> int:
         repo_root=repo_root,
         dry_run=args.dry_run,
     )
+
+    std_result: EnvironmentProvisionResult
+    if ft_result.ready and not args.with_standard_env:
+        std_result = _skipped_environment_result(
+            label="standard",
+            env_dir=repo_root / STD_ENV_DIRNAME,
+            reason=(
+                "Preferred free-threaded environment is ready; standard "
+                "fallback provisioning was skipped for faster setup. Re-run "
+                "with --with-standard-env to create it too."
+            ),
+        )
+    else:
+        std_interpreter = _resolve_standard_interpreter(args.python_std, cwd=repo_root)
+        std_result = _provision_environment(
+            label="standard",
+            env_dir=repo_root / STD_ENV_DIRNAME,
+            interpreter=std_interpreter,
+            repo_root=repo_root,
+            dry_run=args.dry_run,
+        )
 
     primary_env = ft_result if ft_result.ready else std_result
     rust_result = RustSetupResult(attempted=False, ready=False)
