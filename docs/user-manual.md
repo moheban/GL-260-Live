@@ -9,7 +9,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Browser smoke setup: `python -m playwright install chromium`
 - Browser smoke test: `python -m pytest -q tests/test_docs_math_runtime_playwright.py`
 
-Current release: `v4.15.12`
+Current release: `v4.15.13`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
@@ -722,6 +722,11 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.15.13 Release Note (Multi-Sheet Stitched Date/Time Auto-Apply)
+- Multiple Sheets mode now seeds the active single sheet when no included sheets are selected.
+- The app auto-detects the Date & Time column from Columns state or worksheet headers, creates the stitched Date & Time and elapsed-time X columns, and applies them before first column selection.
+- Stitch readiness is cached so repeated mode toggles and sheet-list edits avoid redundant workbook reads when stitch inputs are unchanged.
 
 ### v4.15.12 Release Note (Layout Health Wizard)
 - **Open Layout Health Wizard** is available from Developer Tools -> Runtime / Advanced, generated plot tabs, Combined Plot Preview, and Cycle Timeline Plot Preview.

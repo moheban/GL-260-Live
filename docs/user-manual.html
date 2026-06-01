@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="b717e5a1a001e26d73cb91af238b54d99d8e5b2d66c7b244dc402d9f43558a98">
+  <meta name="manual-source-sha256" content="a8ed0e730f93720386c8328ce61b31bc6985d25c2ff309262183e31b2a370291">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -266,7 +266,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>b717e5a1a001e26d</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>a8ed0e730f937203</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -395,6 +395,11 @@
 <li><a href="#inputs_11">Inputs</a></li>
 <li><a href="#step-by-step-actions_11">Step-by-step actions</a></li>
 <li><a href="#expected-outputs_11">Expected outputs</a></li>
+<li><a href="#v41513-release-note-multi-sheet-stitched-datetime-auto-apply">v4.15.13 Release Note (Multi-Sheet Stitched Date/Time Auto-Apply)</a></li>
+<li><a href="#v41512-release-note-layout-health-wizard">v4.15.12 Release Note (Layout Health Wizard)</a></li>
+<li><a href="#v41511-release-note-multi-reactor-final-report">v4.15.11 Release Note (Multi-Reactor Final Report)</a></li>
+<li><a href="#v41510-release-note-plot-settings-trace-visibility-and-multi-trace-cycle-legends">v4.15.10 Release Note (Plot Settings, Trace Visibility, and Multi-Trace Cycle Legends)</a></li>
+<li><a href="#v4159-release-note-csv-import-multi-trace-channel-names">v4.15.9 Release Note (CSV Import Multi-Trace Channel Names)</a></li>
 <li><a href="#v4158-release-note-reaction-dashboard-visual-workflow-charge-basis">v4.15.8 Release Note (Reaction Dashboard Visual Workflow + Charge Basis)</a></li>
 <li><a href="#v4157-release-note-reaction-dashboard-template-driven-reaction-metrics">v4.15.7 Release Note (Reaction Dashboard + Template-Driven Reaction Metrics)</a></li>
 <li><a href="#v4156-release-note-multi-reactor-trace-import-downstream-integration">v4.15.6 Release Note (Multi-Reactor Trace Import + Downstream Integration)</a></li>
@@ -525,7 +530,7 @@
 <li>Browser smoke setup: <code>python -m playwright install chromium</code></li>
 <li>Browser smoke test: <code>python -m pytest -q tests/test_docs_math_runtime_playwright.py</code></li>
 </ul>
-<p>Current release: <code>v4.15.8</code></p>
+<p>Current release: <code>v4.15.13</code></p>
 <p>Analysis timeline pH terminology:<br>
 - <code>Equilibrium pH (Guidance)</code>: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.<br>
 - <code>Corrected pH</code>: measured-anchor calibrated pH overlay used for Analysis alignment diagnostics.<br>
@@ -817,12 +822,16 @@
    - show/hide cycle markers on core plots<br>
    - show/hide cycle legend<br>
    - include/exclude moles info in legend</li>
+<li>Configure rendering options:<br>
+   - <strong>Enable y=0 line</strong> to show/hide the dashed derivative-axis zero reference line in combined and pressure/derivative plots.<br>
+   - <strong>Show cycle legends for all primary traces</strong> when multiple Cycle Analysis Primary Y traces are available and each trace needs its own cycle summary legend.</li>
 <li>Configure global export DPI and layout behavior.</li>
 <li>Generate or refresh plots and validate expected visual output.</li>
 </ol>
 <h3 id="expected-outputs_5">Expected outputs<a class="headerlink" href="#expected-outputs_5" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Plot visuals match configured ranges/style/legend policies.</li>
+<li>Disabled traces in <strong>Data Trace Settings</strong> remain excluded from every generated plot, including all derivative traces.</li>
 <li>Export behavior aligns with display intent.</li>
 </ul>
 <h3 id="common-errors-and-recovery_5">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_5" title="Permanent link">&para;</a></h3>
@@ -863,6 +872,7 @@
 <li>Enable or disable temperature and derivative axes as needed.</li>
 <li>Configure derivative axis offset and axis label overrides.</li>
 <li>Set combined legend behavior and cycle legend reference axis/corner.</li>
+<li>Use <strong>Enable y=0 line</strong> to show or suppress the derivative zero reference line.</li>
 <li>Generate <strong>Figure 1+2: Combined Triple-Axis</strong>.</li>
 <li>Validate alignment of axis scales and readability of overlays.</li>
 <li>Adjust layout margin profiles for display and export parity.</li>
@@ -965,6 +975,7 @@
 <li>Tune smoothing and snap/refine settings.</li>
 <li>Re-run analysis and compare summary changes.</li>
 <li>Validate cycle summary metrics and conversion/moles outputs.</li>
+<li>When multiple Primary Y traces are loaded, use generated plot <strong>Plot Settings...</strong> to optionally show a separate cycle legend for every Primary Y trace instead of only the active calculation trace.</li>
 <li>Export markers (<code>JSON/CSV</code>) and cycle results (<code>CSV</code>) when required.</li>
 <li>Push cycle payloads to Advanced Solubility workflows as needed.</li>
 </ol>
@@ -1262,6 +1273,42 @@
 <li>Latest Analysis run payload restores after restart when workspace context/signatures match persisted <code>sol_analysis_last_result_v2</code> metadata.</li>
 <li>Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.</li>
 </ul>
+<h3 id="v41513-release-note-multi-sheet-stitched-datetime-auto-apply">v4.15.13 Release Note (Multi-Sheet Stitched Date/Time Auto-Apply)<a class="headerlink" href="#v41513-release-note-multi-sheet-stitched-datetime-auto-apply" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Multiple Sheets mode now seeds the active single sheet when no included sheets are selected.</li>
+<li>The app auto-detects the Date &amp; Time column from Columns state or worksheet headers, creates the stitched Date &amp; Time and elapsed-time X columns, and applies them before first column selection.</li>
+<li>Stitch readiness is cached so repeated mode toggles and sheet-list edits avoid redundant workbook reads when stitch inputs are unchanged.</li>
+</ul>
+<h3 id="v41512-release-note-layout-health-wizard">v4.15.12 Release Note (Layout Health Wizard)<a class="headerlink" href="#v41512-release-note-layout-health-wizard" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Open Layout Health Wizard</strong> is available from Developer Tools -&gt; Runtime / Advanced, generated plot tabs, Combined Plot Preview, and Cycle Timeline Plot Preview.</li>
+<li>The wizard checks the active/previewed figure, reports detected layout issues and auto-fix activity, and lets you preview layout-health threshold tweaks before applying them.</li>
+<li>For combined triple-axis plots, measured layout suggestions are persisted only after explicit <strong>Apply to Settings</strong> approval.</li>
+</ul>
+<h3 id="v41511-release-note-multi-reactor-final-report">v4.15.11 Release Note (Multi-Reactor Final Report)<a class="headerlink" href="#v41511-release-note-multi-reactor-final-report" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Final Report detects multiple active Primary Y reactor traces and repeats the Cycle Analysis Plot, Cycle Analysis Summary, and Cycle Statistics Table for each usable reactor trace.</li>
+<li>Repeated cycle report pages/tables are titled with the respective reactor trace label.</li>
+<li>Speciation timeline, pH guidance, planner narrative, key metrics, and solubility sections remain profile-level unless trace-specific data is available.</li>
+<li>The interactive HTML Final Report viewer includes current-profile reactor cycle groups and shows a reactor selector when multiple reactor traces are present.</li>
+</ul>
+<h3 id="v41510-release-note-plot-settings-trace-visibility-and-multi-trace-cycle-legends">v4.15.10 Release Note (Plot Settings, Trace Visibility, and Multi-Trace Cycle Legends)<a class="headerlink" href="#v41510-release-note-plot-settings-trace-visibility-and-multi-trace-cycle-legends" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Enable y=0 line</strong> is available again in generated plot <strong>Plot Settings...</strong> for combined and pressure/derivative plots.</li>
+<li>The y=0 control applies consistently to combined triple-axis derivative reference lines and core Figure 2 display/export renders.</li>
+<li>Data Trace Settings now guarantees that disabled traces are not plotted, including first and additional derivative traces such as <code>y2</code> and <code>y2_2</code>.</li>
+<li>When multiple Cycle Analysis Primary Y traces are loaded, Plot Settings can show <strong>Show cycle legends for all primary traces</strong>.</li>
+<li>The multi-trace cycle legend option is off by default; when off, only the active calculation trace contributes the cycle legend, preserving existing behavior.</li>
+<li>When enabled, each loaded Primary Y trace gets its own trace-labeled cycle summary legend.</li>
+</ul>
+<h3 id="v4159-release-note-csv-import-multi-trace-channel-names">v4.15.9 Release Note (CSV Import Multi-Trace Channel Names)<a class="headerlink" href="#v4159-release-note-csv-import-multi-trace-channel-names" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CSV Import now supports multiple Reactor Pressure, Manifold Pressure, External Reactor Temperature, and Internal Reactor Temperature mappings in one import.</li>
+<li>Graphtec channel metadata before the <code>Data</code> section is parsed so dropdowns can show readable labels such as <code>CH7 - Formate 1 (PSI)</code> instead of raw channel IDs alone.</li>
+<li>Imported workbook headers remain compatible with existing GL-260 workflows; roles use numbered output columns only when multiple traces are mapped.</li>
+<li>Grouped Columns trace legend labels are seeded from CSV signal names so plots and Data Trace Settings can show labels such as <code>Formate 1</code> and <code>Cylinder 2 EXT TEMP</code>.</li>
+<li>Cycle Analysis temperature selection remains explicit: imported temperature traces become selectable columns, but changing the calculation pressure trace does not silently switch the temperature source.</li>
+</ul>
 <h3 id="v4158-release-note-reaction-dashboard-visual-workflow-charge-basis">v4.15.8 Release Note (Reaction Dashboard Visual Workflow + Charge Basis)<a class="headerlink" href="#v4158-release-note-reaction-dashboard-visual-workflow-charge-basis" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Reaction Dashboard is organized into a numbered workflow: Reaction Map, Charge Basis and Conditions, Gas Uptake, and Results.</li>
@@ -1283,7 +1330,7 @@
 </ul>
 <h3 id="v4156-release-note-multi-reactor-trace-import-downstream-integration">v4.15.6 Release Note (Multi-Reactor Trace Import + Downstream Integration)<a class="headerlink" href="#v4156-release-note-multi-reactor-trace-import-downstream-integration" title="Permanent link">&para;</a></h3>
 <ul>
-<li>CSV Import now supports multiple Reactor Pressure mappings in one import.</li>
+<li>CSV Import now supports multiple Reactor Pressure mappings in one import. In <code>v4.15.9+</code>, this repeatable mapping model also covers Manifold Pressure, External Reactor Temperature, and Internal Reactor Temperature.</li>
 <li>Single-reactor imports keep the legacy <code>Reactor Pressure (PSI)</code> and derivative output names; multi-reactor imports use numbered pressure labels and source-qualified derivative labels.</li>
 <li>Derivative, smoothed derivative, and moving-average derivative columns are generated for every imported reactor pressure trace and mapped manifold pressure trace.</li>
 <li>Columns, combined/core plot legends, and Data Trace Settings label duplicate reactor traces with role and ordinal text so two <code>Primary Y (Reactor, PSI)</code> traces remain easy to distinguish.</li>

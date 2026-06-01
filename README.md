@@ -1,9 +1,10 @@
-# GL-260 Data Analysis and Plotter (v4.15.12)
+# GL-260 Data Analysis and Plotter (v4.15.13)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.15.12`:
+Latest workflow highlights in `v4.15.13`:
+- `v4.15.13`: Fixed first-use multi-sheet column apply by auto-detecting Date & Time, creating stitched timestamp/elapsed-time columns, and reusing stitch signatures to avoid redundant workbook reads.
 - `v4.15.12`: Added a manual Layout Health Wizard from Developer Tools, generated plot tabs, and plot previews so users can inspect layout issues, preview threshold tweaks, and explicitly apply combined layout suggestions.
 - `v4.15.11`: Made Final Report cycle sections reactor-aware for multi-Primary-Y profiles, added current-profile reactor groups to the interactive HTML report viewer, and preserved Rust/Python cycle-stat fallback parity.
 - `v4.15.10`: Restored the global Plot Settings **Enable y=0 line** control, enforced disabled Data Trace visibility for all derivative traces, and added optional per-primary-trace Cycle Analysis legends when multiple Primary Y traces are loaded.
@@ -20,8 +21,8 @@ Latest workflow highlights in `v4.15.12`:
 - `v4.15.0`: Preserved startup performance hardening, bounded caching, and heavy-tab optimization baseline.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.15.12`
-- `APP_VERSION = "v4.15.12"`
+- `# Version: v4.15.13`
+- `APP_VERSION = "v4.15.13"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -565,6 +566,13 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.15.13 Multi-Sheet Stitched Date/Time Auto-Apply
+- Fixed the single-sheet to multi-sheet transition so the active sheet is seeded automatically when no included sheets are selected.
+- Auto-detects and persists the Date & Time mapping from live Columns state or worksheet headers, then creates the internal stitched Date & Time and elapsed-time X columns before first Apply Column Selection.
+- Added stitch-readiness signature caching so repeated mode toggles and sheet-list updates skip redundant workbook reads when inputs are unchanged.
+- Added focused regressions for first-use multi-sheet auto-stitching and selected-sheet rebuild behavior.
+- Updated application version metadata to `v4.15.13` in script header and `APP_VERSION`, and synchronized README/user-manual release references.
 
 ### v4.15.12 Layout Health Wizard
 - Added **Open Layout Health Wizard** entry points in Developer Tools -> Runtime / Advanced, generated plot tab toolbars, Combined Plot Preview, and Cycle Timeline Plot Preview.
