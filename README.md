@@ -1,9 +1,10 @@
-# GL-260 Data Analysis and Plotter (v4.15.13)
+# GL-260 Data Analysis and Plotter (v4.15.14)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.15.13`:
+Latest workflow highlights in `v4.15.14`:
+- `v4.15.14`: Expanded Layout Health Wizard coverage and detection depth across live plots, generated tabs, previews, and the Advanced Speciation Analysis timeline, while adding auto-fit main legend behavior that preserves unwrapped labels when they fit.
 - `v4.15.13`: Fixed first-use multi-sheet column apply by auto-detecting Date & Time, creating stitched timestamp/elapsed-time columns, and reusing stitch signatures to avoid redundant workbook reads.
 - `v4.15.12`: Added a manual Layout Health Wizard from Developer Tools, generated plot tabs, and plot previews so users can inspect layout issues, preview threshold tweaks, and explicitly apply combined layout suggestions.
 - `v4.15.11`: Made Final Report cycle sections reactor-aware for multi-Primary-Y profiles, added current-profile reactor groups to the interactive HTML report viewer, and preserved Rust/Python cycle-stat fallback parity.
@@ -21,8 +22,8 @@ Latest workflow highlights in `v4.15.13`:
 - `v4.15.0`: Preserved startup performance hardening, bounded caching, and heavy-tab optimization baseline.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.15.13`
-- `APP_VERSION = "v4.15.13"`
+- `# Version: v4.15.14`
+- `APP_VERSION = "v4.15.14"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -566,6 +567,13 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.15.14 Layout Health and Main Legend Controls
+- Main combined legends now use no-wrap auto-fit behavior: labels remain unwrapped when one row fits, and bounded fallback rows are used only when the measured legend would clip.
+- Layout Health Wizard checks now cover x-label/tick collisions, legend collisions, off-canvas artists, excessive whitespace, detached-axis spacing, and over-compressed plot areas across live plots, generated tabs, and plot previews.
+- Advanced Speciation Analysis workflow timelines now expose the Layout Health Wizard and are included when the Advanced Speciation tab is the active layout-health target.
+- Combined layout-health suggestions remain review/apply based; visible figures can be corrected immediately without silently rewriting saved display/export profiles.
+- Updated application version metadata to `v4.15.14` in script header and `APP_VERSION`, and synchronized README/user-manual release references.
 
 ### v4.15.13 Multi-Sheet Stitched Date/Time Auto-Apply
 - Fixed the single-sheet to multi-sheet transition so the active sheet is seeded automatically when no included sheets are selected.

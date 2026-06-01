@@ -9,7 +9,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Browser smoke setup: `python -m playwright install chromium`
 - Browser smoke test: `python -m pytest -q tests/test_docs_math_runtime_playwright.py`
 
-Current release: `v4.15.13`
+Current release: `v4.15.14`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
@@ -722,6 +722,12 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.15.14 Release Note (Layout Health and Main Legend Controls)
+- Main combined legends now auto-fit no-wrap layouts by keeping labels unwrapped when one row fits and falling back to bounded rows only when needed to avoid clipping.
+- Layout Health Wizard checks now audit visible axes, titles, labels, tick labels, legends, and plot text for overlap, clipping, excessive spacing, and wasted whitespace across live plots, generated tabs, and Plot Preview windows.
+- The Advanced Speciation & Equilibrium Engine Analysis workflow Cycle Speciation Timeline includes Layout Health Wizard coverage from the embedded plot, generated tab, and preview/export surfaces.
+- Layout-health corrections can adjust the visible figure immediately while saved display/export layout changes remain explicit review/apply actions.
 
 ### v4.15.13 Release Note (Multi-Sheet Stitched Date/Time Auto-Apply)
 - Multiple Sheets mode now seeds the active single sheet when no included sheets are selected.
