@@ -9,7 +9,7 @@ This file is the authoritative manual source for GL-260 user documentation.
 - Browser smoke setup: `python -m playwright install chromium`
 - Browser smoke test: `python -m pytest -q tests/test_docs_math_runtime_playwright.py`
 
-Current release: `v4.15.11`
+Current release: `v4.15.12`
 
 Analysis timeline pH terminology:
 - `Equilibrium pH (Guidance)`: canonical displayed cycle/final pH from guidance/equilibrium target-state estimation.
@@ -722,6 +722,11 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Measured-pH anchor editor rows persist globally in `solubility_inputs` and restore on Analysis tab build/restart.
 - Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
+
+### v4.15.12 Release Note (Layout Health Wizard)
+- **Open Layout Health Wizard** is available from Developer Tools -> Runtime / Advanced, generated plot tabs, Combined Plot Preview, and Cycle Timeline Plot Preview.
+- The wizard checks the active/previewed figure, reports detected layout issues and auto-fix activity, and lets you preview layout-health threshold tweaks before applying them.
+- For combined triple-axis plots, measured layout suggestions are persisted only after explicit **Apply to Settings** approval.
 
 ### v4.15.11 Release Note (Multi-Reactor Final Report)
 - Final Report detects multiple active Primary Y reactor traces and repeats the Cycle Analysis Plot, Cycle Analysis Summary, and Cycle Statistics Table for each usable reactor trace.

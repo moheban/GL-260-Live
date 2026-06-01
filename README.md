@@ -1,9 +1,10 @@
-# GL-260 Data Analysis and Plotter (v4.15.11)
+# GL-260 Data Analysis and Plotter (v4.15.12)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.15.11`:
+Latest workflow highlights in `v4.15.12`:
+- `v4.15.12`: Added a manual Layout Health Wizard from Developer Tools, generated plot tabs, and plot previews so users can inspect layout issues, preview threshold tweaks, and explicitly apply combined layout suggestions.
 - `v4.15.11`: Made Final Report cycle sections reactor-aware for multi-Primary-Y profiles, added current-profile reactor groups to the interactive HTML report viewer, and preserved Rust/Python cycle-stat fallback parity.
 - `v4.15.10`: Restored the global Plot Settings **Enable y=0 line** control, enforced disabled Data Trace visibility for all derivative traces, and added optional per-primary-trace Cycle Analysis legends when multiple Primary Y traces are loaded.
 - `v4.15.9`: Expanded CSV Import to support repeatable reactor, manifold, internal-temperature, and external-temperature mappings with Graphtec signal-name labels in selectors and grouped trace legends.
@@ -19,8 +20,8 @@ Latest workflow highlights in `v4.15.11`:
 - `v4.15.0`: Preserved startup performance hardening, bounded caching, and heavy-tab optimization baseline.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.15.11`
-- `APP_VERSION = "v4.15.11"`
+- `# Version: v4.15.12`
+- `APP_VERSION = "v4.15.12"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -564,6 +565,13 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### v4.15.12 Layout Health Wizard
+- Added **Open Layout Health Wizard** entry points in Developer Tools -> Runtime / Advanced, generated plot tab toolbars, Combined Plot Preview, and Cycle Timeline Plot Preview.
+- The wizard runs the existing layout-health check on the selected/previewed figure, reports passes, issues, elapsed time, and live auto-fix status, then lets users decide whether to tune layout thresholds.
+- Wizard controls cover active-plot basics: auto-fix, strict mode, max passes, legend/x-label gap limits, axis label/tick gap limits, x-axis collision checks, and maximum bottom whitespace.
+- Combined triple-axis plots continue to use the existing explicit **Apply Suggested Layout** boundary; measured display/export suggestions persist only when the user applies them.
+- Updated application version metadata to `v4.15.12` in script header and `APP_VERSION`, and synchronized README/user-manual release references.
 
 ### v4.15.11 Multi-Reactor Final Report
 - Final Report now detects multiple active Primary Y reactor traces and repeats the Cycle Analysis Plot, Cycle Analysis Summary, and Cycle Statistics Table for each usable reactor trace.
