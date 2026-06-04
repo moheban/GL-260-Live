@@ -1025,17 +1025,6 @@ The model converts these database terms into the compact parameters used by the 
 
 Operationally, this is more accurate for GL-260 than an ideal model because sodium carbonate and sodium bicarbonate are not passive spectators. Sodium association changes the effective activities of carbonate-family species, and those activity changes shift the pH and fraction crossover. That is the specific error mode the HMW path is meant to avoid: a misleading carbonate-buffer plateau or incorrect pH slope when the solution is highly loaded with sodium.
 
-### 6.2 Rust Core and Python Fallback Contract
-
-The application treats the NaOH-CO2 Pitzer path as a health-gated compute path:
-
-- Rust receives compact numeric Pitzer parameters for fast cycle-by-cycle solving.
-- Python remains the canonical fallback using the same focused Pitzer source data.
-- Runtime parity checks compare key outputs such as pH, `m_OH`, `m_HCO3`, `m_CO3`, and `m_CO2`.
-- If Rust is unavailable, incompatible, or fails health checks, GL-260 falls back to Python rather than silently emitting an untrusted result.
-
-That is important for presentations because the model is not a black-box trend smoother. The displayed pH/speciation trajectory is tied to a thermodynamic solver path with explicit fallback behavior.
-
 ---
 
 ## 7) Reaction Kinetics and Uptake-Rate Interpretation

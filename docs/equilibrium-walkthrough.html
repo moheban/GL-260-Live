@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="equilibrium-walkthrough-source-sha256" content="f6b617124b8f695e233129e599f645f00b891ab09135f0a0c577f6e0e7b07e0d">
+  <meta name="equilibrium-walkthrough-source-sha256" content="377141e9307f93142213f6e56a2796502115d95dd3f74e0dedad122b163d0eec">
   <title>GL-260 Equilibrium Walkthrough</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -735,7 +735,6 @@
 <li><a href="#5-why-bicarbonate-purity-is-hard-and-why-pco2-is-the-control-lever">5) Why Bicarbonate Purity Is Hard and Why pCO2 Is the Control Lever</a></li>
 <li><a href="#6-naoh-co2-pitzer-hmw-focused-calculation-path">6) NaOH-CO2 Pitzer (HMW-Focused) Calculation Path</a><ul>
 <li><a href="#61-what-hmw-phreeqc-naco3-pairing-means">6.1 What HMW / PHREEQC-NaCO3 Pairing Means</a></li>
-<li><a href="#62-rust-core-and-python-fallback-contract">6.2 Rust Core and Python Fallback Contract</a></li>
 </ul>
 </li>
 <li><a href="#7-reaction-kinetics-and-uptake-rate-interpretation">7) Reaction Kinetics and Uptake-Rate Interpretation</a><ul>
@@ -1714,15 +1713,6 @@
 <p>The model converts these database terms into the compact parameters used by the Rust and Python solver cores:</p>
 <div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mo stretchy="false">&#x0007B;</mo><msubsup><mi>B</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow><mn>0</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>B</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow><mn>1</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>C</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow><mn>0</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>B</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow><mn>0</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>B</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow><mn>1</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>C</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow><mn>0</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>B</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow><mn>0</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>B</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow><mn>1</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>C</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow><mn>0</mn></msubsup><mo>&#x0002C;</mo><msub><mi>&#x00398;</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow></msub><mo>&#x0002C;</mo><msub><mi>&#x003A8;</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub><mo>&#x0002C;</mo><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow></msub><mo>&#x0002C;</mo><msub><mi>&#x003A8;</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub><mo>&#x0002C;</mo><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub><mo>&#x0002C;</mo><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi></mrow></mrow></msub><mo stretchy="false">&#x0007D;</mo></mrow></math></div>
 <p>Operationally, this is more accurate for GL-260 than an ideal model because sodium carbonate and sodium bicarbonate are not passive spectators. Sodium association changes the effective activities of carbonate-family species, and those activity changes shift the pH and fraction crossover. That is the specific error mode the HMW path is meant to avoid: a misleading carbonate-buffer plateau or incorrect pH slope when the solution is highly loaded with sodium.</p>
-<h3 id="62-rust-core-and-python-fallback-contract">6.2 Rust Core and Python Fallback Contract</h3>
-<p>The application treats the NaOH-CO2 Pitzer path as a health-gated compute path:</p>
-<ul>
-<li>Rust receives compact numeric Pitzer parameters for fast cycle-by-cycle solving.</li>
-<li>Python remains the canonical fallback using the same focused Pitzer source data.</li>
-<li>Runtime parity checks compare key outputs such as pH, <code>m_OH</code>, <code>m_HCO3</code>, <code>m_CO3</code>, and <code>m_CO2</code>.</li>
-<li>If Rust is unavailable, incompatible, or fails health checks, GL-260 falls back to Python rather than silently emitting an untrusted result.</li>
-</ul>
-<p>That is important for presentations because the model is not a black-box trend smoother. The displayed pH/speciation trajectory is tied to a thermodynamic solver path with explicit fallback behavior.</p>
 <hr>
 <h2 id="7-reaction-kinetics-and-uptake-rate-interpretation">7) Reaction Kinetics and Uptake-Rate Interpretation</h2>
 <p>Equilibrium tells us where the chemistry can settle after a cycle. Kinetics explains how quickly the process moves toward that state while CO2 is being contacted with the alkaline liquid.</p>
@@ -2611,7 +2601,7 @@ The HMW Pitzer model makes that crossover more realistic by correcting sodium-ca
 python scripts/build_equilibrium_walkthrough.py --check
 </code></pre>
 <p>This walkthrough is documentation-only and does not change runtime chemistry behavior.</p>
-        <div class="footer">Source fingerprint: <code>f6b617124b8f695e233129e599f645f00b891ab09135f0a0c577f6e0e7b07e0d</code></div>
+        <div class="footer">Source fingerprint: <code>377141e9307f93142213f6e56a2796502115d95dd3f74e0dedad122b163d0eec</code></div>
       </article>
       <section id="cycle-trend-panel" class="surface chart-panel" aria-label="Cycle trend highlights">
         <h2>Cycle Trend Highlights</h2>
