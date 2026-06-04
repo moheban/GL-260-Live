@@ -647,16 +647,20 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
    - keep rows aligned to detected cycle IDs
    - use `Clear Anchors` to reset the row editor when needed
    - use `Target pH Controls` directly below the anchor section to set the shared target-pH slider value
-   - run Analysis or click **Recompute Calibration**
+   - click **Run Analysis** with the relearn/global-learning options selected as needed
 6. Use the sticky **Analysis Workflow Actions** bar (top of Advanced Speciation outputs) for:
    - **Import from Cycle Analysis**
    - **Run Analysis**
-   - **Recompute Calibration**
-   - **Use ML-corrected pH in this run** (toggle)
+   - **Refresh cycle data** (toggle)
+   - **Relearn anchors** (toggle)
+   - **Use learned anchors/history** (toggle)
+   - **Use ML pH** (toggle)
    - editing `Cycle timeline plot title`
-   - deterministic action semantics:
-     - **Run Analysis** refreshes from cycle payload and applies compatible saved corrections; no forced ML retraining.
-     - **Recompute Calibration** keeps current cycle payload, recalibrates/relearns on current run data, then applies correction per toggle.
+   - deterministic option semantics:
+     - **Refresh cycle data** reapplies the imported cycle payload before solving.
+     - **Relearn anchors** recalibrates/retrains from current measured pH anchors.
+     - **Use learned anchors/history** includes compatible global anchors and prior history.
+     - **Use ML pH** applies the guarded ML-corrected pH channel when available.
 7. Verify anchored outputs:
    - measured pH marker appears on cycle timeline plot
    - equilibrium pH trajectory appears alongside corrected/planning trajectories
@@ -905,8 +909,7 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Added sticky top **Analysis Workflow Actions** controls:
   - **Import from Cycle Analysis**
   - **Run Analysis**
-  - **Recompute Calibration**
-  - **Use ML-corrected pH in this run**
+  - option toggles for refresh, anchor relearning, compatible learned history, and ML pH
   - shared `Cycle timeline plot title`
 - Replaced fixed lower output stacking with a shared freeform output workspace used across Planning/Analysis/Reprocessing.
 - Added panel-level drag + resize interaction with snap-grid behavior and minimum-size/bounds clamping.
@@ -967,9 +970,11 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
   - `ml_corrected_fractions`
 - Added Analysis input toggle:
   - **Use ML-corrected pH in this run** (default ON).
-- Deterministic action semantics:
-  - **Run Analysis**: refresh from imported cycle payload, rerun simulation, apply compatible saved corrections per toggle, no forced retraining.
-  - **Recompute Calibration**: no payload re-apply; recalibrate/relearn on current run data, then apply per toggle.
+- Current deterministic action semantics are controlled by the **Run Analysis** option toggles:
+  - refresh imported cycle payload before solving,
+  - relearn calibration from current measured pH anchors,
+  - include compatible learned anchors/history,
+  - apply guarded ML-corrected pH when available.
 
 ### v4.13.4 Release Note (Tab-Aware Data Trace + Deterministic Timeline Export Anchor)
 - Data Trace Settings now resolves trace rows by active plot tab context:
@@ -1007,7 +1012,7 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Analysis actions were relocated into one colocated **Input & Controls** card in Analysis workflow inputs:
   - **Import from Cycle Analysis**
   - **Run Analysis**
-  - **Recompute Calibration**
+  - run option toggles
   - shared `Cycle timeline plot title`
 - Analysis tab wheel routing now uses unified outer scrolling with local-widget edge handoff:
   - Text/Listbox/Treeview widgets consume wheel input while they can scroll.
@@ -1134,7 +1139,7 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Error: selected cycle mismatch.
   - Recovery: re-sync cycle selection and refresh dashboard/timeline views.
 - Error: measured pH anchor not applied.
-  - Recovery: confirm Analysis workflow is active, `Measured pH cycle` is within detected cycle count, and pH is in `[0, 14]`, then re-run **Recompute Calibration**.
+  - Recovery: confirm Analysis workflow is active, the anchor cycle is within detected cycle count, pH is in `[0, 14]`, and **Relearn anchors** is checked before clicking **Run Analysis**.
 - Error: Warnings / Narrative / Math Context says "No measured pH provided" even after anchor recompute.
   - Recovery: update to `v4.8.3+`; Analysis guidance now consumes `Measured pH anchor` when final/slurry pH fields are empty and anchor cycle is valid.
 - Error: Analysis progress requests Planning-only delta-P/manual CO2-per-cycle inputs.

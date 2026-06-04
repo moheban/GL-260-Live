@@ -4,6 +4,7 @@
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
 Latest workflow highlights in `v4.15.14`:
+- Current working tree: Consolidated Advanced Speciation Analysis execution into one **Run Analysis** action with checkboxes for cycle refresh, anchor relearning, compatible learned anchors/history, and guarded ML pH application.
 - `v4.15.14`: Expanded Layout Health Wizard coverage and detection depth across live plots, generated tabs, previews, and the Advanced Speciation Analysis timeline, while adding auto-fit main legend behavior that preserves unwrapped labels when they fit.
 - `v4.15.13`: Fixed first-use multi-sheet column apply by auto-detecting Date & Time, creating stitched timestamp/elapsed-time columns, and reusing stitch signatures to avoid redundant workbook reads.
 - `v4.15.12`: Added a manual Layout Health Wizard from Developer Tools, generated plot tabs, and plot previews so users can inspect layout issues, preview threshold tweaks, and explicitly apply combined layout suggestions.
@@ -417,7 +418,7 @@ High-level pipeline:
 
 Core state is held in application-owned data frames, selected-column mappings, plot/cycle settings, and persisted settings/profile payloads. Optional acceleration layers (SciPy/Rust) are additive and fail closed to baseline Python behavior.
 
-Analysis-mode calibration flow supports multiple measured-pH anchors per run: add cycle/pH anchor rows, run or recompute calibration, then propagate corrected uptake/pH/speciation to downstream cycles and dashboard/timeline outputs.
+Analysis-mode calibration flow supports multiple measured-pH anchors per run: add cycle/pH anchor rows, click **Run Analysis**, choose whether to relearn calibration from anchors and compatible learned history, then propagate corrected uptake/pH/speciation to downstream cycles and dashboard/timeline outputs.
 
 ### Quickstart Workflow (Linear)
 Recommended order:
@@ -786,8 +787,7 @@ Apache-2.0. See `LICENSE`.
 - Added sticky top **Analysis Workflow Actions** controls:
   - `Import from Cycle Analysis`
   - `Run Analysis`
-  - `Recompute Calibration`
-  - `Use ML-corrected pH in this run`
+  - refresh/relearn/learned-history/ML pH option toggles
   - `Cycle timeline plot title`
 - Replaced static output panel placement with a shared freeform workspace canvas for all workflows.
 - Added draggable/resizable panel shells (snap-grid behavior) for:
@@ -862,14 +862,12 @@ Apache-2.0. See `LICENSE`.
 - Added per-cycle additive timeline fields:
   - `ml_corrected_ph`
   - `ml_corrected_fractions`
-- Added Analysis workflow control `Use ML-corrected pH in this run` and deterministic action semantics:
-  - **Run Analysis** refreshes from cycle payload and applies compatible saved corrections without forced retraining.
-  - **Recompute Calibration** recalibrates/relearns from current run data and applies corrected pH per toggle.
+- Added Analysis workflow controls for ML-corrected pH and deterministic action semantics; current builds consolidate this into one **Run Analysis** action with refresh/relearn/learned-history/ML pH toggles.
 - Added targeted regressions for:
   - cycle-vs-planning reference trace precedence,
   - snapshot pH/source contract and solver-context line removal,
   - hybrid ML toggle/fail-closed behavior,
-  - Run Analysis vs Recompute calibration action semantics.
+  - Run Analysis option-driven calibration action semantics.
 
 ### v4.13.4 Tab-Aware Data Trace Settings + Deterministic Timeline Export Anchor
 - Updated generated-plot toolbar wiring so **Data Trace Settings...** opens with the active tab `plot_id` context rather than defaulting to combined-triple-axis context.
@@ -920,7 +918,7 @@ Apache-2.0. See `LICENSE`.
 - Relocated Analysis action controls into one colocated `Input & Controls` card inside Analysis workflow inputs:
   - **Import from Cycle Analysis**
   - **Run Analysis**
-  - **Recompute Calibration**
+  - run option toggles
   - shared `Cycle timeline plot title`
 - Added Analysis dashboard state schema migration so legacy persisted layouts normalize safely to the new core-first defaults while preserving valid customizations where possible.
 - Replaced trap-prone Analysis tab wheel routing with unified outer-canvas scrolling plus edge handoff from nested Text/Listbox/Treeview widgets.
@@ -1124,7 +1122,7 @@ Apache-2.0. See `LICENSE`.
 - Synced release metadata references to `v4.8.1`.
 
 `v4.8.1` addendum - Measured-pH Anchor + Uptake Recalibration
-- Added Analysis input/state support for measured-pH anchored calibration (`Measured pH cycle`, `Measured pH anchor`, anchor enable/overwrite semantics) and explicit `Recompute Calibration`.
+- Added Analysis input/state support for measured-pH anchored calibration (`Measured pH cycle`, `Measured pH anchor`, anchor enable/overwrite semantics) and the legacy explicit `Recompute Calibration` action, now consolidated into Run Analysis options in current builds.
 - Added Analysis runtime payload extensions for measured anchor and correction outputs: `measured_ph_anchor`, `uptake_correction`, corrected uptake series, measured-pH completion payload, and latest corrected speciation payload.
 - Added cycle timeline/table/export visualization updates to show measured anchor marker and corrected pH/uptake series alongside original values.
 - Added per-profile calibration persistence so anchor/correction state restores and auto-applies when profile chemistry/model basis matches.
