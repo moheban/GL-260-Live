@@ -2307,6 +2307,22 @@ fn measured_ph_uptake_calibration_core(
                 fractions[2].max(0.0),
             ]);
         }
+        let mut previous_ph: Option<f64> = None;
+        for value in corrected_ph.iter_mut() {
+            let Some(current_ph) = *value else {
+                continue;
+            };
+            if !current_ph.is_finite() {
+                continue;
+            }
+            if let Some(previous) = previous_ph {
+                if current_ph > previous {
+                    *value = Some(previous);
+                    continue;
+                }
+            }
+            previous_ph = Some(current_ph);
+        }
         SimulationPayload {
             corrected_cycle,
             corrected_cumulative,

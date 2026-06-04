@@ -436,6 +436,7 @@ Detect cycles, compute cycle metrics/moles uptake, and support manual correction
    - add marker
    - remove marker
    - undo/redo marker changes
+   - click an existing peak/trough marker to select it before using marker nudge controls
 5. Tune smoothing and snap/refine settings.
 6. Re-run analysis and compare summary changes.
 7. Validate cycle summary metrics and conversion/moles outputs.
@@ -661,6 +662,7 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
      - **Relearn anchors** recalibrates/retrains from current measured pH anchors.
      - **Use learned anchors/history** includes compatible global anchors and prior history.
      - **Use ML pH** applies the guarded ML-corrected pH channel when available.
+     - corrected pH is constrained to non-increasing cycle order so additional CO2 dosing cannot create an unrealistic upward pH reversal.
 7. Verify anchored outputs:
    - measured pH marker appears on cycle timeline plot
    - equilibrium pH trajectory appears alongside corrected/planning trajectories
@@ -959,6 +961,7 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Added hybrid Analysis pH correction pipeline:
   - baseline measured-anchor calibration,
   - residual ML ridge correction over chemistry + cycle features,
+  - non-increasing corrected-pH enforcement for cumulative CO2 dosing,
   - equilibrium-consistent carbonate fraction recomputation from corrected pH.
 - Added global incremental ML stores/settings (chemistry-gated compatibility):
   - `analysis_ml_training_store`
