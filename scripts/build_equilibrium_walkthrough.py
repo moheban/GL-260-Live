@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import html
+import json
 import re
 import sys
 from pathlib import Path
@@ -466,6 +467,190 @@ def render_markdown(markdown_text: str) -> tuple[str, str]:
     return body_html, toc_html
 
 
+def build_derivation_stepper_steps_json() -> str:
+    """Build JSON payload for the live derivation slider.
+
+    Purpose:
+        Convert the stepper's curated LaTeX equations into MathML-backed HTML.
+    Why:
+        The slider content is inserted at runtime, so it cannot pass through the
+        normal Markdown conversion path; pre-rendering keeps the presentation
+        self-contained and visually consistent with the rest of the walkthrough.
+    Inputs:
+        None.
+    Outputs:
+        JSON string containing titles, prose, callouts, and rendered equation
+        HTML fragments for the derivation stepper.
+    Side Effects:
+        None.
+    Exceptions:
+        Propagates ``ValueError`` from LaTeX conversion if a curated expression
+        cannot be rendered, causing the build to fail before writing bad HTML.
+    """
+
+    raw_steps = [
+        {
+            "title": "1. Establish the material basis",
+            "purpose": (
+                "Start with the charged NaOH and convert it into the sodium "
+                "basis used by every later equation."
+            ),
+            "equations": [
+                r"n_{\mathrm{NaOH}} = \frac{m_{\mathrm{NaOH}}}{MW_{\mathrm{NaOH}}}",
+                r"m_{\mathrm{NaT}} = \frac{n_{\mathrm{NaOH}}}{kg_{\mathrm{water}}}",
+                r"m_{\mathrm{NaT}} = \frac{700\ \mathrm{g} / 40.00\ \mathrm{g\ mol^{-1}}}{2.2\ \mathrm{kg}} = 7.9545\ \mathrm{mol\ kg^{-1}}",
+            ],
+            "callout": (
+                "This fixes the positive-charge inventory that the pH solver "
+                "must balance."
+            ),
+        },
+        {
+            "title": "2. Write the carbonate half-reactions",
+            "purpose": (
+                "Expose the three reversible constraints that govern carbonic "
+                "acid, bicarbonate, carbonate, hydroxide, and pH."
+            ),
+            "equations": [
+                r"\mathrm{CO_2^*} \rightleftharpoons \mathrm{H^+} + \mathrm{HCO_3^-}",
+                r"\mathrm{HCO_3^-} \rightleftharpoons \mathrm{H^+} + \mathrm{CO_3^{2-}}",
+                r"\mathrm{H_2O} \rightleftharpoons \mathrm{H^+} + \mathrm{OH^-}",
+            ],
+            "callout": (
+                "These are the local equilibrium rules the solver must satisfy "
+                "at the same time."
+            ),
+        },
+        {
+            "title": "3. Convert reactions into constants",
+            "purpose": (
+                "Turn the reaction statements into algebraic constraints using "
+                "activities or concentration fallback terms."
+            ),
+            "equations": [
+                r"K_{a1} = \frac{a_{\mathrm{H^+}} \times a_{\mathrm{HCO_3^-}}}{a_{\mathrm{CO_2^*}}}",
+                r"K_{a2} = \frac{a_{\mathrm{H^+}} \times a_{\mathrm{CO_3^{2-}}}}{a_{\mathrm{HCO_3^-}}}",
+                r"K_w = a_{\mathrm{H^+}} \times a_{\mathrm{OH^-}}",
+                r"a_i = \gamma_i \times m_i",
+            ],
+            "callout": (
+                "In the Pitzer path, activities replace raw molality through "
+                "a_i = gamma_i x m_i."
+            ),
+        },
+        {
+            "title": "4. Combine the base-consumption path",
+            "purpose": (
+                "Show why bicarbonate is the intermediate and why carbonate "
+                "over-conversion is controlled by hydroxide."
+            ),
+            "equations": [
+                r"K_{b1} = \frac{a_{\mathrm{HCO_3^-}}}{a_{\mathrm{CO_2^*}} \times a_{\mathrm{OH^-}}} = \frac{K_{a1}}{K_w}",
+                r"K_{b2} = \frac{a_{\mathrm{CO_3^{2-}}} \times a_{\mathrm{H_2O}}}{a_{\mathrm{HCO_3^-}} \times a_{\mathrm{OH^-}}} = \frac{K_{a2}}{K_w}",
+                r"K_{eq,\mathrm{overall}} = K_{b1} \times K_{b2}",
+                r"K_{eq,\mathrm{overall}} = \frac{a_{\mathrm{HCO_3^-}}}{a_{\mathrm{CO_2^*}} \times a_{\mathrm{OH^-}}} \times \frac{a_{\mathrm{CO_3^{2-}}} \times a_{\mathrm{H_2O}}}{a_{\mathrm{HCO_3^-}} \times a_{\mathrm{OH^-}}}",
+                r"K_{eq,\mathrm{overall}} = \frac{a_{\mathrm{CO_3^{2-}}} \times a_{\mathrm{H_2O}}}{a_{\mathrm{CO_2^*}} \times a_{\mathrm{OH^-}}^2} = \frac{K_{a1} \times K_{a2}}{K_w^2}",
+            ],
+            "callout": (
+                "The HCO3- term cancels algebraically, which is why residual "
+                "alkalinity can push the pathway past bicarbonate."
+            ),
+        },
+        {
+            "title": "5. Build alpha fractions from H+",
+            "purpose": (
+                "Use one trial hydrogen value to distribute total inorganic "
+                "carbon among the three carbonate-family species."
+            ),
+            "equations": [
+                r"C_T = [\mathrm{CO_2^*}] + [\mathrm{HCO_3^-}] + [\mathrm{CO_3^{2-}}]",
+                r"[\mathrm{HCO_3^-}] = \frac{K_{a1}}{[H^+]}[\mathrm{CO_2^*}]",
+                r"[\mathrm{CO_3^{2-}}] = \frac{K_{a1}K_{a2}}{[H^+]^2}[\mathrm{CO_2^*}]",
+                r"D = [H^+]^2 + K_{a1}[H^+] + K_{a1}K_{a2}",
+                r"\alpha_0 = \frac{[H^+]^2}{D},\quad \alpha_1 = \frac{K_{a1}[H^+]}{D},\quad \alpha_2 = \frac{K_{a1}K_{a2}}{D}",
+            ],
+            "callout": (
+                "Once [H+] is chosen, the species fractions are no longer "
+                "independent knobs."
+            ),
+        },
+        {
+            "title": "6. Reconstruct species and hydroxide",
+            "purpose": (
+                "Convert fractions into concentration or molality outputs that "
+                "can be checked against charge balance."
+            ),
+            "equations": [
+                r"[\mathrm{CO_2^*}] = \frac{[H^+]^2}{[H^+]^2 + K_{a1}[H^+] + K_{a1}K_{a2}} \times C_T",
+                r"[\mathrm{HCO_3^-}] = \frac{K_{a1}[H^+]}{[H^+]^2 + K_{a1}[H^+] + K_{a1}K_{a2}} \times C_T",
+                r"[\mathrm{CO_3^{2-}}] = \frac{K_{a1}K_{a2}}{[H^+]^2 + K_{a1}[H^+] + K_{a1}K_{a2}} \times C_T",
+                r"[\mathrm{OH^-}] = \frac{K_w}{[H^+]}",
+            ],
+            "callout": (
+                "This is the point where pH, hydroxide, and speciation become "
+                "one coupled state."
+            ),
+        },
+        {
+            "title": "7. Close charge balance and report pH",
+            "purpose": (
+                "Accept the pH only when the positive and negative charge pools "
+                "agree within tolerance."
+            ),
+            "equations": [
+                r"R_q = [\mathrm{Na^+}] + [H^+] - \frac{K_w}{[H^+]} - \left(\frac{K_{a1}[H^+]}{D} \times C_T\right) - 2\left(\frac{K_{a1}K_{a2}}{D} \times C_T\right)",
+                r"D = [H^+]^2 + K_{a1}[H^+] + K_{a1}K_{a2}",
+                r"R_q = 0",
+                r"\mathrm{pH} = -\log_{10}([H^+])",
+            ],
+            "callout": (
+                "The displayed pH is useful because it belongs to a "
+                "charge-consistent species distribution."
+            ),
+        },
+        {
+            "title": "8. Apply the same solve per cycle",
+            "purpose": (
+                "Feed each accepted uptake event into cumulative loading, then "
+                "repeat the equilibrium solve for that cycle."
+            ),
+            "equations": [
+                r"\Delta P_{\mathrm{atm},k} = \frac{\Delta P_{\mathrm{psi},k}}{14.6959}",
+                r"n_{\mathrm{CO_2},k} = \frac{\Delta P_{\mathrm{atm},k} \times V_{\mathrm{headspace}}}{R \times T_k}",
+                r"\Delta m_{\mathrm{CO_2},k} = n_{\mathrm{CO_2},k} \times MW_{\mathrm{CO_2}}",
+                r"m_{\mathrm{CO_2,cum},k} = \sum_{i=1}^{k} \Delta m_{\mathrm{CO_2},i}",
+                r"m_{CT,k} = \frac{m_{\mathrm{CO_2,cum},k} / MW_{\mathrm{CO_2}}}{kg_{\mathrm{water}}}",
+                r"k \rightarrow \{\mathrm{pH}_k,\ m_{\mathrm{OH^-},k},\ [\mathrm{CO_2^*}]_k,\ [\mathrm{HCO_3^-}]_k,\ [\mathrm{CO_3^{2-}}]_k\}",
+            ],
+            "callout": (
+                "This is how the derivation becomes the cycle-by-cycle "
+                "predicted pH and speciation timeline."
+            ),
+        },
+    ]
+
+    rendered_steps = []
+    for step in raw_steps:
+        rendered_steps.append(
+            {
+                "title": step["title"],
+                "purpose": step["purpose"],
+                "equationsHtml": [
+                    (
+                        '<div class="math-display-block" '
+                        'data-math-origin="derivation-stepper">'
+                        f"{_convert_latex_fragment(latex_source=equation, display_mode='block', context_label='derivation stepper')}"
+                        "</div>"
+                    )
+                    for equation in step["equations"]
+                ],
+                "callout": step["callout"],
+            }
+        )
+
+    return json.dumps(rendered_steps, ensure_ascii=True)
+
+
 def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> str:
     """Wrap rendered content in a standalone interactive HTML shell.
 
@@ -485,6 +670,8 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     Exceptions:
         None under normal usage.
     """
+
+    derivation_steps_json = build_derivation_stepper_steps_json()
 
     return f"""<!doctype html>
 <html lang=\"en\">
@@ -1014,6 +1201,29 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     .cycle-flow-stage p {{ margin: 0; color: #345468; font-size: 0.86rem; }}
     .cycle-flow-stage.is-active {{ border-color: #58b9b7; box-shadow: 0 10px 22px rgba(13, 81, 95, 0.1); }}
     .cycle-flow-summary {{ border-left: 3px solid #1fb8cb; border-radius: 8px; background: rgba(239,248,250,0.74); padding: 8px 10px; color: #345468; }}
+    .derivation-stepper-module {{ margin: 1rem 0 1.25rem; border: 1px solid #cfe3ec; border-radius: 12px; background: linear-gradient(135deg, #fcfeff 0%, #f6fbff 58%, #fffaf2 100%); padding: 14px; display: grid; gap: 14px; overflow: hidden; }}
+    .derivation-stepper-header {{ display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; }}
+    .derivation-stepper-title {{ margin: 0; color: #19384a; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.86rem; font-family: var(--heading-font); }}
+    .derivation-stepper-copy {{ margin: 4px 0 0; color: #345468; }}
+    .derivation-step-count {{ border: 1px solid #d7e8ec; border-radius: 10px; background: rgba(255,255,255,0.78); padding: 8px 10px; color: #5f7888; min-width: 94px; text-align: right; }}
+    .derivation-step-count strong {{ display: block; color: #102839; font-size: 1.35rem; font-family: var(--heading-font); line-height: 1; }}
+    .derivation-stepper-grid {{ display: grid; grid-template-columns: minmax(230px, 0.82fr) minmax(300px, 1.18fr); gap: 14px; align-items: stretch; }}
+    .derivation-controls, .derivation-board {{ border: 1px solid #d8e8ee; border-radius: 10px; background: rgba(255,255,255,0.76); padding: 12px; }}
+    .derivation-controls {{ display: grid; gap: 12px; align-content: start; }}
+    .derivation-slider-row {{ display: grid; gap: 6px; }}
+    .derivation-slider-row label {{ color: #2c4d61; font-size: 0.82rem; font-family: var(--heading-font); }}
+    .derivation-slider-row input[type="range"] {{ width: 100%; accent-color: #1fb8cb; }}
+    .derivation-step-list {{ display: grid; gap: 6px; }}
+    .derivation-step-button {{ width: 100%; min-height: 36px; border: 1px solid #c8dde6; border-radius: 8px; background: #f8fcfd; color: #25485d; cursor: pointer; font-family: var(--heading-font); font-size: 0.8rem; text-align: left; padding: 7px 9px; }}
+    .derivation-step-button[aria-current="step"] {{ color: #062b35; border-color: #58b9b7; background: #dff7f1; box-shadow: inset 0 0 0 1px rgba(31,184,203,0.28); }}
+    .derivation-board {{ display: grid; gap: 12px; min-width: 0; }}
+    .derivation-stage-label {{ margin: 0; color: #19384a; font-family: var(--heading-font); font-size: 1.05rem; }}
+    .derivation-stage-purpose {{ margin: 0; color: #345468; }}
+    .derivation-equation-stack {{ display: grid; gap: 8px; }}
+    .derivation-equation {{ border: 1px solid #d9e9f3; border-radius: 10px; background: #ffffff; padding: 10px; color: #102839; font-size: 0.95rem; line-height: 1.45; overflow-x: auto; transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease; }}
+    .derivation-equation .math-display-block {{ margin: 0; overflow-x: auto; }}
+    .derivation-equation.is-active {{ border-color: #58b9b7; box-shadow: 0 10px 22px rgba(13, 81, 95, 0.1); transform: translateY(-2px); }}
+    .derivation-callout {{ border-left: 3px solid #1fb8cb; border-radius: 8px; background: rgba(239,248,250,0.74); padding: 8px 10px; color: #345468; min-height: 50px; }}
     .reveal-node {{ opacity: 0; transform: translateY(12px); transition: opacity 360ms ease, transform 360ms ease; }}
     .reveal-node.is-visible {{ opacity: 1; transform: translateY(0); }}
     .footer {{ font-size: 0.85rem; color: #496578; margin-top: 1.8rem; border-top: 1px solid #d9e9f3; padding-top: 0.75rem; }}
@@ -1049,6 +1259,8 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       .charge-balance-panels {{ grid-template-columns: 1fr; }}
       .cycle-flow-stages {{ grid-template-columns: 1fr; }}
       .cycle-flow-stage::after {{ display: none; }}
+      .derivation-stepper-header, .derivation-stepper-grid {{ grid-template-columns: 1fr; }}
+      .derivation-step-count {{ text-align: left; }}
       .content table.reaction-map {{
         display: block;
         border: 0;
@@ -1754,6 +1966,117 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         updateCycleFlow();
       }}
 
+      function ensureDerivationStepperModule() {{
+        if (document.getElementById("derivation-stepper-module")) {{
+          return;
+        }}
+        const anchor = findInlineModuleAnchor("derivation-stepper");
+        if (!(anchor && anchor.parentNode)) {{
+          return;
+        }}
+        const module = document.createElement("section");
+        module.id = "derivation-stepper-module";
+        module.className = "derivation-stepper-module";
+        module.setAttribute("aria-label", "Interactive equation derivation stepper");
+        module.innerHTML = `
+          <div class="derivation-stepper-header">
+            <div>
+              <p class="derivation-stepper-title">Live Derivation Slider</p>
+              <p class="derivation-stepper-copy">Move one step at a time to reveal the calculation chain as if the equations are being built during the presentation.</p>
+            </div>
+            <div class="derivation-step-count">
+              <span>Step</span>
+              <strong data-derivation-count>1 / 8</strong>
+            </div>
+          </div>
+          <div class="derivation-stepper-grid">
+            <div class="derivation-controls">
+              <div class="derivation-slider-row">
+                <label for="derivation-step-slider">Derivation progress</label>
+                <input id="derivation-step-slider" type="range" min="0" max="7" value="0" step="1">
+              </div>
+              <div class="derivation-step-list" data-derivation-step-list></div>
+            </div>
+            <div class="derivation-board">
+              <p class="derivation-stage-label" data-derivation-title></p>
+              <p class="derivation-stage-purpose" data-derivation-purpose></p>
+              <div class="derivation-equation-stack" data-derivation-equations></div>
+              <div class="derivation-callout" data-derivation-callout></div>
+            </div>
+          </div>
+        `;
+        anchor.replaceWith(module);
+
+        const steps = {derivation_steps_json};
+
+        const slider = module.querySelector("#derivation-step-slider");
+        const count = module.querySelector("[data-derivation-count]");
+        const title = module.querySelector("[data-derivation-title]");
+        const purpose = module.querySelector("[data-derivation-purpose]");
+        const equations = module.querySelector("[data-derivation-equations]");
+        const callout = module.querySelector("[data-derivation-callout]");
+        const stepList = module.querySelector("[data-derivation-step-list]");
+
+        function renderStepButtons(activeIndex) {{
+          if (!stepList) {{
+            return;
+          }}
+          stepList.innerHTML = "";
+          steps.forEach(function (step, index) {{
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "derivation-step-button";
+            button.textContent = step.title;
+            if (index === activeIndex) {{
+              button.setAttribute("aria-current", "step");
+            }}
+            button.addEventListener("click", function () {{
+              if (slider) {{
+                slider.value = String(index);
+              }}
+              renderDerivationStep(index);
+            }});
+            stepList.appendChild(button);
+          }});
+        }}
+
+        function renderDerivationStep(index) {{
+          const boundedIndex = Math.max(0, Math.min(steps.length - 1, Number(index) || 0));
+          const step = steps[boundedIndex];
+          if (count) {{
+            count.textContent = String(boundedIndex + 1) + " / " + String(steps.length);
+          }}
+          if (title) {{
+            title.textContent = step.title;
+          }}
+          if (purpose) {{
+            purpose.textContent = step.purpose;
+          }}
+          if (equations) {{
+            equations.innerHTML = "";
+            step.equationsHtml.forEach(function (equationHtml, equationIndex) {{
+              const block = document.createElement("div");
+              block.className = "derivation-equation";
+              block.classList.toggle("is-active", equationIndex === step.equationsHtml.length - 1);
+              block.innerHTML = equationHtml;
+              equations.appendChild(block);
+            }});
+          }}
+          if (callout) {{
+            callout.textContent = step.callout;
+          }}
+          renderStepButtons(boundedIndex);
+        }}
+
+        if (slider) {{
+          slider.max = String(steps.length - 1);
+          slider.addEventListener("input", function () {{
+            renderDerivationStep(Number(slider.value));
+          }});
+        }}
+        renderDerivationStep(0);
+      }}
+
       function ensureCycleTrendPanelInline() {{
         if (!cycleTrendPanel) {{
           return;
@@ -1945,6 +2268,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
 
       function initializeLayoutPhase() {{
         ensureChargeBalanceVisualModule();
+        ensureDerivationStepperModule();
         ensureEquilibriumInterplayModule();
         ensureCycleFlowVisualModule();
         ensureCycleTrendPanelInline();
@@ -1962,7 +2286,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       function markRevealNodes() {{
         const revealNodes = Array.from(
           content.querySelectorAll(
-            "h2, h3, p, ul, ol, blockquote, table, pre, img, .admonition, .math-display-block, .math-inline-display, .inline-chart-mount, .equilibrium-interplay-module, .calculation-visual-module, .chart-panel-inline"
+            "h2, h3, p, ul, ol, blockquote, table, pre, img, .admonition, .math-display-block, .math-inline-display, .inline-chart-mount, .equilibrium-interplay-module, .calculation-visual-module, .derivation-stepper-module, .chart-panel-inline"
           )
         );
         for (const node of revealNodes) {{
