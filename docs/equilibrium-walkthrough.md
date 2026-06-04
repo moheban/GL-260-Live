@@ -8,12 +8,15 @@ This walkthrough will show you how i compute:
 - equilibrium pH,
 - carbonate speciation,
 - cycle CO2 uptake,
+- reaction kinetics and uptake-rate interpretation,
 - measured-pH anchored calibration,
 - residual ML pH correction in Analysis mode.
 - real PR-24304 presentation data,
 - HMW/PHREEQC Na-carbonate Pitzer pairing.
 
-We will discuss how cycles are identified, uptake is calculated, pH is predicted for each cycle, and we will derive detailed equilibrium expressions that are used to calculate pH with +/- 0.5 accuracy.
+We will discuss how cycles are identified, uptake is calculated, reaction kinetics are interpreted, pH is predicted for each cycle, and we will derive detailed equilibrium expressions that are used to calculate pH with +/- 0.5 accuracy.
+
+We will go through a simulation and then ill show a real world example with real data in the program.
 
 ## Locked Assumptions for This Walkthrough
 All values in this document are locked to one deterministic scenario so intermediate results are reproducible during live explanation.
@@ -28,15 +31,11 @@ All values in this document are locked to one deterministic scenario so intermed
 - Measured pH anchors (multi-anchor example):
   - Cycle 5: `pH = 9.74`
   - Cycle 9: `pH = 9.34`
-- ML correction mode: enabled, with fail-closed anchor guard enforced.
 - Real-world worked example profile:
   - `profiles/PR-24304 CLM-441-MPT Sodium Bicarbonate Batch 1 of 2.json`
   - reaction basis: `NaOH + CO2 -> NaHCO3`
   - starting NaOH basis in profile: `702.0 g`
   - product: sodium bicarbonate (`NaHCO3`)
-  - embedded presentation plots:
-    - `docs/assets/equilibrium-walkthrough/pr-24304-batch-1-cycle-speciation-timeline-day-1-6.png`
-    - `docs/assets/equilibrium-walkthrough/pr-24304-batch-1-day-1-6-combined-triple-axis.png`
 
 ---
 
@@ -53,17 +52,17 @@ All values in this document are locked to one deterministic scenario so intermed
     - \(n_{\mathrm{CO_2,eq1}}\), \(n_{\mathrm{CO_2,eq2}}\): CO2 mole endpoints [`mol`]
     - \(m_{\mathrm{CO_2,eq1}}\), \(m_{\mathrm{CO_2,eq2}}\): CO2 mass endpoints [`g`]
 
-Converting mass to molar/molal basis defines the two stoichiometric landmarks used for later calculations.
+Converting mass to molarity/molality defines the two stoichiometric landmarks used for later calculations.
 
 !!! info "Derivation Walkthrough"
     **Goal:** Convert NaOH mass into concentration terms that is used in every later equilibrium equation.
 
     **Step-by-step interpretation:** first compute \(n_{\mathrm{NaOH}}\), then normalize by liquid volume (\(C_{\mathrm{NaOH}}\)) and water mass (\(m_{\mathrm{NaT}}\)), then convert the two stoichiometric CO2 endpoints to grams.
 
-    **Why this changes operation:** these endpoint masses define where bicarbonate formation can be maximized versus where carbonate carryover or leftover caustic are expected, so they are the first control landmarks for high-purity NaHCO3.
+    **Why this changes operation:** these endpoint masses define where bicarbonate formation can be maximized.
 
 ```latex
-Mass NaOH = m_{\mathrm{NaOH}} = 700\ \mathrm{g}
+m_{\mathrm{NaOH}} = 700\ \mathrm{g}
 ```
 
 ```latex
@@ -147,7 +146,7 @@ These half-reactions and constants provide the thermodynamic constraints that al
     - `a_i`: activity of species `i` `[-]`
     - \(\gamma_i\): activity coefficient of species `i` `[-]`
     - `m_i`: molality of species `i` [\(mol kg^{-1}\)]
-    - `K_H`: Henry constant in the convention used by the model [\(mol kg^{-1} atm^{-1}\)]
+    - `K_H`: Henry constant used by the model [\(mol kg^{-1} atm^{-1}\)]
     - \(p_{\mathrm{CO_2}}\): CO2 partial pressure [`atm`]
     - \([\mathrm{CO_2^*}]\): dissolved molecular CO2 plus hydrated carbonic acid basis [\(mol kg^{-1}\)]
 
@@ -188,8 +187,8 @@ For fixed-headspace mode, dissolved CO2 boundary is constrained by Henry's law:
 ### 2.2 Constants Used by the NaOH-CO2 Pitzer Example Path (25 C)
 
 !!! note "Calculation Legend"
-    - \(K_{a1}\): first dissociation constant of carbonic system `[-]`
-    - \(K_{a2}\): second dissociation constant of carbonic system `[-]`
+    - \(K_{a1}\): first dissociation constant `[-]`
+    - \(K_{a2}\): second dissociation constant `[-]`
     - `K_w`: water autoionization constant `[-]`
 
 
@@ -214,19 +213,23 @@ K_w \approx 10^{-14}
     - `activity-corrected model`: computes \(\gamma_i\), then uses \(a_i = \gamma_i m_i\).
     - `high ionic strength`: concentrated electrolyte condition where ion-ion interactions materially change apparent equilibrium behavior.
 
-In a dilute classroom example, the model can often use concentration directly:
+For dilute solutions, we can often use concentration directly:
 
 ```latex
 a_i \approx m_i
 ```
 
-That approximation means each dissolved species behaves as though it were alone in water. The GL-260 NaOH case is not dilute: a 700 g NaOH charge in 2.2 kg water gives roughly `7.95 mol/kg` sodium basis before CO2 loading. At that ionic strength, sodium, hydroxide, bicarbonate, and carbonate are not independent. Each ion is surrounded by an ionic atmosphere, and the thermodynamic effective concentration is activity:
+In dilute solutions, that approximation means each dissolved species behaves as though it were alone in water. Starting conditions when synthesizing sodium bicarbonate is not dilute: a 700 g NaOH charge in 2.2 kg water gives roughly `7.95 mol/kg` sodium basis before CO2 loading. 
+
+At that ionic strength, sodium, hydroxide, bicarbonate, and carbonate are **not** independent. Each ion is surrounded by an ionic atmosphere, and the thermodynamic effective concentration is activity:
 
 ```latex
 a_i = \gamma_i \times m_i
 ```
 
-The activity coefficient \(\gamma_i\) is the correction term. If \(\gamma_i < 1\), the species is less thermodynamically active than its molality alone would imply. If \(\gamma_i > 1\), it is more active. Pitzer terms are used because they are designed for concentrated electrolyte solutions where Debye-Huckel-style dilute corrections are not enough.
+The activity coefficient \(\gamma_i\) is the correction term. 
+
+If \(\gamma_i < 1\), the species is less thermodynamically active than its molality alone would imply. If \(\gamma_i > 1\), it is more active. Pitzer terms are used because they are designed for concentrated electrolyte solutions where Debye-Huckel-style dilute corrections are not enough.
 
 For pH this distinction matters directly:
 
@@ -240,7 +243,7 @@ not simply:
 \mathrm{pH} = -\log_{10}(m_{\mathrm{H^+}})
 ```
 
-The difference is why GL-260 treats the Pitzer path as the deepest sodium bicarbonate prediction path instead of relying only on ideal alpha fractions.
+The difference is why we treat the Pitzer path as the best sodium bicarbonate prediction path instead of relying only on ideal alpha fractions.
 
 ---
 
@@ -251,16 +254,16 @@ The difference is why GL-260 treats the Pitzer path as the deepest sodium bicarb
     - \(K_{eq,\mathrm{overall}}\): overall equilibrium constant `[-]`
     - \(a_{\mathrm{H_2O}}\): water activity `[-]`, often approximated as `1` in concentrated electrolyte simplifications
 
-The overall equilibrium relationship is explicitly tied to the half-reaction constants, enabling direct inspection of the chemistry contract.
+The overall equilibrium relationship is explicitly tied to the half-reaction constants, enabling direct calculation of the species involved and subsequently the pH.
 
 !!! info "Derivation Walkthrough"
-    **Goal:** show that the full carbonate neutralization contract is exactly the product of the two base-consumption half steps.
+    **Goal:** show the derivation of the overall equilibrium expression.
 
     **Step-by-step interpretation:** define each half reaction, write \(K_{b1}\) and \(K_{b2}\) in activity form, then multiply them to recover the overall expression and map to \({K_{a1}, K_{a2}, K_w}\).
 
-    **Why this changes operation:** this is the control bridge from chemistry theory to bicarbonate purity; if either half-step is unintentionally over-driven, the net pathway shifts away from NaHCO3 and toward carbonate.
+    **Why this matters:** this will be the expression later calculations will be based on
 
-GL-260's carbonate neutralization chemistry can be shown in two base-consumption half-steps:
+The overall equilibrium expression can be shown in two half-steps:
 
 <table class="reaction-map">
 <thead>
@@ -287,7 +290,7 @@ The overall carbonate-neutralization chemistry is the direct sum of the two half
 <table class="reaction-map">
 <thead>
 <tr>
-<th>Reaction Assembly</th>
+<th>Reaction Expression</th>
 <th>Resulting Expression</th>
 </tr>
 </thead>
@@ -303,7 +306,9 @@ The overall carbonate-neutralization chemistry is the direct sum of the two half
 </tbody>
 </table>
 
-Operational implication for bicarbonate purity: the \(\mathrm{HCO_3^-}\) term cancels in the algebra because it is an intermediate produced in the first half-step and consumed in the second. This means bicarbonate quality is controlled by how strongly each half-step is driven in practice: we want to favor \(\mathrm{CO_2^*} + \mathrm{OH^-} \rightarrow \mathrm{HCO_3^-}\) while suppressing \(\mathrm{HCO_3^-} + \mathrm{OH^-} \rightarrow \mathrm{CO_3^{2-}} + \mathrm{H_2O}\), achieved by increasing dissolved CO2 (\(p_{\mathrm{CO_2}}\)), reducing effective \(\mathrm{OH^-}\) through loading stage progression, and avoiding excessive residual alkalinity.
+The \(\mathrm{HCO_3^-}\) term cancels in the algebra because it is an intermediate produced in the first half-step and consumed in the second. 
+
+**This means bicarbonate quality is controlled by how strongly each half-step is driven in practice: we want to favor \(\mathrm{CO_2^*} + \mathrm{OH^-} \rightarrow \mathrm{HCO_3^-}\) while suppressing \(\mathrm{HCO_3^-} + \mathrm{OH^-} \rightarrow \mathrm{CO_3^{2-}} + \mathrm{H_2O}\), achieved by increasing dissolved CO2 (\(p_{\mathrm{CO_2}}\)), reducing effective \(\mathrm{OH^-}\) through loading stage progression, and avoiding excessive residual alkalinity.**
 
 The equilibrium constants multiply when reactions are added:
 
@@ -328,6 +333,43 @@ In terms of acid and water constants:
 
 ```latex
 K_{eq,\mathrm{overall}} = \frac{K_{a1} \times K_{a2}}{K_w^2}
+```
+
+where the constants are defined as:
+
+```latex
+K_{a1} = \frac{a_{\mathrm{H^+}} \times a_{\mathrm{HCO_3^-}}}{a_{\mathrm{CO_2^*}}}
+```
+
+```latex
+K_{a2} = \frac{a_{\mathrm{H^+}} \times a_{\mathrm{CO_3^{2-}}}}{a_{\mathrm{HCO_3^-}}}
+```
+
+```latex
+K_w = a_{\mathrm{H^+}} \times a_{\mathrm{OH^-}}
+```
+
+Substituting the definitions into the compact expression gives the full activity expression:
+
+```latex
+K_{eq,\mathrm{overall}}
+=
+\frac{
+\left(\frac{a_{\mathrm{H^+}} \times a_{\mathrm{HCO_3^-}}}{a_{\mathrm{CO_2^*}}}\right)
+\times
+\left(\frac{a_{\mathrm{H^+}} \times a_{\mathrm{CO_3^{2-}}}}{a_{\mathrm{HCO_3^-}}}\right)
+}{
+\left(a_{\mathrm{H^+}} \times a_{\mathrm{OH^-}}\right)^2
+}
+```
+
+Canceling \(a_{\mathrm{HCO_3^-}}\) and \(a_{\mathrm{H^+}}^2\) recovers the overall reaction expression:
+
+```latex
+K_{eq,\mathrm{overall}}
+=
+\frac{a_{\mathrm{CO_3^{2-}}}}{a_{\mathrm{CO_2^*}} \times a_{\mathrm{OH^-}}^2}
+\quad\text{when}\quad a_{\mathrm{H_2O}} \approx 1
 ```
 
 !!! tip "Approximation Note"
@@ -407,6 +449,16 @@ Solver target:
 ```latex
 R_q = 0
 ```
+
+The charge residual is important because it is the numerical test that the proposed pH and species distribution are chemically self-consistent. The left side of \(R_q\) counts positive charge from sodium and hydrogen; the right side counts negative charge from hydroxide, bicarbonate, and carbonate. If \(R_q > 0\), the trial state has too much positive charge or too little anion charge. If \(R_q < 0\), it has too much anion charge or too little positive charge.
+
+GL-260 uses this residual as the solver objective. During the pH solve, the model changes \([H^+]\), recomputes \([\mathrm{OH^-}]\), carbonate fractions, and species concentrations, then evaluates \(R_q\). The accepted solution is the point where the residual is close enough to zero:
+
+```latex
+|R_q| \le \epsilon_{\mathrm{charge}}
+```
+
+where \(\epsilon_{\mathrm{charge}}\) is the solver tolerance. This matters operationally because the pH value is only useful if the accompanying carbonate distribution also conserves charge. A low residual means the displayed pH, bicarbonate fraction, carbonate fraction, hydroxide inventory, and sodium basis all describe the same feasible solution state.
 
 ### 4.1 Deriving the Alpha Fractions From the Equilibrium Constants
 
@@ -634,7 +686,217 @@ That is important for presentations because the model is not a black-box trend s
 
 ---
 
-## 7) Cycle Uptake Math
+## 7) Reaction Kinetics and Uptake-Rate Interpretation
+Equilibrium tells us where the chemistry can settle after a cycle. Kinetics explains how quickly the process moves toward that state while CO2 is being contacted with the alkaline liquid.
+
+!!! note "Calculation Legend"
+    - \(r_{\mathrm{CO_2}}\): volumetric CO2 absorption/reaction rate [\(mol L^{-1} s^{-1}\)] or model-consistent rate basis
+    - \(k_La\): gas-liquid volumetric mass-transfer coefficient [\(s^{-1}\)]
+    - \(C^*_{\mathrm{CO_2}}\): dissolved CO2 concentration at gas-liquid equilibrium [\(mol L^{-1}\)]
+    - \(C_{\mathrm{CO_2}}\): bulk dissolved CO2 concentration [\(mol L^{-1}\)]
+    - \(r_1\), \(r_2\): bicarbonate-forming and carbonate-forming reaction rates [\(mol L^{-1} s^{-1}\)]
+    - \(k_1\), \(k_2\): effective kinetic rate constants on the selected concentration/activity basis
+    - \(E\): enhancement factor showing how fast reaction increases apparent CO2 absorption `[-]`
+    - \(\tau_{\mathrm{mix}}\), \(\tau_{\mathrm{rxn}}\), \(\tau_{\mathrm{mt}}\): mixing, reaction, and mass-transfer time scales [`s`]
+
+!!! info "Derivation Walkthrough"
+    **Goal:** separate the thermodynamic endpoint from the rate path that gets the batch there.
+
+    **Step-by-step interpretation:** write the two liquid reaction rates, connect them to the gas-liquid CO2 supply term, then compare characteristic time scales to decide whether the observed cycle is mass-transfer-limited, reaction-limited, or mixing-limited.
+
+    **Why this changes operation:** equilibrium pH and speciation are the final state calculation, but cycle duration, pressure-decay shape, and heat release depend on kinetics; a batch can have the right endpoint target while still being operated too quickly or unevenly to reach it cleanly.
+
+The same carbonate chemistry discussed earlier can be read as two forward consumption steps when CO2 enters caustic solution:
+
+<table class="reaction-map">
+<thead>
+<tr>
+<th>Kinetic Step</th>
+<th>Rate Expression / Interpretation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>\[\mathrm{CO_2^*} + \mathrm{OH^-} \rightarrow \mathrm{HCO_3^-}\]</td>
+<td>\[r_1 = k_1 \times a_{\mathrm{CO_2^*}} \times a_{\mathrm{OH^-}}\]<br>Fast bicarbonate-forming step that consumes free hydroxide as CO2 dissolves.</td>
+</tr>
+<tr>
+<td>\[\mathrm{HCO_3^-} + \mathrm{OH^-} \rightarrow \mathrm{CO_3^{2-}} + \mathrm{H_2O}\]</td>
+<td>\[r_2 = k_2 \times a_{\mathrm{HCO_3^-}} \times a_{\mathrm{OH^-}}\]<br>Over-conversion step that is favored while hydroxide activity remains high.</td>
+</tr>
+</tbody>
+</table>
+
+The corresponding liquid-phase balances can be written schematically as:
+
+```latex
+\frac{dC_{\mathrm{CO_2}}}{dt}
+=
+k_La \times \left(C^*_{\mathrm{CO_2}} - C_{\mathrm{CO_2}}\right)
+- r_1
+```
+
+```latex
+\frac{dC_{\mathrm{HCO_3^-}}}{dt}
+=
+r_1 - r_2
+```
+
+```latex
+\frac{dC_{\mathrm{CO_3^{2-}}}}{dt}
+=
+r_2
+```
+
+```latex
+\frac{dC_{\mathrm{OH^-}}}{dt}
+=
+-r_1 - r_2
+```
+
+These balances describe a moving cycle, not the final equilibrium solve. CO2 must first cross from gas to liquid, then it must react in the liquid, and the reaction products must mix through the batch. GL-260's equilibrium model consumes the cycle-level uptake after the event has been identified; the kinetic interpretation explains the pressure and temperature shape during the event.
+
+### 7.1 Gas-Liquid Supply Term
+
+The physical supply of dissolved CO2 is controlled by the driving force between the gas-equilibrium concentration and the current bulk concentration:
+
+```latex
+N_{\mathrm{CO_2}} = k_La \times \left(C^*_{\mathrm{CO_2}} - C_{\mathrm{CO_2}}\right)
+```
+
+Using Henry's-law notation from the equilibrium sections:
+
+```latex
+C^*_{\mathrm{CO_2}} \approx K_H \times p_{\mathrm{CO_2}}
+```
+
+so:
+
+```latex
+N_{\mathrm{CO_2}} = k_La \times \left(K_H \times p_{\mathrm{CO_2}} - C_{\mathrm{CO_2}}\right)
+```
+
+This equation is the kinetic version of the pCO2 control lever. Higher \(p_{\mathrm{CO_2}}\) does not only shift the equilibrium distribution toward bicarbonate; it also raises the instantaneous driving force for absorption. Better agitation, gas dispersion, and interfacial contact increase \(k_La\), which lets the same headspace pressure produce faster usable CO2 transfer.
+
+When reaction is fast, dissolved CO2 is consumed almost as soon as it enters the liquid:
+
+```latex
+C_{\mathrm{CO_2}} \rightarrow 0
+```
+
+and the supply term approaches:
+
+```latex
+N_{\mathrm{CO_2}} \approx k_La \times K_H \times p_{\mathrm{CO_2}}
+```
+
+Reaction can be summarized as an absorption enhancement factor:
+
+```latex
+N_{\mathrm{CO_2,eff}} = E \times k_La \times \left(C^*_{\mathrm{CO_2}} - C_{\mathrm{CO_2}}\right)
+```
+
+where \(E > 1\) means the liquid reaction is consuming dissolved CO2 fast enough to increase the apparent absorption rate.
+
+That is the mass-transfer-limited regime: the chemistry is ready to react, but the gas-liquid interface controls how quickly carbon can enter the solution.
+
+### 7.2 Pseudo-First-Order View at High Hydroxide
+
+During early caustic-rich cycles, hydroxide is abundant compared with dissolved CO2. Over a short interval, \(a_{\mathrm{OH^-}}\) can be treated as locally high and slowly varying, which collapses the first rate expression into a pseudo-first-order form:
+
+```latex
+r_1 = k_1 \times a_{\mathrm{OH^-}} \times a_{\mathrm{CO_2^*}}
+```
+
+```latex
+r_1 = k'_1 \times a_{\mathrm{CO_2^*}}
+```
+
+where:
+
+```latex
+k'_1 = k_1 \times a_{\mathrm{OH^-}}
+```
+
+The interpretation is direct: early in the run, high hydroxide activity makes CO2 consumption very fast, so pressure can fall sharply after a charge. As hydroxide is consumed, \(k'_1\) falls, pressure decay slows, and the batch becomes less able to instantly pull CO2 out of the headspace.
+
+This same logic explains the carbonate-rich middle region. If hydroxide remains high while bicarbonate has already been formed, the second step can keep running:
+
+```latex
+r_2 = k_2 \times a_{\mathrm{HCO_3^-}} \times a_{\mathrm{OH^-}}
+```
+
+Lowering \(a_{\mathrm{OH^-}}\) through additional CO2 loading suppresses \(r_2\), which is why the process eventually moves away from carbonate dominance and toward the bicarbonate-rich endpoint.
+
+### 7.3 Time-Scale Test for Interpreting Cycle Shape
+
+For operations, the useful question is which time scale is slowest:
+
+```latex
+\tau_{\mathrm{rxn}} \sim \frac{1}{k'_1}
+```
+
+```latex
+\tau_{\mathrm{mt}} \sim \frac{1}{k_La}
+```
+
+```latex
+\tau_{\mathrm{mix}} = \text{time required to distribute CO2 and heat through the liquid}
+```
+
+If:
+
+```latex
+\tau_{\mathrm{rxn}} \ll \tau_{\mathrm{mt}}
+```
+
+then reaction is fast and the observed uptake rate is mostly controlled by mass transfer. Pressure falls as fast as CO2 can cross the interface.
+
+If:
+
+```latex
+\tau_{\mathrm{mt}} \ll \tau_{\mathrm{rxn}}
+```
+
+then gas-liquid transfer is not the main bottleneck. Dissolved CO2 accumulates more readily, and the liquid chemistry controls how quickly the batch consumes it.
+
+If:
+
+```latex
+\tau_{\mathrm{mix}} \gtrsim \tau_{\mathrm{rxn}}
+```
+
+then local reaction zones can form near the gas-liquid interface or injection region. The bulk pH and average speciation may still look reasonable after the cycle, but local high-pH pockets can temporarily overproduce carbonate before the batch homogenizes.
+
+### 7.4 How This Connects to GL-260 Cycle Detection
+
+GL-260 does not need to solve a full kinetic ODE model to use kinetics operationally. The detected cycle provides an integrated uptake event:
+
+```latex
+\Delta n_{\mathrm{CO_2},i}
+=
+\int_{t_{i,start}}^{t_{i,end}} N_{\mathrm{CO_2}}(t)\ dt
+```
+
+and the equilibrium solver uses that integrated event as the carbon-loading increment:
+
+```latex
+m_{\mathrm{CO_2,cum},k}
+=
+\sum_{i=1}^{k} \Delta m_{\mathrm{CO_2},i}
+```
+
+Kinetics still matters because it explains whether the integrated event is trustworthy and complete. A sharp pressure drop followed by a stable tail suggests the cycle may have approached its local endpoint. A slow decay, reheating, or unstable derivative can indicate that transfer, reaction, or mixing was still active when the event boundary was chosen.
+
+For presentation purposes, the clean separation is:
+
+- **Kinetics:** how quickly CO2 is absorbed and reacted during a cycle.
+- **Equilibrium:** what pH and speciation the batch reaches after that uptake is accepted.
+- **Calibration:** how measured pH anchors correct the cycle trajectory when the real process differs from the modeled ideal.
+
+---
+
+## 8) Cycle Uptake Math
 Cycle-level uptake is converted into cumulative carbon loading, which becomes the cycle-by-cycle driver of equilibrium state updates.
 
 !!! info "Derivation Walkthrough"
@@ -644,7 +906,7 @@ Cycle-level uptake is converted into cumulative carbon loading, which becomes th
 
     **Why this changes operation:** this conversion maps real cycle operation to carbonate chemistry state, so accurate loading is required to keep the process in the bicarbonate-dominant region needed for purer NaHCO3.
 
-### 7.1 Primary (Locked) Synthetic Cycle Uptake Sequence
+### 8.1 Primary (Locked) Synthetic Cycle Uptake Sequence
 
 !!! note "Calculation Legend"
     - \(\Delta m_{\mathrm{CO_2},i}\): CO2 mass uptake during cycle `i` [`g`]
@@ -669,7 +931,7 @@ m_{CT,k} = \frac{\left(m_{\mathrm{CO_2,cum},k} / MW_{\mathrm{CO_2}}\right)}{kg_{
 <div class="inline-chart-anchor" data-inline-chart="uptake-loading"></div>
 
 
-### 7.2 Operational Reference: Pressure-Derived Uptake
+### 8.2 Operational Reference: Pressure-Derived Uptake
 
 !!! note "Calculation Legend"
     - \(\Delta P_{\mathrm{psi}}\), \(\Delta P_{\mathrm{atm}}\): pressure drop per cycle [`psi`, `atm`]
@@ -709,7 +971,7 @@ n_{\mathrm{CO_2},i} = \frac{1.7012\ \mathrm{atm} \times 15\ \mathrm{L}}{0.082057
 
 ---
 
-## 8) Worked NaOH-Pitzer Simulation Table (Synthetic Cycles to 900 g)
+## 9) Worked NaOH-Pitzer Simulation Table (Synthetic Cycles to 900 g)
 
 !!! note "Calculation Legend"
     - `CT`: total inorganic carbon molality [\(mol kg^{-1}\)]
@@ -746,13 +1008,11 @@ Interpretation:
 - Around `~385 g` cumulative CO2, the system approaches Stage-1 equivalence (NaOH mostly consumed).
 - By late cycles, bicarbonate dominates and pH approaches the bicarbonate-buffer region.
 
----
-
-## 9) Worked Real-World Example: PR-24304 Sodium Bicarbonate Batch 1
+## 10) Worked Real-World Example: PR-24304 Sodium Bicarbonate Batch 1
 
 This section connects the derivation to a real GL-260 presentation artifact rather than the locked synthetic cycle sequence.
 
-### 9.1 Profile Basis and Stoichiometric Translation
+### 10.1 Profile Basis and Stoichiometric Translation
 
 !!! note "Calculation Legend"
     - `profile`: saved GL-260 analysis configuration used to reproduce plotting and reaction-basis context.
@@ -788,7 +1048,7 @@ m_{\mathrm{CO_2,stoich}} = 17.55\ \mathrm{mol} \times 44.01\ \mathrm{g\ mol^{-1}
 
 This number is a presentation anchor: it is the ideal CO2 requirement for complete conversion to sodium bicarbonate before yield losses, gas holdup uncertainty, incomplete absorption, or measurement corrections are considered.
 
-### 9.2 Reading the Combined Triple-Axis Plot
+### 10.2 Reading the Combined Triple-Axis Plot
 
 ![PR-24304 Batch 1 Day 1-6 combined triple-axis plot](assets/equilibrium-walkthrough/pr-24304-batch-1-day-1-6-combined-triple-axis.png)
 
@@ -800,7 +1060,7 @@ The combined triple-axis plot is the process-history view. During a live explana
 
 The equilibrium math does not replace this plot. The plot tells GL-260 where the physical events are; the equilibrium model interprets what those events imply for pH and carbonate speciation.
 
-### 9.3 Reading the Speciation Timeline Plot
+### 10.3 Reading the Speciation Timeline Plot
 
 ![PR-24304 Batch 1 Day 1-6 cycle speciation timeline](assets/equilibrium-walkthrough/pr-24304-batch-1-cycle-speciation-timeline-day-1-6.png)
 
@@ -815,7 +1075,7 @@ Early in the run, high hydroxide activity drives carbonate formation.
 As CO2 loading increases and hydroxide is consumed, the system moves through the carbonate-rich region and toward bicarbonate dominance. 
 The HMW Pitzer model makes that crossover more realistic by correcting sodium-carbonate activities in the concentrated electrolyte regime.
 
-### 9.4 How To Narrate the Real-Data Chain
+### 10.4 How To Narrate the Real-Data Chain
 
 Use this sequence when presenting the PR-24304 example:
 
@@ -829,7 +1089,7 @@ Peak/trough markers define cycle events, stoichiometry defines the target, Pitze
 
 ---
 
-## 10) Measured-pH Calibration + Hybrid ML Correction (Analysis Mode)
+## 11) Measured-pH Calibration + Hybrid ML Correction (Analysis Mode)
 Measured anchors reshape the baseline simulation, and ML residual correction is only accepted when anchor quality is preserved.
 
 !!! info "Derivation Walkthrough"
@@ -839,7 +1099,7 @@ Measured anchors reshape the baseline simulation, and ML residual correction is 
 
     **Why this changes operation:** the hybrid path improves predictions without sacrificing bicarbonate-control trust; if anchor fidelity degrades, fail-closed fallback prevents purity decisions from being driven by unstable corrections.
 
-### 10.1 Locked Multi-Anchor Example
+### 11.1 Locked Multi-Anchor Example
 
 !!! note "Calculation Legend"
     - `r_5`, `r_9`: anchor residuals (`measured - baseline`) in pH units
@@ -851,7 +1111,7 @@ Measured anchors reshape the baseline simulation, and ML residual correction is 
 Baseline model at those cycles from the selected-profile pre-calibration run:
 
 - Cycle 5 baseline pH = `9.1483`
-- Cycle 9 baseline pH = `7.8151`
+- Cycle 9 baseline pH = `8.7016`
 
 Anchor residuals (`measured - baseline`):
 
@@ -860,13 +1120,13 @@ r_{5} = 9.74 - 9.1483 = +0.5917\ \mathrm{pH}
 ```
 
 ```latex
-r_{9} = 9.34 - 7.8151 = +1.5249\ \mathrm{pH}
+r_{9} = 9.34 - 8.7016 = +0.6384\ \mathrm{pH}
 ```
 
 <div class="inline-chart-anchor" data-inline-chart="anchor-residuals"></div>
 
 
-### 10.2 Baseline Piecewise Calibration Objective
+### 11.2 Baseline Piecewise Calibration Objective
 
 !!! note "Calculation Legend"
     - `J(s)`: objective value used to score scale factor `s` `[-]`
@@ -920,7 +1180,7 @@ This stage outputs:
 - corrected pH series,
 - corrected fractions series.
 
-### 10.3 Historical Anchors and Cross-Run Learning
+### 11.3 Historical Anchors and Cross-Run Learning
 
 !!! note "Calculation Legend"
     - `manual anchor`: measured pH entered for the current run/profile.
@@ -961,7 +1221,7 @@ s_{\mathrm{prior},k} = \mathrm{mean}(s_{\mathrm{history},k})
 
 for cycle `k` where compatible samples exist. The calibration optimizer can then use that prior to start closer to the behavior previously observed for similar NaOH/CO2 runs.
 
-### 10.4 Why Prediction Accuracy Improves Every Run
+### 11.4 Why Prediction Accuracy Improves Every Run
 
 Each new measured pH anchor supplies a direct observation of the real batch state. The baseline Pitzer model predicts the chemistry from stoichiometry, gas uptake, and activity corrections; the anchor tells the app how the real process deviated from that baseline.
 
@@ -988,7 +1248,7 @@ The result is not an uncontrolled drift. The app applies guardrails:
 
 That is why the presentation can frame historical anchors as accuracy improvement rather than curve-fitting: every accepted correction must preserve observed anchor fidelity and remain consistent with the carbonate equilibrium framework.
 
-### 10.5 Residual ML Ridge Correction Stage
+### 11.5 Residual ML Ridge Correction Stage
 
 !!! note "Calculation Legend"
     - \(\mathbf{x}\): raw feature vector for one cycle
@@ -1041,7 +1301,7 @@ pH_{\mathrm{ML\ corrected}} = \mathrm{clamp}(pH_{\mathrm{baseline\ corrected}} +
 
 Fractions are then recomputed from corrected pH using equilibrium-consistent fallback mapping.
 
-### 10.6 Fail-Closed Anchor Guard (Apply/Reject Logic)
+### 11.6 Fail-Closed Anchor Guard (Apply/Reject Logic)
 
 !!! note "Calculation Legend"
     - \(\mathrm{MAE}_{\mathrm{ML,anchors}}\), \(\mathrm{MAE}_{\mathrm{baseline,anchors}}\): anchor MAE values in pH units
@@ -1064,7 +1324,7 @@ If either check fails, runtime status is fail-closed to baseline corrected serie
 
 ---
 
-## 11) How Dashboard Values Are Computed
+## 12) How Dashboard Values Are Computed
 Dashboard metrics follow strict precedence and clamp logic so operator-facing status remains consistent with analysis outputs.
 
 !!! info "Derivation Walkthrough"
@@ -1074,7 +1334,7 @@ Dashboard metrics follow strict precedence and clamp logic so operator-facing st
 
     **Why this changes operation:** operators receive consistent status semantics even when multiple modeling channels are present.
 
-### 11.1 Required CO2 Source Precedence
+### 12.1 Required CO2 Source Precedence
 
 !!! note "Calculation Legend"
     - Arrow direction indicates strict precedence order for the required CO2 source channel.
@@ -1084,7 +1344,7 @@ Dashboard metrics follow strict precedence and clamp logic so operator-facing st
 \text{guidance\_model} \rightarrow \text{measured\_ph\_calibration} \rightarrow \text{planning\_reference}
 ```
 
-### 11.2 Target Gap and Completion
+### 12.2 Target Gap and Completion
 
 !!! note "Calculation Legend"
     - \(m_{\mathrm{required}}\): required CO2 mass target [`g`]
@@ -1109,7 +1369,7 @@ Corrected planning completion:
 C_{\mathrm{corr}} = \mathrm{clamp}\left(\frac{m_{\mathrm{corrected\ uptake}}}{m_{\mathrm{planning\ reference}}}, 0, 1\right)\times 100
 ```
 
-### 11.3 Corrected vs Baseline pH Channels
+### 12.3 Corrected vs Baseline pH Channels
 
 - Baseline calculated/equilibrium pH channel remains available.
 - Corrected channel is produced by measured-anchor calibration.
@@ -1117,7 +1377,7 @@ C_{\mathrm{corr}} = \mathrm{clamp}\left(\frac{m_{\mathrm{corrected\ uptake}}}{m_
 
 ---
 
-## 12) Presenter Navigation and Reproducibility Notes
+## 13) Presenter Navigation and Reproducibility Notes
 The artifact is fully regenerable from this markdown source with deterministic build and check commands.
 
 For live presentation, the generated HTML includes:
@@ -1133,7 +1393,7 @@ For live presentation, the generated HTML includes:
 
 The recommended flow is:
 
-1. Use **Start Walkthrough** for the derivation-heavy opening.
+1. Use **Start Walkthrough** to begin with the locked basis setup before moving into the derivation.
 2. Use the section selector to jump directly to **Worked Real-World Example** when moving from theory to PR-24304 data.
 3. Use **Slide Mode** for large-room presentation.
 4. Use **Print/PDF** when a static handout is needed.

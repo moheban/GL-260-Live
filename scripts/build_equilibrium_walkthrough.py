@@ -1050,7 +1050,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         <div class="hero-metric"><span class="label">Temperature</span><span class="value">25 C</span></div>
         <div class="hero-metric"><span class="label">Cumulative CO2</span><span class="value">900 g</span></div>
       </div>
-      <a class="hero-cta" id="start-walkthrough" href="#2-equilibrium-half-reactions-constants-and-activities">Start Walkthrough</a>
+      <a class="hero-cta" id="start-walkthrough" href="#1-basis-setup-700-g-naoh-in-2200-ml-water">Start Walkthrough</a>
     </div>
   </header>
 
@@ -1102,7 +1102,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       </article>
       <section id="cycle-trend-panel" class="surface chart-panel" aria-label="Cycle trend highlights">
         <h2>Cycle Trend Highlights</h2>
-        <p>Use these tabs to inspect how loading, hydroxide depletion, and fraction crossover control bicarbonate formation through the Section 8 worked table.</p>
+        <p>Use these tabs to inspect how loading, hydroxide depletion, and fraction crossover control bicarbonate formation through the Section 9 worked table.</p>
         <div class="chart-module" id="cycle-chart-module">
           <div class="chart-tabs" role="tablist" aria-label="Cycle trend chart views">
             <button id="cycle-tab-ph" class="chart-tab" type="button" role="tab" aria-selected="true" aria-controls="cycle-chart-view-ph">pH + m_OH</button>
@@ -2207,7 +2207,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
                 {{
                   type: "line",
                   label: "Baseline pH",
-                  data: [9.1483, 7.8151],
+                  data: [9.1483, 8.7016],
                   yAxisID: "y",
                   borderColor: "#5568ff",
                   backgroundColor: "rgba(85, 104, 255, 0.14)",
@@ -2229,7 +2229,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
                 {{
                   type: "bar",
                   label: "Residual (pH)",
-                  data: [0.5917, 1.5249],
+                  data: [0.5917, 0.6384],
                   yAxisID: "y2",
                   borderColor: "#0daec0",
                   backgroundColor: "rgba(13, 174, 192, 0.22)",
@@ -2537,7 +2537,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             event.preventDefault();
             if (sectionHeadings.length) {{
               const deepDiveIndex = resolveSectionIndexById(
-                "2-equilibrium-half-reactions-constants-and-activities"
+                "1-basis-setup-700-g-naoh-in-2200-ml-water"
               );
               navigateToSection(deepDiveIndex === null ? 0 : deepDiveIndex, true);
               return;
@@ -2553,7 +2553,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         if (realDataJump) {{
           realDataJump.addEventListener("click", function () {{
             const realDataIndex = resolveSectionIndexById(
-              "9-worked-real-world-example-pr-24304-sodium-bicarbonate-batch-1"
+              "10-worked-real-world-example-pr-24304-sodium-bicarbonate-batch-1"
             );
             navigateToSection(realDataIndex === null ? currentSectionIndex : realDataIndex, true);
           }});
