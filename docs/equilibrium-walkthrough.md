@@ -460,6 +460,8 @@ GL-260 uses this residual as the solver objective. During the pH solve, the mode
 
 where \(\epsilon_{\mathrm{charge}}\) is the solver tolerance. This matters operationally because the pH value is only useful if the accompanying carbonate distribution also conserves charge. A low residual means the displayed pH, bicarbonate fraction, carbonate fraction, hydroxide inventory, and sodium basis all describe the same feasible solution state.
 
+<div class="inline-module-anchor" data-inline-module="charge-balance-visual"></div>
+
 ### 4.1 Deriving the Alpha Fractions From the Equilibrium Constants
 
 The alpha fractions are not fitted fractions. They fall directly out of the carbonate acid equilibria once \([H^+]\) is known.
@@ -970,6 +972,8 @@ n_{\mathrm{CO_2},i} = \frac{1.7012\ \mathrm{atm} \times 15\ \mathrm{L}}{0.082057
 ```latex
 \Delta m_{\mathrm{CO_2},i} = 1.0430\ \mathrm{mol} \times 44.01\ \mathrm{g\ mol^{-1}} = 45.90\ \mathrm{g}
 ```
+
+<div class="inline-module-anchor" data-inline-module="cycle-flow-visual"></div>
 
 ---
 

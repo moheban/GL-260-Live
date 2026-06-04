@@ -980,6 +980,40 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     .equilibrium-bar-bicarbonate {{ background: #1eb46e; }}
     .equilibrium-bar-carbonate {{ background: #d99221; }}
     .equilibrium-bar-value {{ color: #19384a; font-family: var(--heading-font); font-size: 0.82rem; text-align: right; }}
+    .calculation-visual-module {{ margin: 1rem 0 1.25rem; border: 1px solid #cfe3ec; border-radius: 12px; background: #fcfeff; padding: 14px; display: grid; gap: 14px; overflow: hidden; }}
+    .calculation-visual-title {{ margin: 0; color: #19384a; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.86rem; font-family: var(--heading-font); }}
+    .calculation-visual-copy {{ margin: 4px 0 0; color: #345468; }}
+    .charge-balance-grid {{ display: grid; grid-template-columns: minmax(220px, 0.85fr) minmax(260px, 1.15fr); gap: 14px; }}
+    .charge-balance-controls, .charge-balance-visual, .cycle-flow-controls, .cycle-flow-stage {{ border: 1px solid #d8e8ee; border-radius: 10px; background: rgba(255,255,255,0.76); padding: 12px; }}
+    .charge-balance-controls {{ display: grid; gap: 10px; align-content: start; }}
+    .charge-balance-slider-row {{ display: grid; gap: 6px; }}
+    .charge-balance-slider-row label, .cycle-flow-controls label {{ color: #2c4d61; font-size: 0.82rem; font-family: var(--heading-font); }}
+    .charge-balance-slider-row input[type="range"], .cycle-flow-controls input[type="range"] {{ width: 100%; accent-color: #1fb8cb; }}
+    .charge-residual-readout {{ border-left: 3px solid #1fb8cb; border-radius: 8px; background: rgba(239,248,250,0.74); padding: 8px 10px; color: #345468; }}
+    .charge-residual-readout strong {{ display: block; color: #102839; font-family: var(--heading-font); font-size: 1.3rem; }}
+    .charge-balance-visual {{ display: grid; gap: 12px; }}
+    .charge-balance-panels {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }}
+    .charge-pool {{ display: grid; gap: 7px; }}
+    .charge-pool h4 {{ margin: 0; color: #19384a; font-size: 0.9rem; font-family: var(--heading-font); }}
+    .charge-meter {{ height: 12px; border-radius: 999px; background: #e7f1f5; overflow: hidden; }}
+    .charge-meter span {{ display: block; height: 100%; width: 0%; border-radius: inherit; transition: width 180ms ease; }}
+    .charge-meter-positive span {{ background: #3fa2ff; }}
+    .charge-meter-negative span {{ background: #d99221; }}
+    .charge-pool-value {{ color: #19384a; font-family: var(--heading-font); }}
+    .charge-balance-beam {{ position: relative; min-height: 52px; display: grid; place-items: center; }}
+    .charge-balance-beam span {{ display: block; width: min(360px, 90%); height: 8px; border-radius: 999px; background: linear-gradient(90deg, #3fa2ff, #1eb46e 50%, #d99221); transform: rotate(0deg); transition: transform 180ms ease; }}
+    .charge-balance-status {{ min-height: 44px; color: #345468; }}
+    .cycle-flow-grid {{ display: grid; gap: 12px; }}
+    .cycle-flow-controls {{ display: grid; grid-template-columns: minmax(180px, 0.6fr) minmax(220px, 1fr); gap: 12px; align-items: center; }}
+    .cycle-flow-stages {{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }}
+    .cycle-flow-stage {{ min-height: 104px; display: grid; align-content: start; gap: 6px; position: relative; }}
+    .cycle-flow-stage::after {{ content: ""; position: absolute; right: -8px; top: 50%; width: 8px; height: 2px; background: #bdd7e2; }}
+    .cycle-flow-stage:last-child::after {{ display: none; }}
+    .cycle-flow-stage span {{ color: #5f7888; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }}
+    .cycle-flow-stage strong {{ color: #102839; font-family: var(--heading-font); font-size: 1.05rem; }}
+    .cycle-flow-stage p {{ margin: 0; color: #345468; font-size: 0.86rem; }}
+    .cycle-flow-stage.is-active {{ border-color: #58b9b7; box-shadow: 0 10px 22px rgba(13, 81, 95, 0.1); }}
+    .cycle-flow-summary {{ border-left: 3px solid #1fb8cb; border-radius: 8px; background: rgba(239,248,250,0.74); padding: 8px 10px; color: #345468; }}
     .reveal-node {{ opacity: 0; transform: translateY(12px); transition: opacity 360ms ease, transform 360ms ease; }}
     .reveal-node.is-visible {{ opacity: 1; transform: translateY(0); }}
     .footer {{ font-size: 0.85rem; color: #496578; margin-top: 1.8rem; border-top: 1px solid #d9e9f3; padding-top: 0.75rem; }}
@@ -1011,6 +1045,10 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       .equilibrium-network {{ grid-template-columns: 1fr; }}
       .equilibrium-arrow {{ display: none; }}
       .equilibrium-toggle-group {{ grid-template-columns: 1fr; }}
+      .charge-balance-grid, .cycle-flow-controls {{ grid-template-columns: 1fr; }}
+      .charge-balance-panels {{ grid-template-columns: 1fr; }}
+      .cycle-flow-stages {{ grid-template-columns: 1fr; }}
+      .cycle-flow-stage::after {{ display: none; }}
       .content table.reaction-map {{
         display: block;
         border: 0;
@@ -1525,6 +1563,197 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         updateModule();
       }}
 
+      function ensureChargeBalanceVisualModule() {{
+        if (document.getElementById("charge-balance-visual-module")) {{
+          return;
+        }}
+        const anchor = findInlineModuleAnchor("charge-balance-visual");
+        if (!(anchor && anchor.parentNode)) {{
+          return;
+        }}
+        const module = document.createElement("section");
+        module.id = "charge-balance-visual-module";
+        module.className = "calculation-visual-module";
+        module.setAttribute("aria-label", "Charge balance solver visual module");
+        module.innerHTML = `
+          <div>
+            <p class="calculation-visual-title">Charge Balance Solver Visual</p>
+            <p class="calculation-visual-copy">Move the trial pH and watch the positive and negative charge pools converge toward the solver target.</p>
+          </div>
+          <div class="charge-balance-grid">
+            <div class="charge-balance-controls">
+              <div class="charge-balance-slider-row">
+                <label for="charge-balance-ph-slider">Trial pH</label>
+                <input id="charge-balance-ph-slider" type="range" min="760" max="1120" value="960" step="1">
+              </div>
+              <div class="charge-residual-readout">
+                <span>Charge residual</span>
+                <strong data-charge-residual>0.000</strong>
+              </div>
+            </div>
+            <div class="charge-balance-visual">
+              <div class="charge-balance-panels">
+                <div class="charge-pool">
+                  <h4>Positive pool</h4>
+                  <div class="charge-meter charge-meter-positive"><span data-charge-meter="positive"></span></div>
+                  <strong class="charge-pool-value" data-charge-value="positive">0.00</strong>
+                </div>
+                <div class="charge-pool">
+                  <h4>Negative pool</h4>
+                  <div class="charge-meter charge-meter-negative"><span data-charge-meter="negative"></span></div>
+                  <strong class="charge-pool-value" data-charge-value="negative">0.00</strong>
+                </div>
+              </div>
+              <div class="charge-balance-beam"><span data-charge-beam></span></div>
+              <div class="charge-balance-status" data-charge-status></div>
+            </div>
+          </div>
+        `;
+        anchor.replaceWith(module);
+
+        const slider = module.querySelector("#charge-balance-ph-slider");
+        const residualOutput = module.querySelector("[data-charge-residual]");
+        const status = module.querySelector("[data-charge-status]");
+        const beam = module.querySelector("[data-charge-beam]");
+        const meters = {{
+          positive: module.querySelector('[data-charge-meter="positive"]'),
+          negative: module.querySelector('[data-charge-meter="negative"]')
+        }};
+        const values = {{
+          positive: module.querySelector('[data-charge-value="positive"]'),
+          negative: module.querySelector('[data-charge-value="negative"]')
+        }};
+
+        function updateChargeBalance() {{
+          const pH = Number(slider ? slider.value : 960) / 100;
+          const h = Math.pow(10, -pH);
+          const kw = Math.pow(10, -14);
+          const ka1 = Math.pow(10, -6.3374);
+          const ka2 = Math.pow(10, -10.3393);
+          const ct = 5.1641;
+          const sodium = 7.9545;
+          const denominator = (h * h) + (ka1 * h) + (ka1 * ka2);
+          const alpha1 = (ka1 * h) / denominator;
+          const alpha2 = (ka1 * ka2) / denominator;
+          const oh = kw / h;
+          const positive = sodium + h;
+          const negative = oh + (alpha1 * ct) + (2 * alpha2 * ct);
+          const residual = positive - negative;
+          const maxPool = Math.max(positive, negative, 0.001);
+          if (residualOutput) {{
+            residualOutput.textContent = residual.toFixed(3);
+          }}
+          if (values.positive) {{
+            values.positive.textContent = positive.toFixed(2);
+          }}
+          if (values.negative) {{
+            values.negative.textContent = negative.toFixed(2);
+          }}
+          if (meters.positive) {{
+            meters.positive.style.width = ((positive / maxPool) * 100).toFixed(1) + "%";
+          }}
+          if (meters.negative) {{
+            meters.negative.style.width = ((negative / maxPool) * 100).toFixed(1) + "%";
+          }}
+          if (beam) {{
+            const tilt = Math.max(Math.min(residual * 5, 10), -10);
+            beam.style.transform = "rotate(" + tilt.toFixed(2) + "deg)";
+          }}
+          if (status) {{
+            if (Math.abs(residual) < 0.08) {{
+              status.textContent = "Near charge closure: this trial pH is chemically self-consistent with the reconstructed species.";
+            }} else if (residual > 0) {{
+              status.textContent = "Positive charge is too high. The solver must shift pH/speciation until anion charge catches up.";
+            }} else {{
+              status.textContent = "Negative charge is too high. The solver must shift pH/speciation back toward charge closure.";
+            }}
+          }}
+        }}
+        if (slider) {{
+          slider.addEventListener("input", updateChargeBalance);
+        }}
+        updateChargeBalance();
+      }}
+
+      function ensureCycleFlowVisualModule() {{
+        if (document.getElementById("cycle-flow-visual-module")) {{
+          return;
+        }}
+        const anchor = findInlineModuleAnchor("cycle-flow-visual");
+        if (!(anchor && anchor.parentNode)) {{
+          return;
+        }}
+        const module = document.createElement("section");
+        module.id = "cycle-flow-visual-module";
+        module.className = "calculation-visual-module";
+        module.setAttribute("aria-label", "Cycle calculation flow visual module");
+        module.innerHTML = `
+          <div>
+            <p class="calculation-visual-title">Cycle Calculation Flow</p>
+            <p class="calculation-visual-copy">Select a synthetic cycle to see how one accepted uptake event becomes loading, pH, speciation, and dashboard outputs.</p>
+          </div>
+          <div class="cycle-flow-grid">
+            <div class="cycle-flow-controls">
+              <label for="cycle-flow-slider">Cycle index</label>
+              <input id="cycle-flow-slider" type="range" min="0" max="8" value="5" step="1">
+            </div>
+            <div class="cycle-flow-stages">
+              <div class="cycle-flow-stage" data-cycle-stage="delta"><span>Accepted uptake</span><strong data-cycle-value="delta">0 g</strong><p>cycle event</p></div>
+              <div class="cycle-flow-stage" data-cycle-stage="cum"><span>Cumulative uptake</span><strong data-cycle-value="cum">0 g</strong><p>total carbon added</p></div>
+              <div class="cycle-flow-stage" data-cycle-stage="ct"><span>Carbon basis</span><strong data-cycle-value="ct">0.0000</strong><p>mol/kg CT</p></div>
+              <div class="cycle-flow-stage" data-cycle-stage="ph"><span>Equilibrium solve</span><strong data-cycle-value="ph">0.00 pH</strong><p>charge closure</p></div>
+              <div class="cycle-flow-stage" data-cycle-stage="species"><span>Dominant species</span><strong data-cycle-value="species">-</strong><p>displayed fraction</p></div>
+            </div>
+            <div class="cycle-flow-summary" data-cycle-flow-summary></div>
+          </div>
+        `;
+        anchor.replaceWith(module);
+
+        const slider = module.querySelector("#cycle-flow-slider");
+        const values = {{
+          delta: module.querySelector('[data-cycle-value="delta"]'),
+          cum: module.querySelector('[data-cycle-value="cum"]'),
+          ct: module.querySelector('[data-cycle-value="ct"]'),
+          ph: module.querySelector('[data-cycle-value="ph"]'),
+          species: module.querySelector('[data-cycle-value="species"]')
+        }};
+        const summary = module.querySelector("[data-cycle-flow-summary]");
+        const stages = Array.from(module.querySelectorAll("[data-cycle-stage]"));
+        const data = [
+          {{ cycle: 0, delta: 0, cum: 0, ct: 0.0000, ph: 15.2672, species: "OH-", frac: 1.0 }},
+          {{ cycle: 1, delta: 80, cum: 80, ct: 0.8263, ph: 15.1608, species: "CO3^2-", frac: 1.0 }},
+          {{ cycle: 2, delta: 90, cum: 170, ct: 1.7558, ph: 15.0093, species: "CO3^2-", frac: 1.0 }},
+          {{ cycle: 3, delta: 100, cum: 270, ct: 2.7886, ph: 14.7436, species: "CO3^2-", frac: 1.0 }},
+          {{ cycle: 4, delta: 110, cum: 380, ct: 3.9247, ph: 13.4003, species: "CO3^2-", frac: 1.0 }},
+          {{ cycle: 5, delta: 120, cum: 500, ct: 5.1641, ph: 9.6257, species: "CO3^2-", frac: 0.5404 }},
+          {{ cycle: 6, delta: 130, cum: 630, ct: 6.5068, ph: 9.2061, species: "HCO3-", frac: 0.7771 }},
+          {{ cycle: 7, delta: 130, cum: 760, ct: 7.8495, ph: 8.2255, species: "HCO3-", frac: 0.9810 }},
+          {{ cycle: 8, delta: 140, cum: 900, ct: 9.2954, ph: 7.8538, species: "HCO3-", frac: 0.9867 }}
+        ];
+
+        function updateCycleFlow() {{
+          const index = Math.max(0, Math.min(data.length - 1, Number(slider ? slider.value : 5)));
+          const row = data[index];
+          if (values.delta) {{ values.delta.textContent = row.delta + " g"; }}
+          if (values.cum) {{ values.cum.textContent = row.cum + " g"; }}
+          if (values.ct) {{ values.ct.textContent = row.ct.toFixed(4); }}
+          if (values.ph) {{ values.ph.textContent = row.ph.toFixed(2) + " pH"; }}
+          if (values.species) {{ values.species.textContent = row.species; }}
+          stages.forEach(function (stage, stageIndex) {{
+            stage.classList.toggle("is-active", stageIndex <= Math.min(index, 4));
+          }});
+          if (summary) {{
+            summary.textContent =
+              "Cycle " + row.cycle + " carries " + row.cum + " g cumulative CO2 into the equilibrium solve; the model reports " +
+              row.ph.toFixed(2) + " pH with " + row.species + " as the dominant state (" + Math.round(row.frac * 100) + "%).";
+          }}
+        }}
+        if (slider) {{
+          slider.addEventListener("input", updateCycleFlow);
+        }}
+        updateCycleFlow();
+      }}
+
       function ensureCycleTrendPanelInline() {{
         if (!cycleTrendPanel) {{
           return;
@@ -1715,7 +1944,9 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       }}
 
       function initializeLayoutPhase() {{
+        ensureChargeBalanceVisualModule();
         ensureEquilibriumInterplayModule();
+        ensureCycleFlowVisualModule();
         ensureCycleTrendPanelInline();
         if (filterInput) {{
           filterInput.addEventListener("input", applyFilter);
@@ -1731,7 +1962,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       function markRevealNodes() {{
         const revealNodes = Array.from(
           content.querySelectorAll(
-            "h2, h3, p, ul, ol, blockquote, table, pre, img, .admonition, .math-display-block, .math-inline-display, .inline-chart-mount, .equilibrium-interplay-module, .chart-panel-inline"
+            "h2, h3, p, ul, ol, blockquote, table, pre, img, .admonition, .math-display-block, .math-inline-display, .inline-chart-mount, .equilibrium-interplay-module, .calculation-visual-module, .chart-panel-inline"
           )
         );
         for (const node of revealNodes) {{
