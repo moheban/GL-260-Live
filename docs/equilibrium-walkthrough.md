@@ -52,7 +52,7 @@ All values in this document are locked to one deterministic scenario so intermed
     - \(n_{\mathrm{CO_2,eq1}}\), \(n_{\mathrm{CO_2,eq2}}\): CO2 mole endpoints [`mol`]
     - \(m_{\mathrm{CO_2,eq1}}\), \(m_{\mathrm{CO_2,eq2}}\): CO2 mass endpoints [`g`]
 
-Converting mass to molarity/molality defines the two stoichiometric landmarks used for later calculations.
+Converting mass to molarity/molality defines the two stoichiometric constants used for later calculations.
 
 !!! info "Derivation Walkthrough"
     **Goal:** Convert NaOH mass into concentration terms that is used in every later equilibrium equation.
@@ -189,7 +189,7 @@ For fixed-headspace mode, dissolved CO2 boundary is constrained by Henry's law:
 !!! note "Calculation Legend"
     - \(K_{a1}\): first dissociation constant `[-]`
     - \(K_{a2}\): second dissociation constant `[-]`
-    - `K_w`: water autoionization constant `[-]`
+    - \(K_{w}\): water autoionization constant `[-]`
 
 
 In `naoh_co2_pitzer_ph_model.py`:
@@ -219,7 +219,7 @@ For dilute solutions, we can often use concentration directly:
 a_i \approx m_i
 ```
 
-In dilute solutions, that approximation means each dissolved species behaves as though it were alone in water. Starting conditions when synthesizing sodium bicarbonate is not dilute: a 700 g NaOH charge in 2.2 kg water gives roughly `7.95 mol/kg` sodium basis before CO2 loading. 
+In dilute solutions, that approximation means each dissolved species behaves as though it were alone in water. Starting conditions when synthesizing sodium bicarbonate is not dilute: a 700 g NaOH charge in 2.2 kg water gives roughly `7.95 mol/kg` molality before CO2 loading. 
 
 At that ionic strength, sodium, hydroxide, bicarbonate, and carbonate are **not** independent. Each ion is surrounded by an ionic atmosphere, and the thermodynamic effective concentration is activity:
 
@@ -243,7 +243,7 @@ not simply:
 \mathrm{pH} = -\log_{10}(m_{\mathrm{H^+}})
 ```
 
-The difference is why we treat the Pitzer path as the best sodium bicarbonate prediction path instead of relying only on ideal alpha fractions.
+The difference is why we treat the Pitzer path as the best sodium bicarbonate prediction path instead of just relying only on ideal alpha fractions.
 
 ---
 
@@ -259,7 +259,7 @@ The overall equilibrium relationship is explicitly tied to the half-reaction con
 !!! info "Derivation Walkthrough"
     **Goal:** show the derivation of the overall equilibrium expression.
 
-    **Step-by-step interpretation:** define each half reaction, write \(K_{b1}\) and \(K_{b2}\) in activity form, then multiply them to recover the overall expression and map to \({K_{a1}, K_{a2}, K_w}\).
+    **Step-by-step interpretation:** define each half reaction, write \(K_{b1}\) and \(K_{b2}\) in activity form, then multiply them to recover the overall expression and map to \({K_{a1}, K_{a2}, K_{w}}\).
 
     **Why this matters:** this will be the expression later calculations will be based on
 
@@ -382,17 +382,17 @@ K_{eq,\mathrm{overall}}
 
 !!! note "Calculation Legend"
     - \([H^+]\), \([\mathrm{OH^-}]\), \([\mathrm{CO_2^*}]\), \([\mathrm{HCO_3^-}]\), \([\mathrm{CO_3^{2-}}]\), \([\mathrm{Na^+}]\): concentration/molarity-like model terms [\(mol L^{-1}\) or model-consistent concentration basis]
-    - `C_T`: total inorganic carbon concentration on the same basis as reconstructed species
+    - \(C_{T}\): total inorganic carbon concentration on the same basis as reconstructed species
     - \(\alpha_0\), \(\alpha_1\), \(\alpha_2\): species fractions `[-]`
-    - `D`: shared denominator in alpha-fraction identities
-    - `R_q`: charge-balance residual on concentration basis (target is zero)
+    - \(D\): shared denominator in alpha-fraction identities
+    - \(R_{q}\): charge-balance residual on concentration basis (target is zero)
 
-GL-260 solves charge balance to recover `[H+]`, then reconstructs species fractions and pH consistently from that solution.
+GL-260 solves charge balance to recover \([H^+]\), then reconstructs species fractions and pH consistently from that solution.
 
 !!! info "Derivation Walkthrough"
     **Goal:** recover all carbonate species and pH from one consistent solution variable (\([H^+]\)).
 
-    **Step-by-step interpretation:** compute the shared denominator `D`, derive \(\alpha_0/\alpha_1/\alpha_2\), reconstruct species with `C_T`, then close with charge-balance residual `R_q = 0`.
+    **Step-by-step interpretation:** compute the shared denominator \(D\), derive \(\alpha_0/\alpha_1/\alpha_2\), reconstruct species with \(C_{T}\), then close with charge-balance residual \(R_{q}\) = 0.
 
     **Why this changes operation:** bicarbonate-control decisions are only trustworthy when one solved state satisfies both speciation and charge closure; otherwise purity guidance can point to the wrong operating region.
 
@@ -527,15 +527,15 @@ The pH solver is therefore doing one central job: find the \([H^+]\) value where
 !!! note "Calculation Legend"
     - \(\frac{a_{\mathrm{HCO_3^-}}}{a_{\mathrm{CO_3^{2-}}}}\): bicarbonate-to-carbonate activity ratio `[-]`
     - \(a_{\mathrm{OH^-}}\): hydroxide activity `[-]`
-    - \(K_{a2}\), `K_w`, \(K_{b2}\): equilibrium constants `[-]`
-    - \(p_{\mathrm{CO_2}}\): headspace CO2 partial pressure [`atm`]
+    - \(K_{a2}\), \(K_{w}\), \(K_{b2}\): equilibrium constants `[-]`
+    - \(p_{\mathrm{CO_2}}\): headspace \(CO_{2}\) partial pressure [`atm`]
 
-At high alkalinity, carbonate is strongly favored unless dissolved CO2 is driven high enough to consume free hydroxide and shift the distribution back toward bicarbonate.
+At high alkalinity, carbonate is strongly favored unless dissolved \(CO_{2}\) is driven high enough to consume free hydroxide and shift the distribution back toward bicarbonate.
 
 !!! info "Derivation Walkthrough"
-    **Goal:** make the bicarbonate-to-carbonate ratio dependence explicit in terms of hydroxide activity and pCO2.
+    **Goal:** make the bicarbonate-to-carbonate ratio dependence explicit in terms of hydroxide activity and \(p_{\mathrm{CO_2}}\).
 
-    **Step-by-step interpretation:** start with the second base equilibrium, rearrange into \(a_{\mathrm{HCO_3^-}}/a_{\mathrm{CO_3^{2-}}}\), then substitute Henry's law to connect dissolved CO2 directly to \(p_{\mathrm{CO_2}}\).
+    **Step-by-step interpretation:** start with the second base equilibrium, rearrange into \(a_{\mathrm{HCO_3^-}}/a_{\mathrm{CO_3^{2-}}}\), then substitute Henry's law to connect dissolved \(CO_{2}\) directly to \(p_{\mathrm{CO_2}}\).
 
     **Why this changes operation:** increasing \(p_{\mathrm{CO_2}}\) is the practical purity lever because it promotes bicarbonate-forming chemistry and suppresses the over-conversion pathway that creates excess carbonate.
 
@@ -570,17 +570,19 @@ From the second equilibrium:
 \frac{a_{\mathrm{HCO_3^-}}}{a_{\mathrm{CO_3^{2-}}}} = \frac{K_w}{K_{a2} \times a_{\mathrm{OH^-}}}
 ```
 
-This ratio increases as `a_OH` drops. In fixed-headspace operation:
+This ratio increases as \(a_{OH}\) drops. In fixed-headspace operation:
 
 ```latex
 [\mathrm{CO_2^*}] = K_H \times p_{\mathrm{CO_2}}
 ```
 
-so increasing `pCO2` raises dissolved CO2, which consumes alkalinity, lowers `a_OH`, and therefore raises the bicarbonate-to-carbonate ratio.
+so increasing \(p_{CO_{2}}\) raises dissolved \(CO_{2}\), which consumes alkalinity, lowers \(a_{OH}\), and therefore raises the bicarbonate-to-carbonate ratio.
+
+<div class="inline-module-anchor" data-inline-module="equilibrium-interplay"></div>
 
 Under the locked walkthrough assumptions (25 C, 700 g NaOH, 2,200 mL water), a compact sensitivity sweep is:
 
-| pCO2 (atm) | pH | H2CO3* frac | HCO3- frac | CO3^2- frac |
+| \(p_{CO_{2}}\) (atm) | pH | \(\mathrm{H_2CO_3^-}\) frac | \(\mathrm{HCO_3^-}\) frac | \(\mathrm{CO_3^2-}\) frac |
 | --- | ---: | ---: | ---: | ---: |
 | 0.10 | 10.25 | 0.0002 | 0.1820 | 0.8178 |
 | 0.50 | 9.85 | 0.0008 | 0.4107 | 0.5885 |

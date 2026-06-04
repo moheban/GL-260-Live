@@ -911,6 +911,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       background: linear-gradient(180deg, #f2fff9 0%, #ebfbf3 100%);
     }}
     .inline-chart-anchor {{ display: block; margin: 0; }}
+    .inline-module-anchor {{ display: block; margin: 0; }}
     .inline-chart-mount {{
       margin: 0.9rem 0 1.2rem;
       border: 1px solid #d6e8f2;
@@ -939,6 +940,46 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     .pco2-sweep-chart-mount .inline-chart-title {{ margin: 0; color: #19384a; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.84rem; font-family: var(--heading-font); }}
     .pco2-sweep-chart-mount .chart-viewport {{ height: clamp(220px, 28vw, 320px); min-height: 220px; max-height: 320px; }}
     .pco2-sweep-chart-mount canvas {{ width: 100% !important; height: 100% !important; display: block; }}
+    .equilibrium-interplay-module {{ margin: 1rem 0 1.25rem; border: 1px solid #cfe3ec; border-radius: 12px; background: linear-gradient(135deg, #fcfeff 0%, #f4faf8 56%, #fffaf0 100%); padding: 14px; display: grid; gap: 14px; overflow: hidden; }}
+    .equilibrium-interplay-header {{ display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; }}
+    .equilibrium-interplay-title {{ margin: 0; color: #19384a; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.86rem; font-family: var(--heading-font); }}
+    .equilibrium-interplay-copy {{ margin: 4px 0 0; color: #345468; }}
+    .equilibrium-ph-readout {{ min-width: 92px; border: 1px solid #d7e8ec; border-radius: 10px; background: rgba(255,255,255,0.78); padding: 8px 10px; text-align: right; }}
+    .equilibrium-ph-readout span {{ display: block; color: #5f7888; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; }}
+    .equilibrium-ph-readout strong {{ display: block; color: #102839; font-size: 1.45rem; font-family: var(--heading-font); line-height: 1; }}
+    .equilibrium-interplay-grid {{ display: grid; grid-template-columns: minmax(230px, 0.9fr) minmax(260px, 1.1fr); gap: 14px; align-items: stretch; }}
+    .equilibrium-control-panel {{ border: 1px solid #d8e8ee; border-radius: 10px; background: rgba(255,255,255,0.7); padding: 12px; display: grid; gap: 12px; align-content: start; }}
+    .equilibrium-toggle-group {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }}
+    .equilibrium-toggle {{ min-height: 40px; border: 1px solid #c8dde6; border-radius: 8px; background: #f8fcfd; color: #25485d; cursor: pointer; font-family: var(--heading-font); font-size: 0.82rem; }}
+    .equilibrium-toggle[aria-pressed="true"] {{ color: #062b35; border-color: #58b9b7; background: #dff7f1; box-shadow: inset 0 0 0 1px rgba(31,184,203,0.28); }}
+    .equilibrium-slider-row {{ display: grid; gap: 6px; }}
+    .equilibrium-slider-row label {{ color: #2c4d61; font-size: 0.82rem; font-family: var(--heading-font); }}
+    .equilibrium-slider-row input[type="range"] {{ width: 100%; accent-color: #1fb8cb; }}
+    .equilibrium-status {{ min-height: 54px; border-left: 3px solid #1fb8cb; padding: 7px 9px; color: #345468; background: rgba(239,248,250,0.74); border-radius: 8px; }}
+    .equilibrium-visual-panel {{ border: 1px solid #d8e8ee; border-radius: 10px; background: rgba(255,255,255,0.72); padding: 12px; display: grid; gap: 12px; }}
+    .equilibrium-network {{ position: relative; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-items: center; min-height: 112px; }}
+    .equilibrium-node {{ position: relative; z-index: 1; min-height: 88px; border: 1px solid #d5e7ee; border-radius: 10px; background: #ffffff; padding: 10px; display: grid; gap: 6px; align-content: center; text-align: center; transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease; }}
+    .equilibrium-node.is-dominant {{ transform: translateY(-3px); border-color: #58b9b7; box-shadow: 0 10px 22px rgba(13, 81, 95, 0.12); }}
+    .equilibrium-node-label {{ color: #19384a; font-family: var(--heading-font); font-size: 0.9rem; }}
+    .equilibrium-node-value {{ color: #102839; font-size: 1.22rem; font-family: var(--heading-font); }}
+    .equilibrium-node-meter {{ height: 7px; border-radius: 999px; background: #e7f1f5; overflow: hidden; }}
+    .equilibrium-node-meter span {{ display: block; height: 100%; width: 0%; border-radius: inherit; transition: width 180ms ease; }}
+    .equilibrium-node-carbonic .equilibrium-node-meter span {{ background: #3fa2ff; }}
+    .equilibrium-node-bicarbonate .equilibrium-node-meter span {{ background: #1eb46e; }}
+    .equilibrium-node-carbonate .equilibrium-node-meter span {{ background: #d99221; }}
+    .equilibrium-arrow {{ position: absolute; top: 50%; height: 3px; border-radius: 999px; background: #b8d4de; transform: translateY(-50%); transition: height 180ms ease, background 180ms ease, opacity 180ms ease; opacity: 0.72; }}
+    .equilibrium-arrow-left {{ left: 28%; width: 16%; }}
+    .equilibrium-arrow-right {{ right: 28%; width: 16%; }}
+    .equilibrium-arrow.is-active {{ height: 7px; background: #1fb8cb; opacity: 0.95; }}
+    .equilibrium-bars {{ display: grid; gap: 8px; }}
+    .equilibrium-bar {{ display: grid; grid-template-columns: 96px minmax(0, 1fr) 48px; gap: 8px; align-items: center; }}
+    .equilibrium-bar-label {{ color: #345468; font-size: 0.82rem; }}
+    .equilibrium-bar-track {{ height: 9px; border-radius: 999px; background: #e7f1f5; overflow: hidden; }}
+    .equilibrium-bar-fill {{ display: block; height: 100%; width: 0%; border-radius: inherit; transition: width 180ms ease; }}
+    .equilibrium-bar-carbonic {{ background: #3fa2ff; }}
+    .equilibrium-bar-bicarbonate {{ background: #1eb46e; }}
+    .equilibrium-bar-carbonate {{ background: #d99221; }}
+    .equilibrium-bar-value {{ color: #19384a; font-family: var(--heading-font); font-size: 0.82rem; text-align: right; }}
     .reveal-node {{ opacity: 0; transform: translateY(12px); transition: opacity 360ms ease, transform 360ms ease; }}
     .reveal-node.is-visible {{ opacity: 1; transform: translateY(0); }}
     .footer {{ font-size: 0.85rem; color: #496578; margin-top: 1.8rem; border-top: 1px solid #d9e9f3; padding-top: 0.75rem; }}
@@ -964,6 +1005,12 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       .hero-metrics {{ grid-template-columns: 1fr; }}
       .chart-stack {{ height: clamp(200px, 52vw, 260px); min-height: 200px; max-height: 260px; }}
       .pco2-sweep-chart-mount .chart-viewport {{ height: clamp(200px, 52vw, 260px); min-height: 200px; max-height: 260px; }}
+      .equilibrium-interplay-header {{ grid-template-columns: 1fr; }}
+      .equilibrium-ph-readout {{ text-align: left; }}
+      .equilibrium-interplay-grid {{ grid-template-columns: 1fr; }}
+      .equilibrium-network {{ grid-template-columns: 1fr; }}
+      .equilibrium-arrow {{ display: none; }}
+      .equilibrium-toggle-group {{ grid-template-columns: 1fr; }}
       .content table.reaction-map {{
         display: block;
         border: 0;
@@ -1237,6 +1284,10 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         return content.querySelector('[data-inline-chart="' + String(name || "") + '"]');
       }}
 
+      function findInlineModuleAnchor(name) {{
+        return content.querySelector('[data-inline-module="' + String(name || "") + '"]');
+      }}
+
       function buildInlineChartMount(config) {{
         const anchor = config && config.anchor ? config.anchor : null;
         if (!anchor || String(anchor.tagName || "").toUpperCase() !== "DIV") {{
@@ -1272,6 +1323,206 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         mount.appendChild(viewport);
         anchor.replaceWith(mount);
         return canvas;
+      }}
+
+      function ensureEquilibriumInterplayModule() {{
+        if (document.getElementById("equilibrium-interplay-module")) {{
+          return;
+        }}
+        const anchor = findInlineModuleAnchor("equilibrium-interplay");
+        if (!(anchor && anchor.parentNode)) {{
+          return;
+        }}
+        const module = document.createElement("section");
+        module.id = "equilibrium-interplay-module";
+        module.className = "equilibrium-interplay-module";
+        module.setAttribute("aria-label", "Equilibrium interplay visual module");
+        module.innerHTML = `
+          <div class="equilibrium-interplay-header">
+            <div>
+              <p class="equilibrium-interplay-title">Equilibrium Interplay Visual</p>
+              <p class="equilibrium-interplay-copy">Changing one carbonate-family species moves the acid-base balance, pH, and final species split together.</p>
+            </div>
+            <div class="equilibrium-ph-readout">
+              <span>Predicted pH</span>
+              <strong data-equilibrium-ph>8.35</strong>
+            </div>
+          </div>
+          <div class="equilibrium-interplay-grid">
+            <div class="equilibrium-control-panel">
+              <div class="equilibrium-toggle-group" aria-label="Species perturbation">
+                <button class="equilibrium-toggle" type="button" data-equilibrium-mode="carbonic" aria-pressed="true">CO2*</button>
+                <button class="equilibrium-toggle" type="button" data-equilibrium-mode="bicarbonate" aria-pressed="false">HCO3-</button>
+                <button class="equilibrium-toggle" type="button" data-equilibrium-mode="carbonate" aria-pressed="false">CO3^2-</button>
+              </div>
+              <div class="equilibrium-slider-row">
+                <label for="equilibrium-shift-slider">Species push</label>
+                <input id="equilibrium-shift-slider" type="range" min="0" max="100" value="55" step="1">
+              </div>
+              <div class="equilibrium-status" data-equilibrium-status></div>
+            </div>
+            <div class="equilibrium-visual-panel">
+              <div class="equilibrium-network" aria-label="Carbonate equilibrium species network">
+                <span class="equilibrium-arrow equilibrium-arrow-left" data-equilibrium-arrow-left></span>
+                <span class="equilibrium-arrow equilibrium-arrow-right" data-equilibrium-arrow-right></span>
+                <div class="equilibrium-node equilibrium-node-carbonic" data-equilibrium-node="carbonic">
+                  <span class="equilibrium-node-label">CO2* / H2CO3</span>
+                  <strong class="equilibrium-node-value" data-equilibrium-value="carbonic">0%</strong>
+                  <span class="equilibrium-node-meter"><span data-equilibrium-meter="carbonic"></span></span>
+                </div>
+                <div class="equilibrium-node equilibrium-node-bicarbonate" data-equilibrium-node="bicarbonate">
+                  <span class="equilibrium-node-label">HCO3-</span>
+                  <strong class="equilibrium-node-value" data-equilibrium-value="bicarbonate">0%</strong>
+                  <span class="equilibrium-node-meter"><span data-equilibrium-meter="bicarbonate"></span></span>
+                </div>
+                <div class="equilibrium-node equilibrium-node-carbonate" data-equilibrium-node="carbonate">
+                  <span class="equilibrium-node-label">CO3^2-</span>
+                  <strong class="equilibrium-node-value" data-equilibrium-value="carbonate">0%</strong>
+                  <span class="equilibrium-node-meter"><span data-equilibrium-meter="carbonate"></span></span>
+                </div>
+              </div>
+              <div class="equilibrium-bars">
+                <div class="equilibrium-bar">
+                  <span class="equilibrium-bar-label">Carbonic</span>
+                  <span class="equilibrium-bar-track"><span class="equilibrium-bar-fill equilibrium-bar-carbonic" data-equilibrium-bar="carbonic"></span></span>
+                  <span class="equilibrium-bar-value" data-equilibrium-bar-value="carbonic">0%</span>
+                </div>
+                <div class="equilibrium-bar">
+                  <span class="equilibrium-bar-label">Bicarbonate</span>
+                  <span class="equilibrium-bar-track"><span class="equilibrium-bar-fill equilibrium-bar-bicarbonate" data-equilibrium-bar="bicarbonate"></span></span>
+                  <span class="equilibrium-bar-value" data-equilibrium-bar-value="bicarbonate">0%</span>
+                </div>
+                <div class="equilibrium-bar">
+                  <span class="equilibrium-bar-label">Carbonate</span>
+                  <span class="equilibrium-bar-track"><span class="equilibrium-bar-fill equilibrium-bar-carbonate" data-equilibrium-bar="carbonate"></span></span>
+                  <span class="equilibrium-bar-value" data-equilibrium-bar-value="carbonate">0%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+        anchor.replaceWith(module);
+
+        const pHOutput = module.querySelector("[data-equilibrium-ph]");
+        const status = module.querySelector("[data-equilibrium-status]");
+        const slider = module.querySelector("#equilibrium-shift-slider");
+        const toggles = Array.from(module.querySelectorAll("[data-equilibrium-mode]"));
+        const nodes = {{
+          carbonic: module.querySelector('[data-equilibrium-node="carbonic"]'),
+          bicarbonate: module.querySelector('[data-equilibrium-node="bicarbonate"]'),
+          carbonate: module.querySelector('[data-equilibrium-node="carbonate"]')
+        }};
+        const values = {{
+          carbonic: module.querySelector('[data-equilibrium-value="carbonic"]'),
+          bicarbonate: module.querySelector('[data-equilibrium-value="bicarbonate"]'),
+          carbonate: module.querySelector('[data-equilibrium-value="carbonate"]')
+        }};
+        const meters = {{
+          carbonic: module.querySelector('[data-equilibrium-meter="carbonic"]'),
+          bicarbonate: module.querySelector('[data-equilibrium-meter="bicarbonate"]'),
+          carbonate: module.querySelector('[data-equilibrium-meter="carbonate"]')
+        }};
+        const bars = {{
+          carbonic: module.querySelector('[data-equilibrium-bar="carbonic"]'),
+          bicarbonate: module.querySelector('[data-equilibrium-bar="bicarbonate"]'),
+          carbonate: module.querySelector('[data-equilibrium-bar="carbonate"]')
+        }};
+        const barValues = {{
+          carbonic: module.querySelector('[data-equilibrium-bar-value="carbonic"]'),
+          bicarbonate: module.querySelector('[data-equilibrium-bar-value="bicarbonate"]'),
+          carbonate: module.querySelector('[data-equilibrium-bar-value="carbonate"]')
+        }};
+        const leftArrow = module.querySelector("[data-equilibrium-arrow-left]");
+        const rightArrow = module.querySelector("[data-equilibrium-arrow-right]");
+
+        function clampNumber(value, lower, upper) {{
+          return Math.min(Math.max(value, lower), upper);
+        }}
+
+        function alphaFractionsFromPH(pH) {{
+          const h = Math.pow(10, -pH);
+          const ka1 = Math.pow(10, -6.3374);
+          const ka2 = Math.pow(10, -10.3393);
+          const denominator = (h * h) + (ka1 * h) + (ka1 * ka2);
+          return {{
+            carbonic: (h * h) / denominator,
+            bicarbonate: (ka1 * h) / denominator,
+            carbonate: (ka1 * ka2) / denominator
+          }};
+        }}
+
+        function currentMode() {{
+          const active = toggles.find(function (button) {{
+            return button.getAttribute("aria-pressed") === "true";
+          }});
+          return active ? active.getAttribute("data-equilibrium-mode") : "carbonic";
+        }}
+
+        function updateModule() {{
+          const mode = currentMode();
+          const push = clampNumber(Number(slider ? slider.value : 55) / 100, 0, 1);
+          let pH = 8.35;
+          let message = "";
+          if (mode === "carbonic") {{
+            pH = 9.25 - (2.35 * push);
+            message = "More dissolved CO2* pulls the balance acidic, suppressing carbonate and raising the carbonic-acid share.";
+          }} else if (mode === "bicarbonate") {{
+            pH = 8.05 + (0.95 * push);
+            message = "More bicarbonate holds the system near the buffer region where HCO3- dominates the split.";
+          }} else {{
+            pH = 8.90 + (1.95 * push);
+            message = "More carbonate pushes the balance basic, increasing CO3^2- and pulling pH upward.";
+          }}
+          pH = clampNumber(pH, 6.4, 11.1);
+          const fractions = alphaFractionsFromPH(pH);
+          const dominant = Object.keys(fractions).reduce(function (best, key) {{
+            return fractions[key] > fractions[best] ? key : best;
+          }}, "carbonic");
+          if (pHOutput) {{
+            pHOutput.textContent = pH.toFixed(2);
+          }}
+          if (status) {{
+            status.textContent = message;
+          }}
+          ["carbonic", "bicarbonate", "carbonate"].forEach(function (key) {{
+            const percent = clampNumber(fractions[key] * 100, 0, 100);
+            const text = percent < 1 ? percent.toFixed(1) + "%" : Math.round(percent) + "%";
+            if (values[key]) {{
+              values[key].textContent = text;
+            }}
+            if (meters[key]) {{
+              meters[key].style.width = percent.toFixed(2) + "%";
+            }}
+            if (bars[key]) {{
+              bars[key].style.width = percent.toFixed(2) + "%";
+            }}
+            if (barValues[key]) {{
+              barValues[key].textContent = text;
+            }}
+            if (nodes[key]) {{
+              nodes[key].classList.toggle("is-dominant", key === dominant);
+            }}
+          }});
+          if (leftArrow) {{
+            leftArrow.classList.toggle("is-active", mode === "carbonic" || dominant === "bicarbonate");
+          }}
+          if (rightArrow) {{
+            rightArrow.classList.toggle("is-active", mode === "carbonate" || dominant === "bicarbonate");
+          }}
+        }}
+
+        toggles.forEach(function (button) {{
+          button.addEventListener("click", function () {{
+            toggles.forEach(function (candidate) {{
+              candidate.setAttribute("aria-pressed", String(candidate === button));
+            }});
+            updateModule();
+          }});
+        }});
+        if (slider) {{
+          slider.addEventListener("input", updateModule);
+        }}
+        updateModule();
       }}
 
       function ensureCycleTrendPanelInline() {{
@@ -1464,6 +1715,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       }}
 
       function initializeLayoutPhase() {{
+        ensureEquilibriumInterplayModule();
         ensureCycleTrendPanelInline();
         if (filterInput) {{
           filterInput.addEventListener("input", applyFilter);
@@ -1479,7 +1731,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       function markRevealNodes() {{
         const revealNodes = Array.from(
           content.querySelectorAll(
-            "h2, h3, p, ul, ol, blockquote, table, pre, img, .admonition, .math-display-block, .math-inline-display, .inline-chart-mount, .chart-panel-inline"
+            "h2, h3, p, ul, ol, blockquote, table, pre, img, .admonition, .math-display-block, .math-inline-display, .inline-chart-mount, .equilibrium-interplay-module, .chart-panel-inline"
           )
         );
         for (const node of revealNodes) {{
@@ -1595,16 +1847,36 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
 
       function extractPco2SensitivitySeries() {{
         const tables = Array.from(content.querySelectorAll("table"));
-        const targetTable = tables.find(function (tableNode) {{
-          const headers = Array.from(tableNode.querySelectorAll("th")).map(function (header) {{
-            return String(header.textContent || "").trim().toLowerCase();
+        const inlineAnchor = findInlineChartAnchor("pco2-sensitivity");
+        let targetTable = null;
+        if (inlineAnchor) {{
+          let cursor = inlineAnchor.previousElementSibling;
+          while (cursor && !targetTable) {{
+            if (String(cursor.tagName || "").toUpperCase() === "TABLE") {{
+              targetTable = cursor;
+              break;
+            }}
+            cursor = cursor.previousElementSibling;
+          }}
+        }}
+        if (!targetTable) {{
+          targetTable = tables.find(function (tableNode) {{
+            const headers = Array.from(tableNode.querySelectorAll("th")).map(function (header) {{
+              return String(header.textContent || "").trim().toLowerCase();
+            }});
+            const compactHeaders = headers.map(function (header) {{
+              return header.replace(/[^a-z0-9]+/g, "");
+            }});
+            // MathML-rendered carbonate headers lose the Markdown text shape, so
+            // identify the pCO2 sweep table by stable neighboring columns too.
+            return (
+              headers.includes("pco2 (atm)") &&
+              headers.includes("ph") &&
+              compactHeaders.some(function (header) {{ return header.includes("h2co3"); }}) &&
+              tableNode.querySelectorAll("th").length >= 5
+            );
           }});
-          return (
-            headers.includes("pco2 (atm)") &&
-            headers.includes("hco3- frac") &&
-            headers.includes("co3^2- frac")
-          );
-        }});
+        }}
         if (!targetTable) {{
           return null;
         }}
@@ -1665,10 +1937,15 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
           const headers = Array.from(tableNode.querySelectorAll("th")).map(function (header) {{
             return String(header.textContent || "").trim().toLowerCase();
           }});
+          const compactHeaders = headers.map(function (header) {{
+            return header.replace(/[^a-z0-9]+/g, "");
+          }});
+          // Keep this fallback tolerant of MathML-rendered species labels.
           return (
             headers.includes("pco2 (atm)") &&
-            headers.includes("hco3- frac") &&
-            headers.includes("co3^2- frac")
+            headers.includes("ph") &&
+            compactHeaders.some(function (header) {{ return header.includes("h2co3"); }}) &&
+            tableNode.querySelectorAll("th").length >= 5
           );
         }});
         if (!(targetTable && targetTable.parentNode)) {{
