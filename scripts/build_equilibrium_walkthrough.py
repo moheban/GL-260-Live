@@ -820,6 +820,17 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     .content code {{ background: #e8f5fb; border: 1px solid #cee5f1; border-radius: 6px; padding: 0.06rem 0.26rem; font-family: var(--mono-font); color: #0f3648; }}
     .content pre {{ margin: 0.68rem 0; background: #08131d; color: #e3f0fa; border-radius: 12px; padding: 14px; overflow-x: auto; max-width: 100%; border: 1px solid #1f3545; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03); }}
     .content pre code {{ background: transparent; border: 0; color: inherit; padding: 0; font-size: 0.92rem; }}
+    .content img {{
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      height: auto;
+      margin: 0.9rem 0 1.2rem;
+      border: 1px solid #cfe1ec;
+      border-radius: 12px;
+      background: #ffffff;
+      box-shadow: 0 10px 24px rgba(24, 52, 70, 0.14);
+    }}
     .content table {{ display: block; width: 100%; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 1rem 0 1.2rem; font-size: 0.94rem; }}
     .content th, .content td {{ border: 1px solid #d6e6f0; padding: 0.55rem; text-align: left; }}
     .content th {{ background: #edf7fc; color: #163547; font-family: var(--heading-font); text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.85rem; }}
@@ -1049,6 +1060,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       <button id="next" type="button" aria-label="Next section">Next</button>
       <label for="section-selector" class="sr-only">Jump to section</label>
       <select id="section-selector" aria-label="Jump to section"></select>
+      <button id="real-data-jump" type="button">Real Data</button>
       <button id="slide-mode" type="button" aria-pressed="false">Slide Mode: Off</button>
       <button id="controls-more" type="button" aria-expanded="false" aria-controls="secondary-controls">More Controls</button>
     </div>
@@ -1132,6 +1144,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       const cycleTrendPanel = document.getElementById("cycle-trend-panel");
       const chartFallback = document.getElementById("chart-fallback");
       const startWalkthrough = document.getElementById("start-walkthrough");
+      const realDataJump = document.getElementById("real-data-jump");
       const motionToggle = document.getElementById("motion");
       const autoAdvanceToggle = document.getElementById("auto-advance");
       const speedSelect = document.getElementById("speed");
@@ -1466,7 +1479,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       function markRevealNodes() {{
         const revealNodes = Array.from(
           content.querySelectorAll(
-            "h2, h3, p, ul, ol, blockquote, table, pre, .admonition, .math-display-block, .math-inline-display, .inline-chart-mount, .chart-panel-inline"
+            "h2, h3, p, ul, ol, blockquote, table, pre, img, .admonition, .math-display-block, .math-inline-display, .inline-chart-mount, .chart-panel-inline"
           )
         );
         for (const node of revealNodes) {{
@@ -2189,12 +2202,12 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         if (anchorCanvas) {{
           anchorResidualChart = new Chart(anchorCanvas.getContext("2d"), {{
             data: {{
-              labels: [5, 8],
+              labels: [5, 9],
               datasets: [
                 {{
                   type: "line",
                   label: "Baseline pH",
-                  data: [9.6257, 7.8538],
+                  data: [9.1483, 7.8151],
                   yAxisID: "y",
                   borderColor: "#5568ff",
                   backgroundColor: "rgba(85, 104, 255, 0.14)",
@@ -2205,7 +2218,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
                 {{
                   type: "line",
                   label: "Measured pH",
-                  data: [9.45, 7.95],
+                  data: [9.74, 9.34],
                   yAxisID: "y",
                   borderColor: "#1eb46e",
                   backgroundColor: "rgba(30, 180, 110, 0.14)",
@@ -2216,7 +2229,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
                 {{
                   type: "bar",
                   label: "Residual (pH)",
-                  data: [-0.1757, 0.0962],
+                  data: [0.5917, 1.5249],
                   yAxisID: "y2",
                   borderColor: "#0daec0",
                   backgroundColor: "rgba(13, 174, 192, 0.22)",
@@ -2535,6 +2548,14 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
                 block: "start"
               }});
             }}
+          }});
+        }}
+        if (realDataJump) {{
+          realDataJump.addEventListener("click", function () {{
+            const realDataIndex = resolveSectionIndexById(
+              "9-worked-real-world-example-pr-24304-sodium-bicarbonate-batch-1"
+            );
+            navigateToSection(realDataIndex === null ? currentSectionIndex : realDataIndex, true);
           }});
         }}
         document.addEventListener("keydown", function (event) {{

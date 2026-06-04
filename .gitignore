@@ -18,6 +18,7 @@ Desktop.ini
 !docs/assets/screenshots/**/*.jpeg
 !docs/assets/screenshots/**/*.webp
 !docs/assets/screenshots/**/*.svg
+!docs/assets/equilibrium-walkthrough/**/*.png
 AGENTS.md
 Prompt.md
 Prompt Template.md

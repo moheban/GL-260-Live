@@ -1,22 +1,24 @@
 ﻿# GL-260 Equilibrium and Simulation Walkthrough (700 g NaOH Case)
 
 ## Purpose
-This walkthrough traces the exact computational chain from NaOH basis through calibrated pH outputs used in GL-260 Analysis mode.
+This walkthrough will be used to understand the sodium bicarbonate reaction and all the challenges associated with it.
 
-This standalone technical document is presentation-focused and explains how GL-260 computes:
+This walkthrough will show you how i compute:
 
 - equilibrium pH,
 - carbonate speciation,
 - cycle CO2 uptake,
 - measured-pH anchored calibration,
 - residual ML pH correction in Analysis mode.
+- real PR-24304 presentation data,
+- HMW/PHREEQC Na-carbonate Pitzer pairing.
 
-The walkthrough is aligned to the current NaOH-CO2 Pitzer pathway and Analysis calibration contracts in the application.
+We will discuss how cycles are identified, uptake is calculated, pH is predicted for each cycle, and we will derive detailed equilibrium expressions that are used to calculate pH with +/- 0.5 accuracy.
 
 ## Locked Assumptions for This Walkthrough
 All values in this document are locked to one deterministic scenario so intermediate results are reproducible during live explanation.
 
-- Temperature: `25 C`
+- Temperature: `Average temp used for each cycle`
 - Water basis: `2,200 mL` pure water (`2.2 kg` water approximation)
 - NaOH charge: `700 g`
 - NaOH purity: `100%` (for this worked example)
@@ -24,9 +26,17 @@ All values in this document are locked to one deterministic scenario so intermed
   - `[80, 90, 100, 110, 120, 130, 130, 140]`
   - Total cumulative CO2: `900 g`
 - Measured pH anchors (multi-anchor example):
-  - Cycle 5: `pH = 9.45`
-  - Cycle 8: `pH = 7.95`
+  - Cycle 5: `pH = 9.74`
+  - Cycle 9: `pH = 9.34`
 - ML correction mode: enabled, with fail-closed anchor guard enforced.
+- Real-world worked example profile:
+  - `profiles/PR-24304 CLM-441-MPT Sodium Bicarbonate Batch 1 of 2.json`
+  - reaction basis: `NaOH + CO2 -> NaHCO3`
+  - starting NaOH basis in profile: `702.0 g`
+  - product: sodium bicarbonate (`NaHCO3`)
+  - embedded presentation plots:
+    - `docs/assets/equilibrium-walkthrough/pr-24304-batch-1-cycle-speciation-timeline-day-1-6.png`
+    - `docs/assets/equilibrium-walkthrough/pr-24304-batch-1-day-1-6-combined-triple-axis.png`
 
 ---
 
@@ -43,17 +53,17 @@ All values in this document are locked to one deterministic scenario so intermed
     - \(n_{\mathrm{CO_2,eq1}}\), \(n_{\mathrm{CO_2,eq2}}\): CO2 mole endpoints [`mol`]
     - \(m_{\mathrm{CO_2,eq1}}\), \(m_{\mathrm{CO_2,eq2}}\): CO2 mass endpoints [`g`]
 
-Converting mass to molar/molal basis defines the two stoichiometric landmarks used for later interpretation.
+Converting mass to molar/molal basis defines the two stoichiometric landmarks used for later calculations.
 
 !!! info "Derivation Walkthrough"
-    **Goal:** translate the charged NaOH mass into concentration terms that drive every later equilibrium equation.
+    **Goal:** Convert NaOH mass into concentration terms that is used in every later equilibrium equation.
 
     **Step-by-step interpretation:** first compute \(n_{\mathrm{NaOH}}\), then normalize by liquid volume (\(C_{\mathrm{NaOH}}\)) and water mass (\(m_{\mathrm{NaT}}\)), then convert the two stoichiometric CO2 endpoints to grams.
 
     **Why this changes operation:** these endpoint masses define where bicarbonate formation can be maximized versus where carbonate carryover or leftover caustic are expected, so they are the first control landmarks for high-purity NaHCO3.
 
 ```latex
-m_{\mathrm{NaOH}} = 700\ \mathrm{g}
+Mass NaOH = m_{\mathrm{NaOH}} = 700\ \mathrm{g}
 ```
 
 ```latex
@@ -196,6 +206,41 @@ K_{a2} = 10^{-10.3393}
 ```latex
 K_w \approx 10^{-14}
 ```
+
+### 2.3 What Activities Change Compared With Concentrations
+
+!!! note "Calculation Legend"
+    - `ideal model`: assumes \(\gamma_i = 1\), so activity equals molality.
+    - `activity-corrected model`: computes \(\gamma_i\), then uses \(a_i = \gamma_i m_i\).
+    - `high ionic strength`: concentrated electrolyte condition where ion-ion interactions materially change apparent equilibrium behavior.
+
+In a dilute classroom example, the model can often use concentration directly:
+
+```latex
+a_i \approx m_i
+```
+
+That approximation means each dissolved species behaves as though it were alone in water. The GL-260 NaOH case is not dilute: a 700 g NaOH charge in 2.2 kg water gives roughly `7.95 mol/kg` sodium basis before CO2 loading. At that ionic strength, sodium, hydroxide, bicarbonate, and carbonate are not independent. Each ion is surrounded by an ionic atmosphere, and the thermodynamic effective concentration is activity:
+
+```latex
+a_i = \gamma_i \times m_i
+```
+
+The activity coefficient \(\gamma_i\) is the correction term. If \(\gamma_i < 1\), the species is less thermodynamically active than its molality alone would imply. If \(\gamma_i > 1\), it is more active. Pitzer terms are used because they are designed for concentrated electrolyte solutions where Debye-Huckel-style dilute corrections are not enough.
+
+For pH this distinction matters directly:
+
+```latex
+\mathrm{pH} = -\log_{10}(a_{\mathrm{H^+}})
+```
+
+not simply:
+
+```latex
+\mathrm{pH} = -\log_{10}(m_{\mathrm{H^+}})
+```
+
+The difference is why GL-260 treats the Pitzer path as the deepest sodium bicarbonate prediction path instead of relying only on ideal alpha fractions.
 
 ---
 
@@ -363,6 +408,66 @@ Solver target:
 R_q = 0
 ```
 
+### 4.1 Deriving the Alpha Fractions From the Equilibrium Constants
+
+The alpha fractions are not fitted fractions. They fall directly out of the carbonate acid equilibria once \([H^+]\) is known.
+
+Start with the first dissociation equation:
+
+```latex
+K_{a1} = \frac{[H^+] [\mathrm{HCO_3^-}]}{[\mathrm{CO_2^*}]}
+```
+
+Rearrange it so bicarbonate is expressed relative to dissolved CO2:
+
+```latex
+[\mathrm{HCO_3^-}] = \frac{K_{a1}}{[H^+]} [\mathrm{CO_2^*}]
+```
+
+Then use the second dissociation equation:
+
+```latex
+K_{a2} = \frac{[H^+] [\mathrm{CO_3^{2-}}]}{[\mathrm{HCO_3^-}]}
+```
+
+and rearrange:
+
+```latex
+[\mathrm{CO_3^{2-}}] = \frac{K_{a2}}{[H^+]} [\mathrm{HCO_3^-}]
+```
+
+Substitute the bicarbonate expression into the carbonate expression:
+
+```latex
+[\mathrm{CO_3^{2-}}] = \frac{K_{a1}K_{a2}}{[H^+]^2} [\mathrm{CO_2^*}]
+```
+
+Total inorganic carbon is the sum of the three carbonate-family species:
+
+```latex
+C_T = [\mathrm{CO_2^*}] + [\mathrm{HCO_3^-}] + [\mathrm{CO_3^{2-}}]
+```
+
+Substitute the relative forms:
+
+```latex
+C_T = [\mathrm{CO_2^*}] \left(1 + \frac{K_{a1}}{[H^+]} + \frac{K_{a1}K_{a2}}{[H^+]^2}\right)
+```
+
+Multiplying numerator and denominator by \([H^+]^2\) gives the shared denominator used above:
+
+```latex
+D = [H^+]^2 + K_{a1}[H^+] + K_{a1}K_{a2}
+```
+
+That is why:
+
+```latex
+\alpha_0 + \alpha_1 + \alpha_2 = 1
+```
+
+The pH solver is therefore doing one central job: find the \([H^+]\) value where these fractions, hydroxide from \(K_w\), sodium charge, and total carbon all agree at the same time.
+
 ---
 
 ## 5) Why Bicarbonate Purity Is Hard and Why pCO2 Is the Control Lever
@@ -490,6 +595,43 @@ m_{CT} = m_{\mathrm{CO_2^*}} + m_{\mathrm{HCO_3^-}} + m_{\mathrm{CO_3^{2-}}}
 
 and charge-balance closure solved iteratively each cycle.
 
+### 6.1 What HMW / PHREEQC-NaCO3 Pairing Means
+
+!!! note "Calculation Legend"
+    - `HMW`: Harvie-Moller-Weare Pitzer parameter family for concentrated electrolyte solutions.
+    - `PHREEQC pitzer.dat`: database source for the Pitzer interaction parameters used by the focused GL-260 path.
+    - `Na-CO3 pairing`: shorthand for explicitly correcting sodium interactions with carbonate-family ions.
+    - `B0`, `B1`, `C0`: pair-interaction terms for a cation-anion pair.
+    - `THETA`, `PSI`: same-charge and ternary interaction terms that capture higher-order electrolyte behavior.
+
+The phrase **HMW / PHREEQC-NaCO3 Pairing** means GL-260 is not just solving carbonate acid-base equations in isolation. It reads the focused Pitzer parameter set from `pitzer.dat` and applies the sodium-carbonate interaction terms that dominate this chemistry:
+
+- `Na+` with `OH-`
+- `Na+` with `HCO3-`
+- `Na+` with `CO3-2`
+- `THETA(CO3-2, OH-)`
+- `PSI(CO3-2, Na+, OH-)`
+- `PSI(CO3-2, HCO3-, Na+)`
+
+The model converts these database terms into the compact parameters used by the Rust and Python solver cores:
+
+```latex
+\{B^0_{\mathrm{Na,OH}}, B^1_{\mathrm{Na,OH}}, C^0_{\mathrm{Na,OH}}, B^0_{\mathrm{Na,HCO_3}}, B^1_{\mathrm{Na,HCO_3}}, C^0_{\mathrm{Na,HCO_3}}, B^0_{\mathrm{Na,CO_3}}, B^1_{\mathrm{Na,CO_3}}, C^0_{\mathrm{Na,CO_3}}, \Theta_{\mathrm{CO_3,OH}}, \Psi_{\mathrm{CO_3,Na,OH}}, \Psi_{\mathrm{CO_3,HCO_3,Na}}\}
+```
+
+Operationally, this is more accurate for GL-260 than an ideal model because sodium carbonate and sodium bicarbonate are not passive spectators. Sodium association changes the effective activities of carbonate-family species, and those activity changes shift the pH and fraction crossover. That is the specific error mode the HMW path is meant to avoid: a misleading carbonate-buffer plateau or incorrect pH slope when the solution is highly loaded with sodium.
+
+### 6.2 Rust Core and Python Fallback Contract
+
+The application treats the NaOH-CO2 Pitzer path as a health-gated compute path:
+
+- Rust receives compact numeric Pitzer parameters for fast cycle-by-cycle solving.
+- Python remains the canonical fallback using the same focused Pitzer source data.
+- Runtime parity checks compare key outputs such as pH, `m_OH`, `m_HCO3`, `m_CO3`, and `m_CO2`.
+- If Rust is unavailable, incompatible, or fails health checks, GL-260 falls back to Python rather than silently emitting an untrusted result.
+
+That is important for presentations because the model is not a black-box trend smoother. The displayed pH/speciation trajectory is tied to a thermodynamic solver path with explicit fallback behavior.
+
 ---
 
 ## 7) Cycle Uptake Math
@@ -606,7 +748,88 @@ Interpretation:
 
 ---
 
-## 9) Measured-pH Calibration + Hybrid ML Correction (Analysis Mode)
+## 9) Worked Real-World Example: PR-24304 Sodium Bicarbonate Batch 1
+
+This section connects the derivation to a real GL-260 presentation artifact rather than the locked synthetic cycle sequence.
+
+### 9.1 Profile Basis and Stoichiometric Translation
+
+!!! note "Calculation Legend"
+    - `profile`: saved GL-260 analysis configuration used to reproduce plotting and reaction-basis context.
+    - \(m_{\mathrm{NaOH,profile}}\): NaOH charge from the profile [`g`]
+    - \(n_{\mathrm{NaOH,profile}}\): NaOH moles implied by the profile [`mol`]
+    - \(m_{\mathrm{CO_2,stoich}}\): CO2 mass required for the ideal one-to-one NaOH-to-NaHCO3 endpoint [`g`]
+
+The selected profile is:
+
+```text
+profiles/PR-24304 CLM-441-MPT Sodium Bicarbonate Batch 1 of 2.json
+```
+
+Its reaction basis is `NaOH + CO2 -> NaHCO3` with `702.0 g` sodium hydroxide starting mass.
+
+```latex
+m_{\mathrm{NaOH,profile}} = 702.0\ \mathrm{g}
+```
+
+```latex
+n_{\mathrm{NaOH,profile}} = \frac{702.0\ \mathrm{g}}{40.0\ \mathrm{g\ mol^{-1}}} = 17.55\ \mathrm{mol}
+```
+
+For ideal bicarbonate formation, one mole of CO2 is required per mole NaOH:
+
+```latex
+n_{\mathrm{CO_2,stoich}} = n_{\mathrm{NaOH,profile}} = 17.55\ \mathrm{mol}
+```
+
+```latex
+m_{\mathrm{CO_2,stoich}} = 17.55\ \mathrm{mol} \times 44.01\ \mathrm{g\ mol^{-1}} \approx 772.4\ \mathrm{g}
+```
+
+This number is a presentation anchor: it is the ideal CO2 requirement for complete conversion to sodium bicarbonate before yield losses, gas holdup uncertainty, incomplete absorption, or measurement corrections are considered.
+
+### 9.2 Reading the Combined Triple-Axis Plot
+
+![PR-24304 Batch 1 Day 1-6 combined triple-axis plot](assets/equilibrium-walkthrough/pr-24304-batch-1-day-1-6-combined-triple-axis.png)
+
+The combined triple-axis plot is the process-history view. During a live explanation, read it from left to right as the experimental record:
+
+- Reactor pressure shows each CO2 contact/reaction event.
+- The pressure derivative highlights where pressure is changing fastest, which helps identify uptake windows and cycle boundaries.
+- Reactor/manifold temperature traces show whether thermal behavior could be influencing pressure, rate, or inferred gas uptake.
+
+The equilibrium math does not replace this plot. The plot tells GL-260 where the physical events are; the equilibrium model interprets what those events imply for pH and carbonate speciation.
+
+### 9.3 Reading the Speciation Timeline Plot
+
+![PR-24304 Batch 1 Day 1-6 cycle speciation timeline](assets/equilibrium-walkthrough/pr-24304-batch-1-cycle-speciation-timeline-day-1-6.png)
+
+The speciation timeline maps detected cycle progression and estimated CO2 loading into sodium-basis species fractions:
+
+- `NaOH %` indicates remaining caustic character.
+- `Na2CO3 %` indicates carbonate-rich intermediate behavior.
+- `NaHCO3 %` indicates the desired bicarbonate-forming endpoint.
+- Measured pH anchors, when present, correct the estimated pH and speciation path rather than being treated as separate annotations.
+
+Early in the run, high hydroxide activity drives carbonate formation. 
+As CO2 loading increases and hydroxide is consumed, the system moves through the carbonate-rich region and toward bicarbonate dominance. 
+The HMW Pitzer model makes that crossover more realistic by correcting sodium-carbonate activities in the concentrated electrolyte regime.
+
+### 9.4 How To Narrate the Real-Data Chain
+
+Use this sequence when presenting the PR-24304 example:
+
+1. Start with the saved profile basis: `702.0 g NaOH`, product `NaHCO3`, and one-to-one CO2 stoichiometry.
+2. Use the combined triple-axis plot to identify where pressure events and thermal context define the cycle timeline.
+3. Convert cycle events into cumulative CO2 loading and compare the trajectory against the approximate `772.4 g CO2` stoichiometric endpoint.
+4. Use the Pitzer speciation timeline to explain whether the run is still caustic/carbonate-rich or moving into bicarbonate dominance.
+5. If measured pH anchors exist for the run, explain that GL-260 uses them to bend the prediction path toward observed chemistry while preserving charge/speciation consistency.
+
+Peak/trough markers define cycle events, stoichiometry defines the target, Pitzer speciation explains the chemical state, and anchors improve the run-specific pH trajectory.
+
+---
+
+## 10) Measured-pH Calibration + Hybrid ML Correction (Analysis Mode)
 Measured anchors reshape the baseline simulation, and ML residual correction is only accepted when anchor quality is preserved.
 
 !!! info "Derivation Walkthrough"
@@ -614,36 +837,36 @@ Measured anchors reshape the baseline simulation, and ML residual correction is 
 
     **Step-by-step interpretation:** compute anchor residuals, optimize baseline piecewise objective, fit ridge residual model on normalized features, then apply fail-closed anchor checks.
 
-    **Why this changes operation:** the hybrid path improves predictive smoothness without sacrificing bicarbonate-control trust; if anchor fidelity degrades, fail-closed fallback prevents purity decisions from being driven by unstable corrections.
+    **Why this changes operation:** the hybrid path improves predictions without sacrificing bicarbonate-control trust; if anchor fidelity degrades, fail-closed fallback prevents purity decisions from being driven by unstable corrections.
 
-### 9.1 Locked Multi-Anchor Example
+### 10.1 Locked Multi-Anchor Example
 
 !!! note "Calculation Legend"
-    - `r_5`, `r_8`: anchor residuals (`measured - baseline`) in pH units
+    - `r_5`, `r_9`: anchor residuals (`measured - baseline`) in pH units
 
 
-- Anchor A: cycle 5 measured pH = `9.45`
-- Anchor B: cycle 8 measured pH = `7.95`
+- Anchor A: cycle 5 measured pH = `9.74`
+- Anchor B: cycle 9 measured pH = `9.34`
 
-Baseline model at those cycles from the table:
+Baseline model at those cycles from the selected-profile pre-calibration run:
 
-- Cycle 5 baseline pH = `9.6257`
-- Cycle 8 baseline pH = `7.8538`
+- Cycle 5 baseline pH = `9.1483`
+- Cycle 9 baseline pH = `7.8151`
 
 Anchor residuals (`measured - baseline`):
 
 ```latex
-r_{5} = 9.45 - 9.6257 = -0.1757\ \mathrm{pH}
+r_{5} = 9.74 - 9.1483 = +0.5917\ \mathrm{pH}
 ```
 
 ```latex
-r_{8} = 7.95 - 7.8538 = +0.0962\ \mathrm{pH}
+r_{9} = 9.34 - 7.8151 = +1.5249\ \mathrm{pH}
 ```
 
 <div class="inline-chart-anchor" data-inline-chart="anchor-residuals"></div>
 
 
-### 9.2 Baseline Piecewise Calibration Objective
+### 10.2 Baseline Piecewise Calibration Objective
 
 !!! note "Calculation Legend"
     - `J(s)`: objective value used to score scale factor `s` `[-]`
@@ -697,7 +920,75 @@ This stage outputs:
 - corrected pH series,
 - corrected fractions series.
 
-### 9.3 Residual ML Ridge Correction Stage
+### 10.3 Historical Anchors and Cross-Run Learning
+
+!!! note "Calculation Legend"
+    - `manual anchor`: measured pH entered for the current run/profile.
+    - `global inherited anchor`: compatible measured pH anchor learned from a previous run.
+    - `history row`: prior calibrated cycle-factor curve used as a soft prior for future calibration.
+    - `compatibility gate`: rule that prevents chemically dissimilar runs from influencing the current prediction.
+
+GL-260 does not treat each run as isolated when anchor learning is enabled. After a successful Analysis calibration, it stores two kinds of information:
+
+- a global measured-pH anchor library,
+- a global anchor-learning history of calibrated cycle-factor series.
+
+On a later run, the prediction engine resolves anchors in this order:
+
+```latex
+\text{current manual anchors} \rightarrow \text{compatible global inherited anchors}
+```
+
+Compatibility is intentionally conservative. A learned row must match the active model key and pass chemistry gates such as NaOH concentration similarity and temperature proximity. Conceptually:
+
+```latex
+\frac{|C_{\mathrm{NaOH,current}} - C_{\mathrm{NaOH,history}}|}{C_{\mathrm{NaOH,current}}} \le 0.25
+```
+
+and:
+
+```latex
+|T_{\mathrm{current}} - T_{\mathrm{history}}| \le \Delta T_{\mathrm{max}}
+```
+
+The exact temperature tolerance is controlled by the application constant, but the intent is simple: history helps only when the chemistry is close enough to be meaningful.
+
+Historical cycle-factor curves are combined into a bounded prior:
+
+```latex
+s_{\mathrm{prior},k} = \mathrm{mean}(s_{\mathrm{history},k})
+```
+
+for cycle `k` where compatible samples exist. The calibration optimizer can then use that prior to start closer to the behavior previously observed for similar NaOH/CO2 runs.
+
+### 10.4 Why Prediction Accuracy Improves Every Run
+
+Each new measured pH anchor supplies a direct observation of the real batch state. The baseline Pitzer model predicts the chemistry from stoichiometry, gas uptake, and activity corrections; the anchor tells the app how the real process deviated from that baseline.
+
+For one anchor:
+
+```latex
+r_k = pH_{\mathrm{measured},k} - pH_{\mathrm{baseline},k}
+```
+
+For many anchors across many compatible runs, GL-260 learns repeated residual patterns:
+
+- consistent under-prediction or over-prediction near a cycle region,
+- profile-specific uptake scaling behavior,
+- terminal pH behavior near the target window,
+- systematic differences between charged CO2 and actually absorbed CO2.
+
+The result is not an uncontrolled drift. The app applies guardrails:
+
+- current manual anchors remain highest priority,
+- incompatible history is ignored,
+- corrected pH is constrained to physically reasonable cycle progression,
+- ML correction is rejected if anchor error worsens,
+- anchor cycles must stay within the configured pH tolerance.
+
+That is why the presentation can frame historical anchors as accuracy improvement rather than curve-fitting: every accepted correction must preserve observed anchor fidelity and remain consistent with the carbonate equilibrium framework.
+
+### 10.5 Residual ML Ridge Correction Stage
 
 !!! note "Calculation Legend"
     - \(\mathbf{x}\): raw feature vector for one cycle
@@ -750,7 +1041,7 @@ pH_{\mathrm{ML\ corrected}} = \mathrm{clamp}(pH_{\mathrm{baseline\ corrected}} +
 
 Fractions are then recomputed from corrected pH using equilibrium-consistent fallback mapping.
 
-### 9.4 Fail-Closed Anchor Guard (Apply/Reject Logic)
+### 10.6 Fail-Closed Anchor Guard (Apply/Reject Logic)
 
 !!! note "Calculation Legend"
     - \(\mathrm{MAE}_{\mathrm{ML,anchors}}\), \(\mathrm{MAE}_{\mathrm{baseline,anchors}}\): anchor MAE values in pH units
@@ -773,7 +1064,7 @@ If either check fails, runtime status is fail-closed to baseline corrected serie
 
 ---
 
-## 10) How Dashboard Values Are Computed
+## 11) How Dashboard Values Are Computed
 Dashboard metrics follow strict precedence and clamp logic so operator-facing status remains consistent with analysis outputs.
 
 !!! info "Derivation Walkthrough"
@@ -783,7 +1074,7 @@ Dashboard metrics follow strict precedence and clamp logic so operator-facing st
 
     **Why this changes operation:** operators receive consistent status semantics even when multiple modeling channels are present.
 
-### 10.1 Required CO2 Source Precedence
+### 11.1 Required CO2 Source Precedence
 
 !!! note "Calculation Legend"
     - Arrow direction indicates strict precedence order for the required CO2 source channel.
@@ -793,7 +1084,7 @@ Dashboard metrics follow strict precedence and clamp logic so operator-facing st
 \text{guidance\_model} \rightarrow \text{measured\_ph\_calibration} \rightarrow \text{planning\_reference}
 ```
 
-### 10.2 Target Gap and Completion
+### 11.2 Target Gap and Completion
 
 !!! note "Calculation Legend"
     - \(m_{\mathrm{required}}\): required CO2 mass target [`g`]
@@ -818,7 +1109,7 @@ Corrected planning completion:
 C_{\mathrm{corr}} = \mathrm{clamp}\left(\frac{m_{\mathrm{corrected\ uptake}}}{m_{\mathrm{planning\ reference}}}, 0, 1\right)\times 100
 ```
 
-### 10.3 Corrected vs Baseline pH Channels
+### 11.3 Corrected vs Baseline pH Channels
 
 - Baseline calculated/equilibrium pH channel remains available.
 - Corrected channel is produced by measured-anchor calibration.
@@ -826,8 +1117,26 @@ C_{\mathrm{corr}} = \mathrm{clamp}\left(\frac{m_{\mathrm{corrected\ uptake}}}{m_
 
 ---
 
-## 11) Reproducibility Notes
+## 12) Presenter Navigation and Reproducibility Notes
 The artifact is fully regenerable from this markdown source with deterministic build and check commands.
+
+For live presentation, the generated HTML includes:
+
+- a sticky Previous/Next control bar,
+- a searchable presentation rail,
+- a section jump selector,
+- keyboard navigation with arrow keys, Page Up/Page Down, Home, and End,
+- slide mode,
+- motion toggle,
+- auto-advance timing,
+- print/PDF export.
+
+The recommended flow is:
+
+1. Use **Start Walkthrough** for the derivation-heavy opening.
+2. Use the section selector to jump directly to **Worked Real-World Example** when moving from theory to PR-24304 data.
+3. Use **Slide Mode** for large-room presentation.
+4. Use **Print/PDF** when a static handout is needed.
 
 To regenerate the HTML presentation artifact from this Markdown source:
 
