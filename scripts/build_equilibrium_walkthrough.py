@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import html
+import json
 import re
 import sys
 from pathlib import Path
@@ -466,6 +467,190 @@ def render_markdown(markdown_text: str) -> tuple[str, str]:
     return body_html, toc_html
 
 
+def build_derivation_stepper_steps_json() -> str:
+    """Build JSON payload for the live derivation slider.
+
+    Purpose:
+        Convert the stepper's curated LaTeX equations into MathML-backed HTML.
+    Why:
+        The slider content is inserted at runtime, so it cannot pass through the
+        normal Markdown conversion path; pre-rendering keeps the presentation
+        self-contained and visually consistent with the rest of the walkthrough.
+    Inputs:
+        None.
+    Outputs:
+        JSON string containing titles, prose, callouts, and rendered equation
+        HTML fragments for the derivation stepper.
+    Side Effects:
+        None.
+    Exceptions:
+        Propagates ``ValueError`` from LaTeX conversion if a curated expression
+        cannot be rendered, causing the build to fail before writing bad HTML.
+    """
+
+    raw_steps = [
+        {
+            "title": "1. Establish the material basis",
+            "purpose": (
+                "Start with the charged NaOH and convert it into the sodium "
+                "basis used by every later equation."
+            ),
+            "equations": [
+                r"n_{\mathrm{NaOH}} = \frac{m_{\mathrm{NaOH}}}{MW_{\mathrm{NaOH}}}",
+                r"m_{\mathrm{NaT}} = \frac{n_{\mathrm{NaOH}}}{kg_{\mathrm{water}}}",
+                r"m_{\mathrm{NaT}} = \frac{700\ \mathrm{g} / 40.00\ \mathrm{g\ mol^{-1}}}{2.2\ \mathrm{kg}} = 7.9545\ \mathrm{mol\ kg^{-1}}",
+            ],
+            "callout": (
+                "This fixes the positive-charge inventory that the pH solver "
+                "must balance."
+            ),
+        },
+        {
+            "title": "2. Write the carbonate half-reactions",
+            "purpose": (
+                "Expose the three reversible constraints that govern carbonic "
+                "acid, bicarbonate, carbonate, hydroxide, and pH."
+            ),
+            "equations": [
+                r"\mathrm{CO_2^*} \rightleftharpoons \mathrm{H^+} + \mathrm{HCO_3^-}",
+                r"\mathrm{HCO_3^-} \rightleftharpoons \mathrm{H^+} + \mathrm{CO_3^{2-}}",
+                r"\mathrm{H_2O} \rightleftharpoons \mathrm{H^+} + \mathrm{OH^-}",
+            ],
+            "callout": (
+                "These are the local equilibrium rules the solver must satisfy "
+                "at the same time."
+            ),
+        },
+        {
+            "title": "3. Convert reactions into constants",
+            "purpose": (
+                "Turn the reaction statements into algebraic constraints using "
+                "activities or concentration fallback terms."
+            ),
+            "equations": [
+                r"K_{a1} = \frac{a_{\mathrm{H^+}} \times a_{\mathrm{HCO_3^-}}}{a_{\mathrm{CO_2^*}}}",
+                r"K_{a2} = \frac{a_{\mathrm{H^+}} \times a_{\mathrm{CO_3^{2-}}}}{a_{\mathrm{HCO_3^-}}}",
+                r"K_w = a_{\mathrm{H^+}} \times a_{\mathrm{OH^-}}",
+                r"a_i = \gamma_i \times m_i",
+            ],
+            "callout": (
+                "In the Pitzer path, activities replace raw molality through "
+                "a_i = gamma_i x m_i."
+            ),
+        },
+        {
+            "title": "4. Combine the base-consumption path",
+            "purpose": (
+                "Show why bicarbonate is the intermediate and why carbonate "
+                "over-conversion is controlled by hydroxide."
+            ),
+            "equations": [
+                r"K_{b1} = \frac{a_{\mathrm{HCO_3^-}}}{a_{\mathrm{CO_2^*}} \times a_{\mathrm{OH^-}}} = \frac{K_{a1}}{K_w}",
+                r"K_{b2} = \frac{a_{\mathrm{CO_3^{2-}}} \times a_{\mathrm{H_2O}}}{a_{\mathrm{HCO_3^-}} \times a_{\mathrm{OH^-}}} = \frac{K_{a2}}{K_w}",
+                r"K_{eq,\mathrm{overall}} = K_{b1} \times K_{b2}",
+                r"K_{eq,\mathrm{overall}} = \frac{a_{\mathrm{HCO_3^-}}}{a_{\mathrm{CO_2^*}} \times a_{\mathrm{OH^-}}} \times \frac{a_{\mathrm{CO_3^{2-}}} \times a_{\mathrm{H_2O}}}{a_{\mathrm{HCO_3^-}} \times a_{\mathrm{OH^-}}}",
+                r"K_{eq,\mathrm{overall}} = \frac{a_{\mathrm{CO_3^{2-}}} \times a_{\mathrm{H_2O}}}{a_{\mathrm{CO_2^*}} \times a_{\mathrm{OH^-}}^2} = \frac{K_{a1} \times K_{a2}}{K_w^2}",
+            ],
+            "callout": (
+                "The HCO3- term cancels algebraically, which is why residual "
+                "alkalinity can push the pathway past bicarbonate."
+            ),
+        },
+        {
+            "title": "5. Build alpha fractions from H+",
+            "purpose": (
+                "Use one trial hydrogen value to distribute total inorganic "
+                "carbon among the three carbonate-family species."
+            ),
+            "equations": [
+                r"C_T = [\mathrm{CO_2^*}] + [\mathrm{HCO_3^-}] + [\mathrm{CO_3^{2-}}]",
+                r"[\mathrm{HCO_3^-}] = \frac{K_{a1}}{[H^+]}[\mathrm{CO_2^*}]",
+                r"[\mathrm{CO_3^{2-}}] = \frac{K_{a1}K_{a2}}{[H^+]^2}[\mathrm{CO_2^*}]",
+                r"D = [H^+]^2 + K_{a1}[H^+] + K_{a1}K_{a2}",
+                r"\alpha_0 = \frac{[H^+]^2}{D},\quad \alpha_1 = \frac{K_{a1}[H^+]}{D},\quad \alpha_2 = \frac{K_{a1}K_{a2}}{D}",
+            ],
+            "callout": (
+                "Once [H+] is chosen, the species fractions are no longer "
+                "independent knobs."
+            ),
+        },
+        {
+            "title": "6. Reconstruct species and hydroxide",
+            "purpose": (
+                "Convert fractions into concentration or molality outputs that "
+                "can be checked against charge balance."
+            ),
+            "equations": [
+                r"[\mathrm{CO_2^*}] = \frac{[H^+]^2}{[H^+]^2 + K_{a1}[H^+] + K_{a1}K_{a2}} \times C_T",
+                r"[\mathrm{HCO_3^-}] = \frac{K_{a1}[H^+]}{[H^+]^2 + K_{a1}[H^+] + K_{a1}K_{a2}} \times C_T",
+                r"[\mathrm{CO_3^{2-}}] = \frac{K_{a1}K_{a2}}{[H^+]^2 + K_{a1}[H^+] + K_{a1}K_{a2}} \times C_T",
+                r"[\mathrm{OH^-}] = \frac{K_w}{[H^+]}",
+            ],
+            "callout": (
+                "This is the point where pH, hydroxide, and speciation become "
+                "one coupled state."
+            ),
+        },
+        {
+            "title": "7. Close charge balance and report pH",
+            "purpose": (
+                "Accept the pH only when the positive and negative charge pools "
+                "agree within tolerance."
+            ),
+            "equations": [
+                r"R_q = [\mathrm{Na^+}] + [H^+] - \frac{K_w}{[H^+]} - \left(\frac{K_{a1}[H^+]}{D} \times C_T\right) - 2\left(\frac{K_{a1}K_{a2}}{D} \times C_T\right)",
+                r"D = [H^+]^2 + K_{a1}[H^+] + K_{a1}K_{a2}",
+                r"R_q = 0",
+                r"\mathrm{pH} = -\log_{10}([H^+])",
+            ],
+            "callout": (
+                "The displayed pH is useful because it belongs to a "
+                "charge-consistent species distribution."
+            ),
+        },
+        {
+            "title": "8. Apply the same solve per cycle",
+            "purpose": (
+                "Feed each accepted uptake event into cumulative loading, then "
+                "repeat the equilibrium solve for that cycle."
+            ),
+            "equations": [
+                r"\Delta P_{\mathrm{atm},k} = \frac{\Delta P_{\mathrm{psi},k}}{14.6959}",
+                r"n_{\mathrm{CO_2},k} = \frac{\Delta P_{\mathrm{atm},k} \times V_{\mathrm{headspace}}}{R \times T_k}",
+                r"\Delta m_{\mathrm{CO_2},k} = n_{\mathrm{CO_2},k} \times MW_{\mathrm{CO_2}}",
+                r"m_{\mathrm{CO_2,cum},k} = \sum_{i=1}^{k} \Delta m_{\mathrm{CO_2},i}",
+                r"m_{CT,k} = \frac{m_{\mathrm{CO_2,cum},k} / MW_{\mathrm{CO_2}}}{kg_{\mathrm{water}}}",
+                r"k \rightarrow \{\mathrm{pH}_k,\ m_{\mathrm{OH^-},k},\ [\mathrm{CO_2^*}]_k,\ [\mathrm{HCO_3^-}]_k,\ [\mathrm{CO_3^{2-}}]_k\}",
+            ],
+            "callout": (
+                "This is how the derivation becomes the cycle-by-cycle "
+                "predicted pH and speciation timeline."
+            ),
+        },
+    ]
+
+    rendered_steps = []
+    for step in raw_steps:
+        rendered_steps.append(
+            {
+                "title": step["title"],
+                "purpose": step["purpose"],
+                "equationsHtml": [
+                    (
+                        '<div class="math-display-block" '
+                        'data-math-origin="derivation-stepper">'
+                        f"{_convert_latex_fragment(latex_source=equation, display_mode='block', context_label='derivation stepper')}"
+                        "</div>"
+                    )
+                    for equation in step["equations"]
+                ],
+                "callout": step["callout"],
+            }
+        )
+
+    return json.dumps(rendered_steps, ensure_ascii=True)
+
+
 def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> str:
     """Wrap rendered content in a standalone interactive HTML shell.
 
@@ -485,6 +670,8 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     Exceptions:
         None under normal usage.
     """
+
+    derivation_steps_json = build_derivation_stepper_steps_json()
 
     return f"""<!doctype html>
 <html lang=\"en\">
@@ -820,6 +1007,17 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     .content code {{ background: #e8f5fb; border: 1px solid #cee5f1; border-radius: 6px; padding: 0.06rem 0.26rem; font-family: var(--mono-font); color: #0f3648; }}
     .content pre {{ margin: 0.68rem 0; background: #08131d; color: #e3f0fa; border-radius: 12px; padding: 14px; overflow-x: auto; max-width: 100%; border: 1px solid #1f3545; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03); }}
     .content pre code {{ background: transparent; border: 0; color: inherit; padding: 0; font-size: 0.92rem; }}
+    .content img {{
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      height: auto;
+      margin: 0.9rem 0 1.2rem;
+      border: 1px solid #cfe1ec;
+      border-radius: 12px;
+      background: #ffffff;
+      box-shadow: 0 10px 24px rgba(24, 52, 70, 0.14);
+    }}
     .content table {{ display: block; width: 100%; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 1rem 0 1.2rem; font-size: 0.94rem; }}
     .content th, .content td {{ border: 1px solid #d6e6f0; padding: 0.55rem; text-align: left; }}
     .content th {{ background: #edf7fc; color: #163547; font-family: var(--heading-font); text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.85rem; }}
@@ -900,6 +1098,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       background: linear-gradient(180deg, #f2fff9 0%, #ebfbf3 100%);
     }}
     .inline-chart-anchor {{ display: block; margin: 0; }}
+    .inline-module-anchor {{ display: block; margin: 0; }}
     .inline-chart-mount {{
       margin: 0.9rem 0 1.2rem;
       border: 1px solid #d6e8f2;
@@ -928,6 +1127,103 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     .pco2-sweep-chart-mount .inline-chart-title {{ margin: 0; color: #19384a; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.84rem; font-family: var(--heading-font); }}
     .pco2-sweep-chart-mount .chart-viewport {{ height: clamp(220px, 28vw, 320px); min-height: 220px; max-height: 320px; }}
     .pco2-sweep-chart-mount canvas {{ width: 100% !important; height: 100% !important; display: block; }}
+    .equilibrium-interplay-module {{ margin: 1rem 0 1.25rem; border: 1px solid #cfe3ec; border-radius: 12px; background: linear-gradient(135deg, #fcfeff 0%, #f4faf8 56%, #fffaf0 100%); padding: 14px; display: grid; gap: 14px; overflow: hidden; }}
+    .equilibrium-interplay-header {{ display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; }}
+    .equilibrium-interplay-title {{ margin: 0; color: #19384a; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.86rem; font-family: var(--heading-font); }}
+    .equilibrium-interplay-copy {{ margin: 4px 0 0; color: #345468; }}
+    .equilibrium-ph-readout {{ min-width: 92px; border: 1px solid #d7e8ec; border-radius: 10px; background: rgba(255,255,255,0.78); padding: 8px 10px; text-align: right; }}
+    .equilibrium-ph-readout span {{ display: block; color: #5f7888; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; }}
+    .equilibrium-ph-readout strong {{ display: block; color: #102839; font-size: 1.45rem; font-family: var(--heading-font); line-height: 1; }}
+    .equilibrium-interplay-grid {{ display: grid; grid-template-columns: minmax(230px, 0.9fr) minmax(260px, 1.1fr); gap: 14px; align-items: stretch; }}
+    .equilibrium-control-panel {{ border: 1px solid #d8e8ee; border-radius: 10px; background: rgba(255,255,255,0.7); padding: 12px; display: grid; gap: 12px; align-content: start; }}
+    .equilibrium-toggle-group {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }}
+    .equilibrium-toggle {{ min-height: 40px; border: 1px solid #c8dde6; border-radius: 8px; background: #f8fcfd; color: #25485d; cursor: pointer; font-family: var(--heading-font); font-size: 0.82rem; }}
+    .equilibrium-toggle[aria-pressed="true"] {{ color: #062b35; border-color: #58b9b7; background: #dff7f1; box-shadow: inset 0 0 0 1px rgba(31,184,203,0.28); }}
+    .equilibrium-slider-row {{ display: grid; gap: 6px; }}
+    .equilibrium-slider-row label {{ color: #2c4d61; font-size: 0.82rem; font-family: var(--heading-font); }}
+    .equilibrium-slider-row input[type="range"] {{ width: 100%; accent-color: #1fb8cb; }}
+    .equilibrium-status {{ min-height: 54px; border-left: 3px solid #1fb8cb; padding: 7px 9px; color: #345468; background: rgba(239,248,250,0.74); border-radius: 8px; }}
+    .equilibrium-visual-panel {{ border: 1px solid #d8e8ee; border-radius: 10px; background: rgba(255,255,255,0.72); padding: 12px; display: grid; gap: 12px; }}
+    .equilibrium-network {{ position: relative; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-items: center; min-height: 112px; }}
+    .equilibrium-node {{ position: relative; z-index: 1; min-height: 88px; border: 1px solid #d5e7ee; border-radius: 10px; background: #ffffff; padding: 10px; display: grid; gap: 6px; align-content: center; text-align: center; transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease; }}
+    .equilibrium-node.is-dominant {{ transform: translateY(-3px); border-color: #58b9b7; box-shadow: 0 10px 22px rgba(13, 81, 95, 0.12); }}
+    .equilibrium-node-label {{ color: #19384a; font-family: var(--heading-font); font-size: 0.9rem; }}
+    .equilibrium-node-value {{ color: #102839; font-size: 1.22rem; font-family: var(--heading-font); }}
+    .equilibrium-node-meter {{ height: 7px; border-radius: 999px; background: #e7f1f5; overflow: hidden; }}
+    .equilibrium-node-meter span {{ display: block; height: 100%; width: 0%; border-radius: inherit; transition: width 180ms ease; }}
+    .equilibrium-node-carbonic .equilibrium-node-meter span {{ background: #3fa2ff; }}
+    .equilibrium-node-bicarbonate .equilibrium-node-meter span {{ background: #1eb46e; }}
+    .equilibrium-node-carbonate .equilibrium-node-meter span {{ background: #d99221; }}
+    .equilibrium-arrow {{ position: absolute; top: 50%; height: 3px; border-radius: 999px; background: #b8d4de; transform: translateY(-50%); transition: height 180ms ease, background 180ms ease, opacity 180ms ease; opacity: 0.72; }}
+    .equilibrium-arrow-left {{ left: 28%; width: 16%; }}
+    .equilibrium-arrow-right {{ right: 28%; width: 16%; }}
+    .equilibrium-arrow.is-active {{ height: 7px; background: #1fb8cb; opacity: 0.95; }}
+    .equilibrium-bars {{ display: grid; gap: 8px; }}
+    .equilibrium-bar {{ display: grid; grid-template-columns: 96px minmax(0, 1fr) 48px; gap: 8px; align-items: center; }}
+    .equilibrium-bar-label {{ color: #345468; font-size: 0.82rem; }}
+    .equilibrium-bar-track {{ height: 9px; border-radius: 999px; background: #e7f1f5; overflow: hidden; }}
+    .equilibrium-bar-fill {{ display: block; height: 100%; width: 0%; border-radius: inherit; transition: width 180ms ease; }}
+    .equilibrium-bar-carbonic {{ background: #3fa2ff; }}
+    .equilibrium-bar-bicarbonate {{ background: #1eb46e; }}
+    .equilibrium-bar-carbonate {{ background: #d99221; }}
+    .equilibrium-bar-value {{ color: #19384a; font-family: var(--heading-font); font-size: 0.82rem; text-align: right; }}
+    .calculation-visual-module {{ margin: 1rem 0 1.25rem; border: 1px solid #cfe3ec; border-radius: 12px; background: #fcfeff; padding: 14px; display: grid; gap: 14px; overflow: hidden; }}
+    .calculation-visual-title {{ margin: 0; color: #19384a; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.86rem; font-family: var(--heading-font); }}
+    .calculation-visual-copy {{ margin: 4px 0 0; color: #345468; }}
+    .charge-balance-grid {{ display: grid; grid-template-columns: minmax(220px, 0.85fr) minmax(260px, 1.15fr); gap: 14px; }}
+    .charge-balance-controls, .charge-balance-visual, .cycle-flow-controls, .cycle-flow-stage {{ border: 1px solid #d8e8ee; border-radius: 10px; background: rgba(255,255,255,0.76); padding: 12px; }}
+    .charge-balance-controls {{ display: grid; gap: 10px; align-content: start; }}
+    .charge-balance-slider-row {{ display: grid; gap: 6px; }}
+    .charge-balance-slider-row label, .cycle-flow-controls label {{ color: #2c4d61; font-size: 0.82rem; font-family: var(--heading-font); }}
+    .charge-balance-slider-row input[type="range"], .cycle-flow-controls input[type="range"] {{ width: 100%; accent-color: #1fb8cb; }}
+    .charge-residual-readout {{ border-left: 3px solid #1fb8cb; border-radius: 8px; background: rgba(239,248,250,0.74); padding: 8px 10px; color: #345468; }}
+    .charge-residual-readout strong {{ display: block; color: #102839; font-family: var(--heading-font); font-size: 1.3rem; }}
+    .charge-balance-visual {{ display: grid; gap: 12px; }}
+    .charge-balance-panels {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }}
+    .charge-pool {{ display: grid; gap: 7px; }}
+    .charge-pool h4 {{ margin: 0; color: #19384a; font-size: 0.9rem; font-family: var(--heading-font); }}
+    .charge-meter {{ height: 12px; border-radius: 999px; background: #e7f1f5; overflow: hidden; }}
+    .charge-meter span {{ display: block; height: 100%; width: 0%; border-radius: inherit; transition: width 180ms ease; }}
+    .charge-meter-positive span {{ background: #3fa2ff; }}
+    .charge-meter-negative span {{ background: #d99221; }}
+    .charge-pool-value {{ color: #19384a; font-family: var(--heading-font); }}
+    .charge-balance-beam {{ position: relative; min-height: 52px; display: grid; place-items: center; }}
+    .charge-balance-beam span {{ display: block; width: min(360px, 90%); height: 8px; border-radius: 999px; background: linear-gradient(90deg, #3fa2ff, #1eb46e 50%, #d99221); transform: rotate(0deg); transition: transform 180ms ease; }}
+    .charge-balance-status {{ min-height: 44px; color: #345468; }}
+    .cycle-flow-grid {{ display: grid; gap: 12px; }}
+    .cycle-flow-controls {{ display: grid; grid-template-columns: minmax(180px, 0.6fr) minmax(220px, 1fr); gap: 12px; align-items: center; }}
+    .cycle-flow-stages {{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }}
+    .cycle-flow-stage {{ min-height: 104px; display: grid; align-content: start; gap: 6px; position: relative; }}
+    .cycle-flow-stage::after {{ content: ""; position: absolute; right: -8px; top: 50%; width: 8px; height: 2px; background: #bdd7e2; }}
+    .cycle-flow-stage:last-child::after {{ display: none; }}
+    .cycle-flow-stage span {{ color: #5f7888; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }}
+    .cycle-flow-stage strong {{ color: #102839; font-family: var(--heading-font); font-size: 1.05rem; }}
+    .cycle-flow-stage p {{ margin: 0; color: #345468; font-size: 0.86rem; }}
+    .cycle-flow-stage.is-active {{ border-color: #58b9b7; box-shadow: 0 10px 22px rgba(13, 81, 95, 0.1); }}
+    .cycle-flow-summary {{ border-left: 3px solid #1fb8cb; border-radius: 8px; background: rgba(239,248,250,0.74); padding: 8px 10px; color: #345468; }}
+    .derivation-stepper-module {{ margin: 1rem 0 1.25rem; border: 1px solid #cfe3ec; border-radius: 12px; background: linear-gradient(135deg, #fcfeff 0%, #f6fbff 58%, #fffaf2 100%); padding: 14px; display: grid; gap: 14px; overflow: hidden; }}
+    .derivation-stepper-header {{ display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; }}
+    .derivation-stepper-title {{ margin: 0; color: #19384a; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.86rem; font-family: var(--heading-font); }}
+    .derivation-stepper-copy {{ margin: 4px 0 0; color: #345468; }}
+    .derivation-step-count {{ border: 1px solid #d7e8ec; border-radius: 10px; background: rgba(255,255,255,0.78); padding: 8px 10px; color: #5f7888; min-width: 94px; text-align: right; }}
+    .derivation-step-count strong {{ display: block; color: #102839; font-size: 1.35rem; font-family: var(--heading-font); line-height: 1; }}
+    .derivation-stepper-grid {{ display: grid; grid-template-columns: minmax(230px, 0.82fr) minmax(300px, 1.18fr); gap: 14px; align-items: stretch; }}
+    .derivation-controls, .derivation-board {{ border: 1px solid #d8e8ee; border-radius: 10px; background: rgba(255,255,255,0.76); padding: 12px; }}
+    .derivation-controls {{ display: grid; gap: 12px; align-content: start; }}
+    .derivation-slider-row {{ display: grid; gap: 6px; }}
+    .derivation-slider-row label {{ color: #2c4d61; font-size: 0.82rem; font-family: var(--heading-font); }}
+    .derivation-slider-row input[type="range"] {{ width: 100%; accent-color: #1fb8cb; }}
+    .derivation-step-list {{ display: grid; gap: 6px; }}
+    .derivation-step-button {{ width: 100%; min-height: 36px; border: 1px solid #c8dde6; border-radius: 8px; background: #f8fcfd; color: #25485d; cursor: pointer; font-family: var(--heading-font); font-size: 0.8rem; text-align: left; padding: 7px 9px; }}
+    .derivation-step-button[aria-current="step"] {{ color: #062b35; border-color: #58b9b7; background: #dff7f1; box-shadow: inset 0 0 0 1px rgba(31,184,203,0.28); }}
+    .derivation-board {{ display: grid; gap: 12px; min-width: 0; }}
+    .derivation-stage-label {{ margin: 0; color: #19384a; font-family: var(--heading-font); font-size: 1.05rem; }}
+    .derivation-stage-purpose {{ margin: 0; color: #345468; }}
+    .derivation-equation-stack {{ display: grid; gap: 8px; }}
+    .derivation-equation {{ border: 1px solid #d9e9f3; border-radius: 10px; background: #ffffff; padding: 10px; color: #102839; font-size: 0.95rem; line-height: 1.45; overflow-x: auto; transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease; }}
+    .derivation-equation .math-display-block {{ margin: 0; overflow-x: auto; }}
+    .derivation-equation.is-active {{ border-color: #58b9b7; box-shadow: 0 10px 22px rgba(13, 81, 95, 0.1); transform: translateY(-2px); }}
+    .derivation-callout {{ border-left: 3px solid #1fb8cb; border-radius: 8px; background: rgba(239,248,250,0.74); padding: 8px 10px; color: #345468; min-height: 50px; }}
     .reveal-node {{ opacity: 0; transform: translateY(12px); transition: opacity 360ms ease, transform 360ms ease; }}
     .reveal-node.is-visible {{ opacity: 1; transform: translateY(0); }}
     .footer {{ font-size: 0.85rem; color: #496578; margin-top: 1.8rem; border-top: 1px solid #d9e9f3; padding-top: 0.75rem; }}
@@ -953,6 +1249,18 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       .hero-metrics {{ grid-template-columns: 1fr; }}
       .chart-stack {{ height: clamp(200px, 52vw, 260px); min-height: 200px; max-height: 260px; }}
       .pco2-sweep-chart-mount .chart-viewport {{ height: clamp(200px, 52vw, 260px); min-height: 200px; max-height: 260px; }}
+      .equilibrium-interplay-header {{ grid-template-columns: 1fr; }}
+      .equilibrium-ph-readout {{ text-align: left; }}
+      .equilibrium-interplay-grid {{ grid-template-columns: 1fr; }}
+      .equilibrium-network {{ grid-template-columns: 1fr; }}
+      .equilibrium-arrow {{ display: none; }}
+      .equilibrium-toggle-group {{ grid-template-columns: 1fr; }}
+      .charge-balance-grid, .cycle-flow-controls {{ grid-template-columns: 1fr; }}
+      .charge-balance-panels {{ grid-template-columns: 1fr; }}
+      .cycle-flow-stages {{ grid-template-columns: 1fr; }}
+      .cycle-flow-stage::after {{ display: none; }}
+      .derivation-stepper-header, .derivation-stepper-grid {{ grid-template-columns: 1fr; }}
+      .derivation-step-count {{ text-align: left; }}
       .content table.reaction-map {{
         display: block;
         border: 0;
@@ -1039,7 +1347,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         <div class="hero-metric"><span class="label">Temperature</span><span class="value">25 C</span></div>
         <div class="hero-metric"><span class="label">Cumulative CO2</span><span class="value">900 g</span></div>
       </div>
-      <a class="hero-cta" id="start-walkthrough" href="#2-equilibrium-half-reactions-constants-and-activities">Start Walkthrough</a>
+      <a class="hero-cta" id="start-walkthrough" href="#1-basis-setup-700-g-naoh-in-2200-ml-water">Start Walkthrough</a>
     </div>
   </header>
 
@@ -1049,6 +1357,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       <button id="next" type="button" aria-label="Next section">Next</button>
       <label for="section-selector" class="sr-only">Jump to section</label>
       <select id="section-selector" aria-label="Jump to section"></select>
+      <button id="real-data-jump" type="button">Real Data</button>
       <button id="slide-mode" type="button" aria-pressed="false">Slide Mode: Off</button>
       <button id="controls-more" type="button" aria-expanded="false" aria-controls="secondary-controls">More Controls</button>
     </div>
@@ -1090,7 +1399,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       </article>
       <section id="cycle-trend-panel" class="surface chart-panel" aria-label="Cycle trend highlights">
         <h2>Cycle Trend Highlights</h2>
-        <p>Use these tabs to inspect how loading, hydroxide depletion, and fraction crossover control bicarbonate formation through the Section 8 worked table.</p>
+        <p>Use these tabs to inspect how loading, hydroxide depletion, and fraction crossover control bicarbonate formation through the Section 9 worked table.</p>
         <div class="chart-module" id="cycle-chart-module">
           <div class="chart-tabs" role="tablist" aria-label="Cycle trend chart views">
             <button id="cycle-tab-ph" class="chart-tab" type="button" role="tab" aria-selected="true" aria-controls="cycle-chart-view-ph">pH + m_OH</button>
@@ -1132,6 +1441,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       const cycleTrendPanel = document.getElementById("cycle-trend-panel");
       const chartFallback = document.getElementById("chart-fallback");
       const startWalkthrough = document.getElementById("start-walkthrough");
+      const realDataJump = document.getElementById("real-data-jump");
       const motionToggle = document.getElementById("motion");
       const autoAdvanceToggle = document.getElementById("auto-advance");
       const speedSelect = document.getElementById("speed");
@@ -1224,6 +1534,10 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         return content.querySelector('[data-inline-chart="' + String(name || "") + '"]');
       }}
 
+      function findInlineModuleAnchor(name) {{
+        return content.querySelector('[data-inline-module="' + String(name || "") + '"]');
+      }}
+
       function buildInlineChartMount(config) {{
         const anchor = config && config.anchor ? config.anchor : null;
         if (!anchor || String(anchor.tagName || "").toUpperCase() !== "DIV") {{
@@ -1259,6 +1573,508 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         mount.appendChild(viewport);
         anchor.replaceWith(mount);
         return canvas;
+      }}
+
+      function ensureEquilibriumInterplayModule() {{
+        if (document.getElementById("equilibrium-interplay-module")) {{
+          return;
+        }}
+        const anchor = findInlineModuleAnchor("equilibrium-interplay");
+        if (!(anchor && anchor.parentNode)) {{
+          return;
+        }}
+        const module = document.createElement("section");
+        module.id = "equilibrium-interplay-module";
+        module.className = "equilibrium-interplay-module";
+        module.setAttribute("aria-label", "Equilibrium interplay visual module");
+        module.innerHTML = `
+          <div class="equilibrium-interplay-header">
+            <div>
+              <p class="equilibrium-interplay-title">Equilibrium Interplay Visual</p>
+              <p class="equilibrium-interplay-copy">Changing one carbonate-family species moves the acid-base balance, pH, and final species split together.</p>
+            </div>
+            <div class="equilibrium-ph-readout">
+              <span>Predicted pH</span>
+              <strong data-equilibrium-ph>8.35</strong>
+            </div>
+          </div>
+          <div class="equilibrium-interplay-grid">
+            <div class="equilibrium-control-panel">
+              <div class="equilibrium-toggle-group" aria-label="Species perturbation">
+                <button class="equilibrium-toggle" type="button" data-equilibrium-mode="carbonic" aria-pressed="true">CO2*</button>
+                <button class="equilibrium-toggle" type="button" data-equilibrium-mode="bicarbonate" aria-pressed="false">HCO3-</button>
+                <button class="equilibrium-toggle" type="button" data-equilibrium-mode="carbonate" aria-pressed="false">CO3^2-</button>
+              </div>
+              <div class="equilibrium-slider-row">
+                <label for="equilibrium-shift-slider">Species push</label>
+                <input id="equilibrium-shift-slider" type="range" min="0" max="100" value="55" step="1">
+              </div>
+              <div class="equilibrium-status" data-equilibrium-status></div>
+            </div>
+            <div class="equilibrium-visual-panel">
+              <div class="equilibrium-network" aria-label="Carbonate equilibrium species network">
+                <span class="equilibrium-arrow equilibrium-arrow-left" data-equilibrium-arrow-left></span>
+                <span class="equilibrium-arrow equilibrium-arrow-right" data-equilibrium-arrow-right></span>
+                <div class="equilibrium-node equilibrium-node-carbonic" data-equilibrium-node="carbonic">
+                  <span class="equilibrium-node-label">CO2* / H2CO3</span>
+                  <strong class="equilibrium-node-value" data-equilibrium-value="carbonic">0%</strong>
+                  <span class="equilibrium-node-meter"><span data-equilibrium-meter="carbonic"></span></span>
+                </div>
+                <div class="equilibrium-node equilibrium-node-bicarbonate" data-equilibrium-node="bicarbonate">
+                  <span class="equilibrium-node-label">HCO3-</span>
+                  <strong class="equilibrium-node-value" data-equilibrium-value="bicarbonate">0%</strong>
+                  <span class="equilibrium-node-meter"><span data-equilibrium-meter="bicarbonate"></span></span>
+                </div>
+                <div class="equilibrium-node equilibrium-node-carbonate" data-equilibrium-node="carbonate">
+                  <span class="equilibrium-node-label">CO3^2-</span>
+                  <strong class="equilibrium-node-value" data-equilibrium-value="carbonate">0%</strong>
+                  <span class="equilibrium-node-meter"><span data-equilibrium-meter="carbonate"></span></span>
+                </div>
+              </div>
+              <div class="equilibrium-bars">
+                <div class="equilibrium-bar">
+                  <span class="equilibrium-bar-label">Carbonic</span>
+                  <span class="equilibrium-bar-track"><span class="equilibrium-bar-fill equilibrium-bar-carbonic" data-equilibrium-bar="carbonic"></span></span>
+                  <span class="equilibrium-bar-value" data-equilibrium-bar-value="carbonic">0%</span>
+                </div>
+                <div class="equilibrium-bar">
+                  <span class="equilibrium-bar-label">Bicarbonate</span>
+                  <span class="equilibrium-bar-track"><span class="equilibrium-bar-fill equilibrium-bar-bicarbonate" data-equilibrium-bar="bicarbonate"></span></span>
+                  <span class="equilibrium-bar-value" data-equilibrium-bar-value="bicarbonate">0%</span>
+                </div>
+                <div class="equilibrium-bar">
+                  <span class="equilibrium-bar-label">Carbonate</span>
+                  <span class="equilibrium-bar-track"><span class="equilibrium-bar-fill equilibrium-bar-carbonate" data-equilibrium-bar="carbonate"></span></span>
+                  <span class="equilibrium-bar-value" data-equilibrium-bar-value="carbonate">0%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+        anchor.replaceWith(module);
+
+        const pHOutput = module.querySelector("[data-equilibrium-ph]");
+        const status = module.querySelector("[data-equilibrium-status]");
+        const slider = module.querySelector("#equilibrium-shift-slider");
+        const toggles = Array.from(module.querySelectorAll("[data-equilibrium-mode]"));
+        const nodes = {{
+          carbonic: module.querySelector('[data-equilibrium-node="carbonic"]'),
+          bicarbonate: module.querySelector('[data-equilibrium-node="bicarbonate"]'),
+          carbonate: module.querySelector('[data-equilibrium-node="carbonate"]')
+        }};
+        const values = {{
+          carbonic: module.querySelector('[data-equilibrium-value="carbonic"]'),
+          bicarbonate: module.querySelector('[data-equilibrium-value="bicarbonate"]'),
+          carbonate: module.querySelector('[data-equilibrium-value="carbonate"]')
+        }};
+        const meters = {{
+          carbonic: module.querySelector('[data-equilibrium-meter="carbonic"]'),
+          bicarbonate: module.querySelector('[data-equilibrium-meter="bicarbonate"]'),
+          carbonate: module.querySelector('[data-equilibrium-meter="carbonate"]')
+        }};
+        const bars = {{
+          carbonic: module.querySelector('[data-equilibrium-bar="carbonic"]'),
+          bicarbonate: module.querySelector('[data-equilibrium-bar="bicarbonate"]'),
+          carbonate: module.querySelector('[data-equilibrium-bar="carbonate"]')
+        }};
+        const barValues = {{
+          carbonic: module.querySelector('[data-equilibrium-bar-value="carbonic"]'),
+          bicarbonate: module.querySelector('[data-equilibrium-bar-value="bicarbonate"]'),
+          carbonate: module.querySelector('[data-equilibrium-bar-value="carbonate"]')
+        }};
+        const leftArrow = module.querySelector("[data-equilibrium-arrow-left]");
+        const rightArrow = module.querySelector("[data-equilibrium-arrow-right]");
+
+        function clampNumber(value, lower, upper) {{
+          return Math.min(Math.max(value, lower), upper);
+        }}
+
+        function alphaFractionsFromPH(pH) {{
+          const h = Math.pow(10, -pH);
+          const ka1 = Math.pow(10, -6.3374);
+          const ka2 = Math.pow(10, -10.3393);
+          const denominator = (h * h) + (ka1 * h) + (ka1 * ka2);
+          return {{
+            carbonic: (h * h) / denominator,
+            bicarbonate: (ka1 * h) / denominator,
+            carbonate: (ka1 * ka2) / denominator
+          }};
+        }}
+
+        function currentMode() {{
+          const active = toggles.find(function (button) {{
+            return button.getAttribute("aria-pressed") === "true";
+          }});
+          return active ? active.getAttribute("data-equilibrium-mode") : "carbonic";
+        }}
+
+        function updateModule() {{
+          const mode = currentMode();
+          const push = clampNumber(Number(slider ? slider.value : 55) / 100, 0, 1);
+          let pH = 8.35;
+          let message = "";
+          if (mode === "carbonic") {{
+            pH = 9.25 - (2.35 * push);
+            message = "More dissolved CO2* pulls the balance acidic, suppressing carbonate and raising the carbonic-acid share.";
+          }} else if (mode === "bicarbonate") {{
+            pH = 8.05 + (0.95 * push);
+            message = "More bicarbonate holds the system near the buffer region where HCO3- dominates the split.";
+          }} else {{
+            pH = 8.90 + (1.95 * push);
+            message = "More carbonate pushes the balance basic, increasing CO3^2- and pulling pH upward.";
+          }}
+          pH = clampNumber(pH, 6.4, 11.1);
+          const fractions = alphaFractionsFromPH(pH);
+          const dominant = Object.keys(fractions).reduce(function (best, key) {{
+            return fractions[key] > fractions[best] ? key : best;
+          }}, "carbonic");
+          if (pHOutput) {{
+            pHOutput.textContent = pH.toFixed(2);
+          }}
+          if (status) {{
+            status.textContent = message;
+          }}
+          ["carbonic", "bicarbonate", "carbonate"].forEach(function (key) {{
+            const percent = clampNumber(fractions[key] * 100, 0, 100);
+            const text = percent < 1 ? percent.toFixed(1) + "%" : Math.round(percent) + "%";
+            if (values[key]) {{
+              values[key].textContent = text;
+            }}
+            if (meters[key]) {{
+              meters[key].style.width = percent.toFixed(2) + "%";
+            }}
+            if (bars[key]) {{
+              bars[key].style.width = percent.toFixed(2) + "%";
+            }}
+            if (barValues[key]) {{
+              barValues[key].textContent = text;
+            }}
+            if (nodes[key]) {{
+              nodes[key].classList.toggle("is-dominant", key === dominant);
+            }}
+          }});
+          if (leftArrow) {{
+            leftArrow.classList.toggle("is-active", mode === "carbonic" || dominant === "bicarbonate");
+          }}
+          if (rightArrow) {{
+            rightArrow.classList.toggle("is-active", mode === "carbonate" || dominant === "bicarbonate");
+          }}
+        }}
+
+        toggles.forEach(function (button) {{
+          button.addEventListener("click", function () {{
+            toggles.forEach(function (candidate) {{
+              candidate.setAttribute("aria-pressed", String(candidate === button));
+            }});
+            updateModule();
+          }});
+        }});
+        if (slider) {{
+          slider.addEventListener("input", updateModule);
+        }}
+        updateModule();
+      }}
+
+      function ensureChargeBalanceVisualModule() {{
+        if (document.getElementById("charge-balance-visual-module")) {{
+          return;
+        }}
+        const anchor = findInlineModuleAnchor("charge-balance-visual");
+        if (!(anchor && anchor.parentNode)) {{
+          return;
+        }}
+        const module = document.createElement("section");
+        module.id = "charge-balance-visual-module";
+        module.className = "calculation-visual-module";
+        module.setAttribute("aria-label", "Charge balance solver visual module");
+        module.innerHTML = `
+          <div>
+            <p class="calculation-visual-title">Charge Balance Solver Visual</p>
+            <p class="calculation-visual-copy">Move the trial pH and watch the positive and negative charge pools converge toward the solver target.</p>
+          </div>
+          <div class="charge-balance-grid">
+            <div class="charge-balance-controls">
+              <div class="charge-balance-slider-row">
+                <label for="charge-balance-ph-slider">Trial pH</label>
+                <input id="charge-balance-ph-slider" type="range" min="760" max="1120" value="960" step="1">
+              </div>
+              <div class="charge-residual-readout">
+                <span>Charge residual</span>
+                <strong data-charge-residual>0.000</strong>
+              </div>
+            </div>
+            <div class="charge-balance-visual">
+              <div class="charge-balance-panels">
+                <div class="charge-pool">
+                  <h4>Positive pool</h4>
+                  <div class="charge-meter charge-meter-positive"><span data-charge-meter="positive"></span></div>
+                  <strong class="charge-pool-value" data-charge-value="positive">0.00</strong>
+                </div>
+                <div class="charge-pool">
+                  <h4>Negative pool</h4>
+                  <div class="charge-meter charge-meter-negative"><span data-charge-meter="negative"></span></div>
+                  <strong class="charge-pool-value" data-charge-value="negative">0.00</strong>
+                </div>
+              </div>
+              <div class="charge-balance-beam"><span data-charge-beam></span></div>
+              <div class="charge-balance-status" data-charge-status></div>
+            </div>
+          </div>
+        `;
+        anchor.replaceWith(module);
+
+        const slider = module.querySelector("#charge-balance-ph-slider");
+        const residualOutput = module.querySelector("[data-charge-residual]");
+        const status = module.querySelector("[data-charge-status]");
+        const beam = module.querySelector("[data-charge-beam]");
+        const meters = {{
+          positive: module.querySelector('[data-charge-meter="positive"]'),
+          negative: module.querySelector('[data-charge-meter="negative"]')
+        }};
+        const values = {{
+          positive: module.querySelector('[data-charge-value="positive"]'),
+          negative: module.querySelector('[data-charge-value="negative"]')
+        }};
+
+        function updateChargeBalance() {{
+          const pH = Number(slider ? slider.value : 960) / 100;
+          const h = Math.pow(10, -pH);
+          const kw = Math.pow(10, -14);
+          const ka1 = Math.pow(10, -6.3374);
+          const ka2 = Math.pow(10, -10.3393);
+          const ct = 5.1641;
+          const sodium = 7.9545;
+          const denominator = (h * h) + (ka1 * h) + (ka1 * ka2);
+          const alpha1 = (ka1 * h) / denominator;
+          const alpha2 = (ka1 * ka2) / denominator;
+          const oh = kw / h;
+          const positive = sodium + h;
+          const negative = oh + (alpha1 * ct) + (2 * alpha2 * ct);
+          const residual = positive - negative;
+          const maxPool = Math.max(positive, negative, 0.001);
+          if (residualOutput) {{
+            residualOutput.textContent = residual.toFixed(3);
+          }}
+          if (values.positive) {{
+            values.positive.textContent = positive.toFixed(2);
+          }}
+          if (values.negative) {{
+            values.negative.textContent = negative.toFixed(2);
+          }}
+          if (meters.positive) {{
+            meters.positive.style.width = ((positive / maxPool) * 100).toFixed(1) + "%";
+          }}
+          if (meters.negative) {{
+            meters.negative.style.width = ((negative / maxPool) * 100).toFixed(1) + "%";
+          }}
+          if (beam) {{
+            const tilt = Math.max(Math.min(residual * 5, 10), -10);
+            beam.style.transform = "rotate(" + tilt.toFixed(2) + "deg)";
+          }}
+          if (status) {{
+            if (Math.abs(residual) < 0.08) {{
+              status.textContent = "Near charge closure: this trial pH is chemically self-consistent with the reconstructed species.";
+            }} else if (residual > 0) {{
+              status.textContent = "Positive charge is too high. The solver must shift pH/speciation until anion charge catches up.";
+            }} else {{
+              status.textContent = "Negative charge is too high. The solver must shift pH/speciation back toward charge closure.";
+            }}
+          }}
+        }}
+        if (slider) {{
+          slider.addEventListener("input", updateChargeBalance);
+        }}
+        updateChargeBalance();
+      }}
+
+      function ensureCycleFlowVisualModule() {{
+        if (document.getElementById("cycle-flow-visual-module")) {{
+          return;
+        }}
+        const anchor = findInlineModuleAnchor("cycle-flow-visual");
+        if (!(anchor && anchor.parentNode)) {{
+          return;
+        }}
+        const module = document.createElement("section");
+        module.id = "cycle-flow-visual-module";
+        module.className = "calculation-visual-module";
+        module.setAttribute("aria-label", "Cycle calculation flow visual module");
+        module.innerHTML = `
+          <div>
+            <p class="calculation-visual-title">Cycle Calculation Flow</p>
+            <p class="calculation-visual-copy">Select a synthetic cycle to see how one accepted uptake event becomes loading, pH, speciation, and dashboard outputs.</p>
+          </div>
+          <div class="cycle-flow-grid">
+            <div class="cycle-flow-controls">
+              <label for="cycle-flow-slider">Cycle index</label>
+              <input id="cycle-flow-slider" type="range" min="0" max="8" value="5" step="1">
+            </div>
+            <div class="cycle-flow-stages">
+              <div class="cycle-flow-stage" data-cycle-stage="delta"><span>Accepted uptake</span><strong data-cycle-value="delta">0 g</strong><p>cycle event</p></div>
+              <div class="cycle-flow-stage" data-cycle-stage="cum"><span>Cumulative uptake</span><strong data-cycle-value="cum">0 g</strong><p>total carbon added</p></div>
+              <div class="cycle-flow-stage" data-cycle-stage="ct"><span>Carbon basis</span><strong data-cycle-value="ct">0.0000</strong><p>mol/kg CT</p></div>
+              <div class="cycle-flow-stage" data-cycle-stage="ph"><span>Equilibrium solve</span><strong data-cycle-value="ph">0.00 pH</strong><p>charge closure</p></div>
+              <div class="cycle-flow-stage" data-cycle-stage="species"><span>Dominant species</span><strong data-cycle-value="species">-</strong><p>displayed fraction</p></div>
+            </div>
+            <div class="cycle-flow-summary" data-cycle-flow-summary></div>
+          </div>
+        `;
+        anchor.replaceWith(module);
+
+        const slider = module.querySelector("#cycle-flow-slider");
+        const values = {{
+          delta: module.querySelector('[data-cycle-value="delta"]'),
+          cum: module.querySelector('[data-cycle-value="cum"]'),
+          ct: module.querySelector('[data-cycle-value="ct"]'),
+          ph: module.querySelector('[data-cycle-value="ph"]'),
+          species: module.querySelector('[data-cycle-value="species"]')
+        }};
+        const summary = module.querySelector("[data-cycle-flow-summary]");
+        const stages = Array.from(module.querySelectorAll("[data-cycle-stage]"));
+        const data = [
+          {{ cycle: 0, delta: 0, cum: 0, ct: 0.0000, ph: 15.2672, species: "OH-", frac: 1.0 }},
+          {{ cycle: 1, delta: 80, cum: 80, ct: 0.8263, ph: 15.1608, species: "CO3^2-", frac: 1.0 }},
+          {{ cycle: 2, delta: 90, cum: 170, ct: 1.7558, ph: 15.0093, species: "CO3^2-", frac: 1.0 }},
+          {{ cycle: 3, delta: 100, cum: 270, ct: 2.7886, ph: 14.7436, species: "CO3^2-", frac: 1.0 }},
+          {{ cycle: 4, delta: 110, cum: 380, ct: 3.9247, ph: 13.4003, species: "CO3^2-", frac: 1.0 }},
+          {{ cycle: 5, delta: 120, cum: 500, ct: 5.1641, ph: 9.6257, species: "CO3^2-", frac: 0.5404 }},
+          {{ cycle: 6, delta: 130, cum: 630, ct: 6.5068, ph: 9.2061, species: "HCO3-", frac: 0.7771 }},
+          {{ cycle: 7, delta: 130, cum: 760, ct: 7.8495, ph: 8.2255, species: "HCO3-", frac: 0.9810 }},
+          {{ cycle: 8, delta: 140, cum: 900, ct: 9.2954, ph: 7.8538, species: "HCO3-", frac: 0.9867 }}
+        ];
+
+        function updateCycleFlow() {{
+          const index = Math.max(0, Math.min(data.length - 1, Number(slider ? slider.value : 5)));
+          const row = data[index];
+          if (values.delta) {{ values.delta.textContent = row.delta + " g"; }}
+          if (values.cum) {{ values.cum.textContent = row.cum + " g"; }}
+          if (values.ct) {{ values.ct.textContent = row.ct.toFixed(4); }}
+          if (values.ph) {{ values.ph.textContent = row.ph.toFixed(2) + " pH"; }}
+          if (values.species) {{ values.species.textContent = row.species; }}
+          stages.forEach(function (stage, stageIndex) {{
+            stage.classList.toggle("is-active", stageIndex <= Math.min(index, 4));
+          }});
+          if (summary) {{
+            summary.textContent =
+              "Cycle " + row.cycle + " carries " + row.cum + " g cumulative CO2 into the equilibrium solve; the model reports " +
+              row.ph.toFixed(2) + " pH with " + row.species + " as the dominant state (" + Math.round(row.frac * 100) + "%).";
+          }}
+        }}
+        if (slider) {{
+          slider.addEventListener("input", updateCycleFlow);
+        }}
+        updateCycleFlow();
+      }}
+
+      function ensureDerivationStepperModule() {{
+        if (document.getElementById("derivation-stepper-module")) {{
+          return;
+        }}
+        const anchor = findInlineModuleAnchor("derivation-stepper");
+        if (!(anchor && anchor.parentNode)) {{
+          return;
+        }}
+        const module = document.createElement("section");
+        module.id = "derivation-stepper-module";
+        module.className = "derivation-stepper-module";
+        module.setAttribute("aria-label", "Interactive equation derivation stepper");
+        module.innerHTML = `
+          <div class="derivation-stepper-header">
+            <div>
+              <p class="derivation-stepper-title">Live Derivation Slider</p>
+              <p class="derivation-stepper-copy">Move one step at a time to reveal the calculation chain as if the equations are being built during the presentation.</p>
+            </div>
+            <div class="derivation-step-count">
+              <span>Step</span>
+              <strong data-derivation-count>1 / 8</strong>
+            </div>
+          </div>
+          <div class="derivation-stepper-grid">
+            <div class="derivation-controls">
+              <div class="derivation-slider-row">
+                <label for="derivation-step-slider">Derivation progress</label>
+                <input id="derivation-step-slider" type="range" min="0" max="7" value="0" step="1">
+              </div>
+              <div class="derivation-step-list" data-derivation-step-list></div>
+            </div>
+            <div class="derivation-board">
+              <p class="derivation-stage-label" data-derivation-title></p>
+              <p class="derivation-stage-purpose" data-derivation-purpose></p>
+              <div class="derivation-equation-stack" data-derivation-equations></div>
+              <div class="derivation-callout" data-derivation-callout></div>
+            </div>
+          </div>
+        `;
+        anchor.replaceWith(module);
+
+        const steps = {derivation_steps_json};
+
+        const slider = module.querySelector("#derivation-step-slider");
+        const count = module.querySelector("[data-derivation-count]");
+        const title = module.querySelector("[data-derivation-title]");
+        const purpose = module.querySelector("[data-derivation-purpose]");
+        const equations = module.querySelector("[data-derivation-equations]");
+        const callout = module.querySelector("[data-derivation-callout]");
+        const stepList = module.querySelector("[data-derivation-step-list]");
+
+        function renderStepButtons(activeIndex) {{
+          if (!stepList) {{
+            return;
+          }}
+          stepList.innerHTML = "";
+          steps.forEach(function (step, index) {{
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "derivation-step-button";
+            button.textContent = step.title;
+            if (index === activeIndex) {{
+              button.setAttribute("aria-current", "step");
+            }}
+            button.addEventListener("click", function () {{
+              if (slider) {{
+                slider.value = String(index);
+              }}
+              renderDerivationStep(index);
+            }});
+            stepList.appendChild(button);
+          }});
+        }}
+
+        function renderDerivationStep(index) {{
+          const boundedIndex = Math.max(0, Math.min(steps.length - 1, Number(index) || 0));
+          const step = steps[boundedIndex];
+          if (count) {{
+            count.textContent = String(boundedIndex + 1) + " / " + String(steps.length);
+          }}
+          if (title) {{
+            title.textContent = step.title;
+          }}
+          if (purpose) {{
+            purpose.textContent = step.purpose;
+          }}
+          if (equations) {{
+            equations.innerHTML = "";
+            step.equationsHtml.forEach(function (equationHtml, equationIndex) {{
+              const block = document.createElement("div");
+              block.className = "derivation-equation";
+              block.classList.toggle("is-active", equationIndex === step.equationsHtml.length - 1);
+              block.innerHTML = equationHtml;
+              equations.appendChild(block);
+            }});
+          }}
+          if (callout) {{
+            callout.textContent = step.callout;
+          }}
+          renderStepButtons(boundedIndex);
+        }}
+
+        if (slider) {{
+          slider.max = String(steps.length - 1);
+          slider.addEventListener("input", function () {{
+            renderDerivationStep(Number(slider.value));
+          }});
+        }}
+        renderDerivationStep(0);
       }}
 
       function ensureCycleTrendPanelInline() {{
@@ -1451,6 +2267,10 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       }}
 
       function initializeLayoutPhase() {{
+        ensureChargeBalanceVisualModule();
+        ensureDerivationStepperModule();
+        ensureEquilibriumInterplayModule();
+        ensureCycleFlowVisualModule();
         ensureCycleTrendPanelInline();
         if (filterInput) {{
           filterInput.addEventListener("input", applyFilter);
@@ -1466,7 +2286,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       function markRevealNodes() {{
         const revealNodes = Array.from(
           content.querySelectorAll(
-            "h2, h3, p, ul, ol, blockquote, table, pre, .admonition, .math-display-block, .math-inline-display, .inline-chart-mount, .chart-panel-inline"
+            "h2, h3, p, ul, ol, blockquote, table, pre, img, .admonition, .math-display-block, .math-inline-display, .inline-chart-mount, .equilibrium-interplay-module, .calculation-visual-module, .derivation-stepper-module, .chart-panel-inline"
           )
         );
         for (const node of revealNodes) {{
@@ -1582,16 +2402,36 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
 
       function extractPco2SensitivitySeries() {{
         const tables = Array.from(content.querySelectorAll("table"));
-        const targetTable = tables.find(function (tableNode) {{
-          const headers = Array.from(tableNode.querySelectorAll("th")).map(function (header) {{
-            return String(header.textContent || "").trim().toLowerCase();
+        const inlineAnchor = findInlineChartAnchor("pco2-sensitivity");
+        let targetTable = null;
+        if (inlineAnchor) {{
+          let cursor = inlineAnchor.previousElementSibling;
+          while (cursor && !targetTable) {{
+            if (String(cursor.tagName || "").toUpperCase() === "TABLE") {{
+              targetTable = cursor;
+              break;
+            }}
+            cursor = cursor.previousElementSibling;
+          }}
+        }}
+        if (!targetTable) {{
+          targetTable = tables.find(function (tableNode) {{
+            const headers = Array.from(tableNode.querySelectorAll("th")).map(function (header) {{
+              return String(header.textContent || "").trim().toLowerCase();
+            }});
+            const compactHeaders = headers.map(function (header) {{
+              return header.replace(/[^a-z0-9]+/g, "");
+            }});
+            // MathML-rendered carbonate headers lose the Markdown text shape, so
+            // identify the pCO2 sweep table by stable neighboring columns too.
+            return (
+              headers.includes("pco2 (atm)") &&
+              headers.includes("ph") &&
+              compactHeaders.some(function (header) {{ return header.includes("h2co3"); }}) &&
+              tableNode.querySelectorAll("th").length >= 5
+            );
           }});
-          return (
-            headers.includes("pco2 (atm)") &&
-            headers.includes("hco3- frac") &&
-            headers.includes("co3^2- frac")
-          );
-        }});
+        }}
         if (!targetTable) {{
           return null;
         }}
@@ -1652,10 +2492,15 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
           const headers = Array.from(tableNode.querySelectorAll("th")).map(function (header) {{
             return String(header.textContent || "").trim().toLowerCase();
           }});
+          const compactHeaders = headers.map(function (header) {{
+            return header.replace(/[^a-z0-9]+/g, "");
+          }});
+          // Keep this fallback tolerant of MathML-rendered species labels.
           return (
             headers.includes("pco2 (atm)") &&
-            headers.includes("hco3- frac") &&
-            headers.includes("co3^2- frac")
+            headers.includes("ph") &&
+            compactHeaders.some(function (header) {{ return header.includes("h2co3"); }}) &&
+            tableNode.querySelectorAll("th").length >= 5
           );
         }});
         if (!(targetTable && targetTable.parentNode)) {{
@@ -2189,12 +3034,12 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         if (anchorCanvas) {{
           anchorResidualChart = new Chart(anchorCanvas.getContext("2d"), {{
             data: {{
-              labels: [5, 8],
+              labels: [5, 9],
               datasets: [
                 {{
                   type: "line",
                   label: "Baseline pH",
-                  data: [9.6257, 7.8538],
+                  data: [9.1483, 8.7016],
                   yAxisID: "y",
                   borderColor: "#5568ff",
                   backgroundColor: "rgba(85, 104, 255, 0.14)",
@@ -2205,7 +3050,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
                 {{
                   type: "line",
                   label: "Measured pH",
-                  data: [9.45, 7.95],
+                  data: [9.74, 9.34],
                   yAxisID: "y",
                   borderColor: "#1eb46e",
                   backgroundColor: "rgba(30, 180, 110, 0.14)",
@@ -2216,7 +3061,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
                 {{
                   type: "bar",
                   label: "Residual (pH)",
-                  data: [-0.1757, 0.0962],
+                  data: [0.5917, 0.6384],
                   yAxisID: "y2",
                   borderColor: "#0daec0",
                   backgroundColor: "rgba(13, 174, 192, 0.22)",
@@ -2524,7 +3369,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             event.preventDefault();
             if (sectionHeadings.length) {{
               const deepDiveIndex = resolveSectionIndexById(
-                "2-equilibrium-half-reactions-constants-and-activities"
+                "1-basis-setup-700-g-naoh-in-2200-ml-water"
               );
               navigateToSection(deepDiveIndex === null ? 0 : deepDiveIndex, true);
               return;
@@ -2535,6 +3380,14 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
                 block: "start"
               }});
             }}
+          }});
+        }}
+        if (realDataJump) {{
+          realDataJump.addEventListener("click", function () {{
+            const realDataIndex = resolveSectionIndexById(
+              "10-worked-real-world-example-pr-24304-sodium-bicarbonate-batch-1"
+            );
+            navigateToSection(realDataIndex === null ? currentSectionIndex : realDataIndex, true);
           }});
         }}
         document.addEventListener("keydown", function (event) {{

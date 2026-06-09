@@ -2268,18 +2268,10 @@ fn measured_ph_uptake_calibration_core(
                 );
             }
 
-            let (ka1, ka2, _kw) = basic_carbonate_constants(Some(temp_c), use_temp_constants);
-            let pseudo_ph = clamp_ph_value(13.5 - (cumulative + 1.0).ln() * 1.2);
-            let h = 10f64.powf(-pseudo_ph);
-            let denom = h * h + ka1 * h + ka1 * ka2;
-            if denom <= 1e-30 {
-                return (Some(pseudo_ph), [0.0, 0.0, 0.0]);
-            }
-            let h2co3 = (h * h / denom).max(0.0);
-            let hco3 = (ka1 * h / denom).max(0.0);
-            let co3 = (ka1 * ka2 / denom).max(0.0);
-            let total = (h2co3 + hco3 + co3).max(1e-12);
-            (Some(pseudo_ph), [h2co3 / total, hco3 / total, co3 / total])
+            // Corrected pH must remain chemistry-backed. Returning no pH here
+            // fails this Rust candidate and lets the Python chemistry fallback
+            // handle incomplete contexts instead of drawing a pseudo high-pH line.
+            (None, [0.0, 0.0, 0.0])
         };
 
     let simulate_for_factor_series = |factor_series: &[f64]| -> SimulationPayload {
@@ -2636,6 +2628,7 @@ fn measured_ph_uptake_calibration_core(
     response.set_item("terminal_ph_range_low", terminal_low)?;
     response.set_item("terminal_ph_range_high", terminal_high)?;
     response.set_item("terminal_ph_weight", terminal_weight)?;
+    response.set_item("ph_prediction_basis", "chemistry_context")?;
     response.set_item(
         "terminal_objective_enabled",
         terminal_weight > 0.0 && !normalized_anchors.is_empty(),
