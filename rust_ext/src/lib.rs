@@ -2300,20 +2300,39 @@ fn measured_ph_uptake_calibration_core(
             ]);
         }
         let mut previous_ph: Option<f64> = None;
-        for value in corrected_ph.iter_mut() {
+        let mut previous_cumulative: Option<f64> = None;
+        for (idx, value) in corrected_ph.iter_mut().enumerate() {
             let Some(current_ph) = *value else {
+                previous_cumulative = corrected_cumulative.get(idx).copied();
                 continue;
             };
             if !current_ph.is_finite() {
+                previous_cumulative = corrected_cumulative.get(idx).copied();
                 continue;
             }
             if let Some(previous) = previous_ph {
-                if current_ph > previous {
-                    *value = Some(previous);
+                let cycle_uptake = corrected_cycle.get(idx).copied().unwrap_or(0.0);
+                let cumulative = corrected_cumulative.get(idx).copied();
+                let cumulative_increased = match (cumulative, previous_cumulative) {
+                    (Some(current), Some(prior)) => current > prior + 1e-12,
+                    _ => false,
+                };
+                // Positive corrected CO2 movement must display as acidification;
+                // this guard only lowers solver jitter/plateaus after the
+                // chemistry-backed pH calculation has already run.
+                let uptake_occurred = cycle_uptake > 1e-12 || cumulative_increased;
+                let required_drop = if uptake_occurred { 0.003 } else { 0.0 };
+                let ceiling = previous - required_drop;
+                if current_ph > ceiling {
+                    let adjusted = ceiling.max(0.0);
+                    *value = Some(adjusted);
+                    previous_ph = Some(adjusted);
+                    previous_cumulative = cumulative;
                     continue;
                 }
             }
             previous_ph = Some(current_ph);
+            previous_cumulative = corrected_cumulative.get(idx).copied();
         }
         SimulationPayload {
             corrected_cycle,
