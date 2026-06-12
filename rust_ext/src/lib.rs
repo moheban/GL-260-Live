@@ -2268,18 +2268,10 @@ fn measured_ph_uptake_calibration_core(
                 );
             }
 
-            let (ka1, ka2, _kw) = basic_carbonate_constants(Some(temp_c), use_temp_constants);
-            let pseudo_ph = clamp_ph_value(13.5 - (cumulative + 1.0).ln() * 1.2);
-            let h = 10f64.powf(-pseudo_ph);
-            let denom = h * h + ka1 * h + ka1 * ka2;
-            if denom <= 1e-30 {
-                return (Some(pseudo_ph), [0.0, 0.0, 0.0]);
-            }
-            let h2co3 = (h * h / denom).max(0.0);
-            let hco3 = (ka1 * h / denom).max(0.0);
-            let co3 = (ka1 * ka2 / denom).max(0.0);
-            let total = (h2co3 + hco3 + co3).max(1e-12);
-            (Some(pseudo_ph), [h2co3 / total, hco3 / total, co3 / total])
+            // Corrected pH must remain chemistry-backed. Returning no pH here
+            // fails this Rust candidate and lets the Python chemistry fallback
+            // handle incomplete contexts instead of drawing a pseudo high-pH line.
+            (None, [0.0, 0.0, 0.0])
         };
 
     let simulate_for_factor_series = |factor_series: &[f64]| -> SimulationPayload {
@@ -2308,20 +2300,39 @@ fn measured_ph_uptake_calibration_core(
             ]);
         }
         let mut previous_ph: Option<f64> = None;
-        for value in corrected_ph.iter_mut() {
+        let mut previous_cumulative: Option<f64> = None;
+        for (idx, value) in corrected_ph.iter_mut().enumerate() {
             let Some(current_ph) = *value else {
+                previous_cumulative = corrected_cumulative.get(idx).copied();
                 continue;
             };
             if !current_ph.is_finite() {
+                previous_cumulative = corrected_cumulative.get(idx).copied();
                 continue;
             }
             if let Some(previous) = previous_ph {
-                if current_ph > previous {
-                    *value = Some(previous);
+                let cycle_uptake = corrected_cycle.get(idx).copied().unwrap_or(0.0);
+                let cumulative = corrected_cumulative.get(idx).copied();
+                let cumulative_increased = match (cumulative, previous_cumulative) {
+                    (Some(current), Some(prior)) => current > prior + 1e-12,
+                    _ => false,
+                };
+                // Positive corrected CO2 movement must display as acidification;
+                // this guard only lowers solver jitter/plateaus after the
+                // chemistry-backed pH calculation has already run.
+                let uptake_occurred = cycle_uptake > 1e-12 || cumulative_increased;
+                let required_drop = if uptake_occurred { 0.003 } else { 0.0 };
+                let ceiling = previous - required_drop;
+                if current_ph > ceiling {
+                    let adjusted = ceiling.max(0.0);
+                    *value = Some(adjusted);
+                    previous_ph = Some(adjusted);
+                    previous_cumulative = cumulative;
                     continue;
                 }
             }
             previous_ph = Some(current_ph);
+            previous_cumulative = corrected_cumulative.get(idx).copied();
         }
         SimulationPayload {
             corrected_cycle,
@@ -2636,6 +2647,7 @@ fn measured_ph_uptake_calibration_core(
     response.set_item("terminal_ph_range_low", terminal_low)?;
     response.set_item("terminal_ph_range_high", terminal_high)?;
     response.set_item("terminal_ph_weight", terminal_weight)?;
+    response.set_item("ph_prediction_basis", "chemistry_context")?;
     response.set_item(
         "terminal_objective_enabled",
         terminal_weight > 0.0 && !normalized_anchors.is_empty(),
