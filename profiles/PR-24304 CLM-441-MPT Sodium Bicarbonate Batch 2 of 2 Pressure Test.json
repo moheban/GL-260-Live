@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-06-01 08:52:04",
+  "created_at": "2026-06-16 10:56:11",
   "description": "",
   "payload": {
     "analysis_last_result": {
@@ -6980,7 +6980,7 @@
     },
     "column_assignments": {
       "y1": "Reactor Pressure (PSI)",
-      "y2": "Reactor Pressure (PSI) First Derivative (\u0394PSI/\u0394hour)",
+      "y2": "Reactor Pressure (PSI) First Derivative Moving Average",
       "y3": "Manifold Pressure (PSI)",
       "z": "Internal Reactor Temperature",
       "z2": "External Reactor Temperature"
@@ -6991,6 +6991,7 @@
       "y1::Reactor Pressure 2 (PSI)": "Cylinder 2 (PSIg)",
       "y2::Manifold Pressure (PSI) First Derivative (\u0394PSI/\u0394hour)": "Mike Manifold derivative",
       "y2::Reactor Pressure (PSI) First Derivative (\u0394PSI/\u0394hour)": "First Derivative Moving Average (PSIg/hour)",
+      "y2::Reactor Pressure (PSI) First Derivative Moving Average": "Reactor First Derivative (PSIg/hour)",
       "y2::Reactor Pressure 1 (PSI) First Derivative (\u0394PSI/\u0394hour)": "Cylinder 1 First Derivative",
       "y2::Reactor Pressure 1 (PSI) First Derivative Moving Average": "Cylinder 1 First Derivative",
       "y2::Reactor Pressure 2 (PSI) First Derivative (\u0394PSI/\u0394hour)": "Cylinder 2 First Derivative",
@@ -7003,23 +7004,49 @@
     "cycle_markers": {
       "active_trace_key": "y1::Reactor Pressure 2 (PSI)",
       "add_peaks": [
-        16,
-        6065,
-        6349
+        16804,
+        20860,
+        21108,
+        21367,
+        21904,
+        22081,
+        28117,
+        32594
       ],
       "add_troughs": [
-        4652,
-        28512
+        16697,
+        20747,
+        21854,
+        26272,
+        31951,
+        55213
       ],
       "auto_detect_enabled": true,
-      "manual_revision": 23,
+      "manual_revision": 78,
       "rm_peaks": [
+        16801,
+        20857,
+        21105,
+        21364,
+        21901,
+        22078,
+        26322,
+        28209,
         29418,
-        29421
+        29421,
+        32215,
+        32595
       ],
       "rm_troughs": [
         5709,
-        28509
+        10103,
+        20579,
+        21895,
+        26320,
+        26904,
+        28509,
+        32084,
+        32279
       ],
       "schema_version": 1,
       "source_profile_name": "",
@@ -7103,28 +7130,85 @@
         },
         "y1::Reactor Pressure 2 (PSI)": {
           "add_peaks": [
-            16,
-            6065,
-            6349
+            16804,
+            20860,
+            21108,
+            21367,
+            21904,
+            22081,
+            28117,
+            32594
           ],
           "add_troughs": [
-            4652,
-            28512
+            16697,
+            20747,
+            21854,
+            26272,
+            31951,
+            55213
           ],
-          "auto_peaks": [],
-          "auto_troughs": [],
-          "manual_revision": 23,
+          "auto_peaks": [
+            3,
+            231,
+            415,
+            629,
+            992,
+            16801,
+            20857,
+            21105,
+            21364,
+            21901,
+            22078,
+            26322,
+            28209,
+            32215,
+            32595
+          ],
+          "auto_troughs": [
+            215,
+            412,
+            625,
+            987,
+            10103,
+            20579,
+            21101,
+            21362,
+            21895,
+            22076,
+            26320,
+            26904,
+            32084,
+            32279
+          ],
+          "manual_revision": 78,
           "rm_peaks": [
+            16801,
+            20857,
+            21105,
+            21364,
+            21901,
+            22078,
+            26322,
+            28209,
             29418,
-            29421
+            29421,
+            32215,
+            32595
           ],
           "rm_troughs": [
             5709,
-            28509
+            10103,
+            20579,
+            21895,
+            26320,
+            26904,
+            28509,
+            32084,
+            32279
           ]
         }
       },
-      "updated_at": "2026-06-01T08:52:04",
+      "updated_at": "2026-06-16T10:56:11",
       "use_auto_markers_in_manual_mode": true
     },
     "dataset_required": false,
@@ -7222,53 +7306,55 @@
       "fig_combined_triple_axis": {
         "display": {
           "axis_labelpads": {
-            "derivative": 20.0,
-            "primary": 4.0,
-            "right": 20.0,
-            "temperature": 20.0,
-            "third": 20.0
+            "derivative": 12.0,
+            "primary": 8.0,
+            "right": 12.0,
+            "temperature": 12.0,
+            "third": 12.0,
+            "x": 3.0
           },
           "cycle_legend_anchor": null,
           "cycle_legend_loc": null,
-          "detached_labelpad": 20.0,
-          "detached_spine_offset": 1.1167550948815794,
+          "detached_labelpad": 12.0,
+          "detached_spine_offset": 1.0519181666206354,
           "legend_anchor": null,
           "legend_anchor_y": null,
           "legend_loc": null,
           "margins": {
-            "bottom": 0.16,
+            "bottom": 0.1750989624177347,
             "left": 0.051,
-            "right": 0.9481789728268603,
+            "right": 0.9275879817281093,
             "top": 0.895
           },
           "suptitle_xy": null,
           "title_xy": null,
-          "xlabel_pad_pts": null
+          "xlabel_pad_pts": 3.0
         },
         "export": {
           "axis_labelpads": {
-            "derivative": 20.0,
-            "primary": 4.0,
-            "right": 20.0,
-            "temperature": 20.0,
-            "third": 20.0
+            "derivative": 12.0,
+            "primary": 8.0,
+            "right": 12.0,
+            "temperature": 12.0,
+            "third": 12.0,
+            "x": 3.0
           },
           "cycle_legend_anchor": null,
           "cycle_legend_loc": null,
-          "detached_labelpad": 20.0,
-          "detached_spine_offset": 1.1167550948815794,
+          "detached_labelpad": 12.0,
+          "detached_spine_offset": 1.0763564957943446,
           "legend_anchor": null,
           "legend_anchor_y": null,
           "legend_loc": null,
           "margins": {
-            "bottom": 0.177,
-            "left": 0.0706,
-            "right": 0.9227308294209704,
+            "bottom": 0.17186210056387347,
+            "left": 0.06965784606629677,
+            "right": 0.8866729121171727,
             "top": 0.895
           },
           "suptitle_xy": null,
           "title_xy": null,
-          "xlabel_pad_pts": null
+          "xlabel_pad_pts": 3.0
         },
         "mirror_detached_labelpad": true
       },
@@ -7325,9 +7411,9 @@
           "legend_loc": null,
           "margins": {
             "bottom": 0.12,
-            "left": 0.08,
-            "right": 0.88,
-            "top": 0.9
+            "left": 0.056,
+            "right": 0.935,
+            "top": 0.932
           },
           "suptitle_xy": null,
           "title_xy": null,
@@ -7343,10 +7429,10 @@
           "legend_anchor_y": null,
           "legend_loc": null,
           "margins": {
-            "bottom": 0.184,
-            "left": 0.08,
-            "right": 0.88,
-            "top": 0.9
+            "bottom": 0.144,
+            "left": 0.073,
+            "right": 0.925,
+            "top": 0.932
           },
           "suptitle_xy": null,
           "title_xy": null,
@@ -7447,7 +7533,7 @@
       "auto_y_ticks": true,
       "axis_auto_range": {
         "derivative": false,
-        "pressure": false,
+        "pressure": true,
         "temperature": false,
         "time": true
       },
@@ -7455,8 +7541,8 @@
       "combined_calculated_trace_extensions_enabled": false,
       "combined_center_plot_legend": false,
       "combined_cycle_legend_anchor": [
-        0.4581296418193558,
-        0.22597723325032773
+        0.692458994532604,
+        0.5593673087541924
       ],
       "combined_cycle_legend_anchor_mode": "loc_tuple",
       "combined_cycle_legend_anchor_space": "axes",
@@ -7465,8 +7551,8 @@
       "combined_cycle_legend_enable_drag": true,
       "combined_cycle_legend_fontsize": 10.0,
       "combined_cycle_legend_loc": [
-        0.4581296418193558,
-        0.22597723325032773
+        0.692458994532604,
+        0.5593673087541924
       ],
       "combined_cycle_legend_loc_choice": "upper right",
       "combined_cycle_legend_lock_position": false,
@@ -7474,8 +7560,8 @@
       "combined_cycle_legend_persist_position": true,
       "combined_cycle_legend_positions": {
         "index:0": [
-          0.4581296418193558,
-          0.22597723325032773
+          0.692458994532604,
+          0.5593673087541924
         ],
         "key:y1::Reactor Pressure 1 (PSI)": [
           0.3645467248040881,
@@ -7491,12 +7577,12 @@
       "combined_cycle_legend_ref_dx_px": null,
       "combined_cycle_legend_ref_dy_px": null,
       "combined_deriv_axis_label": "First Derivative Moving Average (\u0394PSI/\u0394hour)",
-      "combined_deriv_axis_offset": 1.1167550948815794,
-      "combined_deriv_labelpad": 20.0,
+      "combined_deriv_axis_offset": 1.0763564957943446,
+      "combined_deriv_labelpad": 12.0,
       "combined_disable_second_refresh": false,
       "combined_export_pad_pts": 10.0,
       "combined_font_family": "STIXGeneral",
-      "combined_include_zero_line": false,
+      "combined_include_zero_line": true,
       "combined_label_fontsize": 13.0,
       "combined_layout_health_edge_clearance_pts": 10.0,
       "combined_layout_health_max_axis_gap_pts": 24.0,
@@ -7509,6 +7595,7 @@
         0.500695952816758,
         0.047695606644581015
       ],
+      "combined_legend_auto_fit_max_rows": 3,
       "combined_legend_bottom_margin_pts": 2.0,
       "combined_legend_fontsize": 10.0,
       "combined_legend_gap_pts": 6.0,
@@ -7518,14 +7605,14 @@
       "combined_legend_wrap": false,
       "combined_main_legend_enable_drag": false,
       "combined_primary_axis_label": "Pressure (PSIg)",
-      "combined_primary_labelpad": 4.0,
+      "combined_primary_labelpad": 8.0,
       "combined_refresh_mode": "adaptive",
       "combined_right_pad_pct": 8.0,
       "combined_suptitle_fontsize": 18.0,
       "combined_suptitle_pad_pts": 2.0,
       "combined_suptitle_y": 0.99,
       "combined_temp_axis_label": "Temperature (\u00b0C)",
-      "combined_temp_labelpad": 20.0,
+      "combined_temp_labelpad": 12.0,
       "combined_tick_fontsize": 12.0,
       "combined_title_center_reference": "axes_union",
       "combined_title_fontsize": 16.0,
@@ -7535,7 +7622,7 @@
       "combined_xlabel_tick_gap_pts": 12.0,
       "combined_y_left_key": "y1",
       "combined_y_right_key": "y2",
-      "combined_y_third_key": "none",
+      "combined_y_third_key": "z",
       "core_cycle_legend_fontsize": 10.0,
       "core_legend_fontsize": 10.0,
       "core_plot_render_profiles": {
@@ -7621,16 +7708,16 @@
       },
       "deriv_major_tick": 200.0,
       "deriv_minor_tick": 100.0,
-      "deriv_y_max": 125.28,
-      "deriv_y_min": -149.28,
+      "deriv_y_max": 10.0,
+      "deriv_y_min": -10.0,
       "enable_deriv_axis": true,
       "enable_temp_axis": true,
       "include_moles_in_core_plot_legend": false,
-      "max_time": 0.83,
-      "max_y": 1250.0,
+      "max_time": 10.15,
+      "max_y": 842.4,
       "min_cycle_drop": 5.0,
-      "min_time": -0.02,
-      "min_y": 0.0,
+      "min_time": -0.2,
+      "min_y": -31.2,
       "peak_distance": 15,
       "peak_prominence": 1.0,
       "peak_smoothing_window": 15,
@@ -7704,12 +7791,12 @@
       "scatter_size": 20.0,
       "show_cycle_legend_on_core_plots": true,
       "show_cycle_markers_on_core_plots": true,
-      "suptitle_text": "PR-24304 CLM-441-MPT Sodium Bicarbonate Batch 1 of 2",
+      "suptitle_text": "PR-24304 CLM-441-MPT Sodium Bicarbonate Batch 2 of 2 Pressure Test",
       "temp_major_tick": 5.0,
       "temp_minor_tick": 2.5,
       "title_text": "Reaction Day 1-6 1/13-1/19",
-      "twin_y_max": 21.11,
-      "twin_y_min": 20.39,
+      "twin_y_max": 60.0,
+      "twin_y_min": 12.0,
       "x_major_tick": 1.0,
       "x_minor_tick": 0.2,
       "y_major_tick": 50.0,
@@ -7730,7 +7817,7 @@
       "product_stoich_mol_per_mol_starting": 1.0,
       "reaction_id": "naoh_co2_to_nahco3",
       "reaction_label": "NaOH + CO2 -> NaHCO3",
-      "starting_mass_g": 702.0,
+      "starting_mass_g": 703.2,
       "starting_material_display_name": "Sodium hydroxide",
       "starting_material_display_note": "",
       "starting_material_formula": "NaOH",
@@ -7766,5 +7853,5 @@
     "selected_sheets": []
   },
   "profile_version": 1,
-  "updated_at": "2026-06-16 10:20:04"
+  "updated_at": "2026-06-16 10:56:11"
 }
