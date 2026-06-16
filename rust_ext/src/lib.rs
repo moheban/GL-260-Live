@@ -463,21 +463,14 @@ fn forced_ph_distribution_impl(
         oh = next_oh;
         let coeff_co3 = (ka2 * gammas[2]) / (gammas[1] * gammas[3] * h.max(1e-18));
         let coeff_h2co3 = (gammas[1] * gammas[2] * h) / ka1.max(1e-30);
-        let mut denominator = 1.0 + coeff_co3 + coeff_h2co3;
-        if !denominator.is_finite() || denominator <= 0.0 {
-            denominator = 1e-12;
-        }
-        let alpha_hco3 = 1.0 / denominator;
-        let alpha_co3 = coeff_co3 / denominator;
-        hco3 = (total_carbon_m * alpha_hco3).max(1e-16);
-        co3 = (total_carbon_m * alpha_co3).max(1e-16);
-        h2co3 = (total_carbon_m - hco3 - co3).max(fixed_h2co3_value.unwrap_or(0.0));
+        let charge_basis = (na_conc + h - oh).max(1e-16);
+        hco3 = (charge_basis / (1.0 + (2.0 * coeff_co3)).max(1e-12)).max(1e-16);
+        co3 = (coeff_co3 * hco3).max(1e-16);
+        h2co3 = (coeff_h2co3 * hco3)
+            .max(fixed_h2co3_value.unwrap_or(0.0))
+            .max(1e-16);
         charge_residual = na_conc + h - hco3 - 2.0 * co3 - oh;
-        let denom_charge = (alpha_hco3 + 2.0 * alpha_co3).max(1e-12);
-        let mut next_total = ((na_conc + h - oh) / denom_charge).max(1e-16);
-        if let Some(boundary) = fixed_h2co3_value {
-            next_total = next_total.max(boundary + hco3 + co3);
-        }
+        let next_total = (h2co3 + hco3 + co3).max(1e-16);
         let delta_ct = ((next_total - total_carbon_m) / total_carbon_m.max(1e-12)).abs();
         total_carbon_m = next_total;
         if delta_ct < 1e-8 && charge_residual.abs() < 1e-8 {
@@ -486,6 +479,20 @@ fn forced_ph_distribution_impl(
     }
     let (final_i, final_gammas, final_oh) =
         solubility_ionic_state(na_conc, h, hco3, co3, kw, ionic_strength_cap);
+    let coeff_co3 =
+        (ka2 * final_gammas[2]) / (final_gammas[1] * final_gammas[3] * h.max(1e-18));
+    let coeff_h2co3 = (final_gammas[1] * final_gammas[2] * h) / ka1.max(1e-30);
+    let charge_basis = (na_conc + h - final_oh).max(1e-16);
+    hco3 = (charge_basis / (1.0 + (2.0 * coeff_co3)).max(1e-12)).max(1e-16);
+    co3 = (coeff_co3 * hco3).max(1e-16);
+    h2co3 = (coeff_h2co3 * hco3)
+        .max(fixed_h2co3_value.unwrap_or(0.0))
+        .max(1e-16);
+    total_carbon_m = (h2co3 + hco3 + co3).max(1e-16);
+    charge_residual = na_conc + h - hco3 - 2.0 * co3 - final_oh;
+    let (final_i, final_gammas, final_oh) =
+        solubility_ionic_state(na_conc, h, hco3, co3, kw, ionic_strength_cap);
+    charge_residual = na_conc + h - hco3 - 2.0 * co3 - final_oh;
     Ok((
         total_carbon_m,
         h,
