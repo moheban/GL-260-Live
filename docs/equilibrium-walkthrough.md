@@ -1006,16 +1006,16 @@ The NaOH Pitzer path uses activity-corrected species balances and charge balance
     - `PHREEQC pitzer.dat`: database source for the Pitzer interaction parameters used by the focused GL-260 path.
     - `Na-CO3 pairing`: shorthand for explicitly correcting sodium interactions with carbonate-family ions.
     - \(B^0\), \(B^1\), \(C^0\): pair-interaction terms for a cation-anion pair.
-    - \(\Theta\), \(\Psi\): same-charge and ternary interaction terms that capture higher-order electrolyte behavior.
+    - \(Θ\), \(Ψ\): same-charge and ternary interaction terms that capture higher-order electrolyte behavior.
 
 The phrase **HMW / PHREEQC-NaCO3 Pairing** means GL-260 is not just solving carbonate acid-base equations in isolation. It reads the focused Pitzer parameter set from `pitzer.dat` and applies the sodium-carbonate interaction terms that dominate this chemistry:
 
 - \(Na^+\) with \(OH^-\)
 - \(Na^+\) with \(HCO_{3}^-\)
 - \(Na^+\) with \(CO_{3}^{2-}\)
-- \(\Theta_{\mathrm{CO_3,OH}}\)
-- \(\Psi_{\mathrm{CO_3,Na,OH}}\)
-- \(\Psi_{\mathrm{CO_3,OH,Na}}\)
+- \(Θ_{\mathrm{CO_3^{2-},OH^-}}\)
+- \(Ψ_{\mathrm{CO_3^{2-},Na^+,OH^-}}\)
+- \(Ψ_{\mathrm{CO_3^{2-},OH^-,Na^+}}\)
 
 The model converts these database terms into the compact parameters used by the Rust and Python solver cores:
 
