@@ -7,7 +7,7 @@ This walkthrough will show you how i compute:
 
 - equilibrium pH,
 - carbonate speciation,
-- cycle CO2 uptake,
+- cycle \(CO_{2}\) uptake,
 - reaction kinetics and uptake-rate interpretation,
 - measured-pH anchored calibration,
 - residual ML pH correction in Analysis mode.
@@ -33,31 +33,31 @@ All values in this document are locked to one deterministic scenario so intermed
   - Cycle 9: `pH = 9.34`
 - Real-world worked example profile:
   - `profiles/PR-24304 CLM-441-MPT Sodium Bicarbonate Batch 1 of 2.json`
-  - reaction basis: `NaOH + CO2 -> NaHCO3`
+  - reaction basis: \(NaOH\) + \(CO_{2}\) -> \(NaHCO_{3}\)
   - starting NaOH basis in profile: `702.0 g`
-  - product: sodium bicarbonate (`NaHCO3`)
+  - product: sodium bicarbonate (\(NaHCO_{3}\))
 
 ---
 
 ## 1) Basis Setup (700 g NaOH in 2,200 mL Water)
 
 !!! note "Calculation Legend"
-    - \(m_{\mathrm{NaOH}}\): NaOH mass charged to solution [`g`]
+    - \(m_{\mathrm{NaOH}}\): NaOH mass charged to solution [\(g\)]
     - \(MW_{\mathrm{NaOH}}\): NaOH molecular weight [\(g mol^{-1}\)]
-    - \(n_{\mathrm{NaOH}}\): NaOH amount [`mol`]
-    - \(V_{\mathrm{liq}}\): liquid volume [`L`]
-    - \(kg_{\mathrm{water}}\): water mass basis [`kg`]
+    - \(n_{\mathrm{NaOH}}\): NaOH amount [\(mol\)]
+    - \(V_{\mathrm{liq}}\): liquid volume [\(L\)]
+    - \(kg_{\mathrm{water}}\): water mass basis [\(Kg\)]
     - \(C_{\mathrm{NaOH}}\): NaOH molarity [\(mol L^{-1}\)]
     - \(m_{\mathrm{NaT}}\): total sodium molality [\(mol kg^{-1}\)]
-    - \(n_{\mathrm{CO_2,eq1}}\), \(n_{\mathrm{CO_2,eq2}}\): CO2 mole endpoints [`mol`]
-    - \(m_{\mathrm{CO_2,eq1}}\), \(m_{\mathrm{CO_2,eq2}}\): CO2 mass endpoints [`g`]
+    - \(n_{\mathrm{CO_2,eq1}}\), \(n_{\mathrm{CO_2,eq2}}\): \(CO_{2}\) mole endpoints [\(mol\)]
+    - \(m_{\mathrm{CO_2,eq1}}\), \(m_{\mathrm{CO_2,eq2}}\): \(CO_{2}\) mass endpoints [\(g\)]
 
 Converting mass to molarity/molality defines the two stoichiometric constants used for later calculations.
 
 !!! info "Derivation Walkthrough"
     **Goal:** Convert NaOH mass into concentration terms that is used in every later equilibrium equation.
 
-    **Step-by-step interpretation:** first compute \(n_{\mathrm{NaOH}}\), then normalize by liquid volume (\(C_{\mathrm{NaOH}}\)) and water mass (\(m_{\mathrm{NaT}}\)), then convert the two stoichiometric CO2 endpoints to grams.
+    **Step-by-step interpretation:** first compute \(n_{\mathrm{NaOH}}\), then normalize by liquid volume (\(C_{\mathrm{NaOH}}\)) and water mass (\(m_{\mathrm{NaT}}\)), then convert the two stoichiometric \(CO_{2}\) endpoints to grams.
 
     **Why this changes operation:** these endpoint masses define where bicarbonate formation can be maximized.
 
@@ -335,7 +335,7 @@ Converting mass to molarity/molality defines the two stoichiometric constants us
   <div class="basis-expression-heading">
     <div>
       <p class="basis-expression-title">Section 1 Calculation Map</p>
-      <p class="basis-expression-copy">Start with the charged NaOH mass, convert it into concentration bases, then mark the CO2 endpoints that frame carbonate and bicarbonate formation.</p>
+      <p class="basis-expression-copy">Start with the charged NaOH mass, convert it into concentration bases, then mark the \(CO_{2}\) endpoints that frame carbonate and bicarbonate formation.</p>
     </div>
     <div class="basis-expression-result">
       <span>NaOH basis</span>
@@ -386,7 +386,7 @@ Converting mass to molarity/molality defines the two stoichiometric constants us
     </div>
     <div class="basis-expression-stage">
       <span>Mass equivalent</span>
-      <strong>CO2 to eq1</strong>
+      <strong>\(CO_{2}\) to eq1</strong>
       \[m_{\mathrm{CO_2,eq1}} = 8.75\ \mathrm{mol} \times 44.01\ \mathrm{g\ mol^{-1}} \approx 385.1\ \mathrm{g}\]
     </div>
     <div class="basis-expression-stage">
@@ -420,7 +420,7 @@ These half-reactions and constants provide the thermodynamic constraints that al
     - \(\gamma_i\): activity coefficient of species `i`
     - \(m_{i}\): molality of species `i` [\(mol kg^{-1}\)]
     - \(K_{H}\): Henry constant used by the model [\(mol kg^{-1} atm^{-1}\)]
-    - \(p_{\mathrm{CO_2}}\): \(CO_{2}\) partial pressure `[atm]`
+    - \(p_{\mathrm{CO_2}}\): \(CO_{2}\) partial pressure \(atm\)
     - \([\mathrm{CO_2^*}]\): dissolved molecular \(CO_{2}\) plus hydrated carbonic acid basis [\(mol kg^{-1}\)]
 
 
@@ -464,7 +464,7 @@ These half-reactions and constants provide the thermodynamic constraints that al
   </div>
 </div>
 
-### 2.2 Constants Used by the NaOH-CO2 Pitzer Example Path (25 C)
+### 2.2 Constants Used by the NaOH-\(CO_{2}\) Pitzer Example Path (\(25 C\))
 
 !!! note "Calculation Legend"
     - \(K_{a1}\): first dissociation constant
@@ -506,7 +506,7 @@ In `naoh_co2_pitzer_ph_model.py`:
 
 For dilute solutions, we can often use concentration directly, \(a_i \approx m_i\).
 
-In dilute solutions, that approximation means each dissolved species behaves as though it were alone in water. Starting conditions when synthesizing sodium bicarbonate is not dilute: a 700 g NaOH charge in 2.2 kg water gives roughly `7.95 mol/kg` molality before CO2 loading. 
+In dilute solutions, that approximation means each dissolved species behaves as though it were alone in water. Starting conditions when synthesizing sodium bicarbonate is not dilute: a 700 g NaOH charge in 2.2 kg water gives roughly `7.95 mol/kg` molality before \(CO_{2}\) loading. 
 
 At that ionic strength, sodium, hydroxide, bicarbonate, and carbonate are **not** independent. Each ion is surrounded by an ionic atmosphere, and the thermodynamic effective concentration is activity: \(a_i = \gamma_i \times m_i\).
 
@@ -1384,9 +1384,9 @@ Cycle-level uptake is converted into cumulative carbon loading, which becomes th
 !!! note "Calculation Legend"
     - \(\Delta P_{\mathrm{psi}}\), \(\Delta P_{\mathrm{atm}}\): pressure drop per cycle [`psi`, `atm`]
     - \(V_{\mathrm{headspace}}\): headspace volume [`L`]
-    - \(\R\): ideal gas constant [\(L atm mol^{-1} K^{-1}\)]
-    - \(\T\): absolute temperature [\(\K\)]
-    - \(n_{\mathrm{CO_2},i}\): inferred moles of CO2 transferred in cycle `i` [`mol`]
+    - \(R\): ideal gas constant [\(L atm mol^{-1} K^{-1}\)]
+    - \(T\): absolute temperature [\(K\)]
+    - \(n_{\mathrm{CO_2},i}\): inferred moles of CO2 transferred in cycle, \(i\) [\(mol\)]
 
 
 When uptake is inferred from pressure-drop per cycle:
