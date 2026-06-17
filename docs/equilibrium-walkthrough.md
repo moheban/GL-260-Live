@@ -415,13 +415,13 @@ These half-reactions and constants provide the thermodynamic constraints that al
 ### 2.1 Carbonate and Water Equilibrium Half-Reactions
 
 !!! note "Calculation Legend"
-    - \(K_{a1}\), \(K_{a2}\), `K_w`: equilibrium constants in activity form `[-]`
-    - `a_i`: activity of species `i` `[-]`
-    - \(\gamma_i\): activity coefficient of species `i` `[-]`
-    - `m_i`: molality of species `i` [\(mol kg^{-1}\)]
-    - `K_H`: Henry constant used by the model [\(mol kg^{-1} atm^{-1}\)]
-    - \(p_{\mathrm{CO_2}}\): CO2 partial pressure [`atm`]
-    - \([\mathrm{CO_2^*}]\): dissolved molecular CO2 plus hydrated carbonic acid basis [\(mol kg^{-1}\)]
+    - \(K_{a1}\), \(K_{a2}\), \(K_{w}\): equilibrium constants in activity form
+    - \(a_{i}\): activity of species `i`
+    - \(\gamma_i\): activity coefficient of species `i`
+    - \(m_{i}\): molality of species `i` [\(mol kg^{-1}\)]
+    - \(K_{H}\): Henry constant used by the model [\(mol kg^{-1} atm^{-1}\)]
+    - \(p_{\mathrm{CO_2}}\): \(CO_{2}\) partial pressure `[atm]`
+    - \([\mathrm{CO_2^*}]\): dissolved molecular \(CO_{2}\) plus hydrated carbonic acid basis [\(mol kg^{-1}\)]
 
 
 <table class="reaction-map">
@@ -467,9 +467,9 @@ These half-reactions and constants provide the thermodynamic constraints that al
 ### 2.2 Constants Used by the NaOH-CO2 Pitzer Example Path (25 C)
 
 !!! note "Calculation Legend"
-    - \(K_{a1}\): first dissociation constant `[-]`
-    - \(K_{a2}\): second dissociation constant `[-]`
-    - \(K_{w}\): water autoionization constant `[-]`
+    - \(K_{a1}\): first dissociation constant
+    - \(K_{a2}\): second dissociation constant
+    - \(K_{w}\): water autoionization constant
 
 
 In `naoh_co2_pitzer_ph_model.py`:
@@ -541,9 +541,9 @@ The difference is why we treat the Pitzer path as the best sodium bicarbonate pr
 ## 3) Complete Keq Expression
 
 !!! note "Calculation Legend"
-    - \(K_{b1}\), \(K_{b2}\): base-side equilibrium constants `[-]`
-    - \(K_{eq,\mathrm{overall}}\): overall equilibrium constant `[-]`
-    - \(a_{\mathrm{H_2O}}\): water activity `[-]`, often approximated as `1` in concentrated electrolyte simplifications
+    - \(K_{b1}\), \(K_{b2}\): base-side equilibrium constants
+    - \(K_{eq,\mathrm{overall}}\): overall equilibrium constant
+    - \(a_{\mathrm{H_2O}}\): water activity, often approximated as `1` in concentrated electrolyte systems
 
 The overall equilibrium relationship is explicitly tied to the half-reaction constants, enabling direct calculation of the species involved and subsequently the pH.
 
@@ -599,7 +599,7 @@ The overall carbonate-neutralization chemistry is the direct sum of the two half
 
 The \(\mathrm{HCO_3^-}\) term cancels in the algebra because it is an intermediate produced in the first half-step and consumed in the second. 
 
-**This means bicarbonate quality is controlled by how strongly each half-step is driven in practice: we want to favor \(\mathrm{CO_2^*} + \mathrm{OH^-} \rightarrow \mathrm{HCO_3^-}\) while suppressing \(\mathrm{HCO_3^-} + \mathrm{OH^-} \rightarrow \mathrm{CO_3^{2-}} + \mathrm{H_2O}\), achieved by increasing dissolved CO2 (\(p_{\mathrm{CO_2}}\)), reducing effective \(\mathrm{OH^-}\) through loading stage progression, and avoiding excessive residual alkalinity.**
+**This means bicarbonate quality is controlled by how strongly each half-step is driven in practice: we want to favor \(\mathrm{CO_2^*} + \mathrm{OH^-} \rightarrow \mathrm{HCO_3^-}\) while suppressing \(\mathrm{HCO_3^-} + \mathrm{OH^-} \rightarrow \mathrm{CO_3^{2-}} + \mathrm{H_2O}\), achieved by increasing dissolved \(CO_{2}\) (\(p_{\mathrm{CO_2}}\)), reducing effective \(\mathrm{OH^-}\) through loading stage progression, and avoiding excessive residual alkalinity.**
 
 <div class="calculation-map">
   <div class="calculation-map-heading">
@@ -689,9 +689,9 @@ The \(\mathrm{HCO_3^-}\) term cancels in the algebra because it is an intermedia
 ## 4) Speciation and pH Derivation Used in GL-260
 
 !!! note "Calculation Legend"
-    - \([H^+]\), \([\mathrm{OH^-}]\), \([\mathrm{CO_2^*}]\), \([\mathrm{HCO_3^-}]\), \([\mathrm{CO_3^{2-}}]\), \([\mathrm{Na^+}]\): concentration/molarity-like model terms [\(mol L^{-1}\) or model-consistent concentration basis]
+    - \([H^+]\), \([\mathrm{OH^-}]\), \([\mathrm{CO_2^*}]\), \([\mathrm{HCO_3^-}]\), \([\mathrm{CO_3^{2-}}]\), \([\mathrm{Na^+}]\): concentration/molarity-like model terms [\(mol L^{-1}\)] or model-consistent concentration basis]
     - \(C_{T}\): total inorganic carbon concentration on the same basis as reconstructed species
-    - \(\alpha_0\), \(\alpha_1\), \(\alpha_2\): species fractions `[-]`
+    - \(\alpha_0\), \(\alpha_1\), \(\alpha_2\): species fractions
     - \(D\): shared denominator in alpha-fraction identities
     - \(R_{q}\): charge-balance residual on concentration basis (target is zero)
 
@@ -843,10 +843,10 @@ The pH solver is therefore doing one central job: find the \([H^+]\) value where
 ## 5) Why Bicarbonate Purity Is Hard and Why pCO2 Is the Control Lever
 
 !!! note "Calculation Legend"
-    - \(\frac{a_{\mathrm{HCO_3^-}}}{a_{\mathrm{CO_3^{2-}}}}\): bicarbonate-to-carbonate activity ratio `[-]`
-    - \(a_{\mathrm{OH^-}}\): hydroxide activity `[-]`
-    - \(K_{a2}\), \(K_{w}\), \(K_{b2}\): equilibrium constants `[-]`
-    - \(p_{\mathrm{CO_2}}\): headspace \(CO_{2}\) partial pressure [`atm`]
+    - \(\frac{a_{\mathrm{HCO_3^-}}}{a_{\mathrm{CO_3^{2-}}}}\): bicarbonate-to-carbonate activity ratio
+    - \(a_{\mathrm{OH^-}}\): hydroxide activity
+    - \(K_{a2}\), \(K_{w}\), \(K_{b2}\): equilibrium constants
+    - \(p_{\mathrm{CO_2}}\): headspace \(CO_{2}\) partial pressure `[atm]`
 
 At high alkalinity, carbonate is strongly favored unless dissolved \(CO_{2}\) is driven high enough to consume free hydroxide and shift the distribution back toward bicarbonate.
 
@@ -936,16 +936,16 @@ The trend is the key operational point: higher `pCO2` materially suppresses carb
 
 !!! note "Calculation Legend"
     - `I`: ionic strength [\(mol kg^{-1}\)]
-    - `m_i`, `m_j`, `m_k`: species molalities [\(mol kg^{-1}\)]
-    - `z_i`: ion charge number `[-]`
-    - \(\gamma_i\): activity coefficient `[-]`
-    - \(B_{ij}\), \(C_{ij}\), \(\Psi_{ijk}\), `F(I)`, `Z`: Pitzer-model terms used in the focused implementation
-    - `r_1`, \(r_{23}\): dimensionless species ratio identities `[-]`
+    - \(m_{i}\), \(m_{j}\), \(m_{k}\): species molalities [\(mol kg^{-1}\)]
+    - \(z_{i}\): ion charge number
+    - \(\gamma_i\): activity coefficient
+    - \(B_{ij}\), \(C_{ij}\), \(\Psi_{ijk}\), \(F(I)\), \(Z\): Pitzer-model terms used in the focused implementation
+    - \(r_{1}\), \(r_{2}\), \(r_{3}\): dimensionless species ratio identities
     - \(m_{CT}\): total inorganic carbon molality [\(mol kg^{-1}\)]
 
 The NaOH-focused Pitzer path adds activity corrections at high ionic strength while preserving charge and carbon closures each cycle.
 
-The NaOH Pitzer path uses activity-corrected species balances and charge balance with focused Pitzer interactions (`Na+` with `OH-`, `HCO3-`, \(CO3^2-\), plus selected `THETA/PSI` terms).
+The NaOH Pitzer path uses activity-corrected species balances and charge balance with focused Pitzer interactions (\(Na^+\) with \(OH^-\), \(CO_{3}^2^-\), \(CO_{3}^2^-\), plus selected \(\theta\)/\(\Psi\) terms).
 
 <div class="calculation-map">
   <div class="calculation-map-heading">
@@ -1005,17 +1005,17 @@ The NaOH Pitzer path uses activity-corrected species balances and charge balance
     - `HMW`: Harvie-Moller-Weare Pitzer parameter family for concentrated electrolyte solutions.
     - `PHREEQC pitzer.dat`: database source for the Pitzer interaction parameters used by the focused GL-260 path.
     - `Na-CO3 pairing`: shorthand for explicitly correcting sodium interactions with carbonate-family ions.
-    - `B0`, `B1`, `C0`: pair-interaction terms for a cation-anion pair.
-    - `THETA`, `PSI`: same-charge and ternary interaction terms that capture higher-order electrolyte behavior.
+    - \(B^0\), \(B^1\), \(C^0\): pair-interaction terms for a cation-anion pair.
+    - \(\Theta\), \(\Psi\): same-charge and ternary interaction terms that capture higher-order electrolyte behavior.
 
 The phrase **HMW / PHREEQC-NaCO3 Pairing** means GL-260 is not just solving carbonate acid-base equations in isolation. It reads the focused Pitzer parameter set from `pitzer.dat` and applies the sodium-carbonate interaction terms that dominate this chemistry:
 
-- `Na+` with `OH-`
-- `Na+` with `HCO3-`
-- `Na+` with `CO3-2`
-- `THETA(CO3-2, OH-)`
-- `PSI(CO3-2, Na+, OH-)`
-- `PSI(CO3-2, HCO3-, Na+)`
+- \(Na^+\) with \(OH^-\)
+- \(Na^+\) with \(HCO_{3}^-\)
+- \(Na^+\) with \(CO_{3}^{2-}\)
+- \(\Theta_{\mathrm{CO_3,OH}}\)
+- \(\Psi_{\mathrm{CO_3,Na,OH}}\)
+- \(\Psi_{\mathrm{CO_3,OH,Na}}\)
 
 The model converts these database terms into the compact parameters used by the Rust and Python solver cores:
 
@@ -1037,8 +1037,8 @@ Equilibrium tells us where the chemistry can settle after a cycle. Kinetics expl
     - \(C_{\mathrm{CO_2}}\): bulk dissolved CO2 concentration [\(mol L^{-1}\)]
     - \(r_1\), \(r_2\): bicarbonate-forming and carbonate-forming reaction rates [\(mol L^{-1} s^{-1}\)]
     - \(k_1\), \(k_2\): effective kinetic rate constants on the selected concentration/activity basis
-    - \(E\): enhancement factor showing how fast reaction increases apparent CO2 absorption `[-]`
-    - \(\tau_{\mathrm{mix}}\), \(\tau_{\mathrm{rxn}}\), \(\tau_{\mathrm{mt}}\): mixing, reaction, and mass-transfer time scales [`s`]
+    - \(E\): enhancement factor showing how fast reaction increases apparent CO2 absorption
+    - \(\tau_{\mathrm{mix}}\), \(\tau_{\mathrm{rxn}}\), \(\tau_{\mathrm{mt}}\): mixing, reaction, and mass-transfer time scales [seconds]
 
 !!! info "Derivation Walkthrough"
     **Goal:** separate the thermodynamic endpoint from the rate path that gets the batch there.
