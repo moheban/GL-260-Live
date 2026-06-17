@@ -471,7 +471,8 @@ def build_derivation_stepper_steps_json() -> str:
     """Build JSON payload for the live derivation slider.
 
     Purpose:
-        Convert the stepper's curated LaTeX equations into MathML-backed HTML.
+        Convert the stepper's curated LaTeX equations and inline callout math
+        into MathML-backed HTML.
     Why:
         The slider content is inserted at runtime, so it cannot pass through the
         normal Markdown conversion path; pre-rendering keeps the presentation
@@ -479,13 +480,14 @@ def build_derivation_stepper_steps_json() -> str:
     Inputs:
         None.
     Outputs:
-        JSON string containing titles, prose, callouts, and rendered equation
-        HTML fragments for the derivation stepper.
+        JSON string containing titles, prose, rendered callout HTML, and
+        rendered equation HTML fragments for the derivation stepper.
     Side Effects:
         None.
     Exceptions:
         Propagates ``ValueError`` from LaTeX conversion if a curated expression
-        cannot be rendered, causing the build to fail before writing bad HTML.
+        or callout cannot be rendered, causing the build to fail before writing
+        bad HTML.
     """
 
     raw_steps = [
@@ -535,7 +537,7 @@ def build_derivation_stepper_steps_json() -> str:
             ],
             "callout": (
                 "In the Pitzer path, activities replace raw molality through "
-                "a_i = gamma_i x m_i."
+                r"\(a_i = \gamma_i \times m_i\)."
             ),
         },
         {
@@ -644,7 +646,10 @@ def build_derivation_stepper_steps_json() -> str:
                     )
                     for equation in step["equations"]
                 ],
-                "callout": step["callout"],
+                "calloutHtml": _replace_inline_latex_in_segment(
+                    html.escape(step["callout"]),
+                    source_label="derivation stepper callout",
+                ),
             }
         )
 
@@ -2063,7 +2068,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             }});
           }}
           if (callout) {{
-            callout.textContent = step.callout;
+            callout.innerHTML = step.calloutHtml || "";
           }}
           renderStepButtons(boundedIndex);
         }}
