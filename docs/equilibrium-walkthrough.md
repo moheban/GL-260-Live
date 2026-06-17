@@ -1023,7 +1023,7 @@ The model converts these database terms into the compact parameters used by the 
 \{B^0_{\mathrm{Na,OH}}, B^1_{\mathrm{Na,OH}}, C^0_{\mathrm{Na,OH}}, B^0_{\mathrm{Na,HCO_3}}, B^1_{\mathrm{Na,HCO_3}}, C^0_{\mathrm{Na,HCO_3}}, B^0_{\mathrm{Na,CO_3}}, B^1_{\mathrm{Na,CO_3}}, C^0_{\mathrm{Na,CO_3}}, \Theta_{\mathrm{CO_3,OH}}, \Psi_{\mathrm{CO_3,Na,OH}}, \Psi_{\mathrm{CO_3,HCO_3,Na}}\}
 ```
 
-Operationally, this is more accurate for GL-260 than an ideal model because sodium carbonate and sodium bicarbonate are not passive spectators. Sodium association changes the effective activities of carbonate-family species, and those activity changes shift the pH and fraction crossover. That is the specific error mode the HMW path is meant to avoid: a misleading carbonate-buffer plateau or incorrect pH slope when the solution is highly loaded with sodium.
+Operationally, this yields more accurate calculations than an ideal model because sodium carbonate and sodium bicarbonate are not passive spectators. Sodium association changes the effective activities of the species present, and those activity changes shift the pH and fraction crossover. That is the specific error mode the HMW path is meant to avoid: a misleading carbonate-buffer plateau or incorrect pH slope when the solution is highly loaded with sodium.
 
 ---
 
@@ -1130,15 +1130,7 @@ The same carbonate chemistry discussed earlier can be read as a hydrated carboni
 
 These balances describe a moving cycle, not the final equilibrium solve. CO2 must first cross from gas to liquid, hydrate into the \(\mathrm{CO_2^*}\) carbonic-acid basis, react in the liquid, and then mix through the batch. GL-260's equilibrium model consumes the cycle-level uptake after the event has been identified; the kinetic interpretation explains the pressure and temperature shape during the event.
 
-### 7.1 Solvation and Slurry Re-Equilibration
-
-A thick sodium bicarbonate slurry can look like it has stopped reacting because much of the material is no longer freely dissolved in the liquid phase. Solvation theory is the reason the batch can still keep moving toward the bicarbonate endpoint: solid and dissolved material are not static populations. Ions and neutral species are continually dissolving from particle surfaces, solvating into the liquid film, reacting, and precipitating or crystallizing back out as local concentration, pH, CO2 availability, and ionic strength change.
-
-That dynamic exchange matters operationally. Even when the visible batch is a dense slurry, there is still an active liquid phase around the solids. If CO2 continues to enter that liquid phase and mixing keeps exposing fresh surfaces, carbonate-rich and hydroxide-rich microenvironments can re-enter solution long enough to react toward bicarbonate. Given enough contact time and enough CO2 driving force, the equilibrium can still be pushed toward bicarbonate even though the material is not a clear solution.
-
-This is why the physical handling step is part of the kinetic interpretation. After a shaker cycle, the reaction can be removed from the shaker and physically blended until a smooth, homogeneous slurry is observed. That blending breaks up local concentration pockets, refreshes solid-liquid surface area, distributes heat, and moves CO2-rich liquid through the bulk. The result is better usable CO2 uptake and a faster observed approach to the bicarbonate-rich equilibrium state.
-
-### 7.2 Gas-Liquid Supply Term
+### 7.1 Gas-Liquid Supply Term
 
 The physical supply of dissolved CO2 is controlled by the driving force between the gas-equilibrium concentration and the current bulk concentration:
 
@@ -1196,7 +1188,7 @@ where \(E > 1\) means the liquid reaction is consuming dissolved CO2 fast enough
 
 That is the mass-transfer-limited regime: the chemistry is ready to react, but the gas-liquid interface controls how quickly carbon can enter the solution.
 
-### 7.3 Pseudo-First-Order View at High Hydroxide
+### 7.2 Pseudo-First-Order View at High Hydroxide
 
 During early caustic-rich cycles, hydroxide is abundant compared with dissolved CO2. Over a short interval, \(a_{\mathrm{OH^-}}\) can be treated as locally high and slowly varying, which collapses the first rate expression into a pseudo-first-order form:
 
@@ -1237,7 +1229,7 @@ The interpretation is direct: early in the run, high hydroxide activity makes CO
 
 This same logic explains the carbonate-rich middle region. If hydroxide remains high while bicarbonate has already been formed, the second step \(r_2 = k_2 \times a_{\mathrm{HCO_3^-}} \times a_{\mathrm{OH^-}}\) can keep running. Lowering \(a_{\mathrm{OH^-}}\) through additional CO2 loading suppresses \(r_2\), which is why the process eventually moves away from carbonate dominance and toward the bicarbonate-rich endpoint.
 
-### 7.4 Time-Scale Test for Interpreting Cycle Shape
+### 7.3 Time-Scale Test for Interpreting Cycle Shape
 
 For operations, the useful question is which time scale is slowest:
 
@@ -1297,7 +1289,7 @@ For operations, the useful question is which time scale is slowest:
   </div>
 </div>
 
-### 7.5 How This Connects to GL-260 Cycle Detection
+### 7.4 How This Connects to GL-260 Cycle Detection
 
 GL-260 does not need to solve a full kinetic ODE model to use kinetics operationally. The detected cycle provides an integrated uptake event, and the equilibrium solver uses that event as the carbon-loading increment:
 
@@ -1392,8 +1384,8 @@ Cycle-level uptake is converted into cumulative carbon loading, which becomes th
 !!! note "Calculation Legend"
     - \(\Delta P_{\mathrm{psi}}\), \(\Delta P_{\mathrm{atm}}\): pressure drop per cycle [`psi`, `atm`]
     - \(V_{\mathrm{headspace}}\): headspace volume [`L`]
-    - `R`: ideal gas constant [\(L atm mol^{-1} K^{-1}\)]
-    - `T`: absolute temperature [`K`]
+    - \(\R\): ideal gas constant [\(L atm mol^{-1} K^{-1}\)]
+    - \(\T\): absolute temperature [\(\K\)]
     - \(n_{\mathrm{CO_2},i}\): inferred moles of CO2 transferred in cycle `i` [`mol`]
 
 
