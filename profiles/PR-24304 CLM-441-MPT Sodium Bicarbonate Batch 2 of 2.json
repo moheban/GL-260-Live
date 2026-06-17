@@ -304,7 +304,7 @@
               "actual_observed_ph": null,
               "alignment_quality_flag": "ok",
               "analysis_anchor_measured_ph": null,
-              "calculated_ph": 13.452506364889294,
+              "calculated_ph": 13.151476369225312,
               "calibrated_estimated_ph": 14.991,
               "co2_cycle_g": 124.45219007424079,
               "co2_cycle_mol": 2.827848307166425,
@@ -335,7 +335,7 @@
               },
               "headspace_pressure_psi": 798.2,
               "peak_pressure_psi": 798.2,
-              "ph": 13.452506364889294,
+              "ph": 13.151476369225312,
               "trough_pressure_psi": 166.8,
               "warning_codes": [
                 "raw_low_ph_while_naoh"
@@ -387,7 +387,6 @@
               "warning_codes": [],
               "warnings": [
                 "NaOH equivalence reached; carbonate/bicarbonate equilibrium governs excess CO\u2082.",
-                "No measured pH provided; relying on ledger ratios.",
                 "NaHCO3 supersaturated (SI=1.00).",
                 "Saturation limits enforced for NaHCO3; excess solid remains undissolved.",
                 "Only 0.0% of charged NaHCO\u2083 dissolved; 100.0% retained as solids."
@@ -509,12 +508,12 @@
             {
               "actual_co3_pct": 0.12153091567594507,
               "actual_hco3_pct": 92.27511554377752,
-              "actual_ph": 13.452506364889294,
+              "actual_ph": 13.151476369225312,
               "alignment_quality_flag": "ok",
               "cycle_id": 4,
-              "delta_co2_ph": 0.1366176371272445,
+              "delta_co2_ph": -0.16441235853673675,
               "delta_co3_pct": -99.87846908432405,
-              "delta_cycle_ph": 0.1366176371272445,
+              "delta_cycle_ph": -0.16441235853673675,
               "delta_hco3_pct": 92.27511554377752,
               "reference_co2_aligned_ph": 13.315888727762049,
               "reference_co3_pct": 100.0,
@@ -684,13 +683,12 @@
           "summary": {
             "actual_yield_pct": 0.0,
             "additional_co2_required_g": 371.0798194533322,
-            "additional_co2_required_g_guidance": 192.83721063420052,
             "additional_co2_required_mol": 8.43181175549216,
             "alignment_audit_mismatch_count": 1,
             "alignment_audit_status": "reconciled",
             "alpha_applies_to": "pH calibration only",
-            "alpha_post": 1.1817300358903275,
-            "alpha_pre": 1.1817300358903275,
+            "alpha_post": 1.1826393832517224,
+            "alpha_pre": 1.1826393832517224,
             "analysis_anchor_fit_tolerance_ph": 0.3,
             "analysis_co3_primary_source": "plan_cycle_reference",
             "analysis_consistency_affected_cycles": [
@@ -750,8 +748,8 @@
             "anchor_count_by_source": {
               "manual": 1
             },
-            "anchor_residual_after": -1.0113777747424137,
-            "anchor_residual_before": -0.7934994699113496,
+            "anchor_residual_after": -1.013350615514737,
+            "anchor_residual_before": -0.794935079016529,
             "anchor_sources": [
               "manual"
             ],
@@ -793,8 +791,6 @@
             "forecast_slowdown_detected": false,
             "forecast_tail_rate_g_per_cycle": 124.21727458461334,
             "forecast_time_basis": "cycles_only",
-            "guidance_co2_required_total_g": 755.2329349790216,
-            "guidance_conflicts_with_target_total": true,
             "latest_actual_observed_ph": 9.99,
             "latest_actual_ph": 9.99,
             "latest_calculated_ph": 10.061846635978666,
@@ -816,28 +812,28 @@
                 "baseline_abs_error_ph": 0.0,
                 "cycle_index": 5,
                 "measured_ph": 9.99,
-                "ml_abs_error_ph": 0.8753068945767328,
+                "ml_abs_error_ph": 0.5818637527472301,
                 "within_tolerance_after_ml": false
               }
             ],
             "ml_anchor_guard_mae_regression": true,
             "ml_anchor_guard_pass": false,
             "ml_anchor_guard_tolerance_breach": true,
-            "ml_anchor_mae_ph": 0.8753068945767328,
+            "ml_anchor_mae_ph": 0.5818637527472301,
             "ml_correction_applied": false,
-            "ml_fit_error": 0.27137164123636415,
-            "ml_training_sample_count": 152,
+            "ml_fit_error": 0.27660779981862316,
+            "ml_training_sample_count": 153,
             "objective_components": {
-              "anchor_residual_squared_sum": 1.0228850032429166,
-              "factor_regularization_term": 0.003312506859115253,
-              "factor_smoothness_term": 6.203915403298282e-06,
-              "objective_total": 1.7169959009377715,
-              "terminal_penalty_raw": 0.46052812461355747,
-              "terminal_penalty_weighted": 0.6907921869203362
+              "anchor_residual_squared_sum": 1.0268794699640962,
+              "factor_regularization_term": 0.003345608910568419,
+              "factor_smoothness_term": 6.184049444666784e-06,
+              "objective_total": 1.7170128472105364,
+              "terminal_penalty_raw": 0.4578543895242847,
+              "terminal_penalty_weighted": 0.6867815842864271
             },
             "planning_completion_pct": 60.247504938000674,
             "prior_cycle_factor_points_used": 5,
-            "prior_sample_count": 143,
+            "prior_sample_count": 144,
             "reference_cycles": 7,
             "selected_cycle_id": 5,
             "target_ph": 8.1,
@@ -867,14 +863,14 @@
           "gas_delta_mol": -8.43181175549216,
           "gas_delta_pct": -39.75249506199932,
           "hco3_delta_pct": 29.650308477852803,
-          "pH_MAE_co2": 5.938194793928015,
-          "pH_MAE_cycle": 5.938194793928015,
-          "pH_RMSE_co2": 6.520649123656484,
-          "pH_RMSE_cycle": 6.520649123656484,
-          "ph_mae_co2": 5.938194793928015,
-          "ph_mae_cycle": 5.938194793928015,
-          "ph_rmse_co2": 6.520649123656484,
-          "ph_rmse_cycle": 6.520649123656484
+          "pH_MAE_co2": 5.751853162965775,
+          "pH_MAE_cycle": 5.751853162965775,
+          "pH_RMSE_co2": 6.500289762557074,
+          "pH_RMSE_cycle": 6.500289762557074,
+          "ph_mae_co2": 5.751853162965775,
+          "ph_mae_cycle": 5.751853162965775,
+          "ph_rmse_co2": 6.500289762557074,
+          "ph_rmse_cycle": 6.500289762557074
         },
         "analysis_input_signature": "{\"analysis_headspace_volume_l\":1.355,\"anchor_learning_enabled\":true,\"forced_ph_target\":8.1,\"measured_ph_anchors\":[{\"cycle_index\":5,\"measured_ph\":9.99,\"source\":\"manual\"}],\"measured_ph_cycle_index\":5.0,\"measured_ph_value\":9.99,\"ph_model_key\":\"naoh_co2_pitzer_hmw\",\"reaction_co2_charged_g\":575.08,\"reaction_final_ph\":null,\"reaction_naoh_mass_g\":702.0,\"reaction_naoh_mass_input_g\":702.0,\"reaction_slurry_ph\":null,\"reaction_solution_volume_input_l\":3.0,\"reaction_solution_volume_l\":3.0,\"reaction_target_ph\":8.1,\"spec_model_key\":\"naoh_co2_pitzer_hmw\",\"temperature_c\":28.491159250585483,\"terminal_ph_range_high\":8.3,\"terminal_ph_range_low\":7.9,\"terminal_ph_weight\":1.5,\"use_same_model\":true,\"use_temperature_adjusted_constants\":true,\"workflow_key\":\"Analysis\"}",
         "analysis_last_action": "recompute_calibration",
@@ -1008,8 +1004,8 @@
         "analysis_required_co2_text": "CO2 required for target pH (target total): 933.48 g (21.2108 mol) | remaining 371.08 g (8.4318 mol) | source measured-pH calibration",
         "analysis_uptake_correction": {
           "alpha_applies_to": "pH calibration only",
-          "alpha_post": 1.1817300358903275,
-          "alpha_pre": 1.1817300358903275,
+          "alpha_post": 1.1826393832517224,
+          "alpha_pre": 1.1826393832517224,
           "anchor_count": 1,
           "anchor_count_by_source": {
             "manual": 1
@@ -1017,10 +1013,10 @@
           "anchor_cycle_index": 5,
           "anchor_fit_tolerance_ph": 0.3,
           "anchor_measured_ph": 9.99,
-          "anchor_predicted_ph_after": 8.978622225257586,
-          "anchor_predicted_ph_before": 9.19650053008865,
-          "anchor_residual_after": -1.0113777747424137,
-          "anchor_residual_before": -0.7934994699113496,
+          "anchor_predicted_ph_after": 8.976649384485263,
+          "anchor_predicted_ph_before": 9.195064920983471,
+          "anchor_residual_after": -1.013350615514737,
+          "anchor_residual_before": -0.794935079016529,
           "anchor_sources": [
             "manual"
           ],
@@ -1028,10 +1024,10 @@
             {
               "cycle_index": 5,
               "measured_ph": 9.99,
-              "predicted_ph_after": 8.978622225257586,
-              "predicted_ph_before": 9.19650053008865,
-              "residual_after": -1.0113777747424137,
-              "residual_before": -0.7934994699113496,
+              "predicted_ph_after": 8.976649384485263,
+              "predicted_ph_before": 9.195064920983471,
+              "residual_after": -1.013350615514737,
+              "residual_before": -0.794935079016529,
               "source": "manual"
             }
           ],
@@ -1039,9 +1035,9 @@
           "baseline_solver_corrected_ph_series": [
             14.3,
             14.297,
-            14.271243436248524,
-            9.820103725858559,
-            8.978622225257586
+            14.270132911768089,
+            9.817596953102772,
+            8.976649384485263
           ],
           "co2_required_for_target_ph_g": 933.4755437981532,
           "co2_required_for_target_ph_mol": 21.210773669279433,
@@ -1113,11 +1109,11 @@
             9.99
           ],
           "cycle_factor_series": [
-            1.186711567945147,
-            1.186711567945147,
-            1.186711567945147,
-            1.186711567945147,
-            1.16180390767105
+            1.1876129330683691,
+            1.1876129330683691,
+            1.1876129330683691,
+            1.1876129330683691,
+            1.1627451839851353
           ],
           "endpoint_diagnostics": {
             "distance_to_terminal_band": 1.6899999999999995,
@@ -1129,13 +1125,13 @@
           "global_anchor_learning": {
             "compatible_global_anchor_count": 2,
             "manual_anchor_count": 1,
-            "prior_cycle_factor_points_used": 706,
-            "prior_sample_count": 143,
+            "prior_cycle_factor_points_used": 711,
+            "prior_sample_count": 144,
             "prior_sample_profile_counts": {
               "PR-24303 CLM-441-MPT Sodium Bicarbonate Batch 1 of 2": 33,
               "PR-24303 CLM-441-MPT Sodium Bicarbonate Batch 2 of 2": 42,
               "PR-24304 CLM-441-MPT Sodium Bicarbonate Batch 1 of 2": 67,
-              "PR-24304 CLM-441-MPT Sodium Bicarbonate Batch 2 of 2": 1
+              "PR-24304 CLM-441-MPT Sodium Bicarbonate Batch 2 of 2": 2
             },
             "resolved_anchor_source_counts": {
               "manual": 1
@@ -1157,75 +1153,75 @@
               "baseline_abs_error_ph": 0.0,
               "cycle_index": 5,
               "measured_ph": 9.99,
-              "ml_abs_error_ph": 0.8753068945767328,
+              "ml_abs_error_ph": 0.5818637527472301,
               "within_tolerance_after_ml": false
             }
           ],
           "ml_anchor_guard_mae_regression": true,
           "ml_anchor_guard_pass": false,
           "ml_anchor_guard_tolerance_breach": true,
-          "ml_anchor_mae_ph": 0.8753068945767328,
+          "ml_anchor_mae_ph": 0.5818637527472301,
           "ml_corrected_fraction_series": [
             {
-              "CO3^2-": 0.9779519071161789,
-              "H2CO3": 5.2050213010521636e-08,
-              "HCO3-": 0.02204804083360814
+              "CO3^2-": 0.9886488411696045,
+              "H2CO3": 1.3647003257069355e-08,
+              "HCO3-": 0.011351145183392204
             },
             {
-              "CO3^2-": 0.9169113024146764,
-              "H2CO3": 7.884031212503569e-07,
-              "HCO3-": 0.08308790918220227
+              "CO3^2-": 0.9567517945802892,
+              "H2CO3": 2.0470704327451642e-07,
+              "HCO3-": 0.04324800071266747
             },
             {
-              "CO3^2-": 0.8162108800031321,
-              "H2CO3": 4.333279853410153e-06,
-              "HCO3-": 0.18378478671701448
+              "CO3^2-": 0.9010164195497652,
+              "H2CO3": 1.1386326193628188e-06,
+              "HCO3-": 0.09898244181761545
             },
             {
-              "CO3^2-": 0.5034656824597986,
-              "H2CO3": 5.1267126947289414e-05,
-              "HCO3-": 0.49648305041325413
+              "CO3^2-": 0.6791378791504157,
+              "H2CO3": 1.5872157990565502e-05,
+              "HCO3-": 0.3208462486915938
             },
             {
-              "CO3^2-": 0.05732065349127039,
-              "H2CO3": 0.001617800339191864,
-              "HCO3-": 0.9410615461695377
+              "CO3^2-": 0.10682943556111174,
+              "H2CO3": 0.0007805818327093734,
+              "HCO3-": 0.8923899826061789
             }
           ],
           "ml_corrected_ph_series": [
-            11.976947493395347,
-            11.37278949559124,
-            10.977492820937382,
-            10.336065446676276,
-            9.114693105423267
+            12.27000238322171,
+            11.674833249992666,
+            11.289174542052848,
+            10.655660988146515,
+            9.40813624725277
           ],
           "ml_correction_applied": false,
           "ml_correction_status": "baseline_only_ml_rejected_anchor_guard",
           "ml_failure_reason": "ML correction rejected: anchor MAE worsened vs baseline.",
-          "ml_fit_error": 0.27137164123636415,
+          "ml_fit_error": 0.27660779981862316,
           "ml_model_source": "retrained_current_run",
           "ml_model_version": "v1",
           "ml_monotonic_ph_adjusted": false,
-          "ml_training_sample_count": 152,
-          "objective": 1.7169959009377715,
+          "ml_training_sample_count": 153,
+          "objective": 1.7170128472105364,
           "objective_components": {
-            "anchor_residual_squared_sum": 1.0228850032429166,
-            "factor_regularization_term": 0.003312506859115253,
-            "factor_smoothness_term": 6.203915403298282e-06,
-            "objective_total": 1.7169959009377715,
-            "terminal_penalty_raw": 0.46052812461355747,
-            "terminal_penalty_weighted": 0.6907921869203362
+            "anchor_residual_squared_sum": 1.0268794699640962,
+            "factor_regularization_term": 0.003345608910568419,
+            "factor_smoothness_term": 6.184049444666784e-06,
+            "objective_total": 1.7170128472105364,
+            "terminal_penalty_raw": 0.4578543895242847,
+            "terminal_penalty_weighted": 0.6867815842864271
           },
           "ph_prediction_basis": "chemistry_context",
           "prior_cycle_factor_points_used": 5,
           "prior_cycle_factor_series": [
-            1.069711835894217,
-            1.069711835894217,
-            1.069711835894217,
-            1.069711835894217,
-            1.047259860435876
+            1.0705243340334596,
+            1.0705243340334596,
+            1.0705243340334596,
+            1.0705243340334596,
+            1.0481083348598403
           ],
-          "prior_sample_count": 143,
+          "prior_sample_count": 144,
           "reference_shape_primary": {
             "anchor_residual_points": [
               {
@@ -1328,32 +1324,32 @@
           ],
           "solver_message": "",
           "solver_scaled_cumulative_co2_g_series": [
-            77.76120509017196,
-            194.03296352088222,
-            299.53030103754656,
-            447.2191546547563,
-            662.7801468041309
+            77.82026850549651,
+            194.18034098883427,
+            299.7578088616853,
+            447.55883934253666,
+            663.2944758142544
           ],
           "solver_scaled_cumulative_co2_mol_series": [
-            1.766918621892363,
-            4.408888160985292,
-            6.806037356424103,
-            10.161877654932601,
-            15.059933578071345
+            1.7682606824775675,
+            4.412236925864512,
+            6.811206872645345,
+            10.169596094991686,
+            15.071620350475564
           ],
           "solver_scaled_cycle_uptake_g_series": [
-            77.76120509017196,
-            116.27175843071026,
-            105.49733751666436,
-            147.68885361720976,
-            215.56099214937456
+            77.82026850549651,
+            116.36007248333775,
+            105.57746787285106,
+            147.8010304808513,
+            215.73563647171775
           ],
           "solver_scaled_cycle_uptake_mol_series": [
-            1.766918621892363,
-            2.641969539092929,
-            2.397149195438811,
-            3.355840298508498,
-            4.8980559231387435
+            1.7682606824775675,
+            2.6439762433869447,
+            2.3989699467808325,
+            3.3583892223463407,
+            4.902024255483878
           ],
           "solver_status": "ok",
           "split_cycle_index": 5,
@@ -1377,8 +1373,8 @@
         "headspace_co2_g": 176.1833959201892,
         "headspace_co2_mol": 4.003303739424197,
         "ml_correction_applied": false,
-        "ml_fit_error": 0.27137164123636415,
-        "ml_training_sample_count": 152,
+        "ml_fit_error": 0.27660779981862316,
+        "ml_training_sample_count": 153,
         "slurry_mode": true,
         "supersaturation_factor": 1.0,
         "timeline": [
@@ -1473,11 +1469,11 @@
             "ledger_nahco3_mol": 0.0,
             "ledger_naoh_remaining_mol": 14.573476291176409,
             "ml_corrected_fractions": {
-              "CO3^2-": 0.9779519071161789,
-              "H2CO3": 5.2050213010521636e-08,
-              "HCO3-": 0.02204804083360814
+              "CO3^2-": 0.9886488411696045,
+              "H2CO3": 1.3647003257069355e-08,
+              "HCO3-": 0.011351145183392204
             },
-            "ml_corrected_ph": 11.976947493395347,
+            "ml_corrected_ph": 12.27000238322171,
             "na2co3_dissolved_g": 157.80884714581424,
             "na2co3_dissolved_mol": 1.488920028774873,
             "na2co3_solid_mol": 0.0,
@@ -1615,11 +1611,11 @@
             "ledger_nahco3_mol": 0.0,
             "ledger_naoh_remaining_mol": 10.120887118783596,
             "ml_corrected_fractions": {
-              "CO3^2-": 0.9169113024146764,
-              "H2CO3": 7.884031212503569e-07,
-              "HCO3-": 0.08308790918220227
+              "CO3^2-": 0.9567517945802892,
+              "H2CO3": 2.0470704327451642e-07,
+              "HCO3-": 0.04324800071266747
             },
-            "ml_corrected_ph": 11.37278949559124,
+            "ml_corrected_ph": 11.674833249992666,
             "na2co3_dissolved_g": 393.7711387832679,
             "na2co3_dissolved_mol": 3.715214614971279,
             "na2co3_solid_mol": 0.0,
@@ -1757,11 +1753,11 @@
             "ledger_nahco3_mol": 0.0,
             "ledger_naoh_remaining_mol": 6.080900890976615,
             "ml_corrected_fractions": {
-              "CO3^2-": 0.8162108800031321,
-              "H2CO3": 4.333279853410153e-06,
-              "HCO3-": 0.18378478671701448
+              "CO3^2-": 0.9010164195497652,
+              "H2CO3": 1.1386326193628188e-06,
+              "HCO3-": 0.09898244181761545
             },
-            "ml_corrected_ph": 10.977492820937382,
+            "ml_corrected_ph": 11.289174542052848,
             "na2co3_dissolved_g": 607.8677849341622,
             "na2co3_dissolved_mol": 5.735207728874769,
             "na2co3_solid_mol": 0.0,
@@ -1835,11 +1831,11 @@
               "predicted_ph": 8.595173409870872,
               "target_ph": 8.1
             },
-            "calculated_ph": 13.452506364889294,
+            "calculated_ph": 13.151476369225312,
             "calculated_ph_corrected_co2": 13.315888727762049,
             "calculated_ph_corrected_co2_quality": "ok",
-            "calculated_ph_corrected_minus_raw_delta": -0.1366176371272445,
-            "calculated_ph_raw_co2": 13.452506364889294,
+            "calculated_ph_corrected_minus_raw_delta": 0.16441235853673675,
+            "calculated_ph_raw_co2": 13.151476369225312,
             "calibrated_estimated_ph": 14.991,
             "co2_added_mass_g": 124.45219007424079,
             "co2_added_moles": 2.827848307166425,
@@ -1899,11 +1895,11 @@
             "ledger_nahco3_mol": 0.0,
             "ledger_naoh_remaining_mol": 0.4252042766437647,
             "ml_corrected_fractions": {
-              "CO3^2-": 0.5034656824597986,
-              "H2CO3": 5.1267126947289414e-05,
-              "HCO3-": 0.49648305041325413
+              "CO3^2-": 0.6791378791504157,
+              "H2CO3": 1.5872157990565502e-05,
+              "HCO3-": 0.3208462486915938
             },
-            "ml_corrected_ph": 10.336065446676276,
+            "ml_corrected_ph": 10.655660988146515,
             "na2co3_dissolved_g": 907.5880335927629,
             "na2co3_dissolved_mol": 8.563056036041194,
             "na2co3_solid_mol": 0.0,
@@ -1930,12 +1926,12 @@
             "solid_mass_g": 2193.739197304706,
             "solid_na2co3_g": 907.5880335927629,
             "solid_nahco3_g": 0.0,
-            "solution_ph": 13.452506364889294,
+            "solution_ph": 13.151476369225312,
             "speciation_ph": 7.423009474131181,
             "supersaturated": true,
             "target_ph": 8.1,
             "temperature_c": 38.590521327014244,
-            "trajectory_ph": 13.452506364889294,
+            "trajectory_ph": 13.151476369225312,
             "trajectory_speciation_ph": 7.423009474131181,
             "trough_pressure_psi": 166.8,
             "warning_codes": [
@@ -1955,13 +1951,13 @@
             "actual_cycle_co2_mol": 4.21590587774608,
             "actual_hco3_pct": 92.27511554377752,
             "actual_observed_ph": 9.99,
-            "actual_ph": 8.128827157284917,
+            "actual_ph": 9.06053531209612,
             "alignment_quality_flag": "ok",
             "analysis_anchor_cycle_index": 5,
             "analysis_anchor_measured_ph": 9.99,
             "analysis_anchor_source": "manual",
             "analysis_prediction": {
-              "co2_to_target_g": 205.52148628937954,
+              "co2_to_target_g": 172.4372898742657,
               "cycle_id": 5,
               "ledger": {
                 "buffer_carbon_mol": 12.778961913787272,
@@ -1974,7 +1970,7 @@
                 "naoh_initial_mol": 17.551316348726154,
                 "naoh_remaining_mol": 0.0
               },
-              "predicted_ph": 8.128827157284917,
+              "predicted_ph": 9.06053531209612,
               "target_ph": 8.1
             },
             "calculated_ph": 10.061846635978666,
@@ -1992,7 +1988,7 @@
             "co2_mol_delta": 0.0,
             "co2_mol_delta_pct": 0.0,
             "co2_moles": 4.21590587774608,
-            "co2_to_target_g": 205.52148628937954,
+            "co2_to_target_g": 172.4372898742657,
             "co2_total_moles": 12.778961913787274,
             "co2_unconsumed_mass_g": 0.0,
             "co2_unconsumed_moles": 0.0,
@@ -2019,8 +2015,8 @@
             "delta_pressure_psi": 790.3000000000001,
             "dissolved_mass_g": 0.04053828133421739,
             "effective_dissolved_mass_g": 0.040425892592145664,
-            "equilibrium_ph": 8.128827157284917,
-            "forecast_ph": 8.128827157284917,
+            "equilibrium_ph": 9.06053531209612,
+            "forecast_ph": 9.06053531209612,
             "fractions": {
               "CO3^2-": 0.0012153091567594493,
               "H2CO3": 0.07603353540546534,
@@ -2038,11 +2034,11 @@
             "ledger_nahco3_mol": 8.431820531154722,
             "ledger_naoh_remaining_mol": 0.0,
             "ml_corrected_fractions": {
-              "CO3^2-": 0.05732065349127039,
-              "H2CO3": 0.001617800339191864,
-              "HCO3-": 0.9410615461695377
+              "CO3^2-": 0.10682943556111174,
+              "H2CO3": 0.0007805818327093734,
+              "HCO3-": 0.8923899826061789
             },
-            "ml_corrected_ph": 9.114693105423267,
+            "ml_corrected_ph": 9.40813624725277,
             "na2co3_dissolved_g": 483.2822091547076,
             "na2co3_dissolved_mol": 4.559747908785717,
             "na2co3_solid_mol": 0.0,
@@ -2055,9 +2051,9 @@
             "original_cycle_co2_mol": 4.21590587774608,
             "pco2_atm": 54.314099074578124,
             "peak_pressure_psi": 788.1,
-            "ph": 8.128827157284917,
-            "ph_delta_co2": -1.177176596342564,
-            "ph_delta_cycle": -1.177176596342564,
+            "ph": 9.06053531209612,
+            "ph_delta_co2": -0.2454684415313615,
+            "ph_delta_cycle": -0.2454684415313615,
             "ph_source": "spec_solver",
             "planning_co2_aligned_ph": 9.306003753627481,
             "planning_co3_pct": 37.36013083453855,
@@ -2080,7 +2076,6 @@
             "warning_codes": [],
             "warnings": [
               "NaOH equivalence reached; carbonate/bicarbonate equilibrium governs excess CO\u2082.",
-              "No measured pH provided; relying on ledger ratios.",
               "NaHCO3 supersaturated (SI=1.00).",
               "Saturation limits enforced for NaHCO3; excess solid remains undissolved.",
               "Only 0.0% of charged NaHCO\u2083 dissolved; 100.0% retained as solids."
@@ -2092,8 +2087,8 @@
             "Cycle 1: 65.53 g cumulative CO2 | equilibrium pH 6.73 | CO2 to target: 385.45 g | Consistency: contradiction (warnings: No measured pH provided; relying on ledger ratios.; Residual NaOH detected; neutralize remaining caustic first.; NaHCO3 supersaturated (SI=1.00).; Saturation limits enforced for NaHCO3; excess solid remains undissolved.; Only 0.0% of charged NaHCO\u2083 dissolved; 100.0% retained as solids.; Chemistry consistency check: raw low-pH + residual-NaOH contradiction detected; using anchor/calibrated context.) | plan(cycle) pH 14.30, plan(CO2) pH 14.30, corrected pH 15.00, calc(raw CO2) pH 14.30, calc(corrected CO2) pH 14.30, \u0394calc pH +0.000, corrected cycle CO2 65.53 g, \u0394pH cycle -7.575, \u0394pH CO2 -7.575",
             "Cycle 2: 163.50 g cumulative CO2 | equilibrium pH 6.31 | CO2 to target: 384.30 g | Consistency: contradiction (warnings: No measured pH provided; relying on ledger ratios.; Residual NaOH detected; neutralize remaining caustic first.; NaHCO3 supersaturated (SI=1.00).; Saturation limits enforced for NaHCO3; excess solid remains undissolved.; Only 0.0% of charged NaHCO\u2083 dissolved; 100.0% retained as solids.; Chemistry consistency check: raw low-pH + residual-NaOH contradiction detected; using anchor/calibrated context.) | plan(cycle) pH 14.30, plan(CO2) pH 14.30, corrected pH 15.00, calc(raw CO2) pH 14.30, calc(corrected CO2) pH 14.30, \u0394calc pH -0.003, corrected cycle CO2 97.98 g, \u0394pH cycle -7.987, \u0394pH CO2 -7.987",
             "Cycle 3: 252.40 g cumulative CO2 | equilibrium pH 6.07 | CO2 to target: 383.27 g | Consistency: contradiction (warnings: No measured pH provided; relying on ledger ratios.; Residual NaOH detected; neutralize remaining caustic first.; NaHCO3 supersaturated (SI=1.00).; Saturation limits enforced for NaHCO3; excess solid remains undissolved.; Only 0.0% of charged NaHCO\u2083 dissolved; 100.0% retained as solids.; Chemistry consistency check: raw low-pH + residual-NaOH contradiction detected; using anchor/calibrated context.) | plan(cycle) pH 14.30, plan(CO2) pH 14.30, corrected pH 14.99, calc(raw CO2) pH 14.30, calc(corrected CO2) pH 14.29, \u0394calc pH -0.006, corrected cycle CO2 88.90 g, \u0394pH cycle -8.231, \u0394pH CO2 -8.231",
-            "Cycle 4: 376.86 g cumulative CO2 | equilibrium pH 8.60 | CO2 to target: 381.81 g | Consistency: contradiction (warnings: No measured pH provided; relying on ledger ratios.; Residual NaOH detected; neutralize remaining caustic first.; NaHCO3 supersaturated (SI=1.00).; Saturation limits enforced for NaHCO3; excess solid remains undissolved.; Only 0.0% of charged NaHCO\u2083 dissolved; 100.0% retained as solids.; Chemistry consistency check: raw low-pH + residual-NaOH contradiction detected; using anchor/calibrated context.) | plan(cycle) pH 13.32, plan(CO2) pH 13.32, corrected pH 14.99, calc(raw CO2) pH 13.45, calc(corrected CO2) pH 13.32, \u0394calc pH -0.137, corrected cycle CO2 124.45 g, \u0394pH cycle -4.721, \u0394pH CO2 -4.721",
-            "Cycle 5: 562.40 g cumulative CO2 | equilibrium pH 8.13 | CO2 to target: 205.52 g | Measured pH anchor: 9.99 | Consistency: consistent (warnings: NaOH equivalence reached; carbonate/bicarbonate equilibrium governs excess CO\u2082.; No measured pH provided; relying on ledger ratios.; NaHCO3 supersaturated (SI=1.00).; Saturation limits enforced for NaHCO3; excess solid remains undissolved.; Only 0.0% of charged NaHCO\u2083 dissolved; 100.0% retained as solids.) | plan(cycle) pH 9.31, plan(CO2) pH 9.31, corrected pH 9.99, calc(raw CO2) pH 10.06, calc(corrected CO2) pH 9.31, \u0394calc pH -0.756, corrected cycle CO2 185.54 g, \u0394pH cycle -1.177, \u0394pH CO2 -1.177"
+            "Cycle 4: 376.86 g cumulative CO2 | equilibrium pH 8.60 | CO2 to target: 381.81 g | Consistency: contradiction (warnings: No measured pH provided; relying on ledger ratios.; Residual NaOH detected; neutralize remaining caustic first.; NaHCO3 supersaturated (SI=1.00).; Saturation limits enforced for NaHCO3; excess solid remains undissolved.; Only 0.0% of charged NaHCO\u2083 dissolved; 100.0% retained as solids.; Chemistry consistency check: raw low-pH + residual-NaOH contradiction detected; using anchor/calibrated context.) | plan(cycle) pH 13.32, plan(CO2) pH 13.32, corrected pH 14.99, calc(raw CO2) pH 13.15, calc(corrected CO2) pH 13.32, \u0394calc pH +0.164, corrected cycle CO2 124.45 g, \u0394pH cycle -4.721, \u0394pH CO2 -4.721",
+            "Cycle 5: 562.40 g cumulative CO2 | equilibrium pH 9.06 | CO2 to target: 172.44 g | Measured pH anchor: 9.99 | Consistency: consistent (warnings: NaOH equivalence reached; carbonate/bicarbonate equilibrium governs excess CO\u2082.; NaHCO3 supersaturated (SI=1.00).; Saturation limits enforced for NaHCO3; excess solid remains undissolved.; Only 0.0% of charged NaHCO\u2083 dissolved; 100.0% retained as solids.) | plan(cycle) pH 9.31, plan(CO2) pH 9.31, corrected pH 9.99, calc(raw CO2) pH 10.06, calc(corrected CO2) pH 9.31, \u0394calc pH -0.756, corrected cycle CO2 185.54 g, \u0394pH cycle -0.245, \u0394pH CO2 -0.245"
           ],
           "columns": [
             "cycle",
@@ -2483,10 +2478,10 @@
               "381.81",
               "8.60",
               "14.99",
-              "13.453",
-              "13.453",
+              "13.151",
+              "13.151",
               "13.316",
-              "-0.137",
+              "+0.164",
               "14.99",
               "",
               "13.32",
@@ -2520,8 +2515,8 @@
               "185.54",
               "562.40",
               "562.40",
-              "205.52",
-              "8.13",
+              "172.44",
+              "9.06",
               "9.99",
               "10.062",
               "10.062",
@@ -2531,8 +2526,8 @@
               "9.99",
               "9.31",
               "9.31",
-              "-1.177",
-              "-1.177",
+              "-0.245",
+              "-0.245",
               "54.3",
               "7.6",
               "92.3",
@@ -2552,187 +2547,11 @@
               "",
               "483.28",
               "708.33",
-              "NaOH equivalence reached; carbonate/bicarbonate equilibrium governs excess CO\u2082. | No measured pH provided; relying on ledger ratios. | NaHCO3 supersaturated (SI=1.00). | Saturation limits enforced for NaHCO3; excess solid remains undissolved. | Only 0.0% of charged NaHCO\u2083 dissolved; 100.0% retained as solids."
+              "NaOH equivalence reached; carbonate/bicarbonate equilibrium governs excess CO\u2082. | NaHCO3 supersaturated (SI=1.00). | Saturation limits enforced for NaHCO3; excess solid remains undissolved. | Only 0.0% of charged NaHCO\u2083 dissolved; 100.0% retained as solids."
             ]
           ],
           "preview_mode": false,
-          "reaction_guidance": {
-            "base_co2_g": 575.08,
-            "delta_components": {
-              "carbonate_conversion_mol": 4.381717825337723,
-              "neutralize_naoh_mol": 0.0
-            },
-            "equilibrium_constants": {
-              "ka1": 4.450000000000004e-07,
-              "ka2": 4.690000000000006e-11,
-              "kw": 1e-14
-            },
-            "evaluation": {
-              "base_co2_g": 575.08,
-              "constants": [
-                4.450000000000004e-07,
-                4.690000000000006e-11,
-                1e-14
-              ],
-              "initial_ph_guess": 8.128827157284917,
-              "ionic_strength_cap": null,
-              "ledger": {
-                "buffer_carbon_mol": 13.06717867733103,
-                "co2_added_mol": 13.06717867733103,
-                "co2_excess_mol": 0.0,
-                "co2_stage1_mol": 8.775658174363077,
-                "co2_stage2_mol": 4.291520502967954,
-                "na2co3_mol": 4.484137671395123,
-                "nahco3_mol": 8.583041005935907,
-                "naoh_initial_mol": 17.551316348726154,
-                "naoh_remaining_mol": 0.0
-              },
-              "pka2": 10.328827157284916,
-              "temperature_c": 28.491159250585483,
-              "use_temp_adjusted_constants": false,
-              "volume_l": 3.0
-            },
-            "ionic_strength_cap": null,
-            "ledger": {
-              "buffer_carbon_mol": 13.06717867733103,
-              "co2_added_mol": 13.06717867733103,
-              "co2_excess_mol": 0.0,
-              "co2_stage1_mol": 8.775658174363077,
-              "co2_stage2_mol": 4.291520502967954,
-              "na2co3_mol": 4.484137671395123,
-              "nahco3_mol": 8.583041005935907,
-              "naoh_initial_mol": 17.551316348726154,
-              "naoh_remaining_mol": 0.0
-            },
-            "math_lines": [
-              "n(NaOH) = 702.00 g / 39.997 g/mol = 17.5513 mol",
-              "n(CO2) fed = 575.08 g / 44.0095 g/mol = 13.0672 mol",
-              "Stage 1 (2 NaOH + CO2 -> Na2CO3): 8.7757 mol Na2CO3 generated",
-              "Stage 2 (Na2CO3 + CO2 -> 2 NaHCO3): 4.2915 mol converted",
-              "Residuals -> NaOH 0.0000e+00 mol, Na2CO3 4.4841 mol, NaHCO3 8.5830 mol",
-              "Henderson-Hasselbalch with pKa2 = 10.329 informs CO3/HCO3 ratios.",
-              "CO2 for ratio shift = 4.3817 mol; for NaOH neutralization = 0.0000 mol",
-              "Total CO2 recommendation = 4.3817 mol (192.84 g)"
-            ],
-            "measurement": {
-              "label": "Estimated pH",
-              "value": null
-            },
-            "measurement_point": {
-              "co2_g": 575.08,
-              "label": "Estimated pH",
-              "ph": 10.046864907668727
-            },
-            "notes": [
-              "Reaction volume basis: 3.00 L."
-            ],
-            "pka2": 10.328827157284916,
-            "predicted_ph_after": 8.128827157284917,
-            "recommended_co2_g": 192.83721063420052,
-            "recommended_co2_mol": 4.381717825337723,
-            "simulation_curve": [
-              {
-                "delta_g": 0.0,
-                "na2co3_mol": 4.484137671395123,
-                "nahco3_mol": 8.583041005935907,
-                "ph": 6.233137867823311,
-                "total_co2_g": 575.08
-              },
-              {
-                "delta_g": 25.71162808456007,
-                "na2co3_mol": 3.8999086280167603,
-                "nahco3_mol": 9.751499092692633,
-                "ph": 6.1625213718126854,
-                "total_co2_g": 600.7916280845601
-              },
-              {
-                "delta_g": 51.42325616912014,
-                "na2co3_mol": 3.315679584638397,
-                "nahco3_mol": 10.919957179449359,
-                "ph": 6.093663881080091,
-                "total_co2_g": 626.5032561691202
-              },
-              {
-                "delta_g": 77.13488425368021,
-                "na2co3_mol": 2.731450541260034,
-                "nahco3_mol": 12.088415266206086,
-                "ph": 6.024712778311775,
-                "total_co2_g": 652.2148842536802
-              },
-              {
-                "delta_g": 102.84651233824027,
-                "na2co3_mol": 2.147221497881671,
-                "nahco3_mol": 13.256873352962812,
-                "ph": 9.538262896580296,
-                "total_co2_g": 677.9265123382403
-              },
-              {
-                "delta_g": 128.55814042280036,
-                "na2co3_mol": 1.5629924545033074,
-                "nahco3_mol": 14.425331439719539,
-                "ph": 9.363658238318799,
-                "total_co2_g": 703.6381404228005
-              },
-              {
-                "delta_g": 154.26976850736042,
-                "na2co3_mol": 0.9787634111249446,
-                "nahco3_mol": 15.593789526476264,
-                "ph": 9.12655321500679,
-                "total_co2_g": 729.3497685073605
-              },
-              {
-                "delta_g": 179.98139659192051,
-                "na2co3_mol": 0.3945343677465809,
-                "nahco3_mol": 16.762247613232994,
-                "ph": 8.700579745915048,
-                "total_co2_g": 755.0613965919206
-              },
-              {
-                "delta_g": 205.69302467648055,
-                "na2co3_mol": 0.0,
-                "nahco3_mol": 17.551316348726154,
-                "ph": 8.128827157284917,
-                "total_co2_g": 780.7730246764806
-              },
-              {
-                "delta_g": 231.40465276104064,
-                "na2co3_mol": 0.0,
-                "nahco3_mol": 17.551316348726154,
-                "ph": 8.128827157284917,
-                "total_co2_g": 806.4846527610407
-              },
-              {
-                "delta_g": 257.1162808456007,
-                "na2co3_mol": 0.0,
-                "nahco3_mol": 17.551316348726154,
-                "ph": 8.128827157284917,
-                "total_co2_g": 832.1962808456008
-              },
-              {
-                "delta_g": 282.8279089301608,
-                "na2co3_mol": 0.0,
-                "nahco3_mol": 17.551316348726154,
-                "ph": 8.128827157284917,
-                "total_co2_g": 857.9079089301608
-              },
-              {
-                "delta_g": 308.53953701472085,
-                "na2co3_mol": 0.0,
-                "nahco3_mol": 17.551316348726154,
-                "ph": 8.128827157284917,
-                "total_co2_g": 883.6195370147209
-              }
-            ],
-            "slider_max_g": 308.53953701472085,
-            "solution_volume_l": 3.0,
-            "summary": "Initial NaOH charge: 702.0 g (17.5513 mol)\nCO2 absorbed to date: 575.1 g (13.0672 mol)\nLedger -> Na2CO3 4.4841 mol, NaHCO3 8.5830 mol, dissolved CO2 0.0000 mol\nAdd 192.84 g CO2 (4.3817 mol) to approach pH 8.10 (predicted ~= 8.13).",
-            "target_ph": 8.1,
-            "temperature_c": 28.491159250585483,
-            "use_temp_adjusted_constants": false,
-            "warnings": [
-              "No measured pH provided; relying on ledger ratios."
-            ]
-          },
+          "reaction_guidance": {},
           "show_tree": true,
           "timeline": [
             {
@@ -2816,11 +2635,11 @@
               "ledger_nahco3_mol": 0.0,
               "ledger_naoh_remaining_mol": 14.573476291176409,
               "ml_corrected_fractions": {
-                "CO3^2-": 0.9779519071161789,
-                "H2CO3": 5.2050213010521636e-08,
-                "HCO3-": 0.02204804083360814
+                "CO3^2-": 0.9886488411696045,
+                "H2CO3": 1.3647003257069355e-08,
+                "HCO3-": 0.011351145183392204
               },
-              "ml_corrected_ph": 11.976947493395347,
+              "ml_corrected_ph": 12.27000238322171,
               "na2co3_dissolved_g": 157.80884714581424,
               "na2co3_dissolved_mol": 1.488920028774873,
               "na2co3_solid_mol": 0.0,
@@ -2948,11 +2767,11 @@
               "ledger_nahco3_mol": 0.0,
               "ledger_naoh_remaining_mol": 10.120887118783596,
               "ml_corrected_fractions": {
-                "CO3^2-": 0.9169113024146764,
-                "H2CO3": 7.884031212503569e-07,
-                "HCO3-": 0.08308790918220227
+                "CO3^2-": 0.9567517945802892,
+                "H2CO3": 2.0470704327451642e-07,
+                "HCO3-": 0.04324800071266747
               },
-              "ml_corrected_ph": 11.37278949559124,
+              "ml_corrected_ph": 11.674833249992666,
               "na2co3_dissolved_g": 393.7711387832679,
               "na2co3_dissolved_mol": 3.715214614971279,
               "na2co3_solid_mol": 0.0,
@@ -3080,11 +2899,11 @@
               "ledger_nahco3_mol": 0.0,
               "ledger_naoh_remaining_mol": 6.080900890976615,
               "ml_corrected_fractions": {
-                "CO3^2-": 0.8162108800031321,
-                "H2CO3": 4.333279853410153e-06,
-                "HCO3-": 0.18378478671701448
+                "CO3^2-": 0.9010164195497652,
+                "H2CO3": 1.1386326193628188e-06,
+                "HCO3-": 0.09898244181761545
               },
-              "ml_corrected_ph": 10.977492820937382,
+              "ml_corrected_ph": 11.289174542052848,
               "na2co3_dissolved_g": 607.8677849341622,
               "na2co3_dissolved_mol": 5.735207728874769,
               "na2co3_solid_mol": 0.0,
@@ -3145,11 +2964,11 @@
                 "co2_to_target_g": 381.8140811647528,
                 "target_ph": 8.1
               },
-              "calculated_ph": 13.452506364889294,
+              "calculated_ph": 13.151476369225312,
               "calculated_ph_corrected_co2": 13.315888727762049,
               "calculated_ph_corrected_co2_quality": "ok",
-              "calculated_ph_corrected_minus_raw_delta": -0.1366176371272445,
-              "calculated_ph_raw_co2": 13.452506364889294,
+              "calculated_ph_corrected_minus_raw_delta": 0.16441235853673675,
+              "calculated_ph_raw_co2": 13.151476369225312,
               "calibrated_estimated_ph": 14.991,
               "co2_added_mass_g": 124.45219007424079,
               "co2_added_moles": 2.827848307166425,
@@ -3212,11 +3031,11 @@
               "ledger_nahco3_mol": 0.0,
               "ledger_naoh_remaining_mol": 0.4252042766437647,
               "ml_corrected_fractions": {
-                "CO3^2-": 0.5034656824597986,
-                "H2CO3": 5.1267126947289414e-05,
-                "HCO3-": 0.49648305041325413
+                "CO3^2-": 0.6791378791504157,
+                "H2CO3": 1.5872157990565502e-05,
+                "HCO3-": 0.3208462486915938
               },
-              "ml_corrected_ph": 10.336065446676276,
+              "ml_corrected_ph": 10.655660988146515,
               "na2co3_dissolved_g": 907.5880335927629,
               "na2co3_dissolved_mol": 8.563056036041194,
               "na2co3_solid_mol": 0.0,
@@ -3248,7 +3067,7 @@
               "supersaturated": true,
               "target_ph": 8.1,
               "temperature_c": 38.590521327014244,
-              "trajectory_ph": 13.452506364889294,
+              "trajectory_ph": 13.151476369225312,
               "trajectory_speciation_ph": 7.423009474131181,
               "trough_pressure_psi": 166.8,
               "warning_codes": [
@@ -3268,13 +3087,13 @@
               "actual_cycle_co2_mol": 4.21590587774608,
               "actual_hco3_pct": 92.27511554377752,
               "actual_observed_ph": 9.99,
-              "actual_ph": 8.128827157284917,
+              "actual_ph": 9.06053531209612,
               "alignment_quality_flag": "ok",
               "analysis_anchor_cycle_index": 5,
               "analysis_anchor_measured_ph": 9.99,
               "analysis_anchor_source": "manual",
               "analysis_prediction": {
-                "co2_to_target_g": 205.52148628937954,
+                "co2_to_target_g": 172.4372898742657,
                 "target_ph": 8.1
               },
               "calculated_ph": 10.061846635978666,
@@ -3292,7 +3111,7 @@
               "co2_mol_delta": 0.0,
               "co2_mol_delta_pct": 0.0,
               "co2_moles": 4.21590587774608,
-              "co2_to_target_g": 205.52148628937954,
+              "co2_to_target_g": 172.4372898742657,
               "co2_total_moles": 12.778961913787274,
               "co2_unconsumed_mass_g": 0.0,
               "co2_unconsumed_moles": 0.0,
@@ -3319,11 +3138,11 @@
               "delta_pressure_psi": 790.3000000000001,
               "dissolved_mass_g": 0.04053828133421739,
               "effective_dissolved_mass_g": 0.040425892592145664,
-              "equilibrium_ph": 8.128827157284917,
+              "equilibrium_ph": 9.06053531209612,
               "error": false,
-              "final_pH": 8.128827157284917,
-              "final_ph": 8.128827157284917,
-              "forecast_ph": 8.128827157284917,
+              "final_pH": 9.06053531209612,
+              "final_ph": 9.06053531209612,
+              "forecast_ph": 9.06053531209612,
               "fractions": {
                 "CO3^2-": 0.0012153091567594493,
                 "H2CO3": 0.07603353540546534,
@@ -3341,11 +3160,11 @@
               "ledger_nahco3_mol": 8.431820531154722,
               "ledger_naoh_remaining_mol": 0.0,
               "ml_corrected_fractions": {
-                "CO3^2-": 0.05732065349127039,
-                "H2CO3": 0.001617800339191864,
-                "HCO3-": 0.9410615461695377
+                "CO3^2-": 0.10682943556111174,
+                "H2CO3": 0.0007805818327093734,
+                "HCO3-": 0.8923899826061789
               },
-              "ml_corrected_ph": 9.114693105423267,
+              "ml_corrected_ph": 9.40813624725277,
               "na2co3_dissolved_g": 483.2822091547076,
               "na2co3_dissolved_mol": 4.559747908785717,
               "na2co3_solid_mol": 0.0,
@@ -3358,9 +3177,9 @@
               "original_cycle_co2_mol": 4.21590587774608,
               "pco2_atm": 54.314099074578124,
               "peak_pressure_psi": 788.1,
-              "ph": 8.128827157284917,
-              "ph_delta_co2": -1.177176596342564,
-              "ph_delta_cycle": -1.177176596342564,
+              "ph": 9.06053531209612,
+              "ph_delta_co2": -0.2454684415313615,
+              "ph_delta_cycle": -0.2454684415313615,
               "ph_source": "equilibrium_guidance",
               "planning_co2_aligned_ph": 9.306003753627481,
               "planning_co3_pct": 37.36013083453855,
@@ -3372,8 +3191,8 @@
               "solid_mass_g": 2547.90311601417,
               "solid_na2co3_g": 483.2822091547076,
               "solid_nahco3_g": 708.3285746325023,
-              "solution_ph": 8.128827157284917,
-              "speciation_ph": 8.128827157284917,
+              "solution_ph": 9.06053531209612,
+              "speciation_ph": 9.06053531209612,
               "supersaturated": true,
               "target_ph": 8.1,
               "temperature_c": 27.601443445338603,
@@ -3383,7 +3202,6 @@
               "warning_codes": [],
               "warnings": [
                 "NaOH equivalence reached; carbonate/bicarbonate equilibrium governs excess CO\u2082.",
-                "No measured pH provided; relying on ledger ratios.",
                 "NaHCO3 supersaturated (SI=1.00).",
                 "Saturation limits enforced for NaHCO3; excess solid remains undissolved.",
                 "Only 0.0% of charged NaHCO\u2083 dissolved; 100.0% retained as solids."
@@ -3464,10 +3282,10 @@
               "actual_co3_pct": "0.12",
               "actual_hco3_pct": "92.28",
               "alignment_quality_flag": "ok",
-              "calculated_ph": "13.453",
+              "calculated_ph": "13.151",
               "calculated_ph_corrected_co2": "13.316",
-              "calculated_ph_corrected_minus_raw_delta": "-0.137",
-              "calculated_ph_raw_co2": "13.453",
+              "calculated_ph_corrected_minus_raw_delta": "+0.164",
+              "calculated_ph_raw_co2": "13.151",
               "co2_cycle_g": "124.45",
               "co2_g": "376.86",
               "corrected_cumulative_co2_g": "376.86",
@@ -3497,14 +3315,14 @@
               "corrected_cycle_co2_g": "185.54",
               "corrected_ph": "9.99",
               "cycle": "5",
-              "ph": "8.13",
-              "ph_delta_co2": "-1.177",
-              "ph_delta_cycle": "-1.177",
+              "ph": "9.06",
+              "ph_delta_co2": "-0.245",
+              "ph_delta_cycle": "-0.245",
               "planning_co2_aligned_ph": "9.31",
               "planning_co3_pct": "37.36",
               "planning_cycle_ph": "9.31",
               "planning_hco3_pct": "62.62",
-              "warnings": "NaOH equivalence reached; carbonate/bicarbonate equilibrium governs excess CO\u2082. | No measured pH provided; relying on ledger ratios. | NaHCO3 supersaturated (SI=1.00). | Saturation limits enforced for NaHCO3; excess solid remains undissolved. | Only 0.0% of charged NaHCO\u2083 dissolved; 100.0% retained as solids."
+              "warnings": "NaOH equivalence reached; carbonate/bicarbonate equilibrium governs excess CO\u2082. | NaHCO3 supersaturated (SI=1.00). | Saturation limits enforced for NaHCO3; excess solid remains undissolved. | Only 0.0% of charged NaHCO\u2083 dissolved; 100.0% retained as solids."
             }
           ],
           "workflow": "Analysis"
@@ -4336,5 +4154,5 @@
     "selected_sheets": []
   },
   "profile_version": 1,
-  "updated_at": "2026-06-17 13:30:23"
+  "updated_at": "2026-06-17 13:47:59"
 }

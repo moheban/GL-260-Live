@@ -869,11 +869,24 @@ fn estimate_ledger_ph(
         .unwrap_or_else(|| basic_carbonate_constants(temperature_c, use_temp_adjusted_constants));
     let pkw = -kw.max(1e-30).log10();
     let guess = initial_ph_guess.unwrap_or(fallback_ph);
+    let residual_naoh_ph_floor = if state.naoh_remaining_mol > 0.0 {
+        // Residual NaOH supplies one mole of free OH- per mole NaOH; this strong-base
+        // floor prevents carbonate charge balance from reporting acidic raw pH.
+        Some(clamp_ph_value(
+            pkw + (state.naoh_remaining_mol.max(0.0) / volume.max(1e-9)).max(1e-16).log10(),
+        ))
+    } else {
+        None
+    };
     if total_carbon_conc <= 1e-12 {
         if total_na_conc <= 0.0 {
             return clamp_ph_value(pkw / 2.0);
         }
-        return clamp_ph_value(pkw + total_na_conc.max(1e-16).log10());
+        let ph = pkw + total_na_conc.max(1e-16).log10();
+        return clamp_ph_value(match residual_naoh_ph_floor {
+            Some(floor) => ph.max(floor),
+            None => ph,
+        });
     }
     match solve_carbonate_state(
         total_carbon_conc,
@@ -885,16 +898,29 @@ fn estimate_ledger_ph(
         guess,
     ) {
         Ok((h, _, _, _, _, _, _)) => {
-            let ph = clamp_ph_value(-h.max(1e-30).log10());
+            let mut ph = clamp_ph_value(-h.max(1e-30).log10());
+            if let Some(floor) = residual_naoh_ph_floor {
+                ph = clamp_ph_value(ph.max(floor));
+            }
             if ph < 6.0 && (state.nahco3_mol > 0.0 || state.co2_excess_mol > 0.0) {
-                clamp_ph_value(fallback_ph.max(pka2_value - 2.2).max(8.0))
+                let mut buffer_hint = fallback_ph.max(pka2_value - 2.2).max(8.0);
+                if let Some(floor) = residual_naoh_ph_floor {
+                    buffer_hint = buffer_hint.max(floor);
+                }
+                clamp_ph_value(buffer_hint)
             } else {
                 ph
             }
         }
         Err(_) => {
             if state.nahco3_mol > 0.0 || state.co2_excess_mol > 0.0 {
-                clamp_ph_value(fallback_ph.max(pka2_value - 2.2).max(8.0))
+                let mut buffer_hint = fallback_ph.max(pka2_value - 2.2).max(8.0);
+                if let Some(floor) = residual_naoh_ph_floor {
+                    buffer_hint = buffer_hint.max(floor);
+                }
+                clamp_ph_value(buffer_hint)
+            } else if let Some(floor) = residual_naoh_ph_floor {
+                floor
             } else {
                 fallback_ph
             }
