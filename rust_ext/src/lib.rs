@@ -3655,6 +3655,23 @@ fn cycle_timeline_normalize_core(
         let ph_value = dict_optional_finite_by_keys(&entry, &ph_keys);
         let actual_ph = dict_optional_finite_by_keys(&entry, &actual_ph_keys);
         let solution_ph = dict_optional_finite_by_keys(&entry, &solution_ph_keys);
+        let calculated_ph = dict_optional_finite_by_keys(
+            &entry,
+            &["calculated_ph", "calculated_ph_raw_co2", "ph", "solution_ph"],
+        );
+        let calculated_ph_raw_co2 = dict_optional_finite_by_keys(
+            &entry,
+            &[
+                "calculated_ph",
+                "calculated_ph_raw_co2",
+                "planning_co2_aligned_ph",
+                "ph",
+            ],
+        );
+        let calculated_ph_corrected_co2 = dict_optional_finite_by_keys(
+            &entry,
+            &["calculated_ph_corrected_co2", "corrected_ph", "calibrated_estimated_ph"],
+        );
         let fractions = PyDict::new(py);
         fractions.set_item(
             "H2CO3",
@@ -3727,6 +3744,33 @@ fn cycle_timeline_normalize_core(
             row.set_item("solution_ph", value)?;
         } else {
             row.set_item("solution_ph", py.None())?;
+        }
+        if let Some(value) = calculated_ph {
+            row.set_item("calculated_ph", value)?;
+        } else {
+            row.set_item("calculated_ph", py.None())?;
+        }
+        if let Some(value) = calculated_ph_raw_co2 {
+            row.set_item("calculated_ph_raw_co2", value)?;
+        } else {
+            row.set_item("calculated_ph_raw_co2", py.None())?;
+        }
+        if let Some(value) = calculated_ph_corrected_co2 {
+            row.set_item("calculated_ph_corrected_co2", value)?;
+        } else {
+            row.set_item("calculated_ph_corrected_co2", py.None())?;
+        }
+        let calculated_delta = match (calculated_ph_corrected_co2, calculated_ph_raw_co2) {
+            (Some(corrected), Some(raw)) => Some(corrected - raw),
+            _ => dict_optional_finite_by_keys(
+                &entry,
+                &["calculated_ph_corrected_minus_raw_delta"],
+            ),
+        };
+        if let Some(value) = calculated_delta {
+            row.set_item("calculated_ph_corrected_minus_raw_delta", value)?;
+        } else {
+            row.set_item("calculated_ph_corrected_minus_raw_delta", py.None())?;
         }
         for key in [
             "forecast_ph",
