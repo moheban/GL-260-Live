@@ -18,6 +18,170 @@ We will discuss how cycles are identified, uptake is calculated, reaction kineti
 
 We will go through a simulation and then ill show a real world example with real data in the program.
 
+## General Reaction Overview
+
+This process starts as a highly basic sodium hydroxide solution and uses absorbed \(CO_{2}\) to move the sodium-carbonate system toward sodium bicarbonate. The useful presentation message is that \(NaHCO_{3}\) is not created by one isolated step; it is the endpoint of gas absorption, hydration, acid-base transfer, sodium pairing, and carbonate-to-bicarbonate conversion.
+
+In this walkthrough, "half-reactions" means the component acid-base and phase-transfer reactions that build the full carbonate system. They are not electron-transfer redox half-reactions.
+
+### LaTeX Reaction Scheme
+
+<div class="calculation-map">
+  <div class="calculation-map-heading">
+    <div>
+      <p class="calculation-map-title">Reaction Overview Map</p>
+      <p class="calculation-map-copy">In strongly basic solution, absorbed \(CO_{2}\) first drives carbonate formation. The generated carbonate must then react with additional \(CO_{2}\) and water to form sodium bicarbonate.</p>
+    </div>
+    <div class="calculation-map-badge">
+      <span>Target</span>
+      <strong>NaHCO<sub>3</sub></strong>
+    </div>
+  </div>
+
+  <div class="calculation-map-grid three-up">
+    <div class="calculation-map-step">
+      <span>1. Caustic charge</span>
+      <strong>NaOH fixes sodium and hydroxide</strong>
+      \[\mathrm{NaOH \rightarrow Na^{+} + OH^{-}}\]
+      <p>The `700 g` charge defines the sodium inventory and the initial high-pH hydroxide pool.</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>2. Carbonate forms first</span>
+      <strong>Early CO2 is consumed by excess hydroxide</strong>
+      \[\mathrm{2NaOH + CO_{2} \rightarrow Na_{2}CO_{3} + H_{2}O}\]
+      <p>At high pH, the first stoichiometric stage is carbonate-rich sodium carbonate.</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>3. Carbonate must be converted</span>
+      <strong>All generated carbonate needs more CO2</strong>
+      \[\mathrm{Na_{2}CO_{3} + CO_{2} + H_{2}O \rightarrow 2NaHCO_{3}}\]
+      <p>Any carbonate left behind remains a carbonate impurity or carbonate-heavy fraction until it reacts with additional absorbed \(CO_{2}\).</p>
+    </div>
+  </div>
+
+  <div class="calculation-map-grid three-up">
+    <div class="calculation-map-step">
+      <span>4. Direct net target</span>
+      <strong>The intended overall endpoint</strong>
+      \[\mathrm{NaOH + CO_{2} \rightarrow NaHCO_{3}}\]
+      <p>This is the clean net reaction, but it hides the carbonate intermediate that appears while hydroxide is still high.</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>5. Equivalence split</span>
+      <strong>Half load versus full load</strong>
+      \[\mathrm{17.5\ mol\ NaOH \Rightarrow 8.75\ mol\ Na_{2}CO_{3}}\]
+      <p>About `385.1 g CO2` reaches the carbonate-rich midpoint; about `770.2 g CO2` is needed for the bicarbonate endpoint.</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>6. Process check</span>
+      <strong>pH and speciation confirm completion</strong>
+      \[\mathrm{CO_{3}^{2-} + CO_{2} + H_{2}O \rightarrow 2HCO_{3}^{-}}\]
+      <p>The batch is not bicarbonate-rich until carbonate has been pulled toward bicarbonate by sufficient \(CO_{2}\), water, and mixing.</p>
+    </div>
+  </div>
+
+  <p class="calculation-map-callout">Presentation takeaway: sodium carbonate is the expected intermediate in a highly basic batch. Making sodium bicarbonate means carrying that carbonate forward with additional absorbed \(CO_{2}\), not stopping at the first carbonate-forming stage.</p>
+</div>
+
+The scheme uses regular chemical notation instead of structural drawings so it matches the rest of the presentation. The key process point is the sequence: first \(Na_{2}CO_{3}\), then \(NaHCO_{3}\) after additional \(CO_{2}\) conversion.
+
+### Component Reactions Used in the Overview
+
+The carbonate network is built from these coupled phase-transfer, hydration, acid-base, and sodium-pairing steps.
+
+<div class="calculation-map">
+  <div class="calculation-map-heading">
+    <div>
+      <p class="calculation-map-title">Component Reaction Tiles</p>
+      <p class="calculation-map-copy">Each tile is one constraint that the later pH and speciation solver must satisfy at the same time.</p>
+    </div>
+    <div class="calculation-map-badge">
+      <span>Network</span>
+      <strong>6 steps</strong>
+    </div>
+  </div>
+
+  <div class="calculation-map-grid three-up">
+    <div class="calculation-map-step">
+      <span>Gas absorption</span>
+      <strong>\(CO_{2(g)} \rightleftharpoons CO_{2(aq)}\)</strong>
+      <p>Defines how headspace \(CO_{2}\) becomes usable dissolved carbon.</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>Hydration</span>
+      <strong>\(CO_{2(aq)} + H_{2}O \rightleftharpoons H_{2}CO_{3}\)</strong>
+      <p>Creates the carbonic-acid pool represented as \(CO_{2}^{*}\) in the model.</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>First acid-base step</span>
+      <strong>\(H_{2}CO_{3} \rightleftharpoons H^{+} + HCO_{3}^{-}\)</strong>
+      <p>Produces bicarbonate from hydrated \(CO_{2}\).</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>Second acid-base step</span>
+      <strong>\(HCO_{3}^{-} \rightleftharpoons H^{+} + CO_{3}^{2-}\)</strong>
+      <p>Explains why high pH can push bicarbonate toward carbonate.</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>Water balance</span>
+      <strong>\(H_{2}O \rightleftharpoons H^{+} + OH^{-}\)</strong>
+      <p>Couples pH, residual hydroxide, and charge balance.</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>Sodium pairing</span>
+      <strong>\(Na^{+} + HCO_{3}^{-} \rightleftharpoons NaHCO_{3(s/aq)}\)</strong>
+      <p>Connects bicarbonate speciation to the sodium bicarbonate product basis.</p>
+    </div>
+  </div>
+
+  <p class="calculation-map-callout">These tiles are the bridge from regular chemical notation to the later equilibrium math: absorption sets carbon availability, acid-base reactions distribute carbon, and sodium pairing ties the distribution back to product formation.</p>
+</div>
+
+### Relevant Reactions in the Highly Basic System
+
+When \(NaOH\) is still abundant, the first absorbed \(CO_{2}\) is captured rapidly by hydroxide:
+
+```latex
+\mathrm{CO_2} + \mathrm{OH^-} \rightarrow \mathrm{HCO_3^-}
+```
+
+If the solution remains strongly basic, bicarbonate can be deprotonated into carbonate:
+
+```latex
+\mathrm{HCO_3^-} + \mathrm{OH^-} \rightarrow \mathrm{CO_3^{2-}} + \mathrm{H_2O}
+```
+
+That gives the carbonate-rich stoichiometric endpoint:
+
+```latex
+2\mathrm{NaOH} + \mathrm{CO_2} \rightarrow \mathrm{Na_2CO_3} + \mathrm{H_2O}
+```
+
+Additional \(CO_{2}\) and water can convert carbonate back into bicarbonate:
+
+```latex
+\mathrm{Na_2CO_3} + \mathrm{CO_2} + \mathrm{H_2O} \rightarrow 2\mathrm{NaHCO_3}
+```
+
+The desired direct overall reaction for the product target is:
+
+```latex
+\mathrm{NaOH} + \mathrm{CO_2} \rightarrow \mathrm{NaHCO_3}
+```
+
+For the `700 g` NaOH basis used in this walkthrough, \(17.5\ mol\) of \(NaOH\) requires \(17.5\ mol\) of \(CO_{2}\), or about `770.2 g CO2`, to reach the bicarbonate stoichiometric endpoint. About half that \(CO_{2}\), `385.1 g`, corresponds to the carbonate-rich midpoint.
+
+### Reagents and Process Basis
+
+| Reagent or species | MW (g/mol) | Equivalence | Molar amount | Planned amount | Presentation note |
+| --- | ---: | --- | ---: | ---: | --- |
+| Sodium hydroxide, \(NaOH\) | `40.00` | `1.000 mol NaOH = 1.000 mol Na+ = 1.000 mol NaHCO3 target` | `17.5 mol` | `700 g` | Sets the sodium inventory, initial alkalinity, and charge-balance pool. |
+| Water, \(H_{2}O\) | `18.015` | Reaction medium; participates in hydration and \(K_w\) | `~122.1 mol` | `2,200 mL` (`~2,200 g`) | Provides the liquid phase and the `~2.2 kg` molality basis used by the solver. |
+| Carbon dioxide, \(CO_{2}\) | `44.01` | `1.000 mol CO2 per 1.000 mol NaOH` for bicarbonate endpoint | `17.5 mol` target absorbed | `770.2 g` target absorbed | Must enter the liquid/slurry; headspace charge alone is not the same as absorbed \(CO_{2}\). |
+| Carbon dioxide at carbonate midpoint, \(CO_{2}\) | `44.01` | `0.500 mol CO2 per 1.000 mol NaOH` | `8.75 mol` | `385.1 g` | Marks the carbonate-rich midpoint where \(Na_{2}CO_{3}\) can dominate. |
+| Sodium carbonate, \(Na_{2}CO_{3}\) | `105.99` | `0.500 mol Na2CO3 per 1.000 mol NaOH` if all sodium is carbonate | `8.75 mol` theoretical midpoint | Not charged; intermediate | Indicates under-carbonation or locally high-pH conditions when it persists. |
+| Sodium bicarbonate, \(NaHCO_{3}\) | `84.01` | `1.000 mol NaHCO3 per 1.000 mol NaOH` | `17.5 mol` theoretical endpoint | `~1,470.2 g` theoretical product | Target product favored when absorbed \(CO_{2}\), pH, and speciation are bicarbonate-rich. |
+
 ## Locked Assumptions for This Walkthrough
 All values in this document are locked to one deterministic scenario so intermediate results are reproducible during live explanation.
 

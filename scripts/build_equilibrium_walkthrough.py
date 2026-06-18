@@ -848,6 +848,107 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     .control-secondary[hidden] {{
       display: none;
     }}
+    .section-organizer {{
+      border-top: 1px solid rgba(162, 196, 215, 0.26);
+      padding-top: 8px;
+      display: grid;
+      gap: 8px;
+      width: 100%;
+    }}
+    .section-organizer[hidden] {{
+      display: none;
+    }}
+    .section-organizer-header {{
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }}
+    .section-organizer-title {{
+      color: var(--ink-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      font-size: 0.72rem;
+      font-weight: 700;
+    }}
+    .section-organizer-list {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 8px;
+      width: 100%;
+    }}
+    .section-organizer-item {{
+      border: 1px solid rgba(162, 196, 215, 0.30);
+      border-radius: 9px;
+      background: rgba(8, 23, 34, 0.58);
+      padding: 8px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 7px;
+      align-items: center;
+      min-width: 0;
+    }}
+    .section-organizer-item.is-hidden {{
+      opacity: 0.56;
+    }}
+    .section-organizer-toggle {{
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+      color: var(--ink);
+      font-size: 0.84rem;
+    }}
+    .section-organizer-toggle input {{
+      accent-color: var(--accent);
+      flex: 0 0 auto;
+    }}
+    .section-organizer-toggle span {{
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }}
+    .section-organizer-actions {{
+      display: flex;
+      gap: 4px;
+    }}
+    .section-organizer-actions button {{
+      min-width: 32px;
+      padding-inline: 8px;
+    }}
+    [data-section-hidden="true"] {{
+      display: none !important;
+    }}
+    body.tile-reveal-enabled .calculation-map-step {{
+      cursor: pointer;
+    }}
+    body.tile-reveal-enabled .calculation-map-step:focus-within,
+    body.tile-reveal-enabled .calculation-map-step:hover {{
+      border-color: rgba(31, 184, 203, 0.58);
+      box-shadow: 0 10px 22px rgba(13, 81, 95, 0.08);
+    }}
+    body.tile-reveal-enabled .tile-build-fragment {{
+      max-height: 0;
+      margin-top: 0;
+      opacity: 0;
+      overflow: hidden;
+      transform: translateY(8px);
+      transition:
+        max-height 220ms ease,
+        margin-top 180ms ease,
+        opacity 180ms ease,
+        transform 180ms ease;
+    }}
+    body.tile-reveal-enabled .tile-build-fragment.is-revealed {{
+      max-height: 420px;
+      margin-top: 4px;
+      opacity: 1;
+      transform: translateY(0);
+    }}
+    body.tile-reveal-enabled .calculation-map-step.is-build-complete {{
+      border-color: rgba(30, 180, 110, 0.36);
+    }}
     .control-bar .label {{
       color: var(--ink-muted);
       text-transform: uppercase;
@@ -1369,6 +1470,10 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     <div class="control-secondary" id="secondary-controls" hidden>
       <button id="motion" type="button" aria-pressed="true">Motion: On</button>
       <button id="auto-advance" type="button" aria-pressed="false">Auto-Advance: Off</button>
+      <button id="section-organizer-toggle" type="button" aria-expanded="false" aria-controls="section-organizer">Sections</button>
+      <button id="tile-reveal-toggle" type="button" aria-pressed="false">Tile Reveal: Off</button>
+      <button id="tile-reveal-next" type="button" disabled>Reveal Next Tile</button>
+      <button id="tile-reveal-reset" type="button" disabled>Reset Reveals</button>
       <label for="speed" class="label">Speed</label>
       <select id="speed" aria-label="Auto-advance speed">
         <option value="3">3s</option>
@@ -1378,6 +1483,13 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       </select>
       <button id="reset" type="button">Reset View</button>
       <button id="print-export" type="button">Print/PDF</button>
+      <div class="section-organizer" id="section-organizer" hidden>
+        <div class="section-organizer-header">
+          <span class="section-organizer-title">Section Organizer</span>
+          <button id="section-layout-reset" type="button">Reset Sections</button>
+        </div>
+        <div class="section-organizer-list" id="section-organizer-list" aria-label="Reorder and hide walkthrough sections"></div>
+      </div>
     </div>
   </section>
 
@@ -1453,6 +1565,13 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       const slideModeToggle = document.getElementById("slide-mode");
       const controlsMoreButton = document.getElementById("controls-more");
       const secondaryControlsPanel = document.getElementById("secondary-controls");
+      const sectionOrganizerToggle = document.getElementById("section-organizer-toggle");
+      const sectionOrganizerPanel = document.getElementById("section-organizer");
+      const sectionOrganizerList = document.getElementById("section-organizer-list");
+      const sectionLayoutReset = document.getElementById("section-layout-reset");
+      const tileRevealToggle = document.getElementById("tile-reveal-toggle");
+      const tileRevealNext = document.getElementById("tile-reveal-next");
+      const tileRevealReset = document.getElementById("tile-reveal-reset");
       const resetButton = document.getElementById("reset");
       const printExportButton = document.getElementById("print-export");
       const prevButton = document.getElementById("prev");
@@ -1475,7 +1594,12 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       let autoAdvanceTimer = null;
       let revealObserver = null;
       let sectionHeadings = [];
+      let sectionBlocks = [];
+      let sectionLayoutState = {{ order: [], hidden: {{}} }};
+      let tileRevealTiles = [];
+      let tileRevealEnabled = false;
       let currentSectionIndex = 0;
+      const sectionLayoutStorageKey = "gl260-equilibrium-section-layout-v1";
       const supportsPromises = typeof Promise === "function";
       const supportsIntersectionObserver = "IntersectionObserver" in window;
       const supportsRaf = typeof window.requestAnimationFrame === "function";
@@ -2182,7 +2306,9 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
           const linkText = (link.textContent || "").toLowerCase();
           const heading = headingMap.get(href);
           const headingText = heading ? (heading.textContent || "").toLowerCase() : "";
-          const show = !needle || linkText.includes(needle) || headingText.includes(needle);
+          const sectionVisible = !heading || !heading.hidden;
+          const show =
+            sectionVisible && (!needle || linkText.includes(needle) || headingText.includes(needle));
           const row = closestByTagName(link, "LI");
           if (row) {{
             row.style.display = show ? "" : "none";
@@ -2271,6 +2397,153 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         progressBar.style.transform = "scaleX(" + ratio.toFixed(4) + ")";
       }}
 
+      function tileIsVisible(tile) {{
+        if (!tile || tile.hidden || tile.closest("[hidden], [data-section-hidden='true']")) {{
+          return false;
+        }}
+        const rect = tile.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      }}
+
+      function tileRevealFragments(tile) {{
+        if (!tile) {{
+          return [];
+        }}
+        return Array.from(tile.querySelectorAll(":scope > .tile-build-fragment"));
+      }}
+
+      function tileHasHiddenFragments(tile) {{
+        return tileRevealFragments(tile).some(function (fragment) {{
+          return !fragment.classList.contains("is-revealed");
+        }});
+      }}
+
+      function updateTileRevealCompletion(tile) {{
+        const fragments = tileRevealFragments(tile);
+        const isComplete =
+          fragments.length > 0 &&
+          fragments.every(function (fragment) {{
+            return fragment.classList.contains("is-revealed");
+          }});
+        tile.classList.toggle("is-build-complete", isComplete);
+      }}
+
+      function updateTileRevealControls() {{
+        const hasHiddenVisibleFragments = tileRevealTiles.some(function (tile) {{
+          return tileIsVisible(tile) && tileHasHiddenFragments(tile);
+        }});
+        document.body.classList.toggle("tile-reveal-enabled", tileRevealEnabled);
+        if (tileRevealToggle) {{
+          tileRevealToggle.setAttribute("aria-pressed", String(tileRevealEnabled));
+          tileRevealToggle.textContent = "Tile Reveal: " + (tileRevealEnabled ? "On" : "Off");
+        }}
+        if (tileRevealNext) {{
+          tileRevealNext.disabled = !tileRevealEnabled || !hasHiddenVisibleFragments;
+        }}
+        if (tileRevealReset) {{
+          tileRevealReset.disabled = !tileRevealEnabled || !tileRevealTiles.length;
+        }}
+      }}
+
+      function resetTileRevealFragments() {{
+        for (const tile of tileRevealTiles) {{
+          tile.classList.remove("is-build-complete");
+          for (const fragment of tileRevealFragments(tile)) {{
+            fragment.classList.remove("is-revealed");
+          }}
+        }}
+        updateTileRevealControls();
+      }}
+
+      function revealTile(tile) {{
+        if (!tileRevealEnabled || !tile) {{
+          return false;
+        }}
+        const hiddenFragments = tileRevealFragments(tile).filter(function (fragment) {{
+          return !fragment.classList.contains("is-revealed");
+        }});
+        if (!hiddenFragments.length) {{
+          updateTileRevealCompletion(tile);
+          updateTileRevealControls();
+          return false;
+        }}
+        for (const fragment of hiddenFragments) {{
+          fragment.classList.add("is-revealed");
+        }}
+        updateTileRevealCompletion(tile);
+        updateTileRevealControls();
+        return true;
+      }}
+
+      function tileRevealViewportScore(tile) {{
+        const rect = tile.getBoundingClientRect();
+        const viewportCenter = window.innerHeight / 2;
+        const tileCenter = rect.top + rect.height / 2;
+        const intersectsViewport = rect.bottom >= 0 && rect.top <= window.innerHeight;
+        return (intersectsViewport ? 0 : 100000) + Math.abs(tileCenter - viewportCenter);
+      }}
+
+      function revealNextVisibleTileFragment() {{
+        const candidates = tileRevealTiles
+          .filter(function (tile) {{
+            return tileIsVisible(tile) && tileHasHiddenFragments(tile);
+          }})
+          .sort(function (firstTile, secondTile) {{
+            return tileRevealViewportScore(firstTile) - tileRevealViewportScore(secondTile);
+          }});
+        if (!candidates.length) {{
+          updateTileRevealControls();
+          return false;
+        }}
+        return revealTile(candidates[0]);
+      }}
+
+      function setTileRevealEnabled(enabled) {{
+        tileRevealEnabled = Boolean(enabled);
+        if (tileRevealEnabled) {{
+          resetTileRevealFragments();
+        }}
+        updateTileRevealControls();
+      }}
+
+      function initializeTileRevealTiles() {{
+        tileRevealTiles = Array.from(content.querySelectorAll(".calculation-map-step")).filter(
+          function (tile) {{
+            const childElements = Array.from(tile.children);
+            if (childElements.length < 2) {{
+              return false;
+            }}
+            childElements.forEach(function (child, index) {{
+              if (index > 0) {{
+                child.classList.add("tile-build-fragment");
+              }}
+            }});
+            tile.setAttribute("tabindex", "0");
+            tile.addEventListener("click", function (event) {{
+              const interactiveTarget = event.target.closest(
+                "a, button, input, select, textarea, label"
+              );
+              if (interactiveTarget) {{
+                return;
+              }}
+              revealTile(tile);
+            }});
+            tile.addEventListener("keydown", function (event) {{
+              if (event.key !== "Enter" && event.key !== " ") {{
+                return;
+              }}
+              if (!tileRevealEnabled) {{
+                return;
+              }}
+              event.preventDefault();
+              revealTile(tile);
+            }});
+            return true;
+          }}
+        );
+        updateTileRevealControls();
+      }}
+
       function initializeLayoutPhase() {{
         ensureChargeBalanceVisualModule();
         ensureDerivationStepperModule();
@@ -2282,6 +2555,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         }}
         applyFilter();
         initializeChartTabs();
+        initializeTileRevealTiles();
         window.addEventListener("scroll", updateScrollProgress, {{ passive: true }});
         window.addEventListener("resize", updateScrollProgress);
         initializeActiveSectionTracking();
@@ -3164,14 +3438,258 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
 
       function collectSectionHeadings() {{
         const majorHeadings = headingNodes.filter(function (node) {{
-          return String(node.tagName || "").toUpperCase() === "H2" && node.id;
+          return String(node.tagName || "").toUpperCase() === "H2" && node.id && !node.hidden;
         }});
         if (majorHeadings.length) {{
           return majorHeadings;
         }}
         return headingNodes.filter(function (node) {{
-          return Boolean(node.id);
+          return Boolean(node.id) && !node.hidden;
         }});
+      }}
+
+      function createSectionBlocks() {{
+        const majorHeadings = headingNodes.filter(function (node) {{
+          return String(node.tagName || "").toUpperCase() === "H2" && node.id;
+        }});
+        return majorHeadings.map(function (heading, index) {{
+          const nodes = [heading];
+          let sibling = heading.nextElementSibling;
+          while (sibling) {{
+            if (String(sibling.tagName || "").toUpperCase() === "H2" && sibling.id) {{
+              break;
+            }}
+            nodes.push(sibling);
+            sibling = sibling.nextElementSibling;
+          }}
+          return {{
+            id: heading.id,
+            title: (heading.textContent || "").trim() || "Section " + (index + 1),
+            heading: heading,
+            nodes: nodes,
+          }};
+        }});
+      }}
+
+      function readStoredSectionLayout() {{
+        try {{
+          const rawLayout = window.localStorage
+            ? window.localStorage.getItem(sectionLayoutStorageKey)
+            : "";
+          if (!rawLayout) {{
+            return {{ order: [], hidden: {{}} }};
+          }}
+          const parsedLayout = JSON.parse(rawLayout);
+          return {{
+            order: Array.isArray(parsedLayout.order) ? parsedLayout.order : [],
+            hidden:
+              parsedLayout.hidden && typeof parsedLayout.hidden === "object"
+                ? parsedLayout.hidden
+                : {{}},
+          }};
+        }} catch (error) {{
+          return {{ order: [], hidden: {{}} }};
+        }}
+      }}
+
+      function writeStoredSectionLayout() {{
+        try {{
+          if (window.localStorage) {{
+            window.localStorage.setItem(
+              sectionLayoutStorageKey,
+              JSON.stringify(sectionLayoutState)
+            );
+          }}
+        }} catch (error) {{
+          // Storage can be unavailable in locked-down browsers; the page still updates live.
+        }}
+      }}
+
+      function normalizeSectionLayout() {{
+        const knownIds = sectionBlocks.map(function (block) {{ return block.id; }});
+        const knownSet = new Set(knownIds);
+        const orderedKnownIds = [];
+        for (const sectionId of sectionLayoutState.order || []) {{
+          if (knownSet.has(sectionId) && orderedKnownIds.indexOf(sectionId) === -1) {{
+            orderedKnownIds.push(sectionId);
+          }}
+        }}
+        for (const sectionId of knownIds) {{
+          if (orderedKnownIds.indexOf(sectionId) === -1) {{
+            orderedKnownIds.push(sectionId);
+          }}
+        }}
+        const hidden = {{}};
+        for (const sectionId of knownIds) {{
+          hidden[sectionId] = Boolean(sectionLayoutState.hidden[sectionId]);
+        }}
+        sectionLayoutState = {{ order: orderedKnownIds, hidden: hidden }};
+      }}
+
+      function sectionBlockById(sectionId) {{
+        for (const block of sectionBlocks) {{
+          if (block.id === sectionId) {{
+            return block;
+          }}
+        }}
+        return null;
+      }}
+
+      function applySectionLayoutToContent() {{
+        for (const sectionId of sectionLayoutState.order) {{
+          const block = sectionBlockById(sectionId);
+          if (!block) {{
+            continue;
+          }}
+          for (const node of block.nodes) {{
+            node.hidden = Boolean(sectionLayoutState.hidden[block.id]);
+            node.setAttribute(
+              "data-section-hidden",
+              sectionLayoutState.hidden[block.id] ? "true" : "false"
+            );
+            content.appendChild(node);
+          }}
+        }}
+      }}
+
+      function updateTocLayout() {{
+        if (!tocNav) {{
+          return;
+        }}
+        let topLevelParent = null;
+        for (const sectionId of sectionLayoutState.order) {{
+          const tocLink = tocNav.querySelector("a[href='#" + CSS.escape(sectionId) + "']");
+          const tocItem = tocLink ? tocLink.closest("li") : null;
+          if (tocItem && !topLevelParent) {{
+            topLevelParent = tocItem.parentElement;
+          }}
+          if (tocItem) {{
+            tocItem.hidden = Boolean(sectionLayoutState.hidden[sectionId]);
+          }}
+        }}
+        if (!topLevelParent) {{
+          return;
+        }}
+        for (const sectionId of sectionLayoutState.order) {{
+          const tocLink = tocNav.querySelector("a[href='#" + CSS.escape(sectionId) + "']");
+          const tocItem = tocLink ? tocLink.closest("li") : null;
+          if (tocItem && tocItem.parentElement === topLevelParent) {{
+            topLevelParent.appendChild(tocItem);
+          }}
+        }}
+      }}
+
+      function updateSectionSelector() {{
+        if (!sectionSelector) {{
+          return;
+        }}
+        sectionSelector.innerHTML = "";
+        sectionHeadings.forEach(function (heading, index) {{
+          const option = document.createElement("option");
+          option.value = String(index);
+          const labelText = (heading.textContent || "").trim() || "Section " + (index + 1);
+          option.textContent = String(index + 1) + ". " + labelText;
+          sectionSelector.appendChild(option);
+        }});
+      }}
+
+      function refreshSectionNavigationState() {{
+        sectionHeadings = collectSectionHeadings();
+        updateSectionSelector();
+        currentSectionIndex = Math.min(currentSectionIndex, Math.max(sectionHeadings.length - 1, 0));
+        syncSectionControls();
+        applyFilter();
+      }}
+
+      function renderSectionOrganizer() {{
+        if (!sectionOrganizerList) {{
+          return;
+        }}
+        sectionOrganizerList.innerHTML = "";
+        sectionLayoutState.order.forEach(function (sectionId, index) {{
+          const block = sectionBlockById(sectionId);
+          if (!block) {{
+            return;
+          }}
+          const item = document.createElement("div");
+          item.className = "section-organizer-item";
+          item.classList.toggle("is-hidden", Boolean(sectionLayoutState.hidden[sectionId]));
+          const label = document.createElement("label");
+          label.className = "section-organizer-toggle";
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.checked = !sectionLayoutState.hidden[sectionId];
+          checkbox.addEventListener("change", function () {{
+            setSectionHidden(sectionId, !checkbox.checked);
+          }});
+          const labelText = document.createElement("span");
+          labelText.textContent = block.title;
+          label.appendChild(checkbox);
+          label.appendChild(labelText);
+          const actions = document.createElement("div");
+          actions.className = "section-organizer-actions";
+          const upButton = document.createElement("button");
+          upButton.type = "button";
+          upButton.textContent = "Up";
+          upButton.disabled = index === 0;
+          upButton.addEventListener("click", function () {{ moveSection(sectionId, -1); }});
+          const downButton = document.createElement("button");
+          downButton.type = "button";
+          downButton.textContent = "Down";
+          downButton.disabled = index === sectionLayoutState.order.length - 1;
+          downButton.addEventListener("click", function () {{ moveSection(sectionId, 1); }});
+          actions.appendChild(upButton);
+          actions.appendChild(downButton);
+          item.appendChild(label);
+          item.appendChild(actions);
+          sectionOrganizerList.appendChild(item);
+        }});
+      }}
+
+      function setSectionHidden(sectionId, hidden) {{
+        sectionLayoutState.hidden[sectionId] = Boolean(hidden);
+        applySectionLayoutToContent();
+        updateTocLayout();
+        refreshSectionNavigationState();
+        renderSectionOrganizer();
+        updateTileRevealControls();
+        writeStoredSectionLayout();
+      }}
+
+      function moveSection(sectionId, direction) {{
+        const currentIndex = sectionLayoutState.order.indexOf(sectionId);
+        const targetIndex = currentIndex + direction;
+        if (currentIndex < 0 || targetIndex < 0 || targetIndex >= sectionLayoutState.order.length) {{
+          return;
+        }}
+        const movedSection = sectionLayoutState.order.splice(currentIndex, 1)[0];
+        sectionLayoutState.order.splice(targetIndex, 0, movedSection);
+        applySectionLayoutToContent();
+        updateTocLayout();
+        refreshSectionNavigationState();
+        renderSectionOrganizer();
+        updateTileRevealControls();
+        writeStoredSectionLayout();
+      }}
+
+      function resetSectionLayout() {{
+        sectionLayoutState = {{
+          order: sectionBlocks.map(function (block) {{ return block.id; }}),
+          hidden: {{}},
+        }};
+        normalizeSectionLayout();
+        applySectionLayoutToContent();
+        updateTocLayout();
+        refreshSectionNavigationState();
+        renderSectionOrganizer();
+        updateTileRevealControls();
+        try {{
+          if (window.localStorage) {{
+            window.localStorage.removeItem(sectionLayoutStorageKey);
+          }}
+        }} catch (error) {{
+          // The in-page reset is complete even if persisted storage cannot be cleared.
+        }}
       }}
 
       function syncSectionControls() {{
@@ -3321,6 +3839,11 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       }}
 
       function initializeSectionNavigation() {{
+        sectionBlocks = createSectionBlocks();
+        sectionLayoutState = readStoredSectionLayout();
+        normalizeSectionLayout();
+        applySectionLayoutToContent();
+        updateTocLayout();
         sectionHeadings = collectSectionHeadings();
         for (const tocLink of tocLinks) {{
           tocLink.addEventListener("click", function (event) {{
@@ -3346,14 +3869,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
           }});
         }}
         if (sectionSelector) {{
-          sectionSelector.innerHTML = "";
-          sectionHeadings.forEach(function (heading, index) {{
-            const option = document.createElement("option");
-            option.value = String(index);
-            const labelText = (heading.textContent || "").trim() || "Section " + (index + 1);
-            option.textContent = String(index + 1) + ". " + labelText;
-            sectionSelector.appendChild(option);
-          }});
+          updateSectionSelector();
           sectionSelector.addEventListener("change", function () {{
             const requestedIndex = Number(sectionSelector.value);
             navigateToSection(requestedIndex, true);
@@ -3421,6 +3937,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             navigateToSection(sectionHeadings.length - 1, true);
           }}
         }});
+        renderSectionOrganizer();
         setCurrentSectionIndex(0);
       }}
 
@@ -3451,6 +3968,30 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             }}
           }});
         }}
+        if (sectionOrganizerToggle) {{
+          sectionOrganizerToggle.addEventListener("click", function () {{
+            const isExpanded = sectionOrganizerToggle.getAttribute("aria-expanded") === "true";
+            sectionOrganizerToggle.setAttribute("aria-expanded", String(!isExpanded));
+            if (sectionOrganizerPanel) {{
+              sectionOrganizerPanel.hidden = isExpanded;
+            }}
+          }});
+        }}
+        if (sectionLayoutReset) {{
+          sectionLayoutReset.addEventListener("click", resetSectionLayout);
+        }}
+        if (tileRevealToggle) {{
+          tileRevealToggle.addEventListener("click", function () {{
+            const enableTileReveal = tileRevealToggle.getAttribute("aria-pressed") !== "true";
+            setTileRevealEnabled(enableTileReveal);
+          }});
+        }}
+        if (tileRevealNext) {{
+          tileRevealNext.addEventListener("click", revealNextVisibleTileFragment);
+        }}
+        if (tileRevealReset) {{
+          tileRevealReset.addEventListener("click", resetTileRevealFragments);
+        }}
         if (slideModeToggle) {{
           slideModeToggle.addEventListener("click", function () {{
             const enableSlideMode = slideModeToggle.getAttribute("aria-pressed") !== "true";
@@ -3462,6 +4003,9 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             setAutoAdvanceEnabled(false);
             setPresentationMode(false);
             setMotionEnabled(true);
+            setTileRevealEnabled(false);
+            resetTileRevealFragments();
+            resetSectionLayout();
             if (filterInput) {{
               filterInput.value = "";
               applyFilter();

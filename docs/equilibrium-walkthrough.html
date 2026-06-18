@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="equilibrium-walkthrough-source-sha256" content="af359022e6c0260c670fa15f758428e020602794918847aab96cfb722af785fe">
+  <meta name="equilibrium-walkthrough-source-sha256" content="cb663973f2cf78cecd973511451595d6372b7e05a0874c92e92f7a56f4f6f4ec">
   <title>GL-260 Equilibrium Walkthrough</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -167,6 +167,107 @@
     }
     .control-secondary[hidden] {
       display: none;
+    }
+    .section-organizer {
+      border-top: 1px solid rgba(162, 196, 215, 0.26);
+      padding-top: 8px;
+      display: grid;
+      gap: 8px;
+      width: 100%;
+    }
+    .section-organizer[hidden] {
+      display: none;
+    }
+    .section-organizer-header {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+    .section-organizer-title {
+      color: var(--ink-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+    .section-organizer-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 8px;
+      width: 100%;
+    }
+    .section-organizer-item {
+      border: 1px solid rgba(162, 196, 215, 0.30);
+      border-radius: 9px;
+      background: rgba(8, 23, 34, 0.58);
+      padding: 8px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 7px;
+      align-items: center;
+      min-width: 0;
+    }
+    .section-organizer-item.is-hidden {
+      opacity: 0.56;
+    }
+    .section-organizer-toggle {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+      color: var(--ink);
+      font-size: 0.84rem;
+    }
+    .section-organizer-toggle input {
+      accent-color: var(--accent);
+      flex: 0 0 auto;
+    }
+    .section-organizer-toggle span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .section-organizer-actions {
+      display: flex;
+      gap: 4px;
+    }
+    .section-organizer-actions button {
+      min-width: 32px;
+      padding-inline: 8px;
+    }
+    [data-section-hidden="true"] {
+      display: none !important;
+    }
+    body.tile-reveal-enabled .calculation-map-step {
+      cursor: pointer;
+    }
+    body.tile-reveal-enabled .calculation-map-step:focus-within,
+    body.tile-reveal-enabled .calculation-map-step:hover {
+      border-color: rgba(31, 184, 203, 0.58);
+      box-shadow: 0 10px 22px rgba(13, 81, 95, 0.08);
+    }
+    body.tile-reveal-enabled .tile-build-fragment {
+      max-height: 0;
+      margin-top: 0;
+      opacity: 0;
+      overflow: hidden;
+      transform: translateY(8px);
+      transition:
+        max-height 220ms ease,
+        margin-top 180ms ease,
+        opacity 180ms ease,
+        transform 180ms ease;
+    }
+    body.tile-reveal-enabled .tile-build-fragment.is-revealed {
+      max-height: 420px;
+      margin-top: 4px;
+      opacity: 1;
+      transform: translateY(0);
+    }
+    body.tile-reveal-enabled .calculation-map-step.is-build-complete {
+      border-color: rgba(30, 180, 110, 0.36);
     }
     .control-bar .label {
       color: var(--ink-muted);
@@ -689,6 +790,10 @@
     <div class="control-secondary" id="secondary-controls" hidden>
       <button id="motion" type="button" aria-pressed="true">Motion: On</button>
       <button id="auto-advance" type="button" aria-pressed="false">Auto-Advance: Off</button>
+      <button id="section-organizer-toggle" type="button" aria-expanded="false" aria-controls="section-organizer">Sections</button>
+      <button id="tile-reveal-toggle" type="button" aria-pressed="false">Tile Reveal: Off</button>
+      <button id="tile-reveal-next" type="button" disabled>Reveal Next Tile</button>
+      <button id="tile-reveal-reset" type="button" disabled>Reset Reveals</button>
       <label for="speed" class="label">Speed</label>
       <select id="speed" aria-label="Auto-advance speed">
         <option value="3">3s</option>
@@ -698,6 +803,13 @@
       </select>
       <button id="reset" type="button">Reset View</button>
       <button id="print-export" type="button">Print/PDF</button>
+      <div class="section-organizer" id="section-organizer" hidden>
+        <div class="section-organizer-header">
+          <span class="section-organizer-title">Section Organizer</span>
+          <button id="section-layout-reset" type="button">Reset Sections</button>
+        </div>
+        <div class="section-organizer-list" id="section-organizer-list" aria-label="Reorder and hide walkthrough sections"></div>
+      </div>
     </div>
   </section>
 
@@ -716,6 +828,13 @@
         <nav id="toc-nav"><div class="toc">
 <ul>
 <li><a href="#purpose">Purpose</a></li>
+<li><a href="#general-reaction-overview">General Reaction Overview</a><ul>
+<li><a href="#latex-reaction-scheme">LaTeX Reaction Scheme</a></li>
+<li><a href="#component-reactions-used-in-the-overview">Component Reactions Used in the Overview</a></li>
+<li><a href="#relevant-reactions-in-the-highly-basic-system">Relevant Reactions in the Highly Basic System</a></li>
+<li><a href="#reagents-and-process-basis">Reagents and Process Basis</a></li>
+</ul>
+</li>
 <li><a href="#locked-assumptions-for-this-walkthrough">Locked Assumptions for This Walkthrough</a></li>
 <li><a href="#1-basis-setup-700-g-naoh-in-2200-ml-water">1) Basis Setup (700 g NaOH in 2,200 mL Water)</a></li>
 <li><a href="#2-equilibrium-half-reactions-constants-and-activities">2) Equilibrium Half-Reactions, Constants, and Activities</a><ul>
@@ -797,6 +916,193 @@
 </ul>
 <p>We will discuss how cycles are identified, uptake is calculated, reaction kinetics are interpreted, pH is predicted for each cycle, and we will derive detailed equilibrium expressions that are used to calculate pH with +/- 0.5 accuracy.</p>
 <p>We will go through a simulation and then ill show a real world example with real data in the program.</p>
+<h2 id="general-reaction-overview">General Reaction Overview</h2>
+<p>This process starts as a highly basic sodium hydroxide solution and uses absorbed <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span> to move the sodium-carbonate system toward sodium bicarbonate. The useful presentation message is that <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><mi>a</mi><mi>H</mi><mi>C</mi><msub><mi>O</mi><mrow><mn>3</mn></mrow></msub></mrow></math></span> is not created by one isolated step; it is the endpoint of gas absorption, hydration, acid-base transfer, sodium pairing, and carbonate-to-bicarbonate conversion.</p>
+<p>In this walkthrough, "half-reactions" means the component acid-base and phase-transfer reactions that build the full carbonate system. They are not electron-transfer redox half-reactions.</p>
+<h3 id="latex-reaction-scheme">LaTeX Reaction Scheme</h3>
+<div class="calculation-map">
+  <div class="calculation-map-heading">
+    <div>
+      <p class="calculation-map-title">Reaction Overview Map</p>
+      <p class="calculation-map-copy">In strongly basic solution, absorbed <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span> first drives carbonate formation. The generated carbonate must then react with additional <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span> and water to form sodium bicarbonate.</p>
+    </div>
+    <div class="calculation-map-badge">
+      <span>Target</span>
+      <strong>NaHCO<sub>3</sub></strong>
+    </div>
+  </div>
+
+  <div class="calculation-map-grid three-up">
+    <div class="calculation-map-step">
+      <span>1. Caustic charge</span>
+      <strong>NaOH fixes sodium and hydroxide</strong>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi><mo>&#x02192;</mo><mi mathvariant="normal">N</mi><msup><mi mathvariant="normal">a</mi><mrow><mo>&#x0002B;</mo></mrow></msup><mo>&#x0002B;</mo><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mrow><mo>&#x02212;</mo></mrow></msup></mrow></mrow></math></span>
+      <p>The `700 g` charge defines the sodium inventory and the initial high-pH hydroxide pool.</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>2. Carbonate forms first</span>
+      <strong>Early CO2 is consumed by excess hydroxide</strong>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mn>2</mn><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi><mo>&#x0002B;</mo><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mrow><mn>2</mn></mrow></msub><mo>&#x02192;</mo><mi mathvariant="normal">N</mi><msub><mi mathvariant="normal">a</mi><mrow><mn>2</mn></mrow></msub><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mrow><mn>3</mn></mrow></msub><mo>&#x0002B;</mo><msub><mi mathvariant="normal">H</mi><mrow><mn>2</mn></mrow></msub><mi mathvariant="normal">O</mi></mrow></mrow></math></span>
+      <p>At high pH, the first stoichiometric stage is carbonate-rich sodium carbonate.</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>3. Carbonate must be converted</span>
+      <strong>All generated carbonate needs more CO2</strong>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mi mathvariant="normal">N</mi><msub><mi mathvariant="normal">a</mi><mrow><mn>2</mn></mrow></msub><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mrow><mn>3</mn></mrow></msub><mo>&#x0002B;</mo><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mrow><mn>2</mn></mrow></msub><mo>&#x0002B;</mo><msub><mi mathvariant="normal">H</mi><mrow><mn>2</mn></mrow></msub><mi mathvariant="normal">O</mi><mo>&#x02192;</mo><mn>2</mn><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mrow><mn>3</mn></mrow></msub></mrow></mrow></math></span>
+      <p>Any carbonate left behind remains a carbonate impurity or carbonate-heavy fraction until it reacts with additional absorbed <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span>.</p>
+    </div>
+  </div>
+
+  <div class="calculation-map-grid three-up">
+    <div class="calculation-map-step">
+      <span>4. Direct net target</span>
+      <strong>The intended overall endpoint</strong>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi><mo>&#x0002B;</mo><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mrow><mn>2</mn></mrow></msub><mo>&#x02192;</mo><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mrow><mn>3</mn></mrow></msub></mrow></mrow></math></span>
+      <p>This is the clean net reaction, but it hides the carbonate intermediate that appears while hydroxide is still high.</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>5. Equivalence split</span>
+      <strong>Half load versus full load</strong>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mn>17.5</mn><mtext>&#x000A0;</mtext><mi mathvariant="normal">m</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">l</mi><mtext>&#x000A0;</mtext><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi><mo>&#x021D2;</mo><mn>8.75</mn><mtext>&#x000A0;</mtext><mi mathvariant="normal">m</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">l</mi><mtext>&#x000A0;</mtext><mi mathvariant="normal">N</mi><msub><mi mathvariant="normal">a</mi><mrow><mn>2</mn></mrow></msub><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mrow><mn>3</mn></mrow></msub></mrow></mrow></math></span>
+      <p>About `385.1 g CO2` reaches the carbonate-rich midpoint; about `770.2 g CO2` is needed for the bicarbonate endpoint.</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>6. Process check</span>
+      <strong>pH and speciation confirm completion</strong>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mrow><mn>3</mn></mrow><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup><mo>&#x0002B;</mo><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mrow><mn>2</mn></mrow></msub><mo>&#x0002B;</mo><msub><mi mathvariant="normal">H</mi><mrow><mn>2</mn></mrow></msub><mi mathvariant="normal">O</mi><mo>&#x02192;</mo><mn>2</mn><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mrow><mn>3</mn></mrow><mrow><mo>&#x02212;</mo></mrow></msubsup></mrow></mrow></math></span>
+      <p>The batch is not bicarbonate-rich until carbonate has been pulled toward bicarbonate by sufficient <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span>, water, and mixing.</p>
+    </div>
+  </div>
+
+  <p class="calculation-map-callout">Presentation takeaway: sodium carbonate is the expected intermediate in a highly basic batch. Making sodium bicarbonate means carrying that carbonate forward with additional absorbed <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span>, not stopping at the first carbonate-forming stage.</p>
+</div>
+
+<p>The scheme uses regular chemical notation instead of structural drawings so it matches the rest of the presentation. The key process point is the sequence: first <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><msub><mi>a</mi><mrow><mn>2</mn></mrow></msub><mi>C</mi><msub><mi>O</mi><mrow><mn>3</mn></mrow></msub></mrow></math></span>, then <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><mi>a</mi><mi>H</mi><mi>C</mi><msub><mi>O</mi><mrow><mn>3</mn></mrow></msub></mrow></math></span> after additional <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span> conversion.</p>
+<h3 id="component-reactions-used-in-the-overview">Component Reactions Used in the Overview</h3>
+<p>The carbonate network is built from these coupled phase-transfer, hydration, acid-base, and sodium-pairing steps.</p>
+<div class="calculation-map">
+  <div class="calculation-map-heading">
+    <div>
+      <p class="calculation-map-title">Component Reaction Tiles</p>
+      <p class="calculation-map-copy">Each tile is one constraint that the later pH and speciation solver must satisfy at the same time.</p>
+    </div>
+    <div class="calculation-map-badge">
+      <span>Network</span>
+      <strong>6 steps</strong>
+    </div>
+  </div>
+
+  <div class="calculation-map-grid three-up">
+    <div class="calculation-map-step">
+      <span>Gas absorption</span>
+      <strong><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn><mo stretchy="false">&#x00028;</mo><mi>g</mi><mo stretchy="false">&#x00029;</mo></mrow></msub><mo>&#x021CC;</mo><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn><mo stretchy="false">&#x00028;</mo><mi>a</mi><mi>q</mi><mo stretchy="false">&#x00029;</mo></mrow></msub></mrow></math></span></strong>
+      <p>Defines how headspace <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span> becomes usable dissolved carbon.</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>Hydration</span>
+      <strong><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn><mo stretchy="false">&#x00028;</mo><mi>a</mi><mi>q</mi><mo stretchy="false">&#x00029;</mo></mrow></msub><mo>&#x0002B;</mo><msub><mi>H</mi><mrow><mn>2</mn></mrow></msub><mi>O</mi><mo>&#x021CC;</mo><msub><mi>H</mi><mrow><mn>2</mn></mrow></msub><mi>C</mi><msub><mi>O</mi><mrow><mn>3</mn></mrow></msub></mrow></math></span></strong>
+      <p>Creates the carbonic-acid pool represented as <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msubsup><mi>O</mi><mrow><mn>2</mn></mrow><mrow><mo>&#x0002A;</mo></mrow></msubsup></mrow></math></span> in the model.</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>First acid-base step</span>
+      <strong><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>H</mi><mrow><mn>2</mn></mrow></msub><mi>C</mi><msub><mi>O</mi><mrow><mn>3</mn></mrow></msub><mo>&#x021CC;</mo><msup><mi>H</mi><mrow><mo>&#x0002B;</mo></mrow></msup><mo>&#x0002B;</mo><mi>H</mi><mi>C</mi><msubsup><mi>O</mi><mrow><mn>3</mn></mrow><mrow><mo>&#x02212;</mo></mrow></msubsup></mrow></math></span></strong>
+      <p>Produces bicarbonate from hydrated <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span>.</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>Second acid-base step</span>
+      <strong><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>H</mi><mi>C</mi><msubsup><mi>O</mi><mrow><mn>3</mn></mrow><mrow><mo>&#x02212;</mo></mrow></msubsup><mo>&#x021CC;</mo><msup><mi>H</mi><mrow><mo>&#x0002B;</mo></mrow></msup><mo>&#x0002B;</mo><mi>C</mi><msubsup><mi>O</mi><mrow><mn>3</mn></mrow><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow></math></span></strong>
+      <p>Explains why high pH can push bicarbonate toward carbonate.</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>Water balance</span>
+      <strong><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>H</mi><mrow><mn>2</mn></mrow></msub><mi>O</mi><mo>&#x021CC;</mo><msup><mi>H</mi><mrow><mo>&#x0002B;</mo></mrow></msup><mo>&#x0002B;</mo><mi>O</mi><msup><mi>H</mi><mrow><mo>&#x02212;</mo></mrow></msup></mrow></math></span></strong>
+      <p>Couples pH, residual hydroxide, and charge balance.</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>Sodium pairing</span>
+      <strong><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><msup><mi>a</mi><mrow><mo>&#x0002B;</mo></mrow></msup><mo>&#x0002B;</mo><mi>H</mi><mi>C</mi><msubsup><mi>O</mi><mrow><mn>3</mn></mrow><mrow><mo>&#x02212;</mo></mrow></msubsup><mo>&#x021CC;</mo><mi>N</mi><mi>a</mi><mi>H</mi><mi>C</mi><msub><mi>O</mi><mrow><mn>3</mn><mo stretchy="false">&#x00028;</mo><mi>s</mi><mo>&#x0002F;</mo><mi>a</mi><mi>q</mi><mo stretchy="false">&#x00029;</mo></mrow></msub></mrow></math></span></strong>
+      <p>Connects bicarbonate speciation to the sodium bicarbonate product basis.</p>
+    </div>
+  </div>
+
+  <p class="calculation-map-callout">These tiles are the bridge from regular chemical notation to the later equilibrium math: absorption sets carbon availability, acid-base reactions distribute carbon, and sodium pairing ties the distribution back to product formation.</p>
+</div>
+
+<h3 id="relevant-reactions-in-the-highly-basic-system">Relevant Reactions in the Highly Basic System</h3>
+<p>When <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><mi>a</mi><mi>O</mi><mi>H</mi></mrow></math></span> is still abundant, the first absorbed <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span> is captured rapidly by hydroxide:</p>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow><mo>&#x0002B;</mo><mrow><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow><mo>&#x02192;</mo><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></math></div>
+<p>If the solution remains strongly basic, bicarbonate can be deprotonated into carbonate:</p>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow><mo>&#x0002B;</mo><mrow><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow><mo>&#x02192;</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow><mo>&#x0002B;</mo><mrow><msub><mi mathvariant="normal">H</mi><mn>2</mn></msub><mi mathvariant="normal">O</mi></mrow></mrow></math></div>
+<p>That gives the carbonate-rich stoichiometric endpoint:</p>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mn>2</mn><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow><mo>&#x0002B;</mo><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow><mo>&#x02192;</mo><mrow><mi mathvariant="normal">N</mi><msub><mi mathvariant="normal">a</mi><mn>2</mn></msub><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow><mo>&#x0002B;</mo><mrow><msub><mi mathvariant="normal">H</mi><mn>2</mn></msub><mi mathvariant="normal">O</mi></mrow></mrow></math></div>
+<p>Additional <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span> and water can convert carbonate back into bicarbonate:</p>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mi mathvariant="normal">N</mi><msub><mi mathvariant="normal">a</mi><mn>2</mn></msub><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow><mo>&#x0002B;</mo><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow><mo>&#x0002B;</mo><mrow><msub><mi mathvariant="normal">H</mi><mn>2</mn></msub><mi mathvariant="normal">O</mi></mrow><mo>&#x02192;</mo><mn>2</mn><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow></math></div>
+<p>The desired direct overall reaction for the product target is:</p>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow><mo>&#x0002B;</mo><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow><mo>&#x02192;</mo><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow></math></div>
+<p>For the <code>700 g</code> NaOH basis used in this walkthrough, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mn>17.5</mn><mtext>&#x000A0;</mtext><mi>m</mi><mi>o</mi><mi>l</mi></mrow></math></span> of <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><mi>a</mi><mi>O</mi><mi>H</mi></mrow></math></span> requires <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mn>17.5</mn><mtext>&#x000A0;</mtext><mi>m</mi><mi>o</mi><mi>l</mi></mrow></math></span> of <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span>, or about <code>770.2 g CO2</code>, to reach the bicarbonate stoichiometric endpoint. About half that <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span>, <code>385.1 g</code>, corresponds to the carbonate-rich midpoint.</p>
+<h3 id="reagents-and-process-basis">Reagents and Process Basis</h3>
+<table>
+<thead>
+<tr>
+<th>Reagent or species</th>
+<th style="text-align: right;">MW (g/mol)</th>
+<th>Equivalence</th>
+<th style="text-align: right;">Molar amount</th>
+<th style="text-align: right;">Planned amount</th>
+<th>Presentation note</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sodium hydroxide, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><mi>a</mi><mi>O</mi><mi>H</mi></mrow></math></span></td>
+<td style="text-align: right;"><code>40.00</code></td>
+<td><code>1.000 mol NaOH = 1.000 mol Na+ = 1.000 mol NaHCO3 target</code></td>
+<td style="text-align: right;"><code>17.5 mol</code></td>
+<td style="text-align: right;"><code>700 g</code></td>
+<td>Sets the sodium inventory, initial alkalinity, and charge-balance pool.</td>
+</tr>
+<tr>
+<td>Water, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>H</mi><mrow><mn>2</mn></mrow></msub><mi>O</mi></mrow></math></span></td>
+<td style="text-align: right;"><code>18.015</code></td>
+<td>Reaction medium; participates in hydration and <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>K</mi><mi>w</mi></msub></mrow></math></span></td>
+<td style="text-align: right;"><code>~122.1 mol</code></td>
+<td style="text-align: right;"><code>2,200 mL</code> (<code>~2,200 g</code>)</td>
+<td>Provides the liquid phase and the <code>~2.2 kg</code> molality basis used by the solver.</td>
+</tr>
+<tr>
+<td>Carbon dioxide, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span></td>
+<td style="text-align: right;"><code>44.01</code></td>
+<td><code>1.000 mol CO2 per 1.000 mol NaOH</code> for bicarbonate endpoint</td>
+<td style="text-align: right;"><code>17.5 mol</code> target absorbed</td>
+<td style="text-align: right;"><code>770.2 g</code> target absorbed</td>
+<td>Must enter the liquid/slurry; headspace charge alone is not the same as absorbed <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span>.</td>
+</tr>
+<tr>
+<td>Carbon dioxide at carbonate midpoint, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span></td>
+<td style="text-align: right;"><code>44.01</code></td>
+<td><code>0.500 mol CO2 per 1.000 mol NaOH</code></td>
+<td style="text-align: right;"><code>8.75 mol</code></td>
+<td style="text-align: right;"><code>385.1 g</code></td>
+<td>Marks the carbonate-rich midpoint where <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><msub><mi>a</mi><mrow><mn>2</mn></mrow></msub><mi>C</mi><msub><mi>O</mi><mrow><mn>3</mn></mrow></msub></mrow></math></span> can dominate.</td>
+</tr>
+<tr>
+<td>Sodium carbonate, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><msub><mi>a</mi><mrow><mn>2</mn></mrow></msub><mi>C</mi><msub><mi>O</mi><mrow><mn>3</mn></mrow></msub></mrow></math></span></td>
+<td style="text-align: right;"><code>105.99</code></td>
+<td><code>0.500 mol Na2CO3 per 1.000 mol NaOH</code> if all sodium is carbonate</td>
+<td style="text-align: right;"><code>8.75 mol</code> theoretical midpoint</td>
+<td style="text-align: right;">Not charged; intermediate</td>
+<td>Indicates under-carbonation or locally high-pH conditions when it persists.</td>
+</tr>
+<tr>
+<td>Sodium bicarbonate, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><mi>a</mi><mi>H</mi><mi>C</mi><msub><mi>O</mi><mrow><mn>3</mn></mrow></msub></mrow></math></span></td>
+<td style="text-align: right;"><code>84.01</code></td>
+<td><code>1.000 mol NaHCO3 per 1.000 mol NaOH</code></td>
+<td style="text-align: right;"><code>17.5 mol</code> theoretical endpoint</td>
+<td style="text-align: right;"><code>~1,470.2 g</code> theoretical product</td>
+<td>Target product favored when absorbed <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span>, pH, and speciation are bicarbonate-rich.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="locked-assumptions-for-this-walkthrough">Locked Assumptions for This Walkthrough</h2>
 <p>All values in this document are locked to one deterministic scenario so intermediate results are reproducible during live explanation.</p>
 <ul>
@@ -2601,7 +2907,7 @@ The HMW Pitzer model makes that crossover more realistic by correcting sodium-ca
 python scripts/build_equilibrium_walkthrough.py --check
 </code></pre>
 <p>This walkthrough is documentation-only and does not change runtime chemistry behavior.</p>
-        <div class="footer">Source fingerprint: <code>af359022e6c0260c670fa15f758428e020602794918847aab96cfb722af785fe</code></div>
+        <div class="footer">Source fingerprint: <code>cb663973f2cf78cecd973511451595d6372b7e05a0874c92e92f7a56f4f6f4ec</code></div>
       </article>
       <section id="cycle-trend-panel" class="surface chart-panel" aria-label="Cycle trend highlights">
         <h2>Cycle Trend Highlights</h2>
@@ -2654,6 +2960,13 @@ python scripts/build_equilibrium_walkthrough.py --check
       const slideModeToggle = document.getElementById("slide-mode");
       const controlsMoreButton = document.getElementById("controls-more");
       const secondaryControlsPanel = document.getElementById("secondary-controls");
+      const sectionOrganizerToggle = document.getElementById("section-organizer-toggle");
+      const sectionOrganizerPanel = document.getElementById("section-organizer");
+      const sectionOrganizerList = document.getElementById("section-organizer-list");
+      const sectionLayoutReset = document.getElementById("section-layout-reset");
+      const tileRevealToggle = document.getElementById("tile-reveal-toggle");
+      const tileRevealNext = document.getElementById("tile-reveal-next");
+      const tileRevealReset = document.getElementById("tile-reveal-reset");
       const resetButton = document.getElementById("reset");
       const printExportButton = document.getElementById("print-export");
       const prevButton = document.getElementById("prev");
@@ -2676,7 +2989,12 @@ python scripts/build_equilibrium_walkthrough.py --check
       let autoAdvanceTimer = null;
       let revealObserver = null;
       let sectionHeadings = [];
+      let sectionBlocks = [];
+      let sectionLayoutState = { order: [], hidden: {} };
+      let tileRevealTiles = [];
+      let tileRevealEnabled = false;
       let currentSectionIndex = 0;
+      const sectionLayoutStorageKey = "gl260-equilibrium-section-layout-v1";
       const supportsPromises = typeof Promise === "function";
       const supportsIntersectionObserver = "IntersectionObserver" in window;
       const supportsRaf = typeof window.requestAnimationFrame === "function";
@@ -3383,7 +3701,9 @@ python scripts/build_equilibrium_walkthrough.py --check
           const linkText = (link.textContent || "").toLowerCase();
           const heading = headingMap.get(href);
           const headingText = heading ? (heading.textContent || "").toLowerCase() : "";
-          const show = !needle || linkText.includes(needle) || headingText.includes(needle);
+          const sectionVisible = !heading || !heading.hidden;
+          const show =
+            sectionVisible && (!needle || linkText.includes(needle) || headingText.includes(needle));
           const row = closestByTagName(link, "LI");
           if (row) {
             row.style.display = show ? "" : "none";
@@ -3472,6 +3792,153 @@ python scripts/build_equilibrium_walkthrough.py --check
         progressBar.style.transform = "scaleX(" + ratio.toFixed(4) + ")";
       }
 
+      function tileIsVisible(tile) {
+        if (!tile || tile.hidden || tile.closest("[hidden], [data-section-hidden='true']")) {
+          return false;
+        }
+        const rect = tile.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      }
+
+      function tileRevealFragments(tile) {
+        if (!tile) {
+          return [];
+        }
+        return Array.from(tile.querySelectorAll(":scope > .tile-build-fragment"));
+      }
+
+      function tileHasHiddenFragments(tile) {
+        return tileRevealFragments(tile).some(function (fragment) {
+          return !fragment.classList.contains("is-revealed");
+        });
+      }
+
+      function updateTileRevealCompletion(tile) {
+        const fragments = tileRevealFragments(tile);
+        const isComplete =
+          fragments.length > 0 &&
+          fragments.every(function (fragment) {
+            return fragment.classList.contains("is-revealed");
+          });
+        tile.classList.toggle("is-build-complete", isComplete);
+      }
+
+      function updateTileRevealControls() {
+        const hasHiddenVisibleFragments = tileRevealTiles.some(function (tile) {
+          return tileIsVisible(tile) && tileHasHiddenFragments(tile);
+        });
+        document.body.classList.toggle("tile-reveal-enabled", tileRevealEnabled);
+        if (tileRevealToggle) {
+          tileRevealToggle.setAttribute("aria-pressed", String(tileRevealEnabled));
+          tileRevealToggle.textContent = "Tile Reveal: " + (tileRevealEnabled ? "On" : "Off");
+        }
+        if (tileRevealNext) {
+          tileRevealNext.disabled = !tileRevealEnabled || !hasHiddenVisibleFragments;
+        }
+        if (tileRevealReset) {
+          tileRevealReset.disabled = !tileRevealEnabled || !tileRevealTiles.length;
+        }
+      }
+
+      function resetTileRevealFragments() {
+        for (const tile of tileRevealTiles) {
+          tile.classList.remove("is-build-complete");
+          for (const fragment of tileRevealFragments(tile)) {
+            fragment.classList.remove("is-revealed");
+          }
+        }
+        updateTileRevealControls();
+      }
+
+      function revealTile(tile) {
+        if (!tileRevealEnabled || !tile) {
+          return false;
+        }
+        const hiddenFragments = tileRevealFragments(tile).filter(function (fragment) {
+          return !fragment.classList.contains("is-revealed");
+        });
+        if (!hiddenFragments.length) {
+          updateTileRevealCompletion(tile);
+          updateTileRevealControls();
+          return false;
+        }
+        for (const fragment of hiddenFragments) {
+          fragment.classList.add("is-revealed");
+        }
+        updateTileRevealCompletion(tile);
+        updateTileRevealControls();
+        return true;
+      }
+
+      function tileRevealViewportScore(tile) {
+        const rect = tile.getBoundingClientRect();
+        const viewportCenter = window.innerHeight / 2;
+        const tileCenter = rect.top + rect.height / 2;
+        const intersectsViewport = rect.bottom >= 0 && rect.top <= window.innerHeight;
+        return (intersectsViewport ? 0 : 100000) + Math.abs(tileCenter - viewportCenter);
+      }
+
+      function revealNextVisibleTileFragment() {
+        const candidates = tileRevealTiles
+          .filter(function (tile) {
+            return tileIsVisible(tile) && tileHasHiddenFragments(tile);
+          })
+          .sort(function (firstTile, secondTile) {
+            return tileRevealViewportScore(firstTile) - tileRevealViewportScore(secondTile);
+          });
+        if (!candidates.length) {
+          updateTileRevealControls();
+          return false;
+        }
+        return revealTile(candidates[0]);
+      }
+
+      function setTileRevealEnabled(enabled) {
+        tileRevealEnabled = Boolean(enabled);
+        if (tileRevealEnabled) {
+          resetTileRevealFragments();
+        }
+        updateTileRevealControls();
+      }
+
+      function initializeTileRevealTiles() {
+        tileRevealTiles = Array.from(content.querySelectorAll(".calculation-map-step")).filter(
+          function (tile) {
+            const childElements = Array.from(tile.children);
+            if (childElements.length < 2) {
+              return false;
+            }
+            childElements.forEach(function (child, index) {
+              if (index > 0) {
+                child.classList.add("tile-build-fragment");
+              }
+            });
+            tile.setAttribute("tabindex", "0");
+            tile.addEventListener("click", function (event) {
+              const interactiveTarget = event.target.closest(
+                "a, button, input, select, textarea, label"
+              );
+              if (interactiveTarget) {
+                return;
+              }
+              revealTile(tile);
+            });
+            tile.addEventListener("keydown", function (event) {
+              if (event.key !== "Enter" && event.key !== " ") {
+                return;
+              }
+              if (!tileRevealEnabled) {
+                return;
+              }
+              event.preventDefault();
+              revealTile(tile);
+            });
+            return true;
+          }
+        );
+        updateTileRevealControls();
+      }
+
       function initializeLayoutPhase() {
         ensureChargeBalanceVisualModule();
         ensureDerivationStepperModule();
@@ -3483,6 +3950,7 @@ python scripts/build_equilibrium_walkthrough.py --check
         }
         applyFilter();
         initializeChartTabs();
+        initializeTileRevealTiles();
         window.addEventListener("scroll", updateScrollProgress, { passive: true });
         window.addEventListener("resize", updateScrollProgress);
         initializeActiveSectionTracking();
@@ -4365,14 +4833,258 @@ python scripts/build_equilibrium_walkthrough.py --check
 
       function collectSectionHeadings() {
         const majorHeadings = headingNodes.filter(function (node) {
-          return String(node.tagName || "").toUpperCase() === "H2" && node.id;
+          return String(node.tagName || "").toUpperCase() === "H2" && node.id && !node.hidden;
         });
         if (majorHeadings.length) {
           return majorHeadings;
         }
         return headingNodes.filter(function (node) {
-          return Boolean(node.id);
+          return Boolean(node.id) && !node.hidden;
         });
+      }
+
+      function createSectionBlocks() {
+        const majorHeadings = headingNodes.filter(function (node) {
+          return String(node.tagName || "").toUpperCase() === "H2" && node.id;
+        });
+        return majorHeadings.map(function (heading, index) {
+          const nodes = [heading];
+          let sibling = heading.nextElementSibling;
+          while (sibling) {
+            if (String(sibling.tagName || "").toUpperCase() === "H2" && sibling.id) {
+              break;
+            }
+            nodes.push(sibling);
+            sibling = sibling.nextElementSibling;
+          }
+          return {
+            id: heading.id,
+            title: (heading.textContent || "").trim() || "Section " + (index + 1),
+            heading: heading,
+            nodes: nodes,
+          };
+        });
+      }
+
+      function readStoredSectionLayout() {
+        try {
+          const rawLayout = window.localStorage
+            ? window.localStorage.getItem(sectionLayoutStorageKey)
+            : "";
+          if (!rawLayout) {
+            return { order: [], hidden: {} };
+          }
+          const parsedLayout = JSON.parse(rawLayout);
+          return {
+            order: Array.isArray(parsedLayout.order) ? parsedLayout.order : [],
+            hidden:
+              parsedLayout.hidden && typeof parsedLayout.hidden === "object"
+                ? parsedLayout.hidden
+                : {},
+          };
+        } catch (error) {
+          return { order: [], hidden: {} };
+        }
+      }
+
+      function writeStoredSectionLayout() {
+        try {
+          if (window.localStorage) {
+            window.localStorage.setItem(
+              sectionLayoutStorageKey,
+              JSON.stringify(sectionLayoutState)
+            );
+          }
+        } catch (error) {
+          // Storage can be unavailable in locked-down browsers; the page still updates live.
+        }
+      }
+
+      function normalizeSectionLayout() {
+        const knownIds = sectionBlocks.map(function (block) { return block.id; });
+        const knownSet = new Set(knownIds);
+        const orderedKnownIds = [];
+        for (const sectionId of sectionLayoutState.order || []) {
+          if (knownSet.has(sectionId) && orderedKnownIds.indexOf(sectionId) === -1) {
+            orderedKnownIds.push(sectionId);
+          }
+        }
+        for (const sectionId of knownIds) {
+          if (orderedKnownIds.indexOf(sectionId) === -1) {
+            orderedKnownIds.push(sectionId);
+          }
+        }
+        const hidden = {};
+        for (const sectionId of knownIds) {
+          hidden[sectionId] = Boolean(sectionLayoutState.hidden[sectionId]);
+        }
+        sectionLayoutState = { order: orderedKnownIds, hidden: hidden };
+      }
+
+      function sectionBlockById(sectionId) {
+        for (const block of sectionBlocks) {
+          if (block.id === sectionId) {
+            return block;
+          }
+        }
+        return null;
+      }
+
+      function applySectionLayoutToContent() {
+        for (const sectionId of sectionLayoutState.order) {
+          const block = sectionBlockById(sectionId);
+          if (!block) {
+            continue;
+          }
+          for (const node of block.nodes) {
+            node.hidden = Boolean(sectionLayoutState.hidden[block.id]);
+            node.setAttribute(
+              "data-section-hidden",
+              sectionLayoutState.hidden[block.id] ? "true" : "false"
+            );
+            content.appendChild(node);
+          }
+        }
+      }
+
+      function updateTocLayout() {
+        if (!tocNav) {
+          return;
+        }
+        let topLevelParent = null;
+        for (const sectionId of sectionLayoutState.order) {
+          const tocLink = tocNav.querySelector("a[href='#" + CSS.escape(sectionId) + "']");
+          const tocItem = tocLink ? tocLink.closest("li") : null;
+          if (tocItem && !topLevelParent) {
+            topLevelParent = tocItem.parentElement;
+          }
+          if (tocItem) {
+            tocItem.hidden = Boolean(sectionLayoutState.hidden[sectionId]);
+          }
+        }
+        if (!topLevelParent) {
+          return;
+        }
+        for (const sectionId of sectionLayoutState.order) {
+          const tocLink = tocNav.querySelector("a[href='#" + CSS.escape(sectionId) + "']");
+          const tocItem = tocLink ? tocLink.closest("li") : null;
+          if (tocItem && tocItem.parentElement === topLevelParent) {
+            topLevelParent.appendChild(tocItem);
+          }
+        }
+      }
+
+      function updateSectionSelector() {
+        if (!sectionSelector) {
+          return;
+        }
+        sectionSelector.innerHTML = "";
+        sectionHeadings.forEach(function (heading, index) {
+          const option = document.createElement("option");
+          option.value = String(index);
+          const labelText = (heading.textContent || "").trim() || "Section " + (index + 1);
+          option.textContent = String(index + 1) + ". " + labelText;
+          sectionSelector.appendChild(option);
+        });
+      }
+
+      function refreshSectionNavigationState() {
+        sectionHeadings = collectSectionHeadings();
+        updateSectionSelector();
+        currentSectionIndex = Math.min(currentSectionIndex, Math.max(sectionHeadings.length - 1, 0));
+        syncSectionControls();
+        applyFilter();
+      }
+
+      function renderSectionOrganizer() {
+        if (!sectionOrganizerList) {
+          return;
+        }
+        sectionOrganizerList.innerHTML = "";
+        sectionLayoutState.order.forEach(function (sectionId, index) {
+          const block = sectionBlockById(sectionId);
+          if (!block) {
+            return;
+          }
+          const item = document.createElement("div");
+          item.className = "section-organizer-item";
+          item.classList.toggle("is-hidden", Boolean(sectionLayoutState.hidden[sectionId]));
+          const label = document.createElement("label");
+          label.className = "section-organizer-toggle";
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.checked = !sectionLayoutState.hidden[sectionId];
+          checkbox.addEventListener("change", function () {
+            setSectionHidden(sectionId, !checkbox.checked);
+          });
+          const labelText = document.createElement("span");
+          labelText.textContent = block.title;
+          label.appendChild(checkbox);
+          label.appendChild(labelText);
+          const actions = document.createElement("div");
+          actions.className = "section-organizer-actions";
+          const upButton = document.createElement("button");
+          upButton.type = "button";
+          upButton.textContent = "Up";
+          upButton.disabled = index === 0;
+          upButton.addEventListener("click", function () { moveSection(sectionId, -1); });
+          const downButton = document.createElement("button");
+          downButton.type = "button";
+          downButton.textContent = "Down";
+          downButton.disabled = index === sectionLayoutState.order.length - 1;
+          downButton.addEventListener("click", function () { moveSection(sectionId, 1); });
+          actions.appendChild(upButton);
+          actions.appendChild(downButton);
+          item.appendChild(label);
+          item.appendChild(actions);
+          sectionOrganizerList.appendChild(item);
+        });
+      }
+
+      function setSectionHidden(sectionId, hidden) {
+        sectionLayoutState.hidden[sectionId] = Boolean(hidden);
+        applySectionLayoutToContent();
+        updateTocLayout();
+        refreshSectionNavigationState();
+        renderSectionOrganizer();
+        updateTileRevealControls();
+        writeStoredSectionLayout();
+      }
+
+      function moveSection(sectionId, direction) {
+        const currentIndex = sectionLayoutState.order.indexOf(sectionId);
+        const targetIndex = currentIndex + direction;
+        if (currentIndex < 0 || targetIndex < 0 || targetIndex >= sectionLayoutState.order.length) {
+          return;
+        }
+        const movedSection = sectionLayoutState.order.splice(currentIndex, 1)[0];
+        sectionLayoutState.order.splice(targetIndex, 0, movedSection);
+        applySectionLayoutToContent();
+        updateTocLayout();
+        refreshSectionNavigationState();
+        renderSectionOrganizer();
+        updateTileRevealControls();
+        writeStoredSectionLayout();
+      }
+
+      function resetSectionLayout() {
+        sectionLayoutState = {
+          order: sectionBlocks.map(function (block) { return block.id; }),
+          hidden: {},
+        };
+        normalizeSectionLayout();
+        applySectionLayoutToContent();
+        updateTocLayout();
+        refreshSectionNavigationState();
+        renderSectionOrganizer();
+        updateTileRevealControls();
+        try {
+          if (window.localStorage) {
+            window.localStorage.removeItem(sectionLayoutStorageKey);
+          }
+        } catch (error) {
+          // The in-page reset is complete even if persisted storage cannot be cleared.
+        }
       }
 
       function syncSectionControls() {
@@ -4522,6 +5234,11 @@ python scripts/build_equilibrium_walkthrough.py --check
       }
 
       function initializeSectionNavigation() {
+        sectionBlocks = createSectionBlocks();
+        sectionLayoutState = readStoredSectionLayout();
+        normalizeSectionLayout();
+        applySectionLayoutToContent();
+        updateTocLayout();
         sectionHeadings = collectSectionHeadings();
         for (const tocLink of tocLinks) {
           tocLink.addEventListener("click", function (event) {
@@ -4547,14 +5264,7 @@ python scripts/build_equilibrium_walkthrough.py --check
           });
         }
         if (sectionSelector) {
-          sectionSelector.innerHTML = "";
-          sectionHeadings.forEach(function (heading, index) {
-            const option = document.createElement("option");
-            option.value = String(index);
-            const labelText = (heading.textContent || "").trim() || "Section " + (index + 1);
-            option.textContent = String(index + 1) + ". " + labelText;
-            sectionSelector.appendChild(option);
-          });
+          updateSectionSelector();
           sectionSelector.addEventListener("change", function () {
             const requestedIndex = Number(sectionSelector.value);
             navigateToSection(requestedIndex, true);
@@ -4622,6 +5332,7 @@ python scripts/build_equilibrium_walkthrough.py --check
             navigateToSection(sectionHeadings.length - 1, true);
           }
         });
+        renderSectionOrganizer();
         setCurrentSectionIndex(0);
       }
 
@@ -4652,6 +5363,30 @@ python scripts/build_equilibrium_walkthrough.py --check
             }
           });
         }
+        if (sectionOrganizerToggle) {
+          sectionOrganizerToggle.addEventListener("click", function () {
+            const isExpanded = sectionOrganizerToggle.getAttribute("aria-expanded") === "true";
+            sectionOrganizerToggle.setAttribute("aria-expanded", String(!isExpanded));
+            if (sectionOrganizerPanel) {
+              sectionOrganizerPanel.hidden = isExpanded;
+            }
+          });
+        }
+        if (sectionLayoutReset) {
+          sectionLayoutReset.addEventListener("click", resetSectionLayout);
+        }
+        if (tileRevealToggle) {
+          tileRevealToggle.addEventListener("click", function () {
+            const enableTileReveal = tileRevealToggle.getAttribute("aria-pressed") !== "true";
+            setTileRevealEnabled(enableTileReveal);
+          });
+        }
+        if (tileRevealNext) {
+          tileRevealNext.addEventListener("click", revealNextVisibleTileFragment);
+        }
+        if (tileRevealReset) {
+          tileRevealReset.addEventListener("click", resetTileRevealFragments);
+        }
         if (slideModeToggle) {
           slideModeToggle.addEventListener("click", function () {
             const enableSlideMode = slideModeToggle.getAttribute("aria-pressed") !== "true";
@@ -4663,6 +5398,9 @@ python scripts/build_equilibrium_walkthrough.py --check
             setAutoAdvanceEnabled(false);
             setPresentationMode(false);
             setMotionEnabled(true);
+            setTileRevealEnabled(false);
+            resetTileRevealFragments();
+            resetSectionLayout();
             if (filterInput) {
               filterInput.value = "";
               applyFilter();
