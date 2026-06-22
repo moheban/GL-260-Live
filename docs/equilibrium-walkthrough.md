@@ -841,9 +841,6 @@ The \(\mathrm{HCO_3^-}\) term cancels in the algebra because it is an intermedia
   </div>
 </div>
 
-!!! tip "Approximation Note"
-    Approximation note: terms with \(\approx\) follow the common \(a_{\mathrm{H_2O}} \approx 1\) simplification used for interpretability.
-
 ## Controling bicarbonate formation
 
 !!! note "Calculation Legend"
@@ -852,7 +849,7 @@ The \(\mathrm{HCO_3^-}\) term cancels in the algebra because it is an intermedia
     - \(K_{a2}\), \(K_{w}\), \(K_{b2}\): equilibrium constants
     - \(p_{\mathrm{CO_2}}\): headspace \(CO_{2}\) partial pressure `[atm]`
 
-At high alkalinity, carbonate is strongly favored unless dissolved \(CO_{2}\) is driven high enough to consume free hydroxide and shift the distribution back toward bicarbonate.
+As discussed, carbonate is strongly favored unless dissolved \(CO_{2}\) is driven high enough shift the distribution back toward bicarbonate.
 
 !!! info "Derivation Walkthrough"
     **Goal:** make the bicarbonate-to-carbonate ratio dependence explicit in terms of hydroxide activity and \(p_{\mathrm{CO_2}}\).
@@ -920,13 +917,13 @@ From the second equilibrium:
 
 <div class="inline-module-anchor" data-inline-module="equilibrium-interplay"></div>
 
-Higher headspace \(p_{CO_2}\) facilitates bicarbonate formation, while `775 g CO2` absorbed is \(775/44.01 = 17.61\ \mathrm{mol}\) essentially the `17.50 mol` NaOH bicarbonate endpoint. The predicted calculated pH is approximately `pH 8.1`.
+Higher headspace \(p_{CO_2}\) facilitates bicarbonate formation, pushing the equilibrium towards bicarbonate
 
 ---
 
 ## Calculating Speciation and pH
 
-**I dont do any of the following math by hand, i wrote a program to do it for me.**
+**I dont do any of the following math by hand, i wrote a program to do it for me. Some of the following math requires soklving for quartic roots**
 
 !!! note "Calculation Legend"
     - \([H^+]\), \([\mathrm{OH^-}]\), \([\mathrm{CO_2^*}]\), \([\mathrm{HCO_3^-}]\), \([\mathrm{CO_3^{2-}}]\), \([\mathrm{Na^+}]\): concentration/molarity-like model terms [\(mol L^{-1}\)] or model-consistent concentration basis]
@@ -937,7 +934,7 @@ Higher headspace \(p_{CO_2}\) facilitates bicarbonate formation, while `775 g CO
     - \(x\): trial pH used by the numerical root search, with \([H^+] = 10^{-x}\)
     - \(\epsilon_{\mathrm{charge}}\): accepted absolute charge-residual tolerance
 
-GL-260 does not obtain \([H^+]\) from one isolated rearrangement because \([H^+]\) appears in water dissociation, every carbonate fraction, and charge balance at the same time. Instead, the model turns the full chemistry into one scalar function, \(R_q([H^+])\), and numerically finds the positive \([H^+]\) that makes \(R_q = 0\).
+**We do not obtain \([H^+]\) from one isolated rearrangement because \([H^+]\) appears in water dissociation, every carbonate fraction, and charge balance at the same time. Instead, the model turns the full chemistry into one scalar function, \(R_q([H^+])\), and numerically finds the positive \([H^+]\) that makes \(R_q = 0\).**
 
 !!! info "Derivation Walkthrough"
     **Goal:** calculate \([H^+]\) explicitly by solving charge balance, then recover pH and every carbonate species from that accepted root.
@@ -1215,9 +1212,7 @@ Equilibrium tells us where the chemistry can settle after a cycle. Kinetics expl
     - \(E\): enhancement factor showing how fast reaction increases apparent CO2 absorption
     - \(\tau_{\mathrm{mix}}\), \(\tau_{\mathrm{rxn}}\), \(\tau_{\mathrm{mt}}\): mixing, reaction, and mass-transfer time scales [seconds]
 
-The same carbonate chemistry discussed earlier can be read as a hydrated carbonic-acid pool followed by two forward base-consumption steps when CO2 enters caustic solution. 
-
-In this section, \(\mathrm{CO_2^*}\) means the model's dissolved carbonic-acid basis: dissolved molecular \(\mathrm{CO_2(aq)}\) plus hydrated \(\mathrm{H_2CO_3}\). In highly basic solution that pool is rapidly consumed by hydroxide, so the kinetic shorthand often combines hydration and bicarbonate formation into one apparent fast step.
+In this section, \(\mathrm{CO_2^*}\) is how the model treats dissolved CO2. In highly basic solution that pool is rapidly consumed by hydroxide, so the kinetic shorthand often combines hydration and bicarbonate formation into one apparent fast step.
 
 <table class="reaction-map">
 <thead>
@@ -2514,6 +2509,18 @@ The HMW Pitzer model makes that crossover more realistic by correcting sodium-ca
      alt="Batch Ledger"
      style="width: 90%; display: block; margin: 1rem auto;">
 
+- consistent batch size
+- consistent pH
+- QC has not failed once.
+- 1,300g / week
+- 100,000 data points / run
+  - easily plot, analyze, and visualize collected data allowing for informed decisions on endpoint/blending
+- standardized manifold
+  - no more chasing leaks
+  - safer and easier to operate
+- GL-260 data logging
+- GL-260 Data Processing program
+  - can plot anything  
 
 ## Supplementary Sections
 
