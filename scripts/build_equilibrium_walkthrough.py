@@ -917,6 +917,43 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       min-width: 32px;
       padding-inline: 8px;
     }}
+    .slide-studio[hidden] {{ display: none; }}
+    .slide-studio {{ position: fixed; inset: 0; z-index: 1000; background: rgba(3,15,24,0.88); backdrop-filter: blur(8px); padding: 18px; display: grid; place-items: center; }}
+    .slide-studio-shell {{ width: min(1500px, 100%); height: min(940px, calc(100vh - 36px)); border: 1px solid #31596b; border-radius: 14px; background: #0b1f2b; color: #eaf8fb; display: grid; grid-template-rows: auto minmax(0,1fr) auto; overflow: hidden; box-shadow: 0 24px 70px rgba(0,0,0,0.42); }}
+    .slide-studio-header, .slide-studio-footer {{ padding: 10px 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; background: #102b38; }}
+    .slide-studio-header {{ border-bottom: 1px solid #31596b; }}
+    .slide-studio-footer {{ border-top: 1px solid #31596b; justify-content: space-between; }}
+    .slide-studio-title {{ margin-right: auto; font-family: var(--heading-font); font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: #8eeaf0; }}
+    .slide-studio button, .slide-studio select, .slide-studio input {{ min-height: 34px; border: 1px solid #466b79; border-radius: 7px; background: #173746; color: #eefcff; padding: 6px 9px; }}
+    .slide-studio button {{ cursor: pointer; }}
+    .slide-studio button:hover {{ border-color: #69d8e2; background: #1d4656; }}
+    .slide-studio-body {{ min-height: 0; display: grid; grid-template-columns: 220px minmax(0,1fr) 240px; }}
+    .slide-studio-sidebar, .slide-studio-properties {{ padding: 12px; overflow: auto; background: #0e2632; }}
+    .slide-studio-sidebar {{ border-right: 1px solid #31596b; }}
+    .slide-studio-properties {{ border-left: 1px solid #31596b; }}
+    .slide-studio-label {{ display: block; margin: 0 0 6px; color: #9fc4cc; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em; }}
+    .slide-studio-list {{ display: grid; gap: 7px; }}
+    .slide-studio-list button {{ width: 100%; text-align: left; }}
+    .slide-studio-list button.is-active {{ border-color: #66deb0; box-shadow: inset 3px 0 #66deb0; }}
+    .slide-studio-workspace {{ min-width: 0; overflow: auto; padding: 14px; display: grid; place-items: start center; background: radial-gradient(circle at center, #294554 0, #172f3c 46%, #0b202c 100%); }}
+    .slide-studio-canvas, .studio-slide-runtime {{ position: relative; width: 100%; aspect-ratio: 16/9; overflow: hidden; border-radius: 8px; background: linear-gradient(135deg,#fbfeff,#eff8fb); color: #102839; }}
+    .slide-studio-canvas {{ width: min(100%, 1050px); box-shadow: 0 16px 44px rgba(0,0,0,0.32); }}
+    .studio-slide-runtime {{ margin: 0 0 1.2rem; border: 1px solid #cfe3ec; }}
+    .studio-element {{ position: absolute; min-width: 70px; min-height: 42px; border: 1px solid transparent; padding: 8px; overflow: auto; resize: both; background: rgba(255,255,255,0.78); }}
+    .slide-studio-canvas .studio-element {{ cursor: move; }}
+    .slide-studio-canvas .studio-element.is-selected {{ border-color: #1fb8cb; box-shadow: 0 0 0 2px rgba(31,184,203,0.2); }}
+    .studio-element[data-type="title"] {{ font-family: var(--heading-font); font-size: clamp(22px,3vw,42px); font-weight: 800; background: transparent; }}
+    .studio-element[data-type="text"], .studio-element[data-type="bullets"] {{ font-size: clamp(14px,1.5vw,22px); line-height: 1.35; }}
+    .studio-element img {{ width: 100%; height: 100%; object-fit: contain; display: block; }}
+    .studio-element table {{ width: 100%; border-collapse: collapse; background: #fff; }}
+    .studio-element th, .studio-element td {{ border: 1px solid #b9d2dc; padding: 5px; }}
+    .studio-chart-svg {{ width: 100%; height: 100%; display: block; }}
+    .slide-studio-toolbar {{ display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }}
+    .slide-studio-field {{ display: grid; gap: 5px; margin-bottom: 10px; }}
+    .slide-studio-field input, .slide-studio-field select {{ width: 100%; }}
+    .slide-studio-help {{ color: #9fc4cc; font-size: 0.78rem; line-height: 1.45; }}
+    .slide-studio-status {{ color: #a9d5dc; font-size: 0.78rem; }}
+    .slide-studio-import {{ display: none; }}
     [data-section-hidden="true"] {{
       display: none !important;
     }}
@@ -992,48 +1029,93 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       transform: none !important;
       transition: none !important;
     }}
-    body.presentation-mode .hero {{
-      padding-top: clamp(26px, 4vw, 44px);
-      padding-bottom: clamp(20px, 3vw, 34px);
-      min-height: min(74svh, 720px);
-      display: flex;
-      align-items: flex-end;
+    body.presentation-mode {{
+      min-height: 100svh;
+      background:
+        radial-gradient(circle at 8% 12%, rgba(53, 208, 215, 0.18), transparent 32%),
+        radial-gradient(circle at 92% 82%, rgba(217, 146, 33, 0.13), transparent 30%),
+        #07131d;
     }}
+    body.presentation-mode .hero {{ display: none; }}
     body.presentation-mode .control-bar {{
       top: 6px;
-      width: min(1480px, calc(100vw - 16px));
-      margin-bottom: 10px;
+      width: min(1600px, calc(100vw - 24px));
+      margin-bottom: 12px;
       padding: 8px 10px;
+      border-radius: 10px;
     }}
     body.presentation-mode .shell {{
-      width: min(1600px, calc(100vw - 16px));
-      margin-bottom: 16px;
-      gap: 10px;
-      grid-template-columns: minmax(240px, 270px) minmax(0, 1fr);
+      display: block;
+      width: min(
+        1600px,
+        calc(100vw - 32px),
+        calc((100svh - 104px) * 16 / 9)
+      );
+      margin: 0 auto 16px;
     }}
-    body.presentation-mode .rail {{
-      top: 58px;
-      max-height: calc(100vh - 72px);
-      border-radius: 12px;
-    }}
+    body.presentation-mode .rail,
+    body.presentation-mode .chart-panel {{ display: none; }}
+    body.presentation-mode .stage {{ width: 100%; }}
     body.presentation-mode .surface {{
-      border-radius: 12px;
+      border-radius: 8px;
     }}
     body.presentation-mode .content {{
-      font-size: 1.08rem;
-      padding: clamp(14px, 2.4vw, 24px);
-      min-height: clamp(460px, 70vh, 820px);
-    }}
-    body.presentation-mode .chart-panel {{
-      min-height: clamp(460px, 70vh, 820px);
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      min-height: 0;
+      max-height: calc(100svh - 104px);
+      padding: clamp(24px, 3vw, 52px) clamp(28px, 4vw, 68px);
+      overflow-x: hidden;
+      overflow-y: auto;
+      border: 1px solid rgba(53, 208, 215, 0.42);
+      border-top: 6px solid var(--accent);
+      background:
+        linear-gradient(90deg, rgba(53, 208, 215, 0.08), transparent 18%),
+        var(--paper);
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.42);
+      font-size: clamp(0.9rem, 1.08vw, 1.12rem);
+      scrollbar-color: rgba(31, 184, 203, 0.62) rgba(7, 19, 29, 0.08);
     }}
     body.presentation-mode .chart-viewport {{
-      height: clamp(240px, 32vh, 360px);
-      min-height: 240px;
-      max-height: 360px;
+      height: clamp(220px, 28vh, 340px);
+      min-height: 220px;
+      max-height: 340px;
     }}
     body.presentation-mode .content h2 {{
-      margin-top: 1.3rem;
+      margin: 0 0 1.1rem;
+      padding: 0 0 0.72rem;
+      border-top: 0;
+      border-bottom: 1px solid #cfe3ec;
+      font-size: clamp(1.5rem, 2.4vw, 2.3rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }}
+    body.presentation-mode .content > :not([data-slide-node="true"]) {{
+      display: none !important;
+    }}
+    body.presentation-mode .content > [data-slide-active="false"] {{
+      display: none !important;
+    }}
+    body.presentation-mode .content > [data-slide-active="true"] {{
+      animation: slide-content-enter 360ms ease both;
+    }}
+    body.presentation-mode .slide-format {{ display: inline-flex; }}
+    .slide-format {{
+      display: none;
+      align-items: center;
+      margin-left: auto;
+      color: #8eeaf0;
+      font-family: var(--heading-font);
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }}
+    @keyframes slide-content-enter {{
+      from {{ opacity: 0; transform: translateY(10px); }}
+      to {{ opacity: 1; transform: translateY(0); }}
     }}
     .shell {{
       width: min(1480px, calc(100vw - 24px));
@@ -1229,73 +1311,54 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       color: #375a6e;
       font-size: 0.94rem;
     }}
-    .pco2-sweep-chart-mount {{ margin: 0.9rem 0 1.2rem; border: 1px solid #d6e8f2; border-radius: 12px; background: #fcfeff; padding: 10px; min-width: 0; display: grid; gap: 8px; overflow: hidden; }}
-    .pco2-sweep-chart-mount .inline-chart-title {{ margin: 0; color: #19384a; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.84rem; font-family: var(--heading-font); }}
-    .pco2-sweep-chart-mount .chart-viewport {{ height: clamp(220px, 28vw, 320px); min-height: 220px; max-height: 320px; }}
-    .pco2-sweep-chart-mount canvas {{ width: 100% !important; height: 100% !important; display: block; }}
-    .equilibrium-interplay-module {{ margin: 1rem 0 1.25rem; border: 1px solid #cfe3ec; border-radius: 12px; background: linear-gradient(135deg, #fcfeff 0%, #f4faf8 56%, #fffaf0 100%); padding: 14px; display: grid; gap: 14px; overflow: hidden; }}
-    .equilibrium-interplay-header {{ display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; }}
-    .equilibrium-interplay-title {{ margin: 0; color: #19384a; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.86rem; font-family: var(--heading-font); }}
-    .equilibrium-interplay-copy {{ margin: 4px 0 0; color: #345468; }}
-    .equilibrium-ph-readout {{ min-width: 92px; border: 1px solid #d7e8ec; border-radius: 10px; background: rgba(255,255,255,0.78); padding: 8px 10px; text-align: right; }}
-    .equilibrium-ph-readout span {{ display: block; color: #5f7888; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; }}
-    .equilibrium-ph-readout strong {{ display: block; color: #102839; font-size: 1.45rem; font-family: var(--heading-font); line-height: 1; }}
-    .equilibrium-interplay-grid {{ display: grid; grid-template-columns: minmax(230px, 0.9fr) minmax(260px, 1.1fr); gap: 14px; align-items: stretch; }}
-    .equilibrium-control-panel {{ border: 1px solid #d8e8ee; border-radius: 10px; background: rgba(255,255,255,0.7); padding: 12px; display: grid; gap: 12px; align-content: start; }}
-    .equilibrium-toggle-group {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }}
-    .equilibrium-toggle {{ min-height: 40px; border: 1px solid #c8dde6; border-radius: 8px; background: #f8fcfd; color: #25485d; cursor: pointer; font-family: var(--heading-font); font-size: 0.82rem; }}
-    .equilibrium-toggle[aria-pressed="true"] {{ color: #062b35; border-color: #58b9b7; background: #dff7f1; box-shadow: inset 0 0 0 1px rgba(31,184,203,0.28); }}
-    .equilibrium-slider-row {{ display: grid; gap: 6px; }}
-    .equilibrium-slider-row label {{ color: #2c4d61; font-size: 0.82rem; font-family: var(--heading-font); }}
-    .equilibrium-slider-row input[type="range"] {{ width: 100%; accent-color: #1fb8cb; }}
-    .equilibrium-status {{ min-height: 54px; border-left: 3px solid #1fb8cb; padding: 7px 9px; color: #345468; background: rgba(239,248,250,0.74); border-radius: 8px; }}
-    .equilibrium-visual-panel {{ border: 1px solid #d8e8ee; border-radius: 10px; background: rgba(255,255,255,0.72); padding: 12px; display: grid; gap: 12px; }}
-    .equilibrium-network {{ position: relative; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-items: center; min-height: 112px; }}
-    .equilibrium-node {{ position: relative; z-index: 1; min-height: 88px; border: 1px solid #d5e7ee; border-radius: 10px; background: #ffffff; padding: 10px; display: grid; gap: 6px; align-content: center; text-align: center; transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease; }}
-    .equilibrium-node.is-dominant {{ transform: translateY(-3px); border-color: #58b9b7; box-shadow: 0 10px 22px rgba(13, 81, 95, 0.12); }}
-    .equilibrium-node-label {{ color: #19384a; font-family: var(--heading-font); font-size: 0.9rem; }}
-    .equilibrium-node-value {{ color: #102839; font-size: 1.22rem; font-family: var(--heading-font); }}
-    .equilibrium-node-meter {{ height: 7px; border-radius: 999px; background: #e7f1f5; overflow: hidden; }}
-    .equilibrium-node-meter span {{ display: block; height: 100%; width: 0%; border-radius: inherit; transition: width 180ms ease; }}
-    .equilibrium-node-carbonic .equilibrium-node-meter span {{ background: #3fa2ff; }}
-    .equilibrium-node-bicarbonate .equilibrium-node-meter span {{ background: #1eb46e; }}
-    .equilibrium-node-carbonate .equilibrium-node-meter span {{ background: #d99221; }}
-    .equilibrium-arrow {{ position: absolute; top: 50%; height: 3px; border-radius: 999px; background: #b8d4de; transform: translateY(-50%); transition: height 180ms ease, background 180ms ease, opacity 180ms ease; opacity: 0.72; }}
-    .equilibrium-arrow-left {{ left: 28%; width: 16%; }}
-    .equilibrium-arrow-right {{ right: 28%; width: 16%; }}
-    .equilibrium-arrow.is-active {{ height: 7px; background: #1fb8cb; opacity: 0.95; }}
-    .equilibrium-bars {{ display: grid; gap: 8px; }}
-    .equilibrium-bar {{ display: grid; grid-template-columns: 96px minmax(0, 1fr) 48px; gap: 8px; align-items: center; }}
-    .equilibrium-bar-label {{ color: #345468; font-size: 0.82rem; }}
-    .equilibrium-bar-track {{ height: 9px; border-radius: 999px; background: #e7f1f5; overflow: hidden; }}
-    .equilibrium-bar-fill {{ display: block; height: 100%; width: 0%; border-radius: inherit; transition: width 180ms ease; }}
-    .equilibrium-bar-carbonic {{ background: #3fa2ff; }}
-    .equilibrium-bar-bicarbonate {{ background: #1eb46e; }}
-    .equilibrium-bar-carbonate {{ background: #d99221; }}
-    .equilibrium-bar-value {{ color: #19384a; font-family: var(--heading-font); font-size: 0.82rem; text-align: right; }}
+    .equilibrium-interplay-module {{ margin: 1rem 0 1.25rem; border: 1px solid #245765; border-radius: 14px; background: radial-gradient(circle at 85% 10%, rgba(52,211,153,0.14), transparent 34%), linear-gradient(145deg, #0a2631 0%, #103945 58%, #0d2d39 100%); color: #eafcff; padding: 16px; display: grid; gap: 16px; overflow: hidden; box-shadow: 0 16px 36px rgba(7,38,49,0.16); }}
+    .equilibrium-interplay-header {{ display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: start; }}
+    .equilibrium-interplay-title {{ margin: 0; color: #8eeaf0; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.82rem; font-family: var(--heading-font); }}
+    .equilibrium-interplay-copy {{ margin: 5px 0 0; color: #d5edf1; max-width: 780px; }}
+    .pco2-pressure-readout {{ min-width: 118px; border: 1px solid rgba(142,234,240,0.28); border-radius: 11px; background: rgba(255,255,255,0.08); padding: 9px 12px; text-align: right; }}
+    .pco2-pressure-readout span {{ display: block; color: #a8cbd2; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em; }}
+    .pco2-pressure-readout strong {{ display: block; color: #ffffff; font-size: 1.55rem; font-family: var(--heading-font); line-height: 1.05; }}
+    .pco2-batch-anchor {{ border: 1px solid rgba(98,221,169,0.4); border-radius: 11px; background: rgba(4,25,32,0.48); padding: 11px 13px; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr); gap: 12px; align-items: center; }}
+    .pco2-anchor-step {{ display: grid; gap: 2px; }}
+    .pco2-anchor-step span {{ color: #91b8c0; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.07em; }}
+    .pco2-anchor-step strong {{ color: #f3feff; font-family: var(--heading-font); font-size: 1.2rem; }}
+    .pco2-anchor-step small {{ color: #b8d8dd; font-size: 0.7rem; }}
+    .pco2-anchor-step:last-child strong {{ color: #72e5ad; font-size: 1.45rem; }}
+    .pco2-anchor-arrow {{ color: #62dda9; font-family: var(--heading-font); font-size: 1.25rem; }}
+    .pco2-purity-grid {{ display: grid; grid-template-columns: minmax(260px, 0.92fr) minmax(340px, 1.08fr); gap: 14px; align-items: stretch; }}
+    .pco2-control-panel, .pco2-product-panel {{ border: 1px solid rgba(174,224,231,0.2); border-radius: 11px; background: rgba(255,255,255,0.07); padding: 13px; display: grid; gap: 13px; }}
+    .pco2-slider-row {{ display: grid; gap: 7px; }}
+    .pco2-slider-row label {{ color: #d8f1f4; font-family: var(--heading-font); font-size: 0.84rem; }}
+    .pco2-slider-row input[type="range"] {{ width: 100%; accent-color: #62dda9; }}
+    .pco2-slider-scale {{ display: flex; justify-content: space-between; color: #8fb6be; font-size: 0.68rem; }}
+    .pco2-process-path {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }}
+    .pco2-process-stage {{ position: relative; min-height: 82px; border: 1px solid rgba(174,224,231,0.16); border-radius: 9px; background: rgba(5,28,36,0.38); padding: 9px; display: grid; gap: 5px; align-content: center; }}
+    .pco2-process-stage:not(:last-child)::after {{ content: ""; position: absolute; top: 50%; right: -8px; width: 8px; height: 2px; background: #62dda9; }}
+    .pco2-process-stage span {{ color: #91b8c0; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.06em; }}
+    .pco2-process-stage strong {{ color: #f3feff; font-family: var(--heading-font); font-size: 0.84rem; }}
+    .pco2-status {{ min-height: 54px; border-left: 3px solid #62dda9; border-radius: 8px; background: rgba(6,31,40,0.46); padding: 8px 10px; color: #d8f1f4; }}
+    .pco2-product-heading {{ display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: end; }}
+    .pco2-product-heading span {{ color: #a8cbd2; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em; }}
+    .pco2-product-heading strong {{ color: #72e5ad; font-family: var(--heading-font); font-size: 2.15rem; line-height: 1; }}
+    .pco2-purity-gauge {{ height: 16px; border: 1px solid rgba(174,224,231,0.2); border-radius: 999px; background: linear-gradient(90deg, rgba(217,146,33,0.35), rgba(255,255,255,0.08)); overflow: hidden; }}
+    .pco2-purity-gauge span {{ display: block; height: 100%; width: 0%; border-radius: inherit; background: linear-gradient(90deg, #31b779, #72e5ad); transition: width 220ms ease; }}
+    .pco2-species-labels {{ display: flex; justify-content: space-between; gap: 8px; color: #b7d7dc; font-size: 0.72rem; }}
+    .pco2-species-stack {{ display: flex; height: 30px; border: 1px solid rgba(174,224,231,0.2); border-radius: 8px; overflow: hidden; background: rgba(255,255,255,0.06); }}
+    .pco2-species-stack span {{ display: block; height: 100%; min-width: 0; transition: width 220ms ease; }}
+    .pco2-species-carbonic {{ background: #3fa2ff; }}
+    .pco2-species-bicarbonate {{ background: #34d399; }}
+    .pco2-species-carbonate {{ background: #d99221; }}
+    .pco2-kpis {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }}
+    .pco2-kpi {{ border-top: 1px solid rgba(174,224,231,0.18); padding-top: 8px; display: grid; gap: 2px; }}
+    .pco2-kpi span {{ color: #91b8c0; font-size: 0.67rem; text-transform: uppercase; letter-spacing: 0.06em; }}
+    .pco2-kpi strong {{ color: #f3feff; font-family: var(--heading-font); font-size: 1.05rem; }}
+    .pco2-source-note {{ margin: 0; color: #93b9c1; font-size: 0.72rem; }}
     .calculation-visual-module {{ margin: 1rem 0 1.25rem; border: 1px solid #cfe3ec; border-radius: 12px; background: #fcfeff; padding: 14px; display: grid; gap: 14px; overflow: hidden; }}
     .calculation-visual-title {{ margin: 0; color: #19384a; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.86rem; font-family: var(--heading-font); }}
     .calculation-visual-copy {{ margin: 4px 0 0; color: #345468; }}
-    .charge-balance-grid {{ display: grid; grid-template-columns: minmax(220px, 0.85fr) minmax(260px, 1.15fr); gap: 14px; }}
-    .charge-balance-controls, .charge-balance-visual, .cycle-flow-controls, .cycle-flow-stage {{ border: 1px solid #d8e8ee; border-radius: 10px; background: rgba(255,255,255,0.76); padding: 12px; }}
-    .charge-balance-controls {{ display: grid; gap: 10px; align-content: start; }}
-    .charge-balance-slider-row {{ display: grid; gap: 6px; }}
-    .charge-balance-slider-row label, .cycle-flow-controls label {{ color: #2c4d61; font-size: 0.82rem; font-family: var(--heading-font); }}
-    .charge-balance-slider-row input[type="range"], .cycle-flow-controls input[type="range"] {{ width: 100%; accent-color: #1fb8cb; }}
-    .charge-residual-readout {{ border-left: 3px solid #1fb8cb; border-radius: 8px; background: rgba(239,248,250,0.74); padding: 8px 10px; color: #345468; }}
-    .charge-residual-readout strong {{ display: block; color: #102839; font-family: var(--heading-font); font-size: 1.3rem; }}
-    .charge-balance-visual {{ display: grid; gap: 12px; }}
-    .charge-balance-panels {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }}
-    .charge-pool {{ display: grid; gap: 7px; }}
-    .charge-pool h4 {{ margin: 0; color: #19384a; font-size: 0.9rem; font-family: var(--heading-font); }}
-    .charge-meter {{ height: 12px; border-radius: 999px; background: #e7f1f5; overflow: hidden; }}
-    .charge-meter span {{ display: block; height: 100%; width: 0%; border-radius: inherit; transition: width 180ms ease; }}
-    .charge-meter-positive span {{ background: #3fa2ff; }}
-    .charge-meter-negative span {{ background: #d99221; }}
-    .charge-pool-value {{ color: #19384a; font-family: var(--heading-font); }}
-    .charge-balance-beam {{ position: relative; min-height: 52px; display: grid; place-items: center; }}
-    .charge-balance-beam span {{ display: block; width: min(360px, 90%); height: 8px; border-radius: 999px; background: linear-gradient(90deg, #3fa2ff, #1eb46e 50%, #d99221); transform: rotate(0deg); transition: transform 180ms ease; }}
-    .charge-balance-status {{ min-height: 44px; color: #345468; }}
+    .cycle-flow-controls, .cycle-flow-stage {{ border: 1px solid #d8e8ee; border-radius: 10px; background: rgba(255,255,255,0.76); padding: 12px; }}
+    .cycle-flow-controls label {{ color: #2c4d61; font-size: 0.82rem; font-family: var(--heading-font); }}
+    .cycle-flow-controls input[type="range"] {{ width: 100%; accent-color: #1fb8cb; }}
     .cycle-flow-grid {{ display: grid; gap: 12px; }}
     .cycle-flow-controls {{ display: grid; grid-template-columns: minmax(180px, 0.6fr) minmax(220px, 1fr); gap: 12px; align-items: center; }}
     .cycle-flow-stages {{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }}
@@ -1339,14 +1402,6 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       .control-bar {{ width: min(1480px, calc(100vw - 16px)); }}
       .rail {{ position: static; max-height: none; }}
       .toc-scroll {{ max-height: 340px; }}
-      body.presentation-mode .shell {{ grid-template-columns: 1fr; }}
-      body.presentation-mode .rail {{
-        position: sticky;
-        top: 58px;
-        z-index: 24;
-        max-height: min(44vh, 360px);
-      }}
-      body.presentation-mode .toc-scroll {{ max-height: 250px; }}
       .control-primary,
       .control-secondary {{ gap: 6px; }}
       .control-primary select {{ flex: 1 1 240px; }}
@@ -1354,15 +1409,15 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     @media (max-width: 760px) {{
       .hero-metrics {{ grid-template-columns: 1fr; }}
       .chart-stack {{ height: clamp(200px, 52vw, 260px); min-height: 200px; max-height: 260px; }}
-      .pco2-sweep-chart-mount .chart-viewport {{ height: clamp(200px, 52vw, 260px); min-height: 200px; max-height: 260px; }}
       .equilibrium-interplay-header {{ grid-template-columns: 1fr; }}
-      .equilibrium-ph-readout {{ text-align: left; }}
-      .equilibrium-interplay-grid {{ grid-template-columns: 1fr; }}
-      .equilibrium-network {{ grid-template-columns: 1fr; }}
-      .equilibrium-arrow {{ display: none; }}
-      .equilibrium-toggle-group {{ grid-template-columns: 1fr; }}
-      .charge-balance-grid, .cycle-flow-controls {{ grid-template-columns: 1fr; }}
-      .charge-balance-panels {{ grid-template-columns: 1fr; }}
+      .pco2-pressure-readout {{ text-align: left; }}
+      .pco2-batch-anchor {{ grid-template-columns: 1fr; }}
+      .pco2-anchor-arrow {{ display: none; }}
+      .pco2-purity-grid {{ grid-template-columns: 1fr; }}
+      .pco2-process-path {{ grid-template-columns: 1fr 1fr; }}
+      .pco2-process-stage::after {{ display: none; }}
+      .pco2-kpis {{ grid-template-columns: 1fr; }}
+      .cycle-flow-controls {{ grid-template-columns: 1fr; }}
       .cycle-flow-stages {{ grid-template-columns: 1fr; }}
       .cycle-flow-stage::after {{ display: none; }}
       .derivation-stepper-header, .derivation-stepper-grid {{ grid-template-columns: 1fr; }}
@@ -1401,6 +1456,24 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       .control-secondary select {{
         grid-column: 1 / -1;
         width: 100%;
+      }}
+      .slide-studio {{ padding: 0; }}
+      .slide-studio-shell {{ height: 100vh; border-radius: 0; }}
+      .slide-studio-body {{ grid-template-columns: 1fr; overflow: auto; }}
+      .slide-studio-sidebar, .slide-studio-properties {{ border: 0; border-bottom: 1px solid #31596b; max-height: 180px; }}
+      .slide-studio-workspace {{ min-height: 420px; }}
+      body.presentation-mode .shell {{
+        width: calc(100vw - 16px);
+      }}
+      body.presentation-mode .content {{
+        aspect-ratio: 16 / 9;
+        padding: 18px 20px;
+      }}
+      body.presentation-mode .slide-format {{ display: none; }}
+    }}
+    @media (prefers-reduced-motion: reduce) {{
+      body.presentation-mode .content > [data-slide-active="true"] {{
+        animation: none;
       }}
     }}
     @media print {{
@@ -1466,6 +1539,9 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       <button id="real-data-jump" type="button">Real Data</button>
       <button id="slide-mode" type="button" aria-pressed="false">Slide Mode: Off</button>
       <button id="controls-more" type="button" aria-expanded="false" aria-controls="secondary-controls">More Controls</button>
+      <span class="slide-format" id="slide-format" aria-live="polite">
+        16:9 Widescreen
+      </span>
     </div>
     <div class="control-secondary" id="secondary-controls" hidden>
       <button id="motion" type="button" aria-pressed="true">Motion: On</button>
@@ -1483,6 +1559,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       </select>
       <button id="reset" type="button">Reset View</button>
       <button id="print-export" type="button">Print/PDF</button>
+      <button id="slide-studio-open" type="button">Slide Studio</button>
       <div class="section-organizer" id="section-organizer" hidden>
         <div class="section-organizer-header">
           <span class="section-organizer-title">Section Organizer</span>
@@ -1549,6 +1626,56 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
     </main>
   </div>
 
+  <section class="slide-studio" id="slide-studio" role="dialog" aria-modal="true" aria-labelledby="slide-studio-heading" hidden>
+    <div class="slide-studio-shell">
+      <header class="slide-studio-header">
+        <span class="slide-studio-title" id="slide-studio-heading">GL-260 Slide Studio</span>
+        <button id="slide-studio-new" type="button">New Slide</button>
+        <button id="slide-studio-edit-current" type="button">Edit Current Slide</button>
+        <button id="slide-studio-duplicate" type="button">Duplicate</button>
+        <button id="slide-studio-delete" type="button">Delete</button>
+        <button id="slide-studio-export" type="button">Export JSON</button>
+        <button id="slide-studio-import" type="button">Import JSON</button>
+        <input class="slide-studio-import" id="slide-studio-import-file" type="file" accept="application/json,.json">
+        <button id="slide-studio-close" type="button">Close</button>
+      </header>
+      <div class="slide-studio-body">
+        <aside class="slide-studio-sidebar">
+          <span class="slide-studio-label">Custom slides</span>
+          <div class="slide-studio-list" id="slide-studio-list"></div>
+        </aside>
+        <main class="slide-studio-workspace">
+          <div>
+            <div class="slide-studio-toolbar" aria-label="Add slide elements">
+              <button type="button" data-studio-add="title">Title</button>
+              <button type="button" data-studio-add="text">Text</button>
+              <button type="button" data-studio-add="bullets">Bullets</button>
+              <button type="button" data-studio-add="image">Image</button>
+              <button type="button" data-studio-add="table">Table</button>
+              <button type="button" data-studio-add="chart">Chart</button>
+              <button type="button" data-studio-format="bold"><strong>B</strong></button>
+              <button type="button" data-studio-format="italic"><em>I</em></button>
+              <button type="button" data-studio-format="underline"><u>U</u></button>
+            </div>
+            <div class="slide-studio-canvas" id="slide-studio-canvas" aria-label="Editable 16 by 9 slide canvas"></div>
+          </div>
+        </main>
+        <aside class="slide-studio-properties">
+          <label class="slide-studio-field"><span class="slide-studio-label">Slide title</span><input id="slide-studio-slide-title" type="text"></label>
+          <label class="slide-studio-field"><span class="slide-studio-label">Element fill</span><input id="slide-studio-fill" type="color" value="#ffffff"></label>
+          <label class="slide-studio-field"><span class="slide-studio-label">Text color</span><input id="slide-studio-color" type="color" value="#102839"></label>
+          <label class="slide-studio-field"><span class="slide-studio-label">Font size</span><input id="slide-studio-font-size" type="number" min="10" max="72" value="22"></label>
+          <button id="slide-studio-remove-element" type="button">Remove Selected Element</button>
+          <p class="slide-studio-help">Drag elements to position them. Resize from the lower-right corner. Double-click text, bullets, or table cells to edit. Images are embedded into the saved slide. Use Export JSON for backups because browser storage is local to this browser profile.</p>
+        </aside>
+      </div>
+      <footer class="slide-studio-footer">
+        <span class="slide-studio-status" id="slide-studio-status" role="status" aria-live="polite">Custom slides save automatically.</span>
+        <button id="slide-studio-present" type="button">Save &amp; Present</button>
+      </footer>
+    </div>
+  </section>
+
   <script>
     (function () {{
       const tocNav = document.getElementById("toc-nav");
@@ -1574,6 +1701,15 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       const tileRevealReset = document.getElementById("tile-reveal-reset");
       const resetButton = document.getElementById("reset");
       const printExportButton = document.getElementById("print-export");
+      const slideStudioOpen = document.getElementById("slide-studio-open");
+      const slideStudio = document.getElementById("slide-studio");
+      const slideStudioCanvas = document.getElementById("slide-studio-canvas");
+      const slideStudioList = document.getElementById("slide-studio-list");
+      const slideStudioStatus = document.getElementById("slide-studio-status");
+      const slideStudioTitleInput = document.getElementById("slide-studio-slide-title");
+      const slideStudioFill = document.getElementById("slide-studio-fill");
+      const slideStudioColor = document.getElementById("slide-studio-color");
+      const slideStudioFontSize = document.getElementById("slide-studio-font-size");
       const prevButton = document.getElementById("prev");
       const nextButton = document.getElementById("next");
       const sectionSelector = document.getElementById("section-selector");
@@ -1583,6 +1719,8 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       const cycleViewPh = document.getElementById("cycle-chart-view-ph");
       const cycleViewFraction = document.getElementById("cycle-chart-view-fraction");
       const cycleViewLoading = document.getElementById("cycle-chart-view-loading");
+      const presentationShell = document.querySelector(".shell");
+      const slideFormat = document.getElementById("slide-format");
       let phChart = null;
       let fractionChart = null;
       let cycleLoadingChart = null;
@@ -1600,6 +1738,11 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       let tileRevealEnabled = false;
       let currentSectionIndex = 0;
       const sectionLayoutStorageKey = "gl260-equilibrium-section-layout-v1";
+      const slideStudioStorageKey = "gl260-equilibrium-slide-studio-v1";
+      let studioSlides = [];
+      let activeStudioSlideId = "";
+      let activeStudioElementId = "";
+      let studioSourceSectionId = "";
       const supportsPromises = typeof Promise === "function";
       const supportsIntersectionObserver = "IntersectionObserver" in window;
       const supportsRaf = typeof window.requestAnimationFrame === "function";
@@ -1615,17 +1758,437 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       document.body.setAttribute("data-motion-enabled", "enabled");
       document.body.setAttribute("data-auto-advance-enabled", "disabled");
 
-      const tocLinks = tocNav
+      let tocLinks = tocNav
         ? Array.from(tocNav.querySelectorAll("a[href^='#']"))
         : [];
       const headingMap = new Map();
-      const headingNodes = Array.from(
+      let headingNodes = Array.from(
         document.querySelectorAll("#walkthrough-content h2, #walkthrough-content h3, #walkthrough-content h4")
       );
       for (const heading of headingNodes) {{
         if (heading.id) {{
           headingMap.set("#" + heading.id, heading);
         }}
+      }}
+
+      /** Create a collision-resistant local identifier for a slide or element.
+       * Why: author-created nodes need stable storage and DOM keys.
+       * Inputs: prefix, a short identifier category. Returns: string id.
+       * Side effects: none. Errors: falls back to time/random entropy.
+       */
+      function studioId(prefix) {{
+        return prefix + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+      }}
+
+      /** Sanitize formatted author text before it enters the slide DOM.
+       * Why: imported JSON must not execute scripts or event handlers.
+       * Inputs: html, locally edited or imported markup. Returns: safe HTML.
+       * Side effects: creates a detached template. Errors: invalid input becomes text.
+       */
+      function sanitizeStudioHtml(html) {{
+        const template = document.createElement("template");
+        template.innerHTML = String(html || "");
+        template.content.querySelectorAll("script,style,iframe,object,embed,link,meta").forEach(function (node) {{ node.remove(); }});
+        template.content.querySelectorAll("*").forEach(function (node) {{
+          Array.from(node.attributes).forEach(function (attribute) {{
+            if (attribute.name.toLowerCase().startsWith("on")) {{ node.removeAttribute(attribute.name); }}
+          }});
+        }});
+        return template.innerHTML;
+      }}
+
+      /** Read saved custom slides from browser storage.
+       * Why: generated HTML cannot write Markdown, so local persistence preserves work.
+       * Inputs: none. Returns: validated slide array.
+       * Side effects: reads localStorage. Errors: corrupt/unavailable storage returns [].
+       */
+      function readStudioSlides() {{
+        try {{
+          const parsed = JSON.parse(window.localStorage.getItem(slideStudioStorageKey) || "[]");
+          return Array.isArray(parsed) ? parsed.filter(function (slide) {{ return slide && slide.id; }}) : [];
+        }} catch (error) {{
+          return [];
+        }}
+      }}
+
+      /** Persist the complete custom slide deck.
+       * Why: every edit should survive refreshes without server access.
+       * Inputs: none; reads studioSlides. Returns: boolean success.
+       * Side effects: writes localStorage and status copy. Errors: quota failures are reported.
+       */
+      function writeStudioSlides() {{
+        try {{
+          window.localStorage.setItem(slideStudioStorageKey, JSON.stringify(studioSlides));
+          if (slideStudioStatus) {{ slideStudioStatus.textContent = "Saved locally. Use Export JSON for a portable backup."; }}
+          return true;
+        }} catch (error) {{
+          if (slideStudioStatus) {{ slideStudioStatus.textContent = "Save failed: browser storage may be full. Export JSON and reduce image size."; }}
+          return false;
+        }}
+      }}
+
+      /** Return the currently edited slide model.
+       * Why: editor actions share one authoritative selection lookup.
+       * Inputs: none. Returns: slide object or null. Side effects: none.
+       * Errors: missing selection returns null.
+       */
+      function activeStudioSlide() {{
+        return studioSlides.find(function (slide) {{ return slide.id === activeStudioSlideId; }}) || null;
+      }}
+
+      /** Build an accessible inline SVG bar chart from a chart element model.
+       * Why: custom charts must remain self-contained without external libraries.
+       * Inputs: element with labels and numeric values. Returns: SVG markup.
+       * Side effects: none. Errors: invalid values are normalized to zero.
+       */
+      function studioChartSvg(element) {{
+        const labels = Array.isArray(element.labels) ? element.labels.slice(0, 8) : ["A", "B", "C"];
+        const values = Array.isArray(element.values) ? element.values.slice(0, 8).map(Number) : [3, 6, 4];
+        const maximum = Math.max.apply(null, values.concat([1]));
+        const width = 720;
+        const height = 360;
+        const slot = width / Math.max(values.length, 1);
+        const bars = values.map(function (value, index) {{
+          const safeValue = Number.isFinite(value) ? Math.max(value, 0) : 0;
+          const barHeight = (safeValue / maximum) * 250;
+          const x = (index * slot) + (slot * 0.2);
+          const y = 300 - barHeight;
+          const label = String(labels[index] || "Item " + (index + 1)).replace(/[<>&]/g, "");
+          return '<rect x="' + x + '" y="' + y + '" width="' + (slot * 0.6) + '" height="' + barHeight + '" rx="6" fill="#1fb8cb"/><text x="' + (x + slot * 0.3) + '" y="325" text-anchor="middle" font-size="18" fill="#345468">' + label + '</text><text x="' + (x + slot * 0.3) + '" y="' + Math.max(y - 8, 18) + '" text-anchor="middle" font-size="17" fill="#102839">' + safeValue + '</text>';
+        }}).join("");
+        return '<svg class="studio-chart-svg" viewBox="0 0 720 360" role="img" aria-label="Custom bar chart"><line x1="20" y1="300" x2="700" y2="300" stroke="#9cbac6" stroke-width="2"/>' + bars + '</svg>';
+      }}
+
+      /** Create one editable or presentation-ready slide element node.
+       * Why: editor and runtime slides must render from the same model.
+       * Inputs: element model and editable flag. Returns: positioned HTMLElement.
+       * Side effects: none beyond detached node construction. Errors: unknown types render text.
+       */
+      function buildStudioElementNode(element, editable) {{
+        const node = document.createElement("div");
+        node.className = "studio-element";
+        node.dataset.elementId = element.id;
+        node.dataset.type = element.type;
+        node.style.left = Number(element.x || 5) + "%";
+        node.style.top = Number(element.y || 8) + "%";
+        node.style.width = Number(element.w || 40) + "%";
+        node.style.height = Number(element.h || 18) + "%";
+        node.style.color = element.color || "#102839";
+        node.style.backgroundColor = element.fill || "rgba(255,255,255,0.78)";
+        node.style.fontSize = Number(element.fontSize || 22) + "px";
+        if (element.type === "image") {{
+          const imageNode = document.createElement("img");
+          imageNode.src = String(element.src || "");
+          imageNode.alt = String(element.alt || "Custom slide image");
+          node.appendChild(imageNode);
+        }} else if (element.type === "chart") {{
+          node.innerHTML = studioChartSvg(element);
+        }} else {{
+          node.innerHTML = sanitizeStudioHtml(element.html || (element.type === "bullets" ? "<ul><li>First point</li><li>Second point</li></ul>" : "Double-click to edit"));
+        }}
+        return node;
+      }}
+
+      /** Copy canvas geometry/content back into the active slide model.
+       * Why: drag, resize, and rich-text edits occur directly in the preview DOM.
+       * Inputs: none. Returns: undefined.
+       * Side effects: mutates model and localStorage. Errors: missing canvas/slide is a no-op.
+       */
+      function syncStudioCanvasToModel() {{
+        const slide = activeStudioSlide();
+        if (!(slide && slideStudioCanvas)) {{ return; }}
+        const canvasRect = slideStudioCanvas.getBoundingClientRect();
+        slide.elements.forEach(function (element) {{
+          const node = slideStudioCanvas.querySelector('[data-element-id="' + element.id + '"]');
+          if (!node) {{ return; }}
+          const rect = node.getBoundingClientRect();
+          element.x = ((rect.left - canvasRect.left) / canvasRect.width) * 100;
+          element.y = ((rect.top - canvasRect.top) / canvasRect.height) * 100;
+          element.w = (rect.width / canvasRect.width) * 100;
+          element.h = (rect.height / canvasRect.height) * 100;
+          element.color = node.style.color || element.color;
+          element.fill = node.style.backgroundColor || element.fill;
+          element.fontSize = parseFloat(node.style.fontSize) || element.fontSize;
+          if (element.type !== "image" && element.type !== "chart") {{ element.html = sanitizeStudioHtml(node.innerHTML); }}
+        }});
+        writeStudioSlides();
+      }}
+
+      /** Render all saved slides into the walkthrough before navigation initializes.
+       * Why: custom slides must behave like ordinary H2 presentation sections.
+       * Inputs: none. Returns: undefined.
+       * Side effects: replaces runtime custom slide DOM. Errors: invalid slides are skipped.
+       */
+      function renderStudioRuntimeSlides() {{
+        content.querySelectorAll('[data-studio-runtime="true"]').forEach(function (node) {{ node.remove(); }});
+        studioSlides.filter(function (slide) {{ return Boolean(slide.sourceId); }}).forEach(function (slide) {{
+          const heading = document.getElementById(slide.sourceId);
+          if (!heading) {{ return; }}
+          let sibling = heading.nextElementSibling;
+          while (sibling && String(sibling.tagName || "").toUpperCase() !== "H2") {{
+            const nextSibling = sibling.nextElementSibling;
+            sibling.remove();
+            sibling = nextSibling;
+          }}
+          heading.textContent = slide.title || heading.textContent;
+          const canvas = document.createElement("section");
+          canvas.className = "studio-slide-runtime";
+          canvas.dataset.studioRuntime = "true";
+          canvas.setAttribute("aria-label", slide.title || "Edited walkthrough slide");
+          (slide.elements || []).forEach(function (element) {{ canvas.appendChild(buildStudioElementNode(element, false)); }});
+          heading.insertAdjacentElement("afterend", canvas);
+        }});
+        studioSlides.filter(function (slide) {{ return !slide.sourceId; }}).forEach(function (slide, index) {{
+          const heading = document.createElement("h2");
+          heading.id = "studio-slide-" + slide.id;
+          heading.dataset.studioRuntime = "true";
+          heading.textContent = "Custom " + (index + 1) + ") " + (slide.title || "Untitled Slide");
+          const canvas = document.createElement("section");
+          canvas.className = "studio-slide-runtime";
+          canvas.dataset.studioRuntime = "true";
+          canvas.setAttribute("aria-label", slide.title || "Custom slide");
+          (slide.elements || []).forEach(function (element) {{ canvas.appendChild(buildStudioElementNode(element, false)); }});
+          content.appendChild(heading);
+          content.appendChild(canvas);
+        }});
+      }}
+
+      /** Refresh heading and TOC registries after custom slides are inserted.
+       * Why: presentation navigation captures headings once during startup.
+       * Inputs: none. Returns: undefined.
+       * Side effects: rebuilds custom TOC links and heading maps. Errors: absent TOC is tolerated.
+       */
+      function refreshStudioHeadingRegistry() {{
+        if (tocNav) {{
+          tocNav.querySelectorAll('[data-studio-toc="true"]').forEach(function (node) {{ node.remove(); }});
+          const list = tocNav.querySelector(".toc > ul");
+          if (list) {{
+            studioSlides.filter(function (slide) {{ return !slide.sourceId; }}).forEach(function (slide, index) {{
+              const item = document.createElement("li");
+              item.dataset.studioToc = "true";
+              const link = document.createElement("a");
+              link.href = "#studio-slide-" + slide.id;
+              link.textContent = "Custom " + (index + 1) + ") " + (slide.title || "Untitled Slide");
+              item.appendChild(link);
+              list.appendChild(item);
+            }});
+          }}
+          studioSlides.filter(function (slide) {{ return Boolean(slide.sourceId); }}).forEach(function (slide) {{
+            const link = tocNav.querySelector('a[href="#' + slide.sourceId + '"]');
+            if (link) {{ link.textContent = slide.title || link.textContent; }}
+          }});
+        }}
+        tocLinks = tocNav ? Array.from(tocNav.querySelectorAll("a[href^='#']")) : [];
+        headingNodes = Array.from(content.querySelectorAll("h2, h3, h4"));
+        headingMap.clear();
+        headingNodes.forEach(function (heading) {{ if (heading.id) {{ headingMap.set("#" + heading.id, heading); }} }});
+      }}
+
+      /** Render the editor canvas and custom-slide list for the active model.
+       * Why: all authoring actions need one consistent visual refresh.
+       * Inputs: none. Returns: undefined.
+       * Side effects: rebuilds editor DOM and wires drag/select behavior. Errors: empty deck shows guidance.
+       */
+      function renderSlideStudioEditor() {{
+        if (!(slideStudioCanvas && slideStudioList)) {{ return; }}
+        slideStudioList.innerHTML = "";
+        studioSlides.forEach(function (slide) {{
+          const button = document.createElement("button");
+          button.type = "button";
+          button.textContent = (slide.sourceId ? "Override · " : "Custom · ") + (slide.title || "Untitled Slide");
+          button.classList.toggle("is-active", slide.id === activeStudioSlideId);
+          button.addEventListener("click", function () {{ activeStudioSlideId = slide.id; activeStudioElementId = ""; renderSlideStudioEditor(); }});
+          slideStudioList.appendChild(button);
+        }});
+        const slide = activeStudioSlide();
+        slideStudioCanvas.innerHTML = "";
+        if (!slide) {{
+          slideStudioCanvas.innerHTML = '<div style="padding:8%;font-size:24px">Choose New Slide to begin.</div>';
+          return;
+        }}
+        if (slideStudioTitleInput) {{ slideStudioTitleInput.value = slide.title || ""; }}
+        (slide.elements || []).forEach(function (element) {{
+          const node = buildStudioElementNode(element, true);
+          node.classList.toggle("is-selected", element.id === activeStudioElementId);
+          if (element.type !== "image" && element.type !== "chart") {{
+            node.addEventListener("dblclick", function () {{ node.setAttribute("contenteditable", "true"); node.focus(); }});
+            node.addEventListener("blur", function () {{ node.removeAttribute("contenteditable"); syncStudioCanvasToModel(); }});
+          }}
+          node.addEventListener("pointerdown", function (event) {{
+            activeStudioElementId = element.id;
+            renderSlideStudioEditor();
+            const selected = slideStudioCanvas.querySelector('[data-element-id="' + element.id + '"]');
+            if (!selected || selected.getAttribute("contenteditable") === "true") {{ return; }}
+            const startX = event.clientX;
+            const startY = event.clientY;
+            const startLeft = selected.offsetLeft;
+            const startTop = selected.offsetTop;
+            const move = function (moveEvent) {{
+              selected.style.left = Math.max(0, startLeft + moveEvent.clientX - startX) + "px";
+              selected.style.top = Math.max(0, startTop + moveEvent.clientY - startY) + "px";
+            }};
+            const stop = function () {{ document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", stop); syncStudioCanvasToModel(); }};
+            document.addEventListener("pointermove", move);
+            document.addEventListener("pointerup", stop);
+          }});
+          node.addEventListener("input", syncStudioCanvasToModel);
+          node.addEventListener("pointerup", syncStudioCanvasToModel);
+          slideStudioCanvas.appendChild(node);
+        }});
+      }}
+
+      /** Add one supported element type to the active custom slide.
+       * Why: toolbar actions need consistent defaults and storage behavior.
+       * Inputs: type, one of title/text/bullets/image/table/chart. Returns: undefined.
+       * Side effects: may open prompts/file picker, mutates deck, rerenders editor.
+       * Errors: cancelled prompts/uploads leave the slide unchanged.
+       */
+      function addStudioElement(type) {{
+        const slide = activeStudioSlide();
+        if (!slide) {{ return; }}
+        const contentIndex = slide.elements.filter(function (candidate) {{ return candidate.type !== "title"; }}).length;
+        const element = {{ id: studioId("element"), type: type, x: type === "title" ? 7 : 7 + ((contentIndex % 2) * 45), y: type === "title" ? 6 : 25 + (Math.floor(contentIndex / 2) * 30), w: type === "title" ? 86 : 40, h: type === "title" ? 16 : 24, color: "#102839", fill: type === "title" ? "rgba(255,255,255,0)" : "rgba(255,255,255,0.78)", fontSize: type === "title" ? 40 : 22, html: "" }};
+        if (type === "title") {{ element.html = "Slide title"; }}
+        if (type === "text") {{ element.html = "Double-click to edit formatted text."; }}
+        if (type === "bullets") {{ element.html = "<ul><li>First point</li><li>Second point</li></ul>"; }}
+        if (type === "table") {{
+          const rows = Math.max(1, Math.min(10, Number(window.prompt("Table rows", "3")) || 0));
+          const columns = Math.max(1, Math.min(8, Number(window.prompt("Table columns", "3")) || 0));
+          if (!rows || !columns) {{ return; }}
+          element.w = 72; element.h = 36;
+          element.html = "<table><tbody>" + Array.from({{ length: rows }}, function (_, row) {{ return "<tr>" + Array.from({{ length: columns }}, function (_, column) {{ return "<td>" + (row === 0 ? "Header " + (column + 1) : "Value") + "</td>"; }}).join("") + "</tr>"; }}).join("") + "</tbody></table>";
+        }}
+        if (type === "chart") {{
+          const labels = window.prompt("Comma-separated chart labels", "Cycle 1,Cycle 2,Cycle 3");
+          const values = window.prompt("Comma-separated chart values", "20,55,82");
+          if (labels === null || values === null) {{ return; }}
+          element.labels = labels.split(",").map(function (value) {{ return value.trim(); }});
+          element.values = values.split(",").map(Number);
+          element.w = 62; element.h = 42;
+        }}
+        if (type === "image") {{
+          const picker = document.createElement("input");
+          picker.type = "file";
+          picker.accept = "image/*";
+          picker.addEventListener("change", function () {{
+            const file = picker.files && picker.files[0];
+            if (!file) {{ return; }}
+            const reader = new FileReader();
+            reader.addEventListener("load", function () {{ element.src = String(reader.result || ""); element.alt = file.name; element.w = 55; element.h = 48; slide.elements.push(element); activeStudioElementId = element.id; writeStudioSlides(); renderSlideStudioEditor(); }});
+            reader.readAsDataURL(file);
+          }});
+          picker.click();
+          return;
+        }}
+        slide.elements.push(element);
+        activeStudioElementId = element.id;
+        writeStudioSlides();
+        renderSlideStudioEditor();
+      }}
+
+      /** Import the active generated walkthrough section as an editable override.
+       * Why: authors need to modify existing slides without changing Markdown.
+       * Inputs: none; reads currentSectionIndex and sectionBlocks. Returns: undefined.
+       * Side effects: creates an override model, persists it, and opens the editor.
+       * Errors: missing/custom sections are reported without changing stored slides.
+       */
+      function importCurrentStudioSlide() {{
+        const activeHeading = studioSourceSectionId
+          ? document.getElementById(studioSourceSectionId)
+          : sectionHeadings[currentSectionIndex];
+        const block = sectionBlocks.find(function (candidate) {{ return candidate.heading === activeHeading; }});
+        if (!(activeHeading && block && activeHeading.id)) {{
+          if (slideStudioStatus) {{ slideStudioStatus.textContent = "The current slide could not be imported."; }}
+          return;
+        }}
+        if (activeHeading.id.startsWith("studio-slide-")) {{
+          const customId = activeHeading.id.slice("studio-slide-".length);
+          if (studioSlides.some(function (slide) {{ return slide.id === customId; }})) {{
+            activeStudioSlideId = customId;
+            activeStudioElementId = "";
+            if (slideStudio) {{ slideStudio.hidden = false; }}
+            renderSlideStudioEditor();
+            return;
+          }}
+        }}
+        let override = studioSlides.find(function (slide) {{ return slide.sourceId === activeHeading.id; }});
+        if (!override) {{
+          const sourceNodes = block.nodes.filter(function (node) {{ return node !== activeHeading; }});
+          const slotHeight = Math.max(7, Math.min(22, 84 / Math.max(sourceNodes.length, 1)));
+          override = {{
+            id: studioId("override"),
+            sourceId: activeHeading.id,
+            title: String(activeHeading.textContent || "Edited Slide").trim(),
+            elements: sourceNodes.map(function (node, index) {{
+              return {{
+                id: studioId("element"),
+                type: "text",
+                x: 4,
+                y: 5 + (index * slotHeight),
+                w: 92,
+                h: Math.max(slotHeight - 1, 6),
+                color: "#102839",
+                fill: "rgba(255,255,255,0.82)",
+                fontSize: 15,
+                html: sanitizeStudioHtml(node.outerHTML)
+              }};
+            }})
+          }};
+          studioSlides.push(override);
+          writeStudioSlides();
+        }}
+        activeStudioSlideId = override.id;
+        activeStudioElementId = "";
+        if (slideStudio) {{ slideStudio.hidden = false; }}
+        renderSlideStudioEditor();
+        if (slideStudioStatus) {{ slideStudioStatus.textContent = "Imported built-in slide as a local override. Delete this override and reload to restore the generated original."; }}
+      }}
+
+      /** Initialize Slide Studio, load saved slides, and wire authoring controls.
+       * Why: custom slides must exist before section navigation captures headings.
+       * Inputs: none. Returns: undefined.
+       * Side effects: reads storage, inserts runtime slides, and registers UI events.
+       * Errors: unavailable controls/storage degrade to the original walkthrough.
+       */
+      function initializeSlideStudio() {{
+        studioSlides = readStudioSlides();
+        activeStudioSlideId = studioSlides.length ? studioSlides[0].id : "";
+        renderStudioRuntimeSlides();
+        refreshStudioHeadingRegistry();
+        if (!(slideStudio && slideStudioOpen)) {{ return; }}
+        slideStudioOpen.addEventListener("click", function () {{
+          const selectedIndex = Number(sectionSelector && sectionSelector.value);
+          const sourceHeading = sectionHeadings[Number.isFinite(selectedIndex) ? selectedIndex : currentSectionIndex];
+          studioSourceSectionId = sourceHeading && sourceHeading.id ? sourceHeading.id : "";
+          slideStudio.hidden = false;
+          renderSlideStudioEditor();
+        }});
+        document.getElementById("slide-studio-close").addEventListener("click", function () {{ syncStudioCanvasToModel(); slideStudio.hidden = true; }});
+        document.getElementById("slide-studio-new").addEventListener("click", function () {{
+          const slide = {{ id: studioId("slide"), title: "New Custom Slide", elements: [] }};
+          studioSlides.push(slide); activeStudioSlideId = slide.id; activeStudioElementId = ""; writeStudioSlides(); renderSlideStudioEditor();
+        }});
+        document.getElementById("slide-studio-edit-current").addEventListener("click", importCurrentStudioSlide);
+        document.getElementById("slide-studio-duplicate").addEventListener("click", function () {{
+          const slide = activeStudioSlide(); if (!slide) {{ return; }}
+          const copy = JSON.parse(JSON.stringify(slide)); copy.id = studioId("slide"); delete copy.sourceId; copy.title += " Copy"; copy.elements.forEach(function (element) {{ element.id = studioId("element"); }}); studioSlides.push(copy); activeStudioSlideId = copy.id; writeStudioSlides(); renderSlideStudioEditor();
+        }});
+        document.getElementById("slide-studio-delete").addEventListener("click", function () {{
+          if (!activeStudioSlideId || !window.confirm("Delete this custom slide?")) {{ return; }}
+          studioSlides = studioSlides.filter(function (slide) {{ return slide.id !== activeStudioSlideId; }}); activeStudioSlideId = studioSlides.length ? studioSlides[0].id : ""; activeStudioElementId = ""; writeStudioSlides(); renderSlideStudioEditor();
+        }});
+        document.querySelectorAll("[data-studio-add]").forEach(function (button) {{ button.addEventListener("click", function () {{ addStudioElement(button.dataset.studioAdd); }}); }});
+        document.querySelectorAll("[data-studio-format]").forEach(function (button) {{ button.addEventListener("click", function () {{ document.execCommand(button.dataset.studioFormat, false); syncStudioCanvasToModel(); }}); }});
+        if (slideStudioTitleInput) {{ slideStudioTitleInput.addEventListener("input", function () {{ const slide = activeStudioSlide(); if (slide) {{ slide.title = slideStudioTitleInput.value; writeStudioSlides(); }} }}); }}
+        [slideStudioFill, slideStudioColor, slideStudioFontSize].forEach(function (control) {{ if (control) {{ control.addEventListener("input", function () {{ const element = activeStudioSlide() && activeStudioSlide().elements.find(function (candidate) {{ return candidate.id === activeStudioElementId; }}); if (!element) {{ return; }} element.fill = slideStudioFill.value; element.color = slideStudioColor.value; element.fontSize = Number(slideStudioFontSize.value); renderSlideStudioEditor(); writeStudioSlides(); }}); }} }});
+        document.getElementById("slide-studio-remove-element").addEventListener("click", function () {{ const slide = activeStudioSlide(); if (!slide) {{ return; }} slide.elements = slide.elements.filter(function (element) {{ return element.id !== activeStudioElementId; }}); activeStudioElementId = ""; writeStudioSlides(); renderSlideStudioEditor(); }});
+        document.getElementById("slide-studio-present").addEventListener("click", function () {{ syncStudioCanvasToModel(); window.location.reload(); }});
+        document.getElementById("slide-studio-export").addEventListener("click", function () {{
+          syncStudioCanvasToModel(); const blob = new Blob([JSON.stringify({{ schema: 1, slides: studioSlides }}, null, 2)], {{ type: "application/json" }}); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "gl260-custom-slides.json"; link.click(); URL.revokeObjectURL(link.href);
+        }});
+        const importFile = document.getElementById("slide-studio-import-file");
+        document.getElementById("slide-studio-import").addEventListener("click", function () {{ importFile.click(); }});
+        importFile.addEventListener("change", function () {{ const file = importFile.files && importFile.files[0]; if (!file) {{ return; }} const reader = new FileReader(); reader.addEventListener("load", function () {{ try {{ const payload = JSON.parse(String(reader.result || "")); if (!payload || !Array.isArray(payload.slides)) {{ throw new Error("Invalid slide deck"); }} studioSlides = payload.slides; activeStudioSlideId = studioSlides.length ? studioSlides[0].id : ""; writeStudioSlides(); renderSlideStudioEditor(); }} catch (error) {{ slideStudioStatus.textContent = "Import failed: invalid Slide Studio JSON."; }} }}); reader.readAsText(file); }});
       }}
 
       function runPhase(name, fn) {{
@@ -1704,6 +2267,16 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         return canvas;
       }}
 
+      /**
+       * Build the pCO2-to-NaHCO3 purity-potential presentation module.
+       * The module replaces the compact sensitivity table with one operational
+       * story: increasing headspace pCO2 lowers pH, suppresses carbonate, and
+       * raises the equilibrium bicarbonate share.
+       * Inputs: none; reads the equilibrium-interplay inline anchor.
+       * Returns: undefined.
+       * Side effects: replaces the anchor and wires one pressure slider.
+       * Errors: missing anchors or optional output nodes are handled as no-ops.
+       */
       function ensureEquilibriumInterplayModule() {{
         if (document.getElementById("equilibrium-interplay-module")) {{
           return;
@@ -1715,305 +2288,191 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         const module = document.createElement("section");
         module.id = "equilibrium-interplay-module";
         module.className = "equilibrium-interplay-module";
-        module.setAttribute("aria-label", "Equilibrium interplay visual module");
+        module.setAttribute("aria-label", "pCO2 to sodium bicarbonate purity visual");
         module.innerHTML = `
           <div class="equilibrium-interplay-header">
             <div>
-              <p class="equilibrium-interplay-title">Equilibrium Interplay Visual</p>
-              <p class="equilibrium-interplay-copy">Changing one carbonate-family species moves the acid-base balance, pH, and final species split together.</p>
+              <div class="equilibrium-interplay-title">pCO2 → NaHCO3 Purity Path</div>
+              <div class="equilibrium-interplay-copy">Raise headspace CO2 pressure and follow the same chemistry through dissolved CO2, hydroxide consumption, carbonate suppression, and bicarbonate-selective product potential.</div>
             </div>
-            <div class="equilibrium-ph-readout">
-              <span>Predicted pH</span>
-              <strong data-equilibrium-ph>8.35</strong>
+            <div class="pco2-pressure-readout">
+              <span>Headspace pCO2</span>
+              <strong><output data-pco2-pressure>1.00</output> atm</strong>
             </div>
           </div>
-          <div class="equilibrium-interplay-grid">
-            <div class="equilibrium-control-panel">
-              <div class="equilibrium-toggle-group" aria-label="Species perturbation">
-                <button class="equilibrium-toggle" type="button" data-equilibrium-mode="carbonic" aria-pressed="true">CO2*</button>
-                <button class="equilibrium-toggle" type="button" data-equilibrium-mode="bicarbonate" aria-pressed="false">HCO3-</button>
-                <button class="equilibrium-toggle" type="button" data-equilibrium-mode="carbonate" aria-pressed="false">CO3^2-</button>
-              </div>
-              <div class="equilibrium-slider-row">
-                <label for="equilibrium-shift-slider">Species push</label>
-                <input id="equilibrium-shift-slider" type="range" min="0" max="100" value="55" step="1">
-              </div>
-              <div class="equilibrium-status" data-equilibrium-status></div>
+          <div class="pco2-batch-anchor" aria-label="775 gram carbon dioxide uptake target and predicted pH">
+            <div class="pco2-anchor-step">
+              <span>Absorbed CO2 target</span>
+              <strong>775 g</strong>
+              <small>17.61 mol CO2</small>
             </div>
-            <div class="equilibrium-visual-panel">
-              <div class="equilibrium-network" aria-label="Carbonate equilibrium species network">
-                <span class="equilibrium-arrow equilibrium-arrow-left" data-equilibrium-arrow-left></span>
-                <span class="equilibrium-arrow equilibrium-arrow-right" data-equilibrium-arrow-right></span>
-                <div class="equilibrium-node equilibrium-node-carbonic" data-equilibrium-node="carbonic">
-                  <span class="equilibrium-node-label">CO2* / H2CO3</span>
-                  <strong class="equilibrium-node-value" data-equilibrium-value="carbonic">0%</strong>
-                  <span class="equilibrium-node-meter"><span data-equilibrium-meter="carbonic"></span></span>
-                </div>
-                <div class="equilibrium-node equilibrium-node-bicarbonate" data-equilibrium-node="bicarbonate">
-                  <span class="equilibrium-node-label">HCO3-</span>
-                  <strong class="equilibrium-node-value" data-equilibrium-value="bicarbonate">0%</strong>
-                  <span class="equilibrium-node-meter"><span data-equilibrium-meter="bicarbonate"></span></span>
-                </div>
-                <div class="equilibrium-node equilibrium-node-carbonate" data-equilibrium-node="carbonate">
-                  <span class="equilibrium-node-label">CO3^2-</span>
-                  <strong class="equilibrium-node-value" data-equilibrium-value="carbonate">0%</strong>
-                  <span class="equilibrium-node-meter"><span data-equilibrium-meter="carbonate"></span></span>
-                </div>
+            <div class="pco2-anchor-arrow" aria-hidden="true">→</div>
+            <div class="pco2-anchor-step">
+              <span>700 g NaOH basis</span>
+              <strong>17.50 mol</strong>
+              <small>Near the 1:1 bicarbonate endpoint</small>
+            </div>
+            <div class="pco2-anchor-arrow" aria-hidden="true">→</div>
+            <div class="pco2-anchor-step">
+              <span>Predicted batch state</span>
+              <strong>pH ≈ 8.1</strong>
+              <small>Bicarbonate-dominant target</small>
+            </div>
+          </div>
+          <div class="pco2-purity-grid">
+            <div class="pco2-control-panel">
+              <div class="pco2-slider-row">
+                <label for="pco2-purity-slider">Move the operating pCO2</label>
+                <input id="pco2-purity-slider" type="range" min="10" max="400" value="100" step="10">
+                <div class="pco2-slider-scale"><span>0.10 atm</span><span>2.00 atm</span><span>4.00 atm</span></div>
               </div>
-              <div class="equilibrium-bars">
-                <div class="equilibrium-bar">
-                  <span class="equilibrium-bar-label">Carbonic</span>
-                  <span class="equilibrium-bar-track"><span class="equilibrium-bar-fill equilibrium-bar-carbonic" data-equilibrium-bar="carbonic"></span></span>
-                  <span class="equilibrium-bar-value" data-equilibrium-bar-value="carbonic">0%</span>
-                </div>
-                <div class="equilibrium-bar">
-                  <span class="equilibrium-bar-label">Bicarbonate</span>
-                  <span class="equilibrium-bar-track"><span class="equilibrium-bar-fill equilibrium-bar-bicarbonate" data-equilibrium-bar="bicarbonate"></span></span>
-                  <span class="equilibrium-bar-value" data-equilibrium-bar-value="bicarbonate">0%</span>
-                </div>
-                <div class="equilibrium-bar">
-                  <span class="equilibrium-bar-label">Carbonate</span>
-                  <span class="equilibrium-bar-track"><span class="equilibrium-bar-fill equilibrium-bar-carbonate" data-equilibrium-bar="carbonate"></span></span>
-                  <span class="equilibrium-bar-value" data-equilibrium-bar-value="carbonate">0%</span>
-                </div>
+              <div class="pco2-process-path" aria-label="pCO2 process consequence path">
+                <div class="pco2-process-stage"><span>Headspace</span><strong data-path-pressure>1.00 atm CO2</strong></div>
+                <div class="pco2-process-stage"><span>Liquid boundary</span><strong>Dissolved CO2 rises</strong></div>
+                <div class="pco2-process-stage"><span>Alkalinity</span><strong data-path-hydroxide>OH- is consumed</strong></div>
+                <div class="pco2-process-stage"><span>Carbonate impurity</span><strong data-path-carbonate>30.5% CO3</strong></div>
               </div>
+              <div class="pco2-status" data-pco2-status></div>
+            </div>
+            <div class="pco2-product-panel">
+              <div class="pco2-product-heading">
+                <div>
+                  <span>NaHCO3-form purity potential</span>
+                  <div class="pco2-source-note">Equilibrium bicarbonate share, not a final solid assay</div>
+                </div>
+                <strong data-purity-potential>69.3%</strong>
+              </div>
+              <div class="pco2-purity-gauge" aria-label="Bicarbonate purity potential">
+                <span data-purity-fill></span>
+              </div>
+              <div class="pco2-species-labels"><span>CO2*</span><span>HCO3-</span><span>CO3^2-</span></div>
+              <div class="pco2-species-stack" aria-label="Reactive carbon species distribution">
+                <span class="pco2-species-carbonic" data-species-fill="carbonic"></span>
+                <span class="pco2-species-bicarbonate" data-species-fill="bicarbonate"></span>
+                <span class="pco2-species-carbonate" data-species-fill="carbonate"></span>
+              </div>
+              <div class="pco2-kpis">
+                <div class="pco2-kpi"><span>Sensitivity-state pH</span><strong data-pco2-ph>9.45</strong></div>
+                <div class="pco2-kpi"><span>Bicarbonate</span><strong data-pco2-bicarbonate>69.3%</strong></div>
+                <div class="pco2-kpi"><span>Carbonate</span><strong data-pco2-carbonate>30.5%</strong></div>
+              </div>
+              <div class="pco2-source-note">Interpolated from the locked 25 C, 700 g NaOH, and 2,200 mL water sensitivity points formerly shown as the compact sweep.</div>
             </div>
           </div>
         `;
         anchor.replaceWith(module);
 
-        const pHOutput = module.querySelector("[data-equilibrium-ph]");
-        const status = module.querySelector("[data-equilibrium-status]");
-        const slider = module.querySelector("#equilibrium-shift-slider");
-        const toggles = Array.from(module.querySelectorAll("[data-equilibrium-mode]"));
-        const nodes = {{
-          carbonic: module.querySelector('[data-equilibrium-node="carbonic"]'),
-          bicarbonate: module.querySelector('[data-equilibrium-node="bicarbonate"]'),
-          carbonate: module.querySelector('[data-equilibrium-node="carbonate"]')
+        const slider = module.querySelector("#pco2-purity-slider");
+        const pressureOutput = module.querySelector("[data-pco2-pressure]");
+        const pathPressure = module.querySelector("[data-path-pressure]");
+        const pathHydroxide = module.querySelector("[data-path-hydroxide]");
+        const pathCarbonate = module.querySelector("[data-path-carbonate]");
+        const status = module.querySelector("[data-pco2-status]");
+        const purityPotential = module.querySelector("[data-purity-potential]");
+        const purityFill = module.querySelector("[data-purity-fill]");
+        const phOutput = module.querySelector("[data-pco2-ph]");
+        const bicarbonateOutput = module.querySelector("[data-pco2-bicarbonate]");
+        const carbonateOutput = module.querySelector("[data-pco2-carbonate]");
+        const speciesFills = {{
+          carbonic: module.querySelector('[data-species-fill="carbonic"]'),
+          bicarbonate: module.querySelector('[data-species-fill="bicarbonate"]'),
+          carbonate: module.querySelector('[data-species-fill="carbonate"]')
         }};
-        const values = {{
-          carbonic: module.querySelector('[data-equilibrium-value="carbonic"]'),
-          bicarbonate: module.querySelector('[data-equilibrium-value="bicarbonate"]'),
-          carbonate: module.querySelector('[data-equilibrium-value="carbonate"]')
-        }};
-        const meters = {{
-          carbonic: module.querySelector('[data-equilibrium-meter="carbonic"]'),
-          bicarbonate: module.querySelector('[data-equilibrium-meter="bicarbonate"]'),
-          carbonate: module.querySelector('[data-equilibrium-meter="carbonate"]')
-        }};
-        const bars = {{
-          carbonic: module.querySelector('[data-equilibrium-bar="carbonic"]'),
-          bicarbonate: module.querySelector('[data-equilibrium-bar="bicarbonate"]'),
-          carbonate: module.querySelector('[data-equilibrium-bar="carbonate"]')
-        }};
-        const barValues = {{
-          carbonic: module.querySelector('[data-equilibrium-bar-value="carbonic"]'),
-          bicarbonate: module.querySelector('[data-equilibrium-bar-value="bicarbonate"]'),
-          carbonate: module.querySelector('[data-equilibrium-bar-value="carbonate"]')
-        }};
-        const leftArrow = module.querySelector("[data-equilibrium-arrow-left]");
-        const rightArrow = module.querySelector("[data-equilibrium-arrow-right]");
+        const sensitivityPoints = [
+          {{ pco2: 0.10, pH: 10.25, carbonic: 0.0002, bicarbonate: 0.1820, carbonate: 0.8178 }},
+          {{ pco2: 0.50, pH: 9.85, carbonic: 0.0008, bicarbonate: 0.4107, carbonate: 0.5885 }},
+          {{ pco2: 1.00, pH: 9.45, carbonic: 0.0025, bicarbonate: 0.6928, carbonate: 0.3047 }},
+          {{ pco2: 2.00, pH: 9.05, carbonic: 0.0086, bicarbonate: 0.8409, carbonate: 0.1505 }},
+          {{ pco2: 4.00, pH: 8.65, carbonic: 0.0272, bicarbonate: 0.8952, carbonate: 0.0776 }}
+        ];
 
-        function clampNumber(value, lower, upper) {{
-          return Math.min(Math.max(value, lower), upper);
-        }}
-
-        function alphaFractionsFromPH(pH) {{
-          const h = Math.pow(10, -pH);
-          const ka1 = Math.pow(10, -6.3374);
-          const ka2 = Math.pow(10, -10.3393);
-          const denominator = (h * h) + (ka1 * h) + (ka1 * ka2);
+        /**
+         * Interpolate one display state from the locked pCO2 sensitivity points.
+         * The interpolation exists to preserve the documented calculations while
+         * giving the presentation a continuous pressure control.
+         * Inputs: pressure, headspace pCO2 in atmospheres.
+         * Returns: pH and normalized carbon-species fractions.
+         * Side effects: none.
+         * Errors: non-finite values are clamped to the first point.
+         */
+        function interpolateSensitivityState(pressure) {{
+          const boundedPressure = Number.isFinite(pressure)
+            ? Math.min(Math.max(pressure, sensitivityPoints[0].pco2), sensitivityPoints[sensitivityPoints.length - 1].pco2)
+            : sensitivityPoints[0].pco2;
+          let upperIndex = sensitivityPoints.findIndex(function (point) {{
+            return point.pco2 >= boundedPressure;
+          }});
+          if (upperIndex <= 0) {{
+            return {{ ...sensitivityPoints[0] }};
+          }}
+          if (upperIndex < 0) {{
+            return {{ ...sensitivityPoints[sensitivityPoints.length - 1] }};
+          }}
+          const lower = sensitivityPoints[upperIndex - 1];
+          const upper = sensitivityPoints[upperIndex];
+          const ratio = (boundedPressure - lower.pco2) / (upper.pco2 - lower.pco2);
           return {{
-            carbonic: (h * h) / denominator,
-            bicarbonate: (ka1 * h) / denominator,
-            carbonate: (ka1 * ka2) / denominator
+            pco2: boundedPressure,
+            pH: lower.pH + ((upper.pH - lower.pH) * ratio),
+            carbonic: lower.carbonic + ((upper.carbonic - lower.carbonic) * ratio),
+            bicarbonate: lower.bicarbonate + ((upper.bicarbonate - lower.bicarbonate) * ratio),
+            carbonate: lower.carbonate + ((upper.carbonate - lower.carbonate) * ratio)
           }};
         }}
 
-        function currentMode() {{
-          const active = toggles.find(function (button) {{
-            return button.getAttribute("aria-pressed") === "true";
-          }});
-          return active ? active.getAttribute("data-equilibrium-mode") : "carbonic";
-        }}
-
-        function updateModule() {{
-          const mode = currentMode();
-          const push = clampNumber(Number(slider ? slider.value : 55) / 100, 0, 1);
-          let pH = 8.35;
-          let message = "";
-          if (mode === "carbonic") {{
-            pH = 9.25 - (2.35 * push);
-            message = "More dissolved CO2* pulls the balance acidic, suppressing carbonate and raising the carbonic-acid share.";
-          }} else if (mode === "bicarbonate") {{
-            pH = 8.05 + (0.95 * push);
-            message = "More bicarbonate holds the system near the buffer region where HCO3- dominates the split.";
-          }} else {{
-            pH = 8.90 + (1.95 * push);
-            message = "More carbonate pushes the balance basic, increasing CO3^2- and pulling pH upward.";
+        /**
+         * Render the pCO2 consequence path and NaHCO3-form purity potential.
+         * It exists so pressure, pH, carbonate impurity, and bicarbonate
+         * selectivity update as one chemically linked presentation state.
+         * Inputs: none; reads the pressure slider value in hundredths of an atm.
+         * Returns: undefined.
+         * Side effects: updates text, ARIA copy, gauge width, and species widths.
+         * Errors: missing optional output nodes are handled as no-ops.
+         */
+        function updatePco2PurityModule() {{
+          const pressure = Number(slider ? slider.value : 100) / 100;
+          const state = interpolateSensitivityState(pressure);
+          const carbonicPercent = state.carbonic * 100;
+          const bicarbonatePercent = state.bicarbonate * 100;
+          const carbonatePercent = state.carbonate * 100;
+          const pressureText = state.pco2.toFixed(2);
+          const bicarbonateText = bicarbonatePercent.toFixed(1) + "%";
+          const carbonateText = carbonatePercent.toFixed(1) + "%";
+          if (pressureOutput) {{ pressureOutput.textContent = pressureText; }}
+          if (pathPressure) {{ pathPressure.textContent = pressureText + " atm CO2"; }}
+          if (pathHydroxide) {{
+            pathHydroxide.textContent = state.pco2 < 0.75
+              ? "High OH- remains"
+              : state.pco2 < 2.0 ? "OH- is consumed" : "Low free OH-";
           }}
-          pH = clampNumber(pH, 6.4, 11.1);
-          const fractions = alphaFractionsFromPH(pH);
-          const dominant = Object.keys(fractions).reduce(function (best, key) {{
-            return fractions[key] > fractions[best] ? key : best;
-          }}, "carbonic");
-          if (pHOutput) {{
-            pHOutput.textContent = pH.toFixed(2);
-          }}
-          if (status) {{
-            status.textContent = message;
-          }}
-          ["carbonic", "bicarbonate", "carbonate"].forEach(function (key) {{
-            const percent = clampNumber(fractions[key] * 100, 0, 100);
-            const text = percent < 1 ? percent.toFixed(1) + "%" : Math.round(percent) + "%";
-            if (values[key]) {{
-              values[key].textContent = text;
-            }}
-            if (meters[key]) {{
-              meters[key].style.width = percent.toFixed(2) + "%";
-            }}
-            if (bars[key]) {{
-              bars[key].style.width = percent.toFixed(2) + "%";
-            }}
-            if (barValues[key]) {{
-              barValues[key].textContent = text;
-            }}
-            if (nodes[key]) {{
-              nodes[key].classList.toggle("is-dominant", key === dominant);
-            }}
-          }});
-          if (leftArrow) {{
-            leftArrow.classList.toggle("is-active", mode === "carbonic" || dominant === "bicarbonate");
-          }}
-          if (rightArrow) {{
-            rightArrow.classList.toggle("is-active", mode === "carbonate" || dominant === "bicarbonate");
-          }}
-        }}
-
-        toggles.forEach(function (button) {{
-          button.addEventListener("click", function () {{
-            toggles.forEach(function (candidate) {{
-              candidate.setAttribute("aria-pressed", String(candidate === button));
-            }});
-            updateModule();
-          }});
-        }});
-        if (slider) {{
-          slider.addEventListener("input", updateModule);
-        }}
-        updateModule();
-      }}
-
-      function ensureChargeBalanceVisualModule() {{
-        if (document.getElementById("charge-balance-visual-module")) {{
-          return;
-        }}
-        const anchor = findInlineModuleAnchor("charge-balance-visual");
-        if (!(anchor && anchor.parentNode)) {{
-          return;
-        }}
-        const module = document.createElement("section");
-        module.id = "charge-balance-visual-module";
-        module.className = "calculation-visual-module";
-        module.setAttribute("aria-label", "Charge balance solver visual module");
-        module.innerHTML = `
-          <div>
-            <p class="calculation-visual-title">Charge Balance Solver Visual</p>
-            <p class="calculation-visual-copy">Move the trial pH and watch the positive and negative charge pools converge toward the solver target.</p>
-          </div>
-          <div class="charge-balance-grid">
-            <div class="charge-balance-controls">
-              <div class="charge-balance-slider-row">
-                <label for="charge-balance-ph-slider">Trial pH</label>
-                <input id="charge-balance-ph-slider" type="range" min="760" max="1120" value="960" step="1">
-              </div>
-              <div class="charge-residual-readout">
-                <span>Charge residual</span>
-                <strong data-charge-residual>0.000</strong>
-              </div>
-            </div>
-            <div class="charge-balance-visual">
-              <div class="charge-balance-panels">
-                <div class="charge-pool">
-                  <h4>Positive pool</h4>
-                  <div class="charge-meter charge-meter-positive"><span data-charge-meter="positive"></span></div>
-                  <strong class="charge-pool-value" data-charge-value="positive">0.00</strong>
-                </div>
-                <div class="charge-pool">
-                  <h4>Negative pool</h4>
-                  <div class="charge-meter charge-meter-negative"><span data-charge-meter="negative"></span></div>
-                  <strong class="charge-pool-value" data-charge-value="negative">0.00</strong>
-                </div>
-              </div>
-              <div class="charge-balance-beam"><span data-charge-beam></span></div>
-              <div class="charge-balance-status" data-charge-status></div>
-            </div>
-          </div>
-        `;
-        anchor.replaceWith(module);
-
-        const slider = module.querySelector("#charge-balance-ph-slider");
-        const residualOutput = module.querySelector("[data-charge-residual]");
-        const status = module.querySelector("[data-charge-status]");
-        const beam = module.querySelector("[data-charge-beam]");
-        const meters = {{
-          positive: module.querySelector('[data-charge-meter="positive"]'),
-          negative: module.querySelector('[data-charge-meter="negative"]')
-        }};
-        const values = {{
-          positive: module.querySelector('[data-charge-value="positive"]'),
-          negative: module.querySelector('[data-charge-value="negative"]')
-        }};
-
-        function updateChargeBalance() {{
-          const pH = Number(slider ? slider.value : 960) / 100;
-          const h = Math.pow(10, -pH);
-          const kw = Math.pow(10, -14);
-          const ka1 = Math.pow(10, -6.3374);
-          const ka2 = Math.pow(10, -10.3393);
-          const ct = 5.1641;
-          const sodium = 7.9545;
-          const denominator = (h * h) + (ka1 * h) + (ka1 * ka2);
-          const alpha1 = (ka1 * h) / denominator;
-          const alpha2 = (ka1 * ka2) / denominator;
-          const oh = kw / h;
-          const positive = sodium + h;
-          const negative = oh + (alpha1 * ct) + (2 * alpha2 * ct);
-          const residual = positive - negative;
-          const maxPool = Math.max(positive, negative, 0.001);
-          if (residualOutput) {{
-            residualOutput.textContent = residual.toFixed(3);
-          }}
-          if (values.positive) {{
-            values.positive.textContent = positive.toFixed(2);
-          }}
-          if (values.negative) {{
-            values.negative.textContent = negative.toFixed(2);
-          }}
-          if (meters.positive) {{
-            meters.positive.style.width = ((positive / maxPool) * 100).toFixed(1) + "%";
-          }}
-          if (meters.negative) {{
-            meters.negative.style.width = ((negative / maxPool) * 100).toFixed(1) + "%";
-          }}
-          if (beam) {{
-            const tilt = Math.max(Math.min(residual * 5, 10), -10);
-            beam.style.transform = "rotate(" + tilt.toFixed(2) + "deg)";
+          if (pathCarbonate) {{ pathCarbonate.textContent = carbonateText + " CO3"; }}
+          if (purityPotential) {{ purityPotential.textContent = bicarbonateText; }}
+          if (purityFill) {{ purityFill.style.width = bicarbonatePercent.toFixed(2) + "%"; }}
+          if (phOutput) {{ phOutput.textContent = state.pH.toFixed(2); }}
+          if (bicarbonateOutput) {{ bicarbonateOutput.textContent = bicarbonateText; }}
+          if (carbonateOutput) {{ carbonateOutput.textContent = carbonateText; }}
+          if (speciesFills.carbonic) {{ speciesFills.carbonic.style.width = carbonicPercent.toFixed(2) + "%"; }}
+          if (speciesFills.bicarbonate) {{ speciesFills.bicarbonate.style.width = bicarbonatePercent.toFixed(2) + "%"; }}
+          if (speciesFills.carbonate) {{ speciesFills.carbonate.style.width = carbonatePercent.toFixed(2) + "%"; }}
+          if (slider) {{
+            slider.setAttribute(
+              "aria-valuetext",
+              pressureText + " atm; " + bicarbonateText + " bicarbonate-form purity potential"
+            );
           }}
           if (status) {{
-            if (Math.abs(residual) < 0.08) {{
-              status.textContent = "Near charge closure: this trial pH is chemically self-consistent with the reconstructed species.";
-            }} else if (residual > 0) {{
-              status.textContent = "Positive charge is too high. The solver must shift pH/speciation until anion charge catches up.";
-            }} else {{
-              status.textContent = "Negative charge is too high. The solver must shift pH/speciation back toward charge closure.";
-            }}
+            status.textContent = bicarbonatePercent < 50
+              ? "Carbonate-rich region: insufficient pCO2 leaves most reactive carbon as carbonate impurity."
+              : bicarbonatePercent < 80
+                ? "Transition region: higher pCO2 is suppressing carbonate, but bicarbonate selectivity is not yet strong."
+                : "Bicarbonate-dominant region: higher pCO2 lowers carbonate impurity and raises NaHCO3-form product potential.";
           }}
         }}
+
         if (slider) {{
-          slider.addEventListener("input", updateChargeBalance);
+          slider.addEventListener("input", updatePco2PurityModule);
         }}
-        updateChargeBalance();
+        updatePco2PurityModule();
       }}
 
       function ensureCycleFlowVisualModule() {{
@@ -2545,7 +3004,7 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
       }}
 
       function initializeLayoutPhase() {{
-        ensureChargeBalanceVisualModule();
+        initializeSlideStudio();
         ensureDerivationStepperModule();
         ensureEquilibriumInterplayModule();
         ensureCycleFlowVisualModule();
@@ -3448,6 +3907,15 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         }});
       }}
 
+      /**
+       * Group each major heading and its siblings into one presentation slide.
+       * This mapping keeps document order authoritative while adding slide metadata.
+       * Inputs: none; reads the rendered headingNodes collection.
+       * Returns: section descriptors containing ids, titles, headings, and DOM nodes.
+       * Side effects: adds slide index/state attributes to walkthrough content nodes.
+       * Errors: DOM failures propagate to the guarded presentation
+       * initialization phase.
+       */
       function createSectionBlocks() {{
         const majorHeadings = headingNodes.filter(function (node) {{
           return String(node.tagName || "").toUpperCase() === "H2" && node.id;
@@ -3461,6 +3929,10 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
             }}
             nodes.push(sibling);
             sibling = sibling.nextElementSibling;
+          }}
+          for (const node of nodes) {{
+            node.setAttribute("data-slide-node", "true");
+            node.setAttribute("data-slide-index", String(index));
           }}
           return {{
             id: heading.id,
@@ -3706,6 +4178,14 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         }}
       }}
 
+      /**
+       * Select one bounded walkthrough section as the current slide.
+       * Centralizing selection keeps controls, TOC state, and slide visibility aligned.
+       * Inputs: index, a numeric or numeric-like zero-based section index.
+       * Returns: the bounded zero-based index selected for presentation.
+       * Side effects: updates navigation state, slide attributes, and control values.
+       * Errors: invalid numeric inputs safely resolve to the first available section.
+       */
       function setCurrentSectionIndex(index) {{
         if (!sectionHeadings.length) {{
           currentSectionIndex = 0;
@@ -3721,10 +4201,47 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         if (activeHeading && activeHeading.id) {{
           setActiveTocLink("#" + activeHeading.id);
         }}
+        syncPresentationSlide();
         syncSectionControls();
         return boundedIndex;
       }}
 
+      /**
+       * Apply active-slide attributes and update the visible widescreen counter.
+       * The attributes let CSS show one major section without changing document mode.
+       * Inputs: none; reads currentSectionIndex, sectionHeadings, and sectionBlocks.
+       * Returns: undefined.
+       * Side effects: mutates DOM attributes, counter text, presentation scroll
+       * state, and tile-reveal control availability.
+       * Errors: missing optional counter/content state is handled without throwing.
+       */
+      function syncPresentationSlide() {{
+        sectionBlocks.forEach(function (block) {{
+          const isActive = block.heading === sectionHeadings[currentSectionIndex];
+          for (const node of block.nodes) {{
+            node.setAttribute("data-slide-active", isActive ? "true" : "false");
+          }}
+        }});
+        if (slideFormat) {{
+          const slideNumber = sectionHeadings.length ? currentSectionIndex + 1 : 0;
+          slideFormat.textContent =
+            "16:9 Widescreen · " + slideNumber + " / " + sectionHeadings.length;
+        }}
+        if (document.body.classList.contains("presentation-mode")) {{
+          content.scrollTop = 0;
+        }}
+        // Slide visibility changed, so refresh reveal availability for the active slide.
+        updateTileRevealControls();
+      }}
+
+      /**
+       * Navigate to a section using slide replacement or document scrolling as needed.
+       * This preserves one control path for both widescreen and normal reading modes.
+       * Inputs: index (zero-based section index) and smoothScroll (boolean preference).
+       * Returns: undefined.
+       * Side effects: changes the current slide and may scroll the shell or document.
+       * Errors: missing sections or headings cause a safe no-op.
+       */
       function navigateToSection(index, smoothScroll) {{
         if (!sectionHeadings.length) {{
           return;
@@ -3732,6 +4249,13 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         const boundedIndex = setCurrentSectionIndex(index);
         const targetHeading = sectionHeadings[boundedIndex];
         if (!targetHeading) {{
+          return;
+        }}
+        if (document.body.classList.contains("presentation-mode")) {{
+          content.scrollTop = 0;
+          if (presentationShell && supportsScrollIntoView) {{
+            presentationShell.scrollIntoView({{ behavior: "auto", block: "start" }});
+          }}
           return;
         }}
         if (supportsScrollIntoView) {{
@@ -3814,6 +4338,14 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         markRevealNodes();
       }}
 
+      /**
+       * Enable or disable the section-based 16:9 presentation surface.
+       * The mode exists so the browser walkthrough aligns with a PowerPoint deck.
+       * Inputs: enabled, a value normalized to boolean presentation state.
+       * Returns: undefined.
+       * Side effects: updates body state, toggle copy, active slide, and shell scroll.
+       * Errors: absent optional controls or shell elements are handled as no-ops.
+       */
       function setPresentationMode(enabled) {{
         const isEnabled = Boolean(enabled);
         document.body.classList.toggle("presentation-mode", isEnabled);
@@ -3824,6 +4356,10 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         if (slideModeToggle) {{
           slideModeToggle.setAttribute("aria-pressed", String(isEnabled));
           slideModeToggle.textContent = "Slide Mode: " + (isEnabled ? "On" : "Off");
+        }}
+        syncPresentationSlide();
+        if (isEnabled && presentationShell && supportsScrollIntoView) {{
+          presentationShell.scrollIntoView({{ behavior: "auto", block: "start" }});
         }}
       }}
 
