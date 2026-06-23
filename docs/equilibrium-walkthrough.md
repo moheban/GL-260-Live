@@ -5,31 +5,58 @@
 Through this talk, we will:
 
 - understand how we currently make sodium bicarbonate here at CIL
-- equipment
-- challenges associated with making pure sodium bicarbonate
-- derive advanced equilibrium expressions
-- learn how to accurately calculate speciation @ different \(CO_{2}\) uptake
-- track and visualize live \(CO_{2}\) consumption while reaction is running
-- calculate speciation and understand when to stop reaction
+- equipment involved
+- past challenges associated with making pure sodium bicarbonate
+- investigate the equilibrium
+- learn how to control the equilibrium
+- understand the reaction kinetics
+- future improvements for this process and in general
 - improvements to final bicarb product QC and batch size
 
 ## So, how do we make it?
 
 ### Reactor setup
+<img src="assets\equilibrium-walkthrough\bicarb scheme.png"
+     alt="Sensor equipment used in the synthesis of sodium bicarbonate MPT"
+     style="width: 90%; display: block; margin: 1rem auto;">
 
-<img src="assets\equilibrium-walkthrough\bicarb reaction setup.jpg"
-     alt="Reactor setup used in the synthesis of sodium bicarbonate MPT"
-     style="width: 70%; display: block; margin: 1rem auto;">
+- 700 g NaOH (highest grade/purity available)
+- 2,200 g of sterile DI water
+- ~900g of \(CO_{2}\) (~750g to reach stoichiometric endpoint, ~150g to push equilibrium towards pure bicarbonate )
 
-*Reactor setup used in the synthesis of sodium bicarbonate MPT*
+**Reactor set up & Manifold**
+<div style="display: flex; gap: 1rem; align-items: flex-start;">
+  <img
+    src="assets\equilibrium-walkthrough\bicarb manifold.jpg"
+    alt="Manifold used in the synthesis of sodium bicarbonate MPT"
+    style="width: calc(50% - 0.5rem); height: auto;"
+  >
 
-### Reaction Manifold
+  <img
+    src="assets\equilibrium-walkthrough\bicarb reaction setup.jpg"
+    alt="Reactor setup used in the synthesis of sodium bicarbonate MPT"
+    style="width: calc(50% - 0.5rem); height: auto;"
+  >
+</div>
 
-<img src="assets\equilibrium-walkthrough\bicarb manifold.jpg"
-     alt="Manifold used in the synthesis of sodium bicarbonate MPT"
-     style="width: 70%; display: block; margin: 1rem auto;">
+- After the reaction is complete, \(CO_{2}\) is recovered from the reactor, manifold, and lines, preventing water from transferring into the recovery cylinder and damaging it.
+- Recovery pathway is different than the charge pathway
+- Recovery occurs through the SS gas washing bottle. This separates water from the 
+- After one week, the reaction is complete and the reactor is removed from the shaker.
+- Reactor weighs >100 lbs when loaded.
+---
 
-*Manifold used in the synthesis of sodium bicarbonate MPT*
+- Bulk is transferred into 2 5,000 mL Duran beakers and washed with 3L Acetone/beaker twice
+- Bulk is washed with 3L Diethyl ether/beaker twice
+- Drying occurs at room temp. Any heat used will shift the equilibrium towards carbonate
+- Drying takes ~2 days
+
+In total:
+Reaction: 5-7 days
+Workup: 0.5 days
+Drying: 2 days
+
+Total time: 8-10 days max
 
 ### Data Logging Equipment
 
@@ -37,7 +64,28 @@ Through this talk, we will:
      alt="Sensor equipment used in the synthesis of sodium bicarbonate MPT"
      style="width: 70%; display: block; margin: 1rem auto;">
 
-*Sensor equipment used for data logging*
+- GL-260 Data Logger
+- Constant voltage power supply (to provide sensors with a stable 5V reference -- important in obtaining high quality data)
+
+**Aquisition Settings**
+
+- one data point is taken/second
+- one data point/15 seconds is exported, the exported point is an average of the 15 preceeding data points (removes noise)
+
+**Data Processing**
+
+<img src="assets\equilibrium-walkthrough\Screenshot 2026-06-23 091145.png"
+     alt="Data analysis program"
+     style="width: 70%; display: block; margin: 1rem auto;">
+
+- Data is processed via Data Processing program 
+- Program imports raw CSV files from GL-260 and adds them to master sheet
+- Different selected sheets are stitched together
+- Program calculates first derivative (important for determining when reaction is complete)
+- Plots selected sheets
+- Manual/automatic cycle detection
+- Cycle uptake calculation
+- pH and speciation simulation
 
 ## What is the problem?
 
@@ -54,6 +102,65 @@ Through this talk, we will:
 3 years ago I started working on improving this process. I'll present everything ive learned. 
 
 Disclaimer: I LOVE math, so there is a lot of math. Dont worry! You wont need to think about it. We'll derive everything live and work through everything together. 
+
+## Worked Real-World Example: PR-24304 Sodium Bicarbonate Batch 1
+
+Lets take a look at a real batch run a few weeks ago.
+
+<div class="calculation-map">
+  <div class="calculation-map-heading">
+    <div>
+      <p class="calculation-map-title">PR-24304 Stoichiometry Map</p>
+      <p class="calculation-map-copy">Convert the saved profile NaOH charge into the ideal CO2 requirement for the bicarbonate endpoint.</p>
+    </div>
+    <div class="calculation-map-badge">
+      <span>Target</span>
+      <strong>772.4 g</strong>
+    </div>
+  </div>
+  <div class="calculation-map-grid three-up">
+    <div class="calculation-map-step">
+      <span>1. Profile charge</span>
+      \[
+      m_{\mathrm{NaOH,profile}} = 702.0\ \mathrm{g}
+      \]
+    </div>
+    <div class="calculation-map-step">
+      <span>2. NaOH moles</span>
+      \[
+      n_{\mathrm{NaOH,profile}} = \frac{702.0\ \mathrm{g}}{40.0\ \mathrm{g\ mol^{-1}}} = 17.55\ \mathrm{mol}
+      \]
+    </div>
+    <div class="calculation-map-step">
+      <span>3. Ideal CO2 endpoint</span>
+      \[
+      n_{\mathrm{CO_2,stoich}} = n_{\mathrm{NaOH,profile}} = 17.55\ \mathrm{mol}
+      \]
+      \[
+      m_{\mathrm{CO_2,stoich}} = 17.55\ \mathrm{mol} \times 44.01\ \mathrm{g\ mol^{-1}} \approx 772.4\ \mathrm{g}
+      \]
+    </div>
+  </div>
+</div>
+
+
+### Complete Run
+
+<img src="assets\equilibrium-walkthrough\pr-24304-batch-1-day-1-6-combined-triple-axis.png"
+     alt="pr-24304-batch-1-day-1-6-combined-triple-axis.png"
+     style="width: 80%; display: block; margin: 1rem auto;">
+
+### Predicted Speciation
+
+<img src="assets\equilibrium-walkthrough\pr-24304-batch-1-cycle-speciation-timeline-day-1-6.png"
+     alt="pr-24304-batch-1-cycle-speciation-timeline-day-1-6"
+     style="width: 80%; display: block; margin: 1rem auto;">
+
+Early in the run, high hydroxide activity drives carbonate formation. 
+As CO2 loading increases and hydroxide is consumed, the system moves through the carbonate-rich region and toward pure bicarbonate bicarbonate. 
+The HMW Pitzer model makes that crossover more realistic by correcting sodium-carbonate activities in the concentrated electrolyte regime.
+
+- Fun fact: this model is from the United States Geological Survey and was developed to help model mineral formation in high ionic strength conditions
 
 ## Simple equilibrium, right?
 
@@ -481,7 +588,7 @@ This process starts as a highly basic sodium hydroxide solution and uses absorbe
 ---
 
 ## Equilibrium Half-Reactions: Dipping Our Toes In
-Lets derive the half-equations and constants required to make all the calculations we want.
+Let's derive the half-equations and constants required to make all the calculations we want.
 - pH
 - Speciation
 
@@ -921,286 +1028,12 @@ Higher headspace \(p_{CO_2}\) facilitates bicarbonate formation, pushing the equ
 
 ---
 
-## Calculating Speciation and pH
-
-**I dont do any of the following math by hand, i wrote a program to do it for me. Some of the following math requires soklving for quartic roots**
-
-!!! note "Calculation Legend"
-    - \([H^+]\), \([\mathrm{OH^-}]\), \([\mathrm{CO_2^*}]\), \([\mathrm{HCO_3^-}]\), \([\mathrm{CO_3^{2-}}]\), \([\mathrm{Na^+}]\): concentration/molarity-like model terms [\(mol L^{-1}\)] or model-consistent concentration basis]
-    - \(C_{T}\): total inorganic carbon concentration on the same basis as reconstructed species
-    - \(\alpha_0\), \(\alpha_1\), \(\alpha_2\): species fractions
-    - \(D\): shared denominator in alpha-fraction identities
-    - \(R_{q}\): charge-balance residual on concentration basis (target is zero)
-    - \(x\): trial pH used by the numerical root search, with \([H^+] = 10^{-x}\)
-    - \(\epsilon_{\mathrm{charge}}\): accepted absolute charge-residual tolerance
-
-**We do not obtain \([H^+]\) from one isolated rearrangement because \([H^+]\) appears in water dissociation, every carbonate fraction, and charge balance at the same time. Instead, the model turns the full chemistry into one scalar function, \(R_q([H^+])\), and numerically finds the positive \([H^+]\) that makes \(R_q = 0\).**
-
-!!! info "Derivation Walkthrough"
-    **Goal:** calculate \([H^+]\) explicitly by solving charge balance, then recover pH and every carbonate species from that accepted root.
-
-    **Step-by-step interpretation:** bracket a trial pH, convert that trial to \([H^+]\), calculate \(D\), fractions, species, and hydroxide, evaluate \(R_q\), then move the bracket and repeat until the residual is sufficiently close to zero.
-
-    **Why this changes operation:** bicarbonate-control decisions are only trustworthy when one solved state satisfies both speciation and charge closure; otherwise purity guidance can point to the wrong operating region.
-
-<div class="calculation-map">
-  <div class="calculation-map-heading">
-    <div>
-      <p class="calculation-map-title">How the Solver Finds [H+], pH, and Speciation</p>
-      <p class="calculation-map-copy">Known carbon and sodium inputs define one charge-residual function. A bracketed root search changes pH until that function reaches zero.</p>
-    </div>
-    <div class="calculation-map-badge">
-      <span>Target</span>
-      <strong>\(R_q = 0\)</strong>
-    </div>
-  </div>
-  <div class="calculation-map-grid three-up">
-    <div class="calculation-map-step">
-      <span>1. Fix the known inputs</span>
-      \[
-      \{C_T,\ [\mathrm{Na^+}],\ K_{a1},\ K_{a2},\ K_w\}
-      \]
-      <p>These values stay fixed while the solver searches for the one charge-balanced hydrogen concentration.</p>
-    </div>
-    <div class="calculation-map-step">
-      <span>2. Choose a trial pH</span>
-      \[
-      x = \frac{x_{lo} + x_{hi}}{2}
-      \]
-      \[
-      h = [H^+]_{trial} = 10^{-x}
-      \]
-      <p>The search is performed in pH/log space because \([H^+]\) spans many orders of magnitude.</p>
-    </div>
-    <div class="calculation-map-step">
-      <span>3. Build the shared denominator</span>
-      \[
-      D(h) = h^2 + K_{a1}h + K_{a1}K_{a2}
-      \]
-      <p>This denominator converts the trial \(h\) into a complete carbonate distribution.</p>
-    </div>
-    <div class="calculation-map-step">
-      <span>4. Calculate fractions and species</span>
-      \[
-      \alpha_0=\frac{h^2}{D},\quad
-      \alpha_1=\frac{K_{a1}h}{D},\quad
-      \alpha_2=\frac{K_{a1}K_{a2}}{D}
-      \]
-      \[
-      [\mathrm{CO_2^*}]=\alpha_0C_T,\quad
-      [\mathrm{HCO_3^-}]=\alpha_1C_T,\quad
-      [\mathrm{CO_3^{2-}}]=\alpha_2C_T
-      \]
-    </div>
-    <div class="calculation-map-step">
-      <span>5. Calculate hydroxide and residual</span>
-      \[
-      [\mathrm{OH^-}] = \frac{K_w}{h}
-      \]
-      \[
-      R_q(h)=[\mathrm{Na^+}]+h-[\mathrm{OH^-}]-[\mathrm{HCO_3^-}]-2[\mathrm{CO_3^{2-}}]
-      \]
-    </div>
-    <div class="calculation-map-step">
-      <span>6. Move the bracket and repeat</span>
-      \[
-      R_q(x_{lo})R_q(x_{mid}) \le 0
-      \Rightarrow x_{hi}=x_{mid}
-      \]
-      \[
-      \text{otherwise}\quad x_{lo}=x_{mid}
-      \]
-      <p>Each iteration halves the remaining pH interval while preserving a sign change around the root.</p>
-    </div>
-  </div>
-  <div class="calculation-map-step">
-    <span>7. Accept [H+] and report the final state</span>
-    \[
-    |R_q(h^*)| \le \epsilon_{\mathrm{charge}}
-    \]
-    \[
-    [H^+] = h^*,\qquad \mathrm{pH}=-\log_{10}(h^*),\qquad
-    \{\alpha_0,\alpha_1,\alpha_2\}=\{\alpha_0(h^*),\alpha_1(h^*),\alpha_2(h^*)\}
-    \]
-    <p>The accepted root is reused for pH, hydroxide, fractions, and species; these outputs therefore describe the same charge-balanced state.</p>
-  </div>
-</div>
-
-Substituting the fraction equations directly into charge balance makes the one-variable solve explicit:
-
-\[R_q(h) = [\mathrm{Na^+}] + h - \frac{K_w}{h} - C_T\left(\frac{K_{a1}h + 2K_{a1}K_{a2}}{h^2 + K_{a1}h + K_{a1}K_{a2}}\right) = 0\]
-
-Everything on the right is known except \(h=[H^+]\). For each trial pH, the solver evaluates this expression. If \(R_q > 0\), the trial state has excess positive charge relative to the reconstructed anions. If \(R_q < 0\), it has excess negative charge. The sign tells the bracketed solver which half of the pH interval can still contain the zero crossing.
-
-The ideal concentration form above is the presentation-level calculation. In the concentrated HMW/Pitzer path, the same root-search flow uses activities and updates activity coefficients around the charge-balance solve. The Python closed-system fallback uses bracketed bisection with a quartic cross-check/fallback, while the accelerated path preserves the same residual-to-root-to-speciation handoff.
-
-### Deriving Alpha Fractions From the Equilibrium Constants
-
-The alpha fractions are not fitted fractions. They fall directly out of the carbonate acid equilibria once \([H^+]\) is known.
-
-<div class="calculation-map">
-  <div class="calculation-map-heading">
-    <div>
-      <p class="calculation-map-title">Alpha Fraction Derivation Map</p>
-      <p class="calculation-map-copy">Express bicarbonate and carbonate relative to the carbonic-acid basis, substitute those ratios into total carbon, then recover the shared denominator.</p>
-    </div>
-    <div class="calculation-map-badge">
-      <span>Closure</span>
-      <strong>\(\sum \alpha = 1\)</strong>
-    </div>
-  </div>
-  <div class="calculation-map-grid">
-    <div class="calculation-map-step">
-      <span>1. First dissociation</span>
-      \[
-      K_{a1} = \frac{[H^+] [\mathrm{HCO_3^-}]}{[\mathrm{CO_2^*}]}
-      \]
-      \[
-      [\mathrm{HCO_3^-}] = \frac{K_{a1}}{[H^+]} [\mathrm{CO_2^*}]
-      \]
-    </div>
-    <div class="calculation-map-step">
-      <span>2. Second dissociation</span>
-      \[
-      K_{a2} = \frac{[H^+] [\mathrm{CO_3^{2-}}]}{[\mathrm{HCO_3^-}]}
-      \]
-      \[
-      [\mathrm{CO_3^{2-}}] = \frac{K_{a2}}{[H^+]} [\mathrm{HCO_3^-}]
-      \]
-    </div>
-    <div class="calculation-map-step">
-      <span>3. Substitute bicarbonate ratio</span>
-      \[
-      [\mathrm{CO_3^{2-}}] = \frac{K_{a1}K_{a2}}{[H^+]^2} [\mathrm{CO_2^*}]
-      \]
-    </div>
-    <div class="calculation-map-step">
-      <span>4. Total carbon closure</span>
-      \[
-      C_T = [\mathrm{CO_2^*}] + [\mathrm{HCO_3^-}] + [\mathrm{CO_3^{2-}}]
-      \]
-      \[
-      C_T = [\mathrm{CO_2^*}] \left(1 + \frac{K_{a1}}{[H^+]} + \frac{K_{a1}K_{a2}}{[H^+]^2}\right)
-      \]
-    </div>
-  </div>
-  <div class="calculation-map-step">
-    <span>5. Shared denominator and fraction closure</span>
-    \[
-    D = [H^+]^2 + K_{a1}[H^+] + K_{a1}K_{a2}
-    \]
-    \[
-    \alpha_0 + \alpha_1 + \alpha_2 = 1
-    \]
-  </div>
-</div>
-
-The pH solver is therefore doing one central job: find the \([H^+]\) value where these fractions, hydroxide from \(K_w\), sodium charge, and total carbon all agree at the same time.
-
 ## Derivation Summary
 
 <div class="inline-module-anchor" data-inline-module="derivation-stepper"></div>
 
-## NaOH-CO2 Pitzer (HMW-Focused) Calculation Path: Even more complex
-
-!!! note "Calculation Legend"
-    - `I`: ionic strength [\(mol kg^{-1}\)]
-    - \(m_{i}\), \(m_{j}\), \(m_{k}\): species molalities [\(mol kg^{-1}\)]
-    - \(z_{i}\): ion charge number
-    - \(\gamma_i\): activity coefficient
-    - \(B_{ij}\), \(C_{ij}\), \(\Psi_{ijk}\), \(F(I)\), \(Z\): Pitzer-model terms used in the focused implementation
-    - \(r_1=m_{\mathrm{HCO_3^-}}/m_{\mathrm{CO_2^*}}\): bicarbonate-to-carbonic-acid ratio [dimensionless]
-    - \(r_2=m_{\mathrm{CO_3^{2-}}}/m_{\mathrm{HCO_3^-}}\): carbonate-to-bicarbonate ratio [dimensionless]
-    - \(r_1r_2=m_{\mathrm{CO_3^{2-}}}/m_{\mathrm{CO_2^*}}\): derived carbonate-to-carbonic-acid ratio used in total-carbon reconstruction [dimensionless]
-    - In this equilibrium section, \(r_1\) and \(r_2\) are dimensionless species ratios; they are distinct from the kinetic rate symbols introduced in Section 7.
-    - \(m_{CT}\): total inorganic carbon molality [\(mol kg^{-1}\)]
-
-The NaOH-focused Pitzer path adds activity corrections at high ionic strength while preserving charge and carbon closures each cycle.
-
-The NaOH Pitzer path uses activity-corrected species balances and charge balance with focused Pitzer interactions (\(Na^+\) with \(OH^-\), \(CO_{3}^2^-\), \(CO_{3}^2^-\), plus selected \(\theta\)/\(\Psi\) terms).
-
-<div class="calculation-map">
-  <div class="calculation-map-heading">
-    <div>
-      <p class="calculation-map-title">Focused Pitzer Solver Map</p>
-      <p class="calculation-map-copy">Compute ionic strength, correct activities, use activity-corrected species ratios, then enforce total-carbon and charge closure each cycle.</p>
-    </div>
-    <div class="calculation-map-badge">
-      <span>Path</span>
-      <strong>HMW</strong>
-    </div>
-  </div>
-  <div class="calculation-map-grid">
-    <div class="calculation-map-step">
-      <span>1. Ionic strength</span>
-      \[
-      I = \frac{1}{2} \sum_i (m_i \times z_i^2)
-      \]
-    </div>
-    <div class="calculation-map-step">
-      <span>2. Activity coefficients</span>
-      \[
-      \ln(\gamma_i) = (z_i^2 \times F(I)) + \sum_j \left(m_j \times (2 \times B_{ij} + Z \times C_{ij})\right) + \sum_{j,k} \left(m_j \times m_k \times \Psi_{ijk}\right) + \cdots
-      \]
-    </div>
-    <div class="calculation-map-step">
-      <span>3. Bicarbonate ratio</span>
-      \[
-      r_1 = \frac{K_{a1}}{\gamma_{\mathrm{H^+}} \times \gamma_{\mathrm{HCO_3^-}} \times [H^+]}
-      \]
-      \[
-      r_1 = \frac{m_{\mathrm{HCO_3^-}}}{m_{\mathrm{CO_2^*}}}
-      \]
-    </div>
-    <div class="calculation-map-step">
-      <span>4. Carbonate ratio</span>
-      \[
-      r_2 = \frac{K_{a2} \times \gamma_{\mathrm{HCO_3^-}}}{\gamma_{\mathrm{H^+}} \times \gamma_{\mathrm{CO_3^{2-}}} \times [H^+]}
-      \]
-      \[
-      r_2 = \frac{m_{\mathrm{CO_3^{2-}}}}{m_{\mathrm{HCO_3^-}}}
-      \]
-    </div>
-  </div>
-  <div class="calculation-map-step">
-    <span>5. Total carbon closure</span>
-    \[
-    m_{CT} = m_{\mathrm{CO_2^*}} + m_{\mathrm{HCO_3^-}} + m_{\mathrm{CO_3^{2-}}}
-    \]
-  </div>
-  <p class="calculation-map-callout">The charge-balance closure is then solved iteratively each cycle using the corrected activities.</p>
-</div>
-
-### Advanced Model Information: What HMW / PHREEQC-NaCO3 Pairing Means
-
-!!! note "Calculation Legend"
-    - `HMW`: Harvie-Moller-Weare Pitzer parameter family for concentrated electrolyte solutions.
-    - `PHREEQC pitzer.dat`: database source for the Pitzer interaction parameters used by the focused GL-260 path.
-    - `Na-CO3 pairing`: shorthand for explicitly correcting sodium interactions with carbonate-family ions.
-    - \(B^0\), \(B^1\), \(C^0\): pair-interaction terms for a cation-anion pair.
-    - \(Θ\), \(Ψ\): same-charge and ternary interaction terms that capture higher-order electrolyte behavior.
-
-The phrase **HMW / PHREEQC-NaCO3 Pairing** means GL-260 is not just solving carbonate acid-base equations in isolation. It reads the focused Pitzer parameter set from `pitzer.dat` and applies the sodium-carbonate interaction terms that dominate this chemistry:
-
-- \(Na^+\) with \(OH^-\)
-- \(Na^+\) with \(HCO_{3}^-\)
-- \(Na^+\) with \(CO_{3}^{2-}\)
-- \(Θ_{\mathrm{CO_3^{2-},OH^-}}\)
-- \(Ψ_{\mathrm{CO_3^{2-},Na^+,OH^-}}\)
-- \(Ψ_{\mathrm{CO_3^{2-},OH^-,Na^+}}\)
-
-The model converts these database terms into the compact parameters used by the Rust and Python solver cores:
-
-```latex
-\{B^0_{\mathrm{Na,OH}}, B^1_{\mathrm{Na,OH}}, C^0_{\mathrm{Na,OH}}, B^0_{\mathrm{Na,HCO_3}}, B^1_{\mathrm{Na,HCO_3}}, C^0_{\mathrm{Na,HCO_3}}, B^0_{\mathrm{Na,CO_3}}, B^1_{\mathrm{Na,CO_3}}, C^0_{\mathrm{Na,CO_3}}, \Theta_{\mathrm{CO_3,OH}}, \Psi_{\mathrm{CO_3,Na,OH}}, \Psi_{\mathrm{CO_3,HCO_3,Na}}\}
-```
-
-Operationally, this yields more accurate calculations than an ideal model because sodium carbonate and sodium bicarbonate are not passive spectators. Sodium association changes the effective activities of the species present, and those activity changes shift the pH and fraction crossover. That is the specific error mode the HMW path is meant to avoid: a misleading carbonate-buffer plateau or incorrect pH slope when the solution is highly loaded with sodium.
-
----
-
 ## Reaction Kinetics
-Equilibrium tells us where the chemistry can settle after a cycle. Kinetics explains how quickly the process moves toward that state while CO2 is being contacted with the alkaline liquid.
+Equilibrium tells us about the speciation at each cycle. Kinetics explains how quickly the process moves toward that state while CO2 is being consumed.
 
 !!! note "Calculation Legend"
     - \(r_{\mathrm{CO_2}}\): volumetric CO2 absorption/reaction rate [\(mol L^{-1} s^{-1}\)] or model-consistent rate basis
@@ -1212,7 +1045,7 @@ Equilibrium tells us where the chemistry can settle after a cycle. Kinetics expl
     - \(E\): enhancement factor showing how fast reaction increases apparent CO2 absorption
     - \(\tau_{\mathrm{mix}}\), \(\tau_{\mathrm{rxn}}\), \(\tau_{\mathrm{mt}}\): mixing, reaction, and mass-transfer time scales [seconds]
 
-In this section, \(\mathrm{CO_2^*}\) is how the model treats dissolved CO2. In highly basic solution that pool is rapidly consumed by hydroxide, so the kinetic shorthand often combines hydration and bicarbonate formation into one apparent fast step.
+In this section, \(\mathrm{CO_2^*}\) is how the model treats dissolved \(\mathrm{CO_{2}}\). In highly basic solution that pool is rapidly consumed by hydroxide, so the kinetic shorthand often combines \(\mathrm{CO_{2}}\) absorption and bicarbonate formation into one apparent fast step.
 
 <table class="reaction-map">
 <thead>
@@ -1293,7 +1126,7 @@ In this section, \(\mathrm{CO_2^*}\) is how the model treats dissolved CO2. In h
   </div>
 </div>
 
-These balances describe a moving cycle, not the final equilibrium solve. CO2 must first cross from gas to liquid, hydrate into the \(\mathrm{CO_2^*}\) carbonic-acid basis, react in the liquid, and then mix through the batch. GL-260's equilibrium model consumes the cycle-level uptake after the event has been identified; the kinetic interpretation explains the pressure and temperature shape during the event.
+These balances describe a moving cycle, not the final equilibrium. \(\mathrm{CO_{2}}\) must first cross from gas to liquid, before reacting.
 
 ### Liquid-Gas Interaction
 
@@ -1347,15 +1180,15 @@ The physical supply of dissolved CO2 is controlled by the driving force between 
   </div>
 </div>
 
-This equation is the kinetic version of the pCO2 control lever. Higher \(p_{\mathrm{CO_2}}\) does not only shift the equilibrium distribution toward bicarbonate; it also raises the instantaneous driving force for absorption. Better agitation, gas dispersion, and interfacial contact increase \(k_La\), which lets the same headspace pressure produce faster usable CO2 transfer.
+This equation is the kinetic version of the pCO2 control lever. Higher \(p_{\mathrm{CO_2}}\) not only shifts the equilibrium toward bicarbonate, it also raises the instantaneous driving force for absorption. Better agitation, gas dispersion, and interfacial contact increase \(k_La\), which lets the same headspace pressure produce faster usable CO2 transfer.
 
 where \(E > 1\) means the liquid reaction is consuming dissolved CO2 fast enough to increase the apparent absorption rate.
 
-That is the mass-transfer-limited regime: the chemistry is ready to react, but the gas-liquid interface controls how quickly carbon can enter the solution.
+That is the mass transfer limited regime: The gas-liquid interface controls how quickly carbon can enter the solution.
 
 ### Pseudo-First-Order View at High Hydroxide Concentration
 
-During early caustic-rich cycles, hydroxide is abundant compared with dissolved CO2. Over a short interval, \(a_{\mathrm{OH^-}}\) can be treated as locally high and slowly varying, which collapses the first rate expression into a pseudo-first-order form:
+During early cycles, hydroxide is abundant compared with dissolved CO2. Over a short interval, \(a_{\mathrm{OH^-}}\) can be treated as locally high and slowly varying, which collapses the first rate expression into a pseudo-first-order form:
 
 <div class="calculation-map">
   <div class="calculation-map-heading">
@@ -1390,13 +1223,13 @@ During early caustic-rich cycles, hydroxide is abundant compared with dissolved 
   </div>
 </div>
 
-The interpretation is direct: early in the run, high hydroxide activity makes CO2 consumption very fast, so pressure can fall sharply after a charge. As hydroxide is consumed, \(k'_1\) falls, pressure decay slows, and the batch becomes less able to instantly pull CO2 out of the headspace.
+Early in the run, high hydroxide activity makes CO2 consumption very fast, so pressure can fall sharply after a charge. As hydroxide is consumed, \(k'_1\) falls, pressure decay slows, and the batch becomes less able to instantly pull CO2 out of the headspace.
 
 This same logic explains the carbonate-rich middle region. If hydroxide remains high while bicarbonate has already been formed, the second step \(r_2 = k_2 \times a_{\mathrm{HCO_3^-}} \times a_{\mathrm{OH^-}}\) can keep running. Lowering \(a_{\mathrm{OH^-}}\) through additional CO2 loading suppresses \(r_2\), which is why the process eventually moves away from carbonate dominance and toward the bicarbonate-rich endpoint.
 
 ### Time-Scale Test for Interpreting Cycle Shape
 
-For operations, the useful question is which time scale is slowest:
+Which time scale is slowest:
 
 <div class="calculation-map">
   <div class="calculation-map-heading">
@@ -1454,6 +1287,80 @@ For operations, the useful question is which time scale is slowest:
   </div>
 </div>
 
+## Why does this all matter?
+
+<img src="assets\equilibrium-walkthrough\bicarb manifold.jpg"
+     alt="Manifold used in the synthesis of sodium bicarbonate MPT"
+     style="width: 75%; display: block; margin: 1rem auto;">
+
+**Automation**
+
+This manifold was set up with the intention of fitting it with electronically controlled pneumatically actuated valves.
+
+In order to program a computer to automate something like this, we need to understand it on a deeper level ourselves.
+
+<div style="display: flex; gap: 1rem; align-items: flex-start;">
+  <img
+    src="assets/equilibrium-walkthrough/bicarb reaction setup.jpg"
+    alt="Reactor setup used in sodium bicarbonate synthesis"
+    style="width: calc(50% - 0.5rem); height: auto;"
+  >
+
+  <img
+    src="assets\equilibrium-walkthrough\pr-24304-batch-1-day-1-6-combined-triple-axis.png"
+    alt="Description of the second photo"
+    style="width: calc(50% - 0.5rem); height: auto;"
+  >
+</div>
+
+**Reactor**
+
+- The reactor needs to be removed from the shaker and manifold, opened, and blended twice
+
+  - After NaOH is consumed and we have mostly carbonate
+  - After the reaction seems to stall, blending helps bring the reaction towards 98-100% bicarbonate
+
+### Synthesis Time
+
+- The entire synthesis, including blending, now only takes 7 days (depending on when you start)
+- No stalling/unexpected behavior
+- Consistent 90% yield
+- Consistent 1,300-1,350g batch size
+
+### Supply Chain Optimization
+
+- New item # was created **CLM-185-Z-BICARB**
+- **CLM-185-Z-BICARB** now is loaded with 46 moles/2,000 g of CO2, which provides enough pressure to complete 2 batches with recovery cylinder.
+- Once bulk pressure reaches 500 PSI, the bulk is transferred into the recovery cylinder to increase the effective pressure we are able to deliver to the reactor
+
+## How has Bicarb production been with all of this understanding?
+
+<img src="assets\equilibrium-walkthrough\Screenshot 2026-06-22 143155.png"
+     alt="Batch Ledger"
+     style="width: 90%; display: block; margin: 1rem auto;">
+
+- consistent batch size
+- consistent pH
+- QC has not failed once.
+- 1,300g / week
+- 100,000 data points / run
+  - easily plot, analyze, and visualize collected data allowing for informed decisions on endpoint/blending
+- standardized manifold
+  - no more chasing leaks
+  - safer and easier to operate
+- GL-260 data logging
+- GL-260 Data Processing program
+  - can plot anything  
+
+
+## Questions?
+
+<img src="assets\equilibrium-walkthrough\satan.jpg"
+     alt="good boy"
+     style="width: 40%; display: block; margin: 1rem auto;">
+
+## Supplementary Sections
+
 ### How This Connects to GL-260 Cycle Detection
 
 GL-260 does not need to solve a full kinetic ODE model to use kinetics operationally. The detected cycle provides an integrated uptake event, and the equilibrium solver uses that event as the carbon-loading increment:
@@ -1489,7 +1396,7 @@ For presentation purposes, the clean separation is:
 
 ---
 
-## Cycle Uptake Math
+### Cycle Uptake Math
 Cycle-level uptake is converted into cumulative carbon loading, which becomes the cycle-by-cycle driver of equilibrium state updates.
 
 !!! info "Derivation Walkthrough"
@@ -1602,7 +1509,7 @@ When uptake is inferred from pressure-drop per cycle:
 
 ---
 
-## Integrated Worked Examples: From CO2 Uptake to pH and Speciation
+### Integrated Worked Examples: From CO2 Uptake to pH and Speciation
 
 This section brings the preceding derivations together into one repeatable calculation path. Each example starts with a measured cumulative \(CO_{2}\) uptake, converts it to the total-carbon basis, identifies the stoichiometric region, applies the focused HMW/Pitzer activity correction, closes charge balance, and reports the resulting pH and carbonate-family speciation.
 
@@ -2381,7 +2288,7 @@ Because \(950\ \mathrm{g} > 770.2\ \mathrm{g}\), the measured uptake exceeds the
 
 ---
 
-## Worked NaOH-Pitzer Simulation Table (Synthetic Cycles to 900 g)
+### Worked NaOH-Pitzer Simulation Table (Synthetic Cycles to 900 g)
 
 !!! note "Calculation Legend"
     - `CT`: total inorganic carbon molality [\(mol kg^{-1}\)]
@@ -2418,111 +2325,281 @@ Interpretation:
 - Around `~385 g` cumulative CO2, the system approaches Stage-1 equivalence (NaOH mostly consumed).
 - By late cycles, bicarbonate dominates and pH approaches the bicarbonate-buffer region.
 
-## Worked Real-World Example: PR-24304 Sodium Bicarbonate Batch 1
+### Calculating Speciation and pH
 
-This section connects the derivation to a real GL-260 presentation artifact rather than the locked synthetic cycle sequence.
-
-### Profile Basis and Stoichiometric Translation
+**I dont do any of the following math by hand, i wrote a program to do it for me. Some of the following math requires soklving for quartic roots**
 
 !!! note "Calculation Legend"
-    - `profile`: saved GL-260 analysis configuration used to reproduce plotting and reaction-basis context.
-    - \(m_{\mathrm{NaOH,profile}}\): NaOH charge from the profile [`g`]
-    - \(n_{\mathrm{NaOH,profile}}\): NaOH moles implied by the profile [`mol`]
-    - \(m_{\mathrm{CO_2,stoich}}\): CO2 mass required for the ideal one-to-one NaOH-to-NaHCO3 endpoint [`g`]
+    - \([H^+]\), \([\mathrm{OH^-}]\), \([\mathrm{CO_2^*}]\), \([\mathrm{HCO_3^-}]\), \([\mathrm{CO_3^{2-}}]\), \([\mathrm{Na^+}]\): concentration/molarity-like model terms [\(mol L^{-1}\)] or model-consistent concentration basis]
+    - \(C_{T}\): total inorganic carbon concentration on the same basis as reconstructed species
+    - \(\alpha_0\), \(\alpha_1\), \(\alpha_2\): species fractions
+    - \(D\): shared denominator in alpha-fraction identities
+    - \(R_{q}\): charge-balance residual on concentration basis (target is zero)
+    - \(x\): trial pH used by the numerical root search, with \([H^+] = 10^{-x}\)
+    - \(\epsilon_{\mathrm{charge}}\): accepted absolute charge-residual tolerance
 
-The selected profile is:
+**We do not obtain \([H^+]\) from one isolated rearrangement because \([H^+]\) appears in water dissociation, every carbonate fraction, and charge balance at the same time. Instead, the model turns the full chemistry into one scalar function, \(R_q([H^+])\), and numerically finds the positive \([H^+]\) that makes \(R_q = 0\).**
 
-```text
-profiles/PR-24304 CLM-441-MPT Sodium Bicarbonate Batch 1 of 2.json
-```
+!!! info "Derivation Walkthrough"
+    **Goal:** calculate \([H^+]\) explicitly by solving charge balance, then recover pH and every carbonate species from that accepted root.
 
-Its reaction basis is `NaOH + CO2 -> NaHCO3` with `702.0 g` sodium hydroxide starting mass.
+    **Step-by-step interpretation:** bracket a trial pH, convert that trial to \([H^+]\), calculate \(D\), fractions, species, and hydroxide, evaluate \(R_q\), then move the bracket and repeat until the residual is sufficiently close to zero.
+
+    **Why this changes operation:** bicarbonate-control decisions are only trustworthy when one solved state satisfies both speciation and charge closure; otherwise purity guidance can point to the wrong operating region.
 
 <div class="calculation-map">
   <div class="calculation-map-heading">
     <div>
-      <p class="calculation-map-title">PR-24304 Stoichiometry Map</p>
-      <p class="calculation-map-copy">Convert the saved profile NaOH charge into the ideal CO2 requirement for the bicarbonate endpoint.</p>
+      <p class="calculation-map-title">How the Solver Finds [H+], pH, and Speciation</p>
+      <p class="calculation-map-copy">Known carbon and sodium inputs define one charge-residual function. A bracketed root search changes pH until that function reaches zero.</p>
     </div>
     <div class="calculation-map-badge">
       <span>Target</span>
-      <strong>772.4 g</strong>
+      <strong>\(R_q = 0\)</strong>
     </div>
   </div>
   <div class="calculation-map-grid three-up">
     <div class="calculation-map-step">
-      <span>1. Profile charge</span>
+      <span>1. Fix the known inputs</span>
       \[
-      m_{\mathrm{NaOH,profile}} = 702.0\ \mathrm{g}
+      \{C_T,\ [\mathrm{Na^+}],\ K_{a1},\ K_{a2},\ K_w\}
+      \]
+      <p>These values stay fixed while the solver searches for the one charge-balanced hydrogen concentration.</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>2. Choose a trial pH</span>
+      \[
+      x = \frac{x_{lo} + x_{hi}}{2}
+      \]
+      \[
+      h = [H^+]_{trial} = 10^{-x}
+      \]
+      <p>The search is performed in pH/log space because \([H^+]\) spans many orders of magnitude.</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>3. Build the shared denominator</span>
+      \[
+      D(h) = h^2 + K_{a1}h + K_{a1}K_{a2}
+      \]
+      <p>This denominator converts the trial \(h\) into a complete carbonate distribution.</p>
+    </div>
+    <div class="calculation-map-step">
+      <span>4. Calculate fractions and species</span>
+      \[
+      \alpha_0=\frac{h^2}{D},\quad
+      \alpha_1=\frac{K_{a1}h}{D},\quad
+      \alpha_2=\frac{K_{a1}K_{a2}}{D}
+      \]
+      \[
+      [\mathrm{CO_2^*}]=\alpha_0C_T,\quad
+      [\mathrm{HCO_3^-}]=\alpha_1C_T,\quad
+      [\mathrm{CO_3^{2-}}]=\alpha_2C_T
       \]
     </div>
     <div class="calculation-map-step">
-      <span>2. NaOH moles</span>
+      <span>5. Calculate hydroxide and residual</span>
       \[
-      n_{\mathrm{NaOH,profile}} = \frac{702.0\ \mathrm{g}}{40.0\ \mathrm{g\ mol^{-1}}} = 17.55\ \mathrm{mol}
+      [\mathrm{OH^-}] = \frac{K_w}{h}
+      \]
+      \[
+      R_q(h)=[\mathrm{Na^+}]+h-[\mathrm{OH^-}]-[\mathrm{HCO_3^-}]-2[\mathrm{CO_3^{2-}}]
       \]
     </div>
     <div class="calculation-map-step">
-      <span>3. Ideal CO2 endpoint</span>
+      <span>6. Move the bracket and repeat</span>
       \[
-      n_{\mathrm{CO_2,stoich}} = n_{\mathrm{NaOH,profile}} = 17.55\ \mathrm{mol}
+      R_q(x_{lo})R_q(x_{mid}) \le 0
+      \Rightarrow x_{hi}=x_{mid}
       \]
       \[
-      m_{\mathrm{CO_2,stoich}} = 17.55\ \mathrm{mol} \times 44.01\ \mathrm{g\ mol^{-1}} \approx 772.4\ \mathrm{g}
+      \text{otherwise}\quad x_{lo}=x_{mid}
       \]
+      <p>Each iteration halves the remaining pH interval while preserving a sign change around the root.</p>
     </div>
+  </div>
+  <div class="calculation-map-step">
+    <span>7. Accept [H+] and report the final state</span>
+    \[
+    |R_q(h^*)| \le \epsilon_{\mathrm{charge}}
+    \]
+    \[
+    [H^+] = h^*,\qquad \mathrm{pH}=-\log_{10}(h^*),\qquad
+    \{\alpha_0,\alpha_1,\alpha_2\}=\{\alpha_0(h^*),\alpha_1(h^*),\alpha_2(h^*)\}
+    \]
+    <p>The accepted root is reused for pH, hydroxide, fractions, and species; these outputs therefore describe the same charge-balanced state.</p>
   </div>
 </div>
 
-This number is a presentation anchor: it is the ideal CO2 requirement for complete conversion to sodium bicarbonate before yield losses, gas holdup uncertainty, incomplete absorption, or measurement corrections are considered.
+Substituting the fraction equations directly into charge balance makes the one-variable solve explicit:
 
-### Reading the Combined Triple-Axis Plot
+\[R_q(h) = [\mathrm{Na^+}] + h - \frac{K_w}{h} - C_T\left(\frac{K_{a1}h + 2K_{a1}K_{a2}}{h^2 + K_{a1}h + K_{a1}K_{a2}}\right) = 0\]
 
-![PR-24304 Batch 1 Day 1-6 combined triple-axis plot](assets/equilibrium-walkthrough/pr-24304-batch-1-day-1-6-combined-triple-axis.png)
+Everything on the right is known except \(h=[H^+]\). For each trial pH, the solver evaluates this expression. If \(R_q > 0\), the trial state has excess positive charge relative to the reconstructed anions. If \(R_q < 0\), it has excess negative charge. The sign tells the bracketed solver which half of the pH interval can still contain the zero crossing.
 
-The combined triple-axis plot is the process-history view. During a live explanation, read it from left to right as the experimental record:
+The ideal concentration form above is the presentation-level calculation. In the concentrated HMW/Pitzer path, the same root-search flow uses activities and updates activity coefficients around the charge-balance solve. The Python closed-system fallback uses bracketed bisection with a quartic cross-check/fallback, while the accelerated path preserves the same residual-to-root-to-speciation handoff.
 
-- Reactor pressure shows each CO2 contact/reaction event.
-- The pressure derivative highlights where pressure is changing fastest, which helps identify uptake windows and cycle boundaries.
-- Reactor/manifold temperature traces show whether thermal behavior could be influencing pressure, rate, or inferred gas uptake.
+### Deriving Alpha Fractions From the Equilibrium Constants
 
-The equilibrium math does not replace this plot. The plot tells GL-260 where the physical events are; the equilibrium model interprets what those events imply for pH and carbonate speciation.
+The alpha fractions are not fitted fractions. They fall directly out of the carbonate acid equilibria once \([H^+]\) is known.
 
-### Reading the Speciation Timeline Plot
+<div class="calculation-map">
+  <div class="calculation-map-heading">
+    <div>
+      <p class="calculation-map-title">Alpha Fraction Derivation Map</p>
+      <p class="calculation-map-copy">Express bicarbonate and carbonate relative to the carbonic-acid basis, substitute those ratios into total carbon, then recover the shared denominator.</p>
+    </div>
+    <div class="calculation-map-badge">
+      <span>Closure</span>
+      <strong>\(\sum \alpha = 1\)</strong>
+    </div>
+  </div>
+  <div class="calculation-map-grid">
+    <div class="calculation-map-step">
+      <span>1. First dissociation</span>
+      \[
+      K_{a1} = \frac{[H^+] [\mathrm{HCO_3^-}]}{[\mathrm{CO_2^*}]}
+      \]
+      \[
+      [\mathrm{HCO_3^-}] = \frac{K_{a1}}{[H^+]} [\mathrm{CO_2^*}]
+      \]
+    </div>
+    <div class="calculation-map-step">
+      <span>2. Second dissociation</span>
+      \[
+      K_{a2} = \frac{[H^+] [\mathrm{CO_3^{2-}}]}{[\mathrm{HCO_3^-}]}
+      \]
+      \[
+      [\mathrm{CO_3^{2-}}] = \frac{K_{a2}}{[H^+]} [\mathrm{HCO_3^-}]
+      \]
+    </div>
+    <div class="calculation-map-step">
+      <span>3. Substitute bicarbonate ratio</span>
+      \[
+      [\mathrm{CO_3^{2-}}] = \frac{K_{a1}K_{a2}}{[H^+]^2} [\mathrm{CO_2^*}]
+      \]
+    </div>
+    <div class="calculation-map-step">
+      <span>4. Total carbon closure</span>
+      \[
+      C_T = [\mathrm{CO_2^*}] + [\mathrm{HCO_3^-}] + [\mathrm{CO_3^{2-}}]
+      \]
+      \[
+      C_T = [\mathrm{CO_2^*}] \left(1 + \frac{K_{a1}}{[H^+]} + \frac{K_{a1}K_{a2}}{[H^+]^2}\right)
+      \]
+    </div>
+  </div>
+  <div class="calculation-map-step">
+    <span>5. Shared denominator and fraction closure</span>
+    \[
+    D = [H^+]^2 + K_{a1}[H^+] + K_{a1}K_{a2}
+    \]
+    \[
+    \alpha_0 + \alpha_1 + \alpha_2 = 1
+    \]
+  </div>
+</div>
 
-![PR-24304 Batch 1 Day 1-6 cycle speciation timeline](assets/equilibrium-walkthrough/pr-24304-batch-1-cycle-speciation-timeline-day-1-6.png)
+The pH solver is therefore doing one central job: find the \([H^+]\) value where these fractions, hydroxide from \(K_w\), sodium charge, and total carbon all agree at the same time.
 
-The speciation timeline maps detected cycle progression and estimated CO2 loading into sodium-basis species fractions:
 
-- `NaOH %` indicates remaining caustic character.
-- `Na2CO3 %` indicates carbonate-rich intermediate behavior.
-- `NaHCO3 %` indicates the desired bicarbonate-forming endpoint.
-- Measured pH anchors, when present, correct the estimated pH and speciation path rather than being treated as separate annotations.
+### NaOH-CO2 Pitzer (HMW-Focused) Calculation Path: Even more complex
 
-Early in the run, high hydroxide activity drives carbonate formation. 
-As CO2 loading increases and hydroxide is consumed, the system moves through the carbonate-rich region and toward bicarbonate dominance. 
-The HMW Pitzer model makes that crossover more realistic by correcting sodium-carbonate activities in the concentrated electrolyte regime.
+!!! note "Calculation Legend"
+    - `I`: ionic strength [\(mol kg^{-1}\)]
+    - \(m_{i}\), \(m_{j}\), \(m_{k}\): species molalities [\(mol kg^{-1}\)]
+    - \(z_{i}\): ion charge number
+    - \(\gamma_i\): activity coefficient
+    - \(B_{ij}\), \(C_{ij}\), \(\Psi_{ijk}\), \(F(I)\), \(Z\): Pitzer-model terms used in the focused implementation
+    - \(r_1=m_{\mathrm{HCO_3^-}}/m_{\mathrm{CO_2^*}}\): bicarbonate-to-carbonic-acid ratio [dimensionless]
+    - \(r_2=m_{\mathrm{CO_3^{2-}}}/m_{\mathrm{HCO_3^-}}\): carbonate-to-bicarbonate ratio [dimensionless]
+    - \(r_1r_2=m_{\mathrm{CO_3^{2-}}}/m_{\mathrm{CO_2^*}}\): derived carbonate-to-carbonic-acid ratio used in total-carbon reconstruction [dimensionless]
+    - In this equilibrium section, \(r_1\) and \(r_2\) are dimensionless species ratios; they are distinct from the kinetic rate symbols introduced in Section 7.
+    - \(m_{CT}\): total inorganic carbon molality [\(mol kg^{-1}\)]
 
-## How has Bicarb production been with all of this understanding?
+The NaOH-focused Pitzer path adds activity corrections at high ionic strength while preserving charge and carbon closures each cycle.
 
-<img src="assets\equilibrium-walkthrough\Screenshot 2026-06-22 143155.png"
-     alt="Batch Ledger"
-     style="width: 90%; display: block; margin: 1rem auto;">
+The NaOH Pitzer path uses activity-corrected species balances and charge balance with focused Pitzer interactions (\(Na^+\) with \(OH^-\), \(CO_{3}^2^-\), \(CO_{3}^2^-\), plus selected \(\theta\)/\(\Psi\) terms).
 
-- consistent batch size
-- consistent pH
-- QC has not failed once.
-- 1,300g / week
-- 100,000 data points / run
-  - easily plot, analyze, and visualize collected data allowing for informed decisions on endpoint/blending
-- standardized manifold
-  - no more chasing leaks
-  - safer and easier to operate
-- GL-260 data logging
-- GL-260 Data Processing program
-  - can plot anything  
+<div class="calculation-map">
+  <div class="calculation-map-heading">
+    <div>
+      <p class="calculation-map-title">Focused Pitzer Solver Map</p>
+      <p class="calculation-map-copy">Compute ionic strength, correct activities, use activity-corrected species ratios, then enforce total-carbon and charge closure each cycle.</p>
+    </div>
+    <div class="calculation-map-badge">
+      <span>Path</span>
+      <strong>HMW</strong>
+    </div>
+  </div>
+  <div class="calculation-map-grid">
+    <div class="calculation-map-step">
+      <span>1. Ionic strength</span>
+      \[
+      I = \frac{1}{2} \sum_i (m_i \times z_i^2)
+      \]
+    </div>
+    <div class="calculation-map-step">
+      <span>2. Activity coefficients</span>
+      \[
+      \ln(\gamma_i) = (z_i^2 \times F(I)) + \sum_j \left(m_j \times (2 \times B_{ij} + Z \times C_{ij})\right) + \sum_{j,k} \left(m_j \times m_k \times \Psi_{ijk}\right) + \cdots
+      \]
+    </div>
+    <div class="calculation-map-step">
+      <span>3. Bicarbonate ratio</span>
+      \[
+      r_1 = \frac{K_{a1}}{\gamma_{\mathrm{H^+}} \times \gamma_{\mathrm{HCO_3^-}} \times [H^+]}
+      \]
+      \[
+      r_1 = \frac{m_{\mathrm{HCO_3^-}}}{m_{\mathrm{CO_2^*}}}
+      \]
+    </div>
+    <div class="calculation-map-step">
+      <span>4. Carbonate ratio</span>
+      \[
+      r_2 = \frac{K_{a2} \times \gamma_{\mathrm{HCO_3^-}}}{\gamma_{\mathrm{H^+}} \times \gamma_{\mathrm{CO_3^{2-}}} \times [H^+]}
+      \]
+      \[
+      r_2 = \frac{m_{\mathrm{CO_3^{2-}}}}{m_{\mathrm{HCO_3^-}}}
+      \]
+    </div>
+  </div>
+  <div class="calculation-map-step">
+    <span>5. Total carbon closure</span>
+    \[
+    m_{CT} = m_{\mathrm{CO_2^*}} + m_{\mathrm{HCO_3^-}} + m_{\mathrm{CO_3^{2-}}}
+    \]
+  </div>
+  <p class="calculation-map-callout">The charge-balance closure is then solved iteratively each cycle using the corrected activities.</p>
+</div>
 
-## Supplementary Sections
+### Advanced Model Information: What HMW / PHREEQC-NaCO3 Pairing Means
+
+!!! note "Calculation Legend"
+    - `HMW`: Harvie-Moller-Weare Pitzer parameter family for concentrated electrolyte solutions.
+    - `PHREEQC pitzer.dat`: database source for the Pitzer interaction parameters used by the focused GL-260 path.
+    - `Na-CO3 pairing`: shorthand for explicitly correcting sodium interactions with carbonate-family ions.
+    - \(B^0\), \(B^1\), \(C^0\): pair-interaction terms for a cation-anion pair.
+    - \(Θ\), \(Ψ\): same-charge and ternary interaction terms that capture higher-order electrolyte behavior.
+
+The phrase **HMW / PHREEQC-NaCO3 Pairing** means GL-260 is not just solving carbonate acid-base equations in isolation. It reads the focused Pitzer parameter set from `pitzer.dat` and applies the sodium-carbonate interaction terms that dominate this chemistry:
+
+- \(Na^+\) with \(OH^-\)
+- \(Na^+\) with \(HCO_{3}^-\)
+- \(Na^+\) with \(CO_{3}^{2-}\)
+- \(Θ_{\mathrm{CO_3^{2-},OH^-}}\)
+- \(Ψ_{\mathrm{CO_3^{2-},Na^+,OH^-}}\)
+- \(Ψ_{\mathrm{CO_3^{2-},OH^-,Na^+}}\)
+
+The model converts these database terms into the compact parameters used by the Rust and Python solver cores:
+
+```latex
+\{B^0_{\mathrm{Na,OH}}, B^1_{\mathrm{Na,OH}}, C^0_{\mathrm{Na,OH}}, B^0_{\mathrm{Na,HCO_3}}, B^1_{\mathrm{Na,HCO_3}}, C^0_{\mathrm{Na,HCO_3}}, B^0_{\mathrm{Na,CO_3}}, B^1_{\mathrm{Na,CO_3}}, C^0_{\mathrm{Na,CO_3}}, \Theta_{\mathrm{CO_3,OH}}, \Psi_{\mathrm{CO_3,Na,OH}}, \Psi_{\mathrm{CO_3,HCO_3,Na}}\}
+```
+
+Operationally, this yields more accurate calculations than an ideal model because sodium carbonate and sodium bicarbonate are not passive spectators. Sodium association changes the effective activities of the species present, and those activity changes shift the pH and fraction crossover. That is the specific error mode the HMW path is meant to avoid: a misleading carbonate-buffer plateau or incorrect pH slope when the solution is highly loaded with sodium.
+
+---
+
 
 ### Measured-pH Calibration + Hybrid ML Correction (Analysis Mode)
 Measured anchors reshape the baseline simulation, and ML residual correction is only accepted when anchor quality is preserved.

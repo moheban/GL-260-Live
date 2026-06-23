@@ -2230,11 +2230,16 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         return content.querySelector('[data-inline-module="' + String(name || "") + '"]');
       }}
 
+      /** Resolve or create one inline chart canvas.
+       * Purpose: provide a stable canvas for generated and Slide Studio-rendered charts.
+       * Why: saved slide overrides can retain the mounted canvas after replacing the
+       * original data-inline-chart anchor, so existing canvases must be reusable.
+       * Inputs: config containing the optional anchor, required canvasId, title, copy,
+       * and accessibility labels. Returns: the existing or newly created canvas, or null.
+       * Side effects: creates and mounts chart DOM only when no reusable canvas exists.
+       * Errors: missing identifiers or invalid/missing anchors fail closed with null.
+       */
       function buildInlineChartMount(config) {{
-        const anchor = config && config.anchor ? config.anchor : null;
-        if (!anchor || String(anchor.tagName || "").toUpperCase() !== "DIV") {{
-          return null;
-        }}
         const canvasId = config && config.canvasId ? String(config.canvasId) : "";
         if (!canvasId) {{
           return null;
@@ -2242,6 +2247,10 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
         const existingCanvas = document.getElementById(canvasId);
         if (existingCanvas) {{
           return existingCanvas;
+        }}
+        const anchor = config && config.anchor ? config.anchor : null;
+        if (!anchor || String(anchor.tagName || "").toUpperCase() !== "DIV") {{
+          return null;
         }}
         const mount = document.createElement("section");
         mount.className = "inline-chart-mount";
@@ -2570,7 +2579,6 @@ def build_html_document(*, body_html: str, toc_html: str, source_hash: str) -> s
           <div class="derivation-stepper-header">
             <div>
               <p class="derivation-stepper-title">Live Derivation Slider</p>
-              <p class="derivation-stepper-copy">Move one step at a time to reveal the calculation chain as if the equations are being built during the presentation.</p>
             </div>
             <div class="derivation-step-count">
               <span>Step</span>

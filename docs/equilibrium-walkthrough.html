@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="equilibrium-walkthrough-source-sha256" content="6def75f90c8cf54f6ab88fc87b9719c2380fd96303b03acd256d3e4d4b753964">
+  <meta name="equilibrium-walkthrough-source-sha256" content="b8994f6f4ac76139fe0a9c3a6644f6ae913b7849890ddbc38214e64652aa476b">
   <title>GL-260 Equilibrium Walkthrough</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -907,11 +907,15 @@
 <li><a href="#roadmap">Roadmap</a></li>
 <li><a href="#so-how-do-we-make-it">So, how do we make it?</a><ul>
 <li><a href="#reactor-setup">Reactor setup</a></li>
-<li><a href="#reaction-manifold">Reaction Manifold</a></li>
 <li><a href="#data-logging-equipment">Data Logging Equipment</a></li>
 </ul>
 </li>
 <li><a href="#what-is-the-problem">What is the problem?</a></li>
+<li><a href="#worked-real-world-example-pr-24304-sodium-bicarbonate-batch-1">Worked Real-World Example: PR-24304 Sodium Bicarbonate Batch 1</a><ul>
+<li><a href="#complete-run">Complete Run</a></li>
+<li><a href="#predicted-speciation">Predicted Speciation</a></li>
+</ul>
+</li>
 <li><a href="#simple-equilibrium-right">Simple equilibrium, right?</a></li>
 <li><a href="#equilibrium-reactions-in-the-highly-basic-system">Equilibrium Reactions in the Highly Basic System</a></li>
 <li><a href="#starting-conditions">Starting Conditions</a></li>
@@ -928,44 +932,36 @@
 </ul>
 </li>
 <li><a href="#controling-bicarbonate-formation">Controling bicarbonate formation</a></li>
-<li><a href="#calculating-speciation-and-ph">Calculating Speciation and pH</a><ul>
-<li><a href="#deriving-alpha-fractions-from-the-equilibrium-constants">Deriving Alpha Fractions From the Equilibrium Constants</a></li>
-</ul>
-</li>
 <li><a href="#derivation-summary">Derivation Summary</a></li>
-<li><a href="#naoh-co2-pitzer-hmw-focused-calculation-path-even-more-complex">NaOH-CO2 Pitzer (HMW-Focused) Calculation Path: Even more complex</a><ul>
-<li><a href="#advanced-model-information-what-hmw-phreeqc-naco3-pairing-means">Advanced Model Information: What HMW / PHREEQC-NaCO3 Pairing Means</a></li>
-</ul>
-</li>
 <li><a href="#reaction-kinetics">Reaction Kinetics</a><ul>
 <li><a href="#liquid-gas-interaction">Liquid-Gas Interaction</a></li>
 <li><a href="#pseudo-first-order-view-at-high-hydroxide-concentration">Pseudo-First-Order View at High Hydroxide Concentration</a></li>
 <li><a href="#time-scale-test-for-interpreting-cycle-shape">Time-Scale Test for Interpreting Cycle Shape</a></li>
-<li><a href="#how-this-connects-to-gl-260-cycle-detection">How This Connects to GL-260 Cycle Detection</a></li>
 </ul>
 </li>
-<li><a href="#cycle-uptake-math">Cycle Uptake Math</a><ul>
+<li><a href="#why-does-this-all-matter">Why does this all matter?</a><ul>
+<li><a href="#synthesis-time">Synthesis Time</a></li>
+<li><a href="#supply-chain-optimization">Supply Chain Optimization</a></li>
+</ul>
+</li>
+<li><a href="#how-has-bicarb-production-been-with-all-of-this-understanding">How has Bicarb production been with all of this understanding?</a></li>
+<li><a href="#questions">Questions?</a></li>
+<li><a href="#supplementary-sections">Supplementary Sections</a><ul>
+<li><a href="#how-this-connects-to-gl-260-cycle-detection">How This Connects to GL-260 Cycle Detection</a></li>
+<li><a href="#cycle-uptake-math">Cycle Uptake Math</a></li>
 <li><a href="#primary-locked-synthetic-cycle-uptake-sequence">Primary (Locked) Synthetic Cycle Uptake Sequence</a></li>
 <li><a href="#pressure-derived-uptake">Pressure-Derived Uptake</a></li>
-</ul>
-</li>
-<li><a href="#integrated-worked-examples-from-co2-uptake-to-ph-and-speciation">Integrated Worked Examples: From CO2 Uptake to pH and Speciation</a><ul>
+<li><a href="#integrated-worked-examples-from-co2-uptake-to-ph-and-speciation">Integrated Worked Examples: From CO2 Uptake to pH and Speciation</a></li>
 <li><a href="#shared-basis-and-calculation-sequence">Shared Basis and Calculation Sequence</a></li>
 <li><a href="#worked-example-a-250-g-co2-uptake">Worked Example A: 250 g CO2 Uptake</a></li>
 <li><a href="#worked-example-b-650-g-co2-uptake">Worked Example B: 650 g CO2 Uptake</a></li>
 <li><a href="#worked-example-c-950-g-co2-uptake">Worked Example C: 950 g CO2 Uptake</a></li>
 <li><a href="#worked-example-comparison">Worked-Example Comparison</a></li>
-</ul>
-</li>
 <li><a href="#worked-naoh-pitzer-simulation-table-synthetic-cycles-to-900-g">Worked NaOH-Pitzer Simulation Table (Synthetic Cycles to 900 g)</a></li>
-<li><a href="#worked-real-world-example-pr-24304-sodium-bicarbonate-batch-1">Worked Real-World Example: PR-24304 Sodium Bicarbonate Batch 1</a><ul>
-<li><a href="#profile-basis-and-stoichiometric-translation">Profile Basis and Stoichiometric Translation</a></li>
-<li><a href="#reading-the-combined-triple-axis-plot">Reading the Combined Triple-Axis Plot</a></li>
-<li><a href="#reading-the-speciation-timeline-plot">Reading the Speciation Timeline Plot</a></li>
-</ul>
-</li>
-<li><a href="#how-has-bicarb-production-been-with-all-of-this-understanding">How has Bicarb production been with all of this understanding?</a></li>
-<li><a href="#supplementary-sections">Supplementary Sections</a><ul>
+<li><a href="#calculating-speciation-and-ph">Calculating Speciation and pH</a></li>
+<li><a href="#deriving-alpha-fractions-from-the-equilibrium-constants">Deriving Alpha Fractions From the Equilibrium Constants</a></li>
+<li><a href="#naoh-co2-pitzer-hmw-focused-calculation-path-even-more-complex">NaOH-CO2 Pitzer (HMW-Focused) Calculation Path: Even more complex</a></li>
+<li><a href="#advanced-model-information-what-hmw-phreeqc-naco3-pairing-means">Advanced Model Information: What HMW / PHREEQC-NaCO3 Pairing Means</a></li>
 <li><a href="#measured-ph-calibration-hybrid-ml-correction-analysis-mode">Measured-pH Calibration + Hybrid ML Correction (Analysis Mode)</a></li>
 <li><a href="#optional-locked-multi-anchor-example">Optional: Locked Multi-Anchor Example</a></li>
 <li><a href="#optional-baseline-piecewise-calibration-objective">Optional: Baseline Piecewise Calibration Objective</a></li>
@@ -992,30 +988,85 @@
 <p>Through this talk, we will:</p>
 <ul>
 <li>understand how we currently make sodium bicarbonate here at CIL</li>
-<li>equipment</li>
-<li>challenges associated with making pure sodium bicarbonate</li>
-<li>derive advanced equilibrium expressions</li>
-<li>learn how to accurately calculate speciation @ different <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span> uptake</li>
-<li>track and visualize live <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span> consumption while reaction is running</li>
-<li>calculate speciation and understand when to stop reaction</li>
+<li>equipment involved</li>
+<li>past challenges associated with making pure sodium bicarbonate</li>
+<li>investigate the equilibrium</li>
+<li>learn how to control the equilibrium</li>
+<li>understand the reaction kinetics</li>
+<li>future improvements for this process and in general</li>
 <li>improvements to final bicarb product QC and batch size</li>
 </ul>
 <h2 id="so-how-do-we-make-it">So, how do we make it?</h2>
 <h3 id="reactor-setup">Reactor setup</h3>
-<p><img src="assets\equilibrium-walkthrough\bicarb reaction setup.jpg"
-     alt="Reactor setup used in the synthesis of sodium bicarbonate MPT"
-     style="width: 70%; display: block; margin: 1rem auto;"></p>
-<p><em>Reactor setup used in the synthesis of sodium bicarbonate MPT</em></p>
-<h3 id="reaction-manifold">Reaction Manifold</h3>
-<p><img src="assets\equilibrium-walkthrough\bicarb manifold.jpg"
-     alt="Manifold used in the synthesis of sodium bicarbonate MPT"
-     style="width: 70%; display: block; margin: 1rem auto;"></p>
-<p><em>Manifold used in the synthesis of sodium bicarbonate MPT</em></p>
+<p><img src="assets\equilibrium-walkthrough\bicarb scheme.png"
+     alt="Sensor equipment used in the synthesis of sodium bicarbonate MPT"
+     style="width: 90%; display: block; margin: 1rem auto;"></p>
+<ul>
+<li>700 g NaOH (highest grade/purity available)</li>
+<li>2,200 g of sterile DI water</li>
+<li>~900g of <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span> (~750g to reach stoichiometric endpoint, ~150g to push equilibrium towards pure bicarbonate )</li>
+</ul>
+<p><strong>Reactor set up &amp; Manifold</strong></p>
+<div style="display: flex; gap: 1rem; align-items: flex-start;">
+  <img
+    src="assets\equilibrium-walkthrough\bicarb manifold.jpg"
+    alt="Manifold used in the synthesis of sodium bicarbonate MPT"
+    style="width: calc(50% - 0.5rem); height: auto;"
+  >
+
+  <img
+    src="assets\equilibrium-walkthrough\bicarb reaction setup.jpg"
+    alt="Reactor setup used in the synthesis of sodium bicarbonate MPT"
+    style="width: calc(50% - 0.5rem); height: auto;"
+  >
+</div>
+
+<ul>
+<li>After the reaction is complete, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span> is recovered from the reactor, manifold, and lines, preventing water from transferring into the recovery cylinder and damaging it.</li>
+<li>Recovery pathway is different than the charge pathway</li>
+<li>Recovery occurs through the SS gas washing bottle. This separates water from the </li>
+<li>After one week, the reaction is complete and the reactor is removed from the shaker.</li>
+<li>Reactor weighs &gt;100 lbs when loaded.</li>
+</ul>
+<hr>
+<ul>
+<li>Bulk is transferred into 2 5,000 mL Duran beakers and washed with 3L Acetone/beaker twice</li>
+<li>Bulk is washed with 3L Diethyl ether/beaker twice</li>
+<li>Drying occurs at room temp. Any heat used will shift the equilibrium towards carbonate</li>
+<li>Drying takes ~2 days</li>
+</ul>
+<p>In total:<br>
+Reaction: 5-7 days<br>
+Workup: 0.5 days<br>
+Drying: 2 days</p>
+<p>Total time: 8-10 days max</p>
 <h3 id="data-logging-equipment">Data Logging Equipment</h3>
 <p><img src="assets\equilibrium-walkthrough\Sensor equipment bicarb.jpg"
      alt="Sensor equipment used in the synthesis of sodium bicarbonate MPT"
      style="width: 70%; display: block; margin: 1rem auto;"></p>
-<p><em>Sensor equipment used for data logging</em></p>
+<ul>
+<li>GL-260 Data Logger</li>
+<li>Constant voltage power supply (to provide sensors with a stable 5V reference -- important in obtaining high quality data)</li>
+</ul>
+<p><strong>Aquisition Settings</strong></p>
+<ul>
+<li>one data point is taken/second</li>
+<li>one data point/15 seconds is exported, the exported point is an average of the 15 preceeding data points (removes noise)</li>
+</ul>
+<p><strong>Data Processing</strong></p>
+<p><img src="assets\equilibrium-walkthrough\Screenshot 2026-06-23 091145.png"
+     alt="Data analysis program"
+     style="width: 70%; display: block; margin: 1rem auto;"></p>
+<ul>
+<li>Data is processed via Data Processing program </li>
+<li>Program imports raw CSV files from GL-260 and adds them to master sheet</li>
+<li>Different selected sheets are stitched together</li>
+<li>Program calculates first derivative (important for determining when reaction is complete)</li>
+<li>Plots selected sheets</li>
+<li>Manual/automatic cycle detection</li>
+<li>Cycle uptake calculation</li>
+<li>pH and speciation simulation</li>
+</ul>
 <h2 id="what-is-the-problem">What is the problem?</h2>
 <p><img src="assets\equilibrium-walkthrough\bicarb scheme.png"
      alt="Sensor equipment used in the synthesis of sodium bicarbonate MPT"
@@ -1029,6 +1080,50 @@
 </ul>
 <p>3 years ago I started working on improving this process. I'll present everything ive learned. </p>
 <p>Disclaimer: I LOVE math, so there is a lot of math. Dont worry! You wont need to think about it. We'll derive everything live and work through everything together. </p>
+<h2 id="worked-real-world-example-pr-24304-sodium-bicarbonate-batch-1">Worked Real-World Example: PR-24304 Sodium Bicarbonate Batch 1</h2>
+<p>Lets take a look at a real batch run a few weeks ago.</p>
+<div class="calculation-map">
+  <div class="calculation-map-heading">
+    <div>
+      <p class="calculation-map-title">PR-24304 Stoichiometry Map</p>
+      <p class="calculation-map-copy">Convert the saved profile NaOH charge into the ideal CO2 requirement for the bicarbonate endpoint.</p>
+    </div>
+    <div class="calculation-map-badge">
+      <span>Target</span>
+      <strong>772.4 g</strong>
+    </div>
+  </div>
+  <div class="calculation-map-grid three-up">
+    <div class="calculation-map-step">
+      <span>1. Profile charge</span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi><mo>&#x0002C;</mo><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mn>702.0</mn><mtext>&#x000A0;</mtext><mi>&#x00067;</mi></mrow></math></span>
+    </div>
+    <div class="calculation-map-step">
+      <span>2. NaOH moles</span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>n</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi><mo>&#x0002C;</mo><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mfrac><mrow><mn>702.0</mn><mtext>&#x000A0;</mtext><mi>&#x00067;</mi></mrow><mrow><mn>40.0</mn><mtext>&#x000A0;</mtext><mrow><mi mathvariant="normal">g</mi><mtext>&#x000A0;</mtext><mi mathvariant="normal">m</mi><mi mathvariant="normal">o</mi><msup><mi mathvariant="normal">l</mi><mrow><mo>&#x02212;</mo><mn>1</mn></mrow></msup></mrow></mrow></mfrac><mo>&#x0003D;</mo><mn>17.55</mn><mtext>&#x000A0;</mtext><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">l</mi></mrow></mrow></math></span>
+    </div>
+    <div class="calculation-map-step">
+      <span>3. Ideal CO2 endpoint</span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>n</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub><mo>&#x0002C;</mo><mi mathvariant="normal">s</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">h</mi></mrow></mrow></msub><mo>&#x0003D;</mo><msub><mi>n</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi><mo>&#x0002C;</mo><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mn>17.55</mn><mtext>&#x000A0;</mtext><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">l</mi></mrow></mrow></math></span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub><mo>&#x0002C;</mo><mi mathvariant="normal">s</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">h</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mn>17.55</mn><mtext>&#x000A0;</mtext><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">l</mi></mrow><mo>&#x000D7;</mo><mn>44.01</mn><mtext>&#x000A0;</mtext><mrow><mi mathvariant="normal">g</mi><mtext>&#x000A0;</mtext><mi mathvariant="normal">m</mi><mi mathvariant="normal">o</mi><msup><mi mathvariant="normal">l</mi><mrow><mo>&#x02212;</mo><mn>1</mn></mrow></msup></mrow><mo>&#x02248;</mo><mn>772.4</mn><mtext>&#x000A0;</mtext><mi>&#x00067;</mi></mrow></math></span>
+    </div>
+  </div>
+</div>
+
+<h3 id="complete-run">Complete Run</h3>
+<p><img src="assets\equilibrium-walkthrough\pr-24304-batch-1-day-1-6-combined-triple-axis.png"
+     alt="pr-24304-batch-1-day-1-6-combined-triple-axis.png"
+     style="width: 80%; display: block; margin: 1rem auto;"></p>
+<h3 id="predicted-speciation">Predicted Speciation</h3>
+<p><img src="assets\equilibrium-walkthrough\pr-24304-batch-1-cycle-speciation-timeline-day-1-6.png"
+     alt="pr-24304-batch-1-cycle-speciation-timeline-day-1-6"
+     style="width: 80%; display: block; margin: 1rem auto;"></p>
+<p>Early in the run, high hydroxide activity drives carbonate formation. <br>
+As CO2 loading increases and hydroxide is consumed, the system moves through the carbonate-rich region and toward pure bicarbonate bicarbonate. <br>
+The HMW Pitzer model makes that crossover more realistic by correcting sodium-carbonate activities in the concentrated electrolyte regime.</p>
+<ul>
+<li>Fun fact: this model is from the United States Geological Survey and was developed to help model mineral formation in high ionic strength conditions</li>
+</ul>
 <h2 id="simple-equilibrium-right">Simple equilibrium, right?</h2>
 <table class="reaction-map">
 <thead>
@@ -1434,7 +1529,7 @@
 
 <hr>
 <h2 id="equilibrium-half-reactions-dipping-our-toes-in">Equilibrium Half-Reactions: Dipping Our Toes In</h2>
-<p>Lets derive the half-equations and constants required to make all the calculations we want.<br>
+<p>Let's derive the half-equations and constants required to make all the calculations we want.<br>
 - pH<br>
 - Speciation</p>
 <h3 id="carbonate-and-water-equilibrium-half-reactions">Carbonate and Water Equilibrium Half-Reactions</h3>
@@ -1784,211 +1879,11 @@
 
 <p>Higher headspace <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>p</mi><mrow><mi>C</mi><msub><mi>O</mi><mn>2</mn></msub></mrow></msub></mrow></math></span> facilitates bicarbonate formation, pushing the equilibrium towards bicarbonate</p>
 <hr>
-<h2 id="calculating-speciation-and-ph">Calculating Speciation and pH</h2>
-<p><strong>I dont do any of the following math by hand, i wrote a program to do it for me. Some of the following math requires soklving for quartic roots</strong></p>
-<div class="admonition note">
-<p class="admonition-title">Calculation Legend</p>
-<ul>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">N</mi><msup><mi mathvariant="normal">a</mi><mo>&#x0002B;</mo></msup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>: concentration/molarity-like model terms [<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>m</mi><mi>o</mi><mi>l</mi><msup><mi>L</mi><mrow><mo>&#x02212;</mo><mn>1</mn></mrow></msup></mrow></math></span>] or model-consistent concentration basis]</li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>C</mi><mrow><mi>T</mi></mrow></msub></mrow></math></span>: total inorganic carbon concentration on the same basis as reconstructed species</li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003B1;</mi><mn>0</mn></msub></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003B1;</mi><mn>1</mn></msub></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003B1;</mi><mn>2</mn></msub></mrow></math></span>: species fractions</li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>D</mi></mrow></math></span>: shared denominator in alpha-fraction identities</li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>R</mi><mrow><mi>q</mi></mrow></msub></mrow></math></span>: charge-balance residual on concentration basis (target is zero)</li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>x</mi></mrow></math></span>: trial pH used by the numerical root search, with <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><msup><mn>10</mn><mrow><mo>&#x02212;</mo><mi>x</mi></mrow></msup></mrow></math></span></li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003F5;</mi><mrow><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">h</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">g</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub></mrow></math></span>: accepted absolute charge-residual tolerance</li>
-</ul>
-</div>
-<p><strong>We do not obtain <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span> from one isolated rearrangement because <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span> appears in water dissociation, every carbonate fraction, and charge balance at the same time. Instead, the model turns the full chemistry into one scalar function, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>R</mi><mi>q</mi></msub><mo stretchy="false">&#x00028;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo stretchy="false">&#x00029;</mo></mrow></math></span>, and numerically finds the positive <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span> that makes <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>R</mi><mi>q</mi></msub><mo>&#x0003D;</mo><mn>0</mn></mrow></math></span>.</strong></p>
-<div class="admonition info">
-<p class="admonition-title">Derivation Walkthrough</p>
-<p><strong>Goal:</strong> calculate <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span> explicitly by solving charge balance, then recover pH and every carbonate species from that accepted root.</p>
-<p><strong>Step-by-step interpretation:</strong> bracket a trial pH, convert that trial to <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>, calculate <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>D</mi></mrow></math></span>, fractions, species, and hydroxide, evaluate <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>R</mi><mi>q</mi></msub></mrow></math></span>, then move the bracket and repeat until the residual is sufficiently close to zero.</p>
-<p><strong>Why this changes operation:</strong> bicarbonate-control decisions are only trustworthy when one solved state satisfies both speciation and charge closure; otherwise purity guidance can point to the wrong operating region.</p>
-</div>
-<div class="calculation-map">
-  <div class="calculation-map-heading">
-    <div>
-      <p class="calculation-map-title">How the Solver Finds [H+], pH, and Speciation</p>
-      <p class="calculation-map-copy">Known carbon and sodium inputs define one charge-residual function. A bracketed root search changes pH until that function reaches zero.</p>
-    </div>
-    <div class="calculation-map-badge">
-      <span>Target</span>
-      <strong><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>R</mi><mi>q</mi></msub><mo>&#x0003D;</mo><mn>0</mn></mrow></math></span></strong>
-    </div>
-  </div>
-  <div class="calculation-map-grid three-up">
-    <div class="calculation-map-step">
-      <span>1. Fix the known inputs</span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mo stretchy="false">&#x0007B;</mo><msub><mi>C</mi><mi>T</mi></msub><mo>&#x0002C;</mo><mtext>&#x000A0;</mtext><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">N</mi><msup><mi mathvariant="normal">a</mi><mo>&#x0002B;</mo></msup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0002C;</mo><mtext>&#x000A0;</mtext><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mo>&#x0002C;</mo><mtext>&#x000A0;</mtext><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub><mo>&#x0002C;</mo><mtext>&#x000A0;</mtext><msub><mi>K</mi><mi>w</mi></msub><mo stretchy="false">&#x0007D;</mo></mrow></math></span>
-      <p>These values stay fixed while the solver searches for the one charge-balanced hydrogen concentration.</p>
-    </div>
-    <div class="calculation-map-step">
-      <span>2. Choose a trial pH</span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>x</mi><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>x</mi><mrow><mi>l</mi><mi>o</mi></mrow></msub><mo>&#x0002B;</mo><msub><mi>x</mi><mrow><mi>h</mi><mi>i</mi></mrow></msub></mrow><mrow><mn>2</mn></mrow></mfrac></mrow></math></span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>h</mi><mo>&#x0003D;</mo><msub><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mrow><mi>t</mi><mi>r</mi><mi>i</mi><mi>a</mi><mi>l</mi></mrow></msub><mo>&#x0003D;</mo><msup><mn>10</mn><mrow><mo>&#x02212;</mo><mi>x</mi></mrow></msup></mrow></math></span>
-      <p>The search is performed in pH/log space because <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span> spans many orders of magnitude.</p>
-    </div>
-    <div class="calculation-map-step">
-      <span>3. Build the shared denominator</span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>D</mi><mo stretchy="false">&#x00028;</mo><mi>h</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><msup><mi>h</mi><mn>2</mn></msup><mo>&#x0002B;</mo><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mi>h</mi><mo>&#x0002B;</mo><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub></mrow></math></span>
-      <p>This denominator converts the trial <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>h</mi></mrow></math></span> into a complete carbonate distribution.</p>
-    </div>
-    <div class="calculation-map-step">
-      <span>4. Calculate fractions and species</span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>&#x003B1;</mi><mn>0</mn></msub><mo>&#x0003D;</mo><mfrac><mrow><msup><mi>h</mi><mn>2</mn></msup></mrow><mrow><mi>D</mi></mrow></mfrac><mo>&#x0002C;</mo><mspace width="1em" /><msub><mi>&#x003B1;</mi><mn>1</mn></msub><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mi>h</mi></mrow><mrow><mi>D</mi></mrow></mfrac><mo>&#x0002C;</mo><mspace width="1em" /><msub><mi>&#x003B1;</mi><mn>2</mn></msub><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub></mrow><mrow><mi>D</mi></mrow></mfrac></mrow></math></span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><msub><mi>&#x003B1;</mi><mn>0</mn></msub><msub><mi>C</mi><mi>T</mi></msub><mo>&#x0002C;</mo><mspace width="1em" /><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><msub><mi>&#x003B1;</mi><mn>1</mn></msub><msub><mi>C</mi><mi>T</mi></msub><mo>&#x0002C;</mo><mspace width="1em" /><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><msub><mi>&#x003B1;</mi><mn>2</mn></msub><msub><mi>C</mi><mi>T</mi></msub></mrow></math></span>
-    </div>
-    <div class="calculation-map-step">
-      <span>5. Calculate hydroxide and residual</span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>K</mi><mi>w</mi></msub></mrow><mrow><mi>h</mi></mrow></mfrac></mrow></math></span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>R</mi><mi>q</mi></msub><mo stretchy="false">&#x00028;</mo><mi>h</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">N</mi><msup><mi mathvariant="normal">a</mi><mo>&#x0002B;</mo></msup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0002B;</mo><mi>h</mi><mo>&#x02212;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x02212;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x02212;</mo><mn>2</mn><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>
-    </div>
-    <div class="calculation-map-step">
-      <span>6. Move the bracket and repeat</span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>R</mi><mi>q</mi></msub><mo stretchy="false">&#x00028;</mo><msub><mi>x</mi><mrow><mi>l</mi><mi>o</mi></mrow></msub><mo stretchy="false">&#x00029;</mo><msub><mi>R</mi><mi>q</mi></msub><mo stretchy="false">&#x00028;</mo><msub><mi>x</mi><mrow><mi>m</mi><mi>i</mi><mi>d</mi></mrow></msub><mo stretchy="false">&#x00029;</mo><mo>&#x02264;</mo><mn>0</mn><mo>&#x021D2;</mo><msub><mi>x</mi><mrow><mi>h</mi><mi>i</mi></mrow></msub><mo>&#x0003D;</mo><msub><mi>x</mi><mrow><mi>m</mi><mi>i</mi><mi>d</mi></mrow></msub></mrow></math></span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mtext>otherwise</mtext><mspace width="1em" /><msub><mi>x</mi><mrow><mi>l</mi><mi>o</mi></mrow></msub><mo>&#x0003D;</mo><msub><mi>x</mi><mrow><mi>m</mi><mi>i</mi><mi>d</mi></mrow></msub></mrow></math></span>
-      <p>Each iteration halves the remaining pH interval while preserving a sign change around the root.</p>
-    </div>
-  </div>
-  <div class="calculation-map-step">
-    <span>7. Accept [H+] and report the final state</span>
-    <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mo stretchy="false">&#x0007C;</mo><msub><mi>R</mi><mi>q</mi></msub><mo stretchy="false">&#x00028;</mo><msup><mi>h</mi><mo>&#x0002A;</mo></msup><mo stretchy="false">&#x00029;</mo><mo stretchy="false">&#x0007C;</mo><mo>&#x02264;</mo><msub><mi>&#x003F5;</mi><mrow><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">h</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">g</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub></mrow></math></span>
-    <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><msup><mi>h</mi><mo>&#x0002A;</mo></msup><mo>&#x0002C;</mo><mspace width="2em" /><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">H</mi></mrow><mo>&#x0003D;</mo><mo>&#x02212;</mo><msub><mi>log</mi><mrow><mn>10</mn></mrow></msub><mo stretchy="false">&#x00028;</mo><msup><mi>h</mi><mo>&#x0002A;</mo></msup><mo stretchy="false">&#x00029;</mo><mo>&#x0002C;</mo><mspace width="2em" /><mo stretchy="false">&#x0007B;</mo><msub><mi>&#x003B1;</mi><mn>0</mn></msub><mo>&#x0002C;</mo><msub><mi>&#x003B1;</mi><mn>1</mn></msub><mo>&#x0002C;</mo><msub><mi>&#x003B1;</mi><mn>2</mn></msub><mo stretchy="false">&#x0007D;</mo><mo>&#x0003D;</mo><mo stretchy="false">&#x0007B;</mo><msub><mi>&#x003B1;</mi><mn>0</mn></msub><mo stretchy="false">&#x00028;</mo><msup><mi>h</mi><mo>&#x0002A;</mo></msup><mo stretchy="false">&#x00029;</mo><mo>&#x0002C;</mo><msub><mi>&#x003B1;</mi><mn>1</mn></msub><mo stretchy="false">&#x00028;</mo><msup><mi>h</mi><mo>&#x0002A;</mo></msup><mo stretchy="false">&#x00029;</mo><mo>&#x0002C;</mo><msub><mi>&#x003B1;</mi><mn>2</mn></msub><mo stretchy="false">&#x00028;</mo><msup><mi>h</mi><mo>&#x0002A;</mo></msup><mo stretchy="false">&#x00029;</mo><mo stretchy="false">&#x0007D;</mo></mrow></math></span>
-    <p>The accepted root is reused for pH, hydroxide, fractions, and species; these outputs therefore describe the same charge-balanced state.</p>
-  </div>
-</div>
-
-<p>Substituting the fraction equations directly into charge balance makes the one-variable solve explicit:</p>
-<p><span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>R</mi><mi>q</mi></msub><mo stretchy="false">&#x00028;</mo><mi>h</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">N</mi><msup><mi mathvariant="normal">a</mi><mo>&#x0002B;</mo></msup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0002B;</mo><mi>h</mi><mo>&#x02212;</mo><mfrac><mrow><msub><mi>K</mi><mi>w</mi></msub></mrow><mrow><mi>h</mi></mrow></mfrac><mo>&#x02212;</mo><msub><mi>C</mi><mi>T</mi></msub><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mi>h</mi><mo>&#x0002B;</mo><mn>2</mn><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub></mrow><mrow><msup><mi>h</mi><mn>2</mn></msup><mo>&#x0002B;</mo><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mi>h</mi><mo>&#x0002B;</mo><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub></mrow></mfrac><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo>&#x0003D;</mo><mn>0</mn></mrow></math></span></p>
-<p>Everything on the right is known except <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>h</mi><mo>&#x0003D;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>. For each trial pH, the solver evaluates this expression. If <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>R</mi><mi>q</mi></msub><mo>&#x0003E;</mo><mn>0</mn></mrow></math></span>, the trial state has excess positive charge relative to the reconstructed anions. If <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>R</mi><mi>q</mi></msub><mo>&#x0003C;</mo><mn>0</mn></mrow></math></span>, it has excess negative charge. The sign tells the bracketed solver which half of the pH interval can still contain the zero crossing.</p>
-<p>The ideal concentration form above is the presentation-level calculation. In the concentrated HMW/Pitzer path, the same root-search flow uses activities and updates activity coefficients around the charge-balance solve. The Python closed-system fallback uses bracketed bisection with a quartic cross-check/fallback, while the accelerated path preserves the same residual-to-root-to-speciation handoff.</p>
-<h3 id="deriving-alpha-fractions-from-the-equilibrium-constants">Deriving Alpha Fractions From the Equilibrium Constants</h3>
-<p>The alpha fractions are not fitted fractions. They fall directly out of the carbonate acid equilibria once <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span> is known.</p>
-<div class="calculation-map">
-  <div class="calculation-map-heading">
-    <div>
-      <p class="calculation-map-title">Alpha Fraction Derivation Map</p>
-      <p class="calculation-map-copy">Express bicarbonate and carbonate relative to the carbonic-acid basis, substitute those ratios into total carbon, then recover the shared denominator.</p>
-    </div>
-    <div class="calculation-map-badge">
-      <span>Closure</span>
-      <strong><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo>&#x02211;</mo><mi>&#x003B1;</mi><mo>&#x0003D;</mo><mn>1</mn></mrow></math></span></strong>
-    </div>
-  </div>
-  <div class="calculation-map-grid">
-    <div class="calculation-map-step">
-      <span>1. First dissociation</span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mo>&#x0003D;</mo><mfrac><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></mfrac></mrow></math></span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub></mrow><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></mfrac><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>
-    </div>
-    <div class="calculation-map-step">
-      <span>2. Second dissociation</span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub><mo>&#x0003D;</mo><mfrac><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></mfrac></mrow></math></span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub></mrow><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></mfrac><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>
-    </div>
-    <div class="calculation-map-step">
-      <span>3. Substitute bicarbonate ratio</span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub></mrow><mrow><msup><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mn>2</mn></msup></mrow></mfrac><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>
-    </div>
-    <div class="calculation-map-step">
-      <span>4. Total carbon closure</span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>C</mi><mi>T</mi></msub><mo>&#x0003D;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0002B;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0002B;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>C</mi><mi>T</mi></msub><mo>&#x0003D;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mn>1</mn><mo>&#x0002B;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub></mrow><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></mfrac><mo>&#x0002B;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub></mrow><mrow><msup><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mn>2</mn></msup></mrow></mfrac><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow></mrow></math></span>
-    </div>
-  </div>
-  <div class="calculation-map-step">
-    <span>5. Shared denominator and fraction closure</span>
-    <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>D</mi><mo>&#x0003D;</mo><msup><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mn>2</mn></msup><mo>&#x0002B;</mo><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0002B;</mo><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub></mrow></math></span>
-    <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>&#x003B1;</mi><mn>0</mn></msub><mo>&#x0002B;</mo><msub><mi>&#x003B1;</mi><mn>1</mn></msub><mo>&#x0002B;</mo><msub><mi>&#x003B1;</mi><mn>2</mn></msub><mo>&#x0003D;</mo><mn>1</mn></mrow></math></span>
-  </div>
-</div>
-
-<p>The pH solver is therefore doing one central job: find the <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span> value where these fractions, hydroxide from <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>K</mi><mi>w</mi></msub></mrow></math></span>, sodium charge, and total carbon all agree at the same time.</p>
 <h2 id="derivation-summary">Derivation Summary</h2>
 <div class="inline-module-anchor" data-inline-module="derivation-stepper"></div>
 
-<h2 id="naoh-co2-pitzer-hmw-focused-calculation-path-even-more-complex">NaOH-CO2 Pitzer (HMW-Focused) Calculation Path: Even more complex</h2>
-<div class="admonition note">
-<p class="admonition-title">Calculation Legend</p>
-<ul>
-<li><code>I</code>: ionic strength [<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>m</mi><mi>o</mi><mi>l</mi><mi>k</mi><msup><mi>g</mi><mrow><mo>&#x02212;</mo><mn>1</mn></mrow></msup></mrow></math></span>]</li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>m</mi><mrow><mi>i</mi></mrow></msub></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>m</mi><mrow><mi>j</mi></mrow></msub></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>m</mi><mrow><mi>k</mi></mrow></msub></mrow></math></span>: species molalities [<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>m</mi><mi>o</mi><mi>l</mi><mi>k</mi><msup><mi>g</mi><mrow><mo>&#x02212;</mo><mn>1</mn></mrow></msup></mrow></math></span>]</li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>z</mi><mrow><mi>i</mi></mrow></msub></mrow></math></span>: ion charge number</li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003B3;</mi><mi>i</mi></msub></mrow></math></span>: activity coefficient</li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>B</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>C</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003A8;</mi><mrow><mi>i</mi><mi>j</mi><mi>k</mi></mrow></msub></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>F</mi><mo stretchy="false">&#x00028;</mo><mi>I</mi><mo stretchy="false">&#x00029;</mo></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Z</mi></mrow></math></span>: Pitzer-model terms used in the focused implementation</li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>r</mi><mn>1</mn></msub><mo>&#x0003D;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></msub><mo>&#x0002F;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow></mrow></msub></mrow></math></span>: bicarbonate-to-carbonic-acid ratio [dimensionless]</li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>r</mi><mn>2</mn></msub><mo>&#x0003D;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow></mrow></msub><mo>&#x0002F;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></msub></mrow></math></span>: carbonate-to-bicarbonate ratio [dimensionless]</li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>r</mi><mn>1</mn></msub><msub><mi>r</mi><mn>2</mn></msub><mo>&#x0003D;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow></mrow></msub><mo>&#x0002F;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow></mrow></msub></mrow></math></span>: derived carbonate-to-carbonic-acid ratio used in total-carbon reconstruction [dimensionless]</li>
-<li>In this equilibrium section, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>r</mi><mn>1</mn></msub></mrow></math></span> and <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>r</mi><mn>2</mn></msub></mrow></math></span> are dimensionless species ratios; they are distinct from the kinetic rate symbols introduced in Section 7.</li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>m</mi><mrow><mi>C</mi><mi>T</mi></mrow></msub></mrow></math></span>: total inorganic carbon molality [<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>m</mi><mi>o</mi><mi>l</mi><mi>k</mi><msup><mi>g</mi><mrow><mo>&#x02212;</mo><mn>1</mn></mrow></msup></mrow></math></span>]</li>
-</ul>
-</div>
-<p>The NaOH-focused Pitzer path adds activity corrections at high ionic strength while preserving charge and carbon closures each cycle.</p>
-<p>The NaOH Pitzer path uses activity-corrected species balances and charge balance with focused Pitzer interactions (<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><msup><mi>a</mi><mo>&#x0002B;</mo></msup></mrow></math></span> with <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>O</mi><msup><mi>H</mi><mo>&#x02212;</mo></msup></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msup><msubsup><mi>O</mi><mrow><mn>3</mn></mrow><mn>2</mn></msubsup><mo>&#x02212;</mo></msup></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msup><msubsup><mi>O</mi><mrow><mn>3</mn></mrow><mn>2</mn></msubsup><mo>&#x02212;</mo></msup></mrow></math></span>, plus selected <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x003B8;</mi></mrow></math></span>/<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x003A8;</mi></mrow></math></span> terms).</p>
-<div class="calculation-map">
-  <div class="calculation-map-heading">
-    <div>
-      <p class="calculation-map-title">Focused Pitzer Solver Map</p>
-      <p class="calculation-map-copy">Compute ionic strength, correct activities, use activity-corrected species ratios, then enforce total-carbon and charge closure each cycle.</p>
-    </div>
-    <div class="calculation-map-badge">
-      <span>Path</span>
-      <strong>HMW</strong>
-    </div>
-  </div>
-  <div class="calculation-map-grid">
-    <div class="calculation-map-step">
-      <span>1. Ionic strength</span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>I</mi><mo>&#x0003D;</mo><mfrac><mrow><mn>1</mn></mrow><mrow><mn>2</mn></mrow></mfrac><munder><mo>&#x02211;</mo><mi>i</mi></munder><mo stretchy="false">&#x00028;</mo><msub><mi>m</mi><mi>i</mi></msub><mo>&#x000D7;</mo><msubsup><mi>z</mi><mi>i</mi><mn>2</mn></msubsup><mo stretchy="false">&#x00029;</mo></mrow></math></span>
-    </div>
-    <div class="calculation-map-step">
-      <span>2. Activity coefficients</span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>ln</mi><mo stretchy="false">&#x00028;</mo><msub><mi>&#x003B3;</mi><mi>i</mi></msub><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><mo stretchy="false">&#x00028;</mo><msubsup><mi>z</mi><mi>i</mi><mn>2</mn></msubsup><mo>&#x000D7;</mo><mi>F</mi><mo stretchy="false">&#x00028;</mo><mi>I</mi><mo stretchy="false">&#x00029;</mo><mo stretchy="false">&#x00029;</mo><mo>&#x0002B;</mo><munder><mo>&#x02211;</mo><mi>j</mi></munder><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><msub><mi>m</mi><mi>j</mi></msub><mo>&#x000D7;</mo><mo stretchy="false">&#x00028;</mo><mn>2</mn><mo>&#x000D7;</mo><msub><mi>B</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>&#x0002B;</mo><mi>Z</mi><mo>&#x000D7;</mo><msub><mi>C</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo stretchy="false">&#x00029;</mo><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo>&#x0002B;</mo><munder><mo>&#x02211;</mo><mrow><mi>j</mi><mo>&#x0002C;</mo><mi>k</mi></mrow></munder><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><msub><mi>m</mi><mi>j</mi></msub><mo>&#x000D7;</mo><msub><mi>m</mi><mi>k</mi></msub><mo>&#x000D7;</mo><msub><mi>&#x003A8;</mi><mrow><mi>i</mi><mi>j</mi><mi>k</mi></mrow></msub><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo>&#x0002B;</mo><mo>&#x022EF;</mo></mrow></math></span>
-    </div>
-    <div class="calculation-map-step">
-      <span>3. Bicarbonate ratio</span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>r</mi><mn>1</mn></msub><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub></mrow><mrow><msub><mi>&#x003B3;</mi><mrow><mrow><msup><mi mathvariant="normal">H</mi><mo>&#x0002B;</mo></msup></mrow></mrow></msub><mo>&#x000D7;</mo><msub><mi>&#x003B3;</mi><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></msub><mo>&#x000D7;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></mfrac></mrow></math></span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>r</mi><mn>1</mn></msub><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></msub></mrow><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow></mrow></msub></mrow></mfrac></mrow></math></span>
-    </div>
-    <div class="calculation-map-step">
-      <span>4. Carbonate ratio</span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>r</mi><mn>2</mn></msub><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub><mo>&#x000D7;</mo><msub><mi>&#x003B3;</mi><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></msub></mrow><mrow><msub><mi>&#x003B3;</mi><mrow><mrow><msup><mi mathvariant="normal">H</mi><mo>&#x0002B;</mo></msup></mrow></mrow></msub><mo>&#x000D7;</mo><msub><mi>&#x003B3;</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow></mrow></msub><mo>&#x000D7;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></mfrac></mrow></math></span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>r</mi><mn>2</mn></msub><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow></mrow></msub></mrow><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></msub></mrow></mfrac></mrow></math></span>
-    </div>
-  </div>
-  <div class="calculation-map-step">
-    <span>5. Total carbon closure</span>
-    <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>m</mi><mrow><mi>C</mi><mi>T</mi></mrow></msub><mo>&#x0003D;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow></mrow></msub><mo>&#x0002B;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></msub><mo>&#x0002B;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow></mrow></msub></mrow></math></span>
-  </div>
-  <p class="calculation-map-callout">The charge-balance closure is then solved iteratively each cycle using the corrected activities.</p>
-</div>
-
-<h3 id="advanced-model-information-what-hmw-phreeqc-naco3-pairing-means">Advanced Model Information: What HMW / PHREEQC-NaCO3 Pairing Means</h3>
-<div class="admonition note">
-<p class="admonition-title">Calculation Legend</p>
-<ul>
-<li><code>HMW</code>: Harvie-Moller-Weare Pitzer parameter family for concentrated electrolyte solutions.</li>
-<li><code>PHREEQC pitzer.dat</code>: database source for the Pitzer interaction parameters used by the focused GL-260 path.</li>
-<li><code>Na-CO3 pairing</code>: shorthand for explicitly correcting sodium interactions with carbonate-family ions.</li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msup><mi>B</mi><mn>0</mn></msup></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msup><mi>B</mi><mn>1</mn></msup></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msup><mi>C</mi><mn>0</mn></msup></mrow></math></span>: pair-interaction terms for a cation-anion pair.</li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Θ</mi></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Ψ</mi></mrow></math></span>: same-charge and ternary interaction terms that capture higher-order electrolyte behavior.</li>
-</ul>
-</div>
-<p>The phrase <strong>HMW / PHREEQC-NaCO3 Pairing</strong> means GL-260 is not just solving carbonate acid-base equations in isolation. It reads the focused Pitzer parameter set from <code>pitzer.dat</code> and applies the sodium-carbonate interaction terms that dominate this chemistry:</p>
-<ul>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><msup><mi>a</mi><mo>&#x0002B;</mo></msup></mrow></math></span> with <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>O</mi><msup><mi>H</mi><mo>&#x02212;</mo></msup></mrow></math></span></li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><msup><mi>a</mi><mo>&#x0002B;</mo></msup></mrow></math></span> with <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>H</mi><mi>C</mi><msubsup><mi>O</mi><mrow><mn>3</mn></mrow><mo>&#x02212;</mo></msubsup></mrow></math></span></li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><msup><mi>a</mi><mo>&#x0002B;</mo></msup></mrow></math></span> with <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msubsup><mi>O</mi><mrow><mn>3</mn></mrow><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow></math></span></li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>Θ</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow></mrow></msub></mrow></math></span></li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>Ψ</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup><mo>&#x0002C;</mo><mi mathvariant="normal">N</mi><msup><mi mathvariant="normal">a</mi><mo>&#x0002B;</mo></msup><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow></mrow></msub></mrow></math></span></li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>Ψ</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup><mo>&#x0002C;</mo><mi mathvariant="normal">N</mi><msup><mi mathvariant="normal">a</mi><mo>&#x0002B;</mo></msup></mrow></mrow></msub></mrow></math></span></li>
-</ul>
-<p>The model converts these database terms into the compact parameters used by the Rust and Python solver cores:</p>
-<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mo stretchy="false">&#x0007B;</mo><msubsup><mi>B</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow><mn>0</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>B</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow><mn>1</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>C</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow><mn>0</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>B</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow><mn>0</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>B</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow><mn>1</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>C</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow><mn>0</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>B</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow><mn>0</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>B</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow><mn>1</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>C</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow><mn>0</mn></msubsup><mo>&#x0002C;</mo><msub><mi>&#x00398;</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow></msub><mo>&#x0002C;</mo><msub><mi>&#x003A8;</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub><mo>&#x0002C;</mo><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow></msub><mo>&#x0002C;</mo><msub><mi>&#x003A8;</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub><mo>&#x0002C;</mo><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub><mo>&#x0002C;</mo><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi></mrow></mrow></msub><mo stretchy="false">&#x0007D;</mo></mrow></math></div>
-<p>Operationally, this yields more accurate calculations than an ideal model because sodium carbonate and sodium bicarbonate are not passive spectators. Sodium association changes the effective activities of the species present, and those activity changes shift the pH and fraction crossover. That is the specific error mode the HMW path is meant to avoid: a misleading carbonate-buffer plateau or incorrect pH slope when the solution is highly loaded with sodium.</p>
-<hr>
 <h2 id="reaction-kinetics">Reaction Kinetics</h2>
-<p>Equilibrium tells us where the chemistry can settle after a cycle. Kinetics explains how quickly the process moves toward that state while CO2 is being contacted with the alkaline liquid.</p>
+<p>Equilibrium tells us about the speciation at each cycle. Kinetics explains how quickly the process moves toward that state while CO2 is being consumed.</p>
 <div class="admonition note">
 <p class="admonition-title">Calculation Legend</p>
 <ul>
@@ -2002,7 +1897,7 @@
 <li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003C4;</mi><mrow><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">x</mi></mrow></mrow></msub></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003C4;</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">x</mi><mi mathvariant="normal">n</mi></mrow></mrow></msub></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003C4;</mi><mrow><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">t</mi></mrow></mrow></msub></mrow></math></span>: mixing, reaction, and mass-transfer time scales [seconds]</li>
 </ul>
 </div>
-<p>In this section, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow></mrow></math></span> is how the model treats dissolved CO2. In highly basic solution that pool is rapidly consumed by hydroxide, so the kinetic shorthand often combines hydration and bicarbonate formation into one apparent fast step.</p>
+<p>In this section, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow></mrow></math></span> is how the model treats dissolved <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mrow><mn>2</mn></mrow></msub></mrow></mrow></math></span>. In highly basic solution that pool is rapidly consumed by hydroxide, so the kinetic shorthand often combines <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mrow><mn>2</mn></mrow></msub></mrow></mrow></math></span> absorption and bicarbonate formation into one apparent fast step.</p>
 <table class="reaction-map">
 <thead>
 <tr>
@@ -2065,7 +1960,7 @@
   </div>
 </div>
 
-<p>These balances describe a moving cycle, not the final equilibrium solve. CO2 must first cross from gas to liquid, hydrate into the <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow></mrow></math></span> carbonic-acid basis, react in the liquid, and then mix through the batch. GL-260's equilibrium model consumes the cycle-level uptake after the event has been identified; the kinetic interpretation explains the pressure and temperature shape during the event.</p>
+<p>These balances describe a moving cycle, not the final equilibrium. <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mrow><mn>2</mn></mrow></msub></mrow></mrow></math></span> must first cross from gas to liquid, before reacting.</p>
 <h3 id="liquid-gas-interaction">Liquid-Gas Interaction</h3>
 <p>The physical supply of dissolved CO2 is controlled by the driving force between the gas-equilibrium concentration and the current bulk concentration:</p>
 <div class="calculation-map">
@@ -2104,11 +1999,11 @@
   </div>
 </div>
 
-<p>This equation is the kinetic version of the pCO2 control lever. Higher <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>p</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow></mrow></msub></mrow></math></span> does not only shift the equilibrium distribution toward bicarbonate; it also raises the instantaneous driving force for absorption. Better agitation, gas dispersion, and interfacial contact increase <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>k</mi><mi>L</mi></msub><mi>a</mi></mrow></math></span>, which lets the same headspace pressure produce faster usable CO2 transfer.</p>
+<p>This equation is the kinetic version of the pCO2 control lever. Higher <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>p</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub></mrow></mrow></msub></mrow></math></span> not only shifts the equilibrium toward bicarbonate, it also raises the instantaneous driving force for absorption. Better agitation, gas dispersion, and interfacial contact increase <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>k</mi><mi>L</mi></msub><mi>a</mi></mrow></math></span>, which lets the same headspace pressure produce faster usable CO2 transfer.</p>
 <p>where <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>E</mi><mo>&#x0003E;</mo><mn>1</mn></mrow></math></span> means the liquid reaction is consuming dissolved CO2 fast enough to increase the apparent absorption rate.</p>
-<p>That is the mass-transfer-limited regime: the chemistry is ready to react, but the gas-liquid interface controls how quickly carbon can enter the solution.</p>
+<p>That is the mass transfer limited regime: The gas-liquid interface controls how quickly carbon can enter the solution.</p>
 <h3 id="pseudo-first-order-view-at-high-hydroxide-concentration">Pseudo-First-Order View at High Hydroxide Concentration</h3>
-<p>During early caustic-rich cycles, hydroxide is abundant compared with dissolved CO2. Over a short interval, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>a</mi><mrow><mrow><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow></mrow></msub></mrow></math></span> can be treated as locally high and slowly varying, which collapses the first rate expression into a pseudo-first-order form:</p>
+<p>During early cycles, hydroxide is abundant compared with dissolved CO2. Over a short interval, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>a</mi><mrow><mrow><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow></mrow></msub></mrow></math></span> can be treated as locally high and slowly varying, which collapses the first rate expression into a pseudo-first-order form:</p>
 <div class="calculation-map">
   <div class="calculation-map-heading">
     <div>
@@ -2136,10 +2031,10 @@
   </div>
 </div>
 
-<p>The interpretation is direct: early in the run, high hydroxide activity makes CO2 consumption very fast, so pressure can fall sharply after a charge. As hydroxide is consumed, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msubsup><mi>k</mi><mn>1</mn><mi>&#x02032;</mi></msubsup></mrow></math></span> falls, pressure decay slows, and the batch becomes less able to instantly pull CO2 out of the headspace.</p>
+<p>Early in the run, high hydroxide activity makes CO2 consumption very fast, so pressure can fall sharply after a charge. As hydroxide is consumed, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msubsup><mi>k</mi><mn>1</mn><mi>&#x02032;</mi></msubsup></mrow></math></span> falls, pressure decay slows, and the batch becomes less able to instantly pull CO2 out of the headspace.</p>
 <p>This same logic explains the carbonate-rich middle region. If hydroxide remains high while bicarbonate has already been formed, the second step <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>r</mi><mn>2</mn></msub><mo>&#x0003D;</mo><msub><mi>k</mi><mn>2</mn></msub><mo>&#x000D7;</mo><msub><mi>a</mi><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></msub><mo>&#x000D7;</mo><msub><mi>a</mi><mrow><mrow><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow></mrow></msub></mrow></math></span> can keep running. Lowering <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>a</mi><mrow><mrow><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow></mrow></msub></mrow></math></span> through additional CO2 loading suppresses <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>r</mi><mn>2</mn></msub></mrow></math></span>, which is why the process eventually moves away from carbonate dominance and toward the bicarbonate-rich endpoint.</p>
 <h3 id="time-scale-test-for-interpreting-cycle-shape">Time-Scale Test for Interpreting Cycle Shape</h3>
-<p>For operations, the useful question is which time scale is slowest:</p>
+<p>Which time scale is slowest:</p>
 <div class="calculation-map">
   <div class="calculation-map-heading">
     <div>
@@ -2184,6 +2079,73 @@
   </div>
 </div>
 
+<h2 id="why-does-this-all-matter">Why does this all matter?</h2>
+<p><img src="assets\equilibrium-walkthrough\bicarb manifold.jpg"
+     alt="Manifold used in the synthesis of sodium bicarbonate MPT"
+     style="width: 75%; display: block; margin: 1rem auto;"></p>
+<p><strong>Automation</strong></p>
+<p>This manifold was set up with the intention of fitting it with electronically controlled pneumatically actuated valves.</p>
+<p>In order to program a computer to automate something like this, we need to understand it on a deeper level ourselves.</p>
+<div style="display: flex; gap: 1rem; align-items: flex-start;">
+  <img
+    src="assets/equilibrium-walkthrough/bicarb reaction setup.jpg"
+    alt="Reactor setup used in sodium bicarbonate synthesis"
+    style="width: calc(50% - 0.5rem); height: auto;"
+  >
+
+  <img
+    src="assets\equilibrium-walkthrough\pr-24304-batch-1-day-1-6-combined-triple-axis.png"
+    alt="Description of the second photo"
+    style="width: calc(50% - 0.5rem); height: auto;"
+  >
+</div>
+
+<p><strong>Reactor</strong></p>
+<ul>
+<li>
+<p>The reactor needs to be removed from the shaker and manifold, opened, and blended twice</p>
+</li>
+<li>
+<p>After NaOH is consumed and we have mostly carbonate</p>
+</li>
+<li>After the reaction seems to stall, blending helps bring the reaction towards 98-100% bicarbonate</li>
+</ul>
+<h3 id="synthesis-time">Synthesis Time</h3>
+<ul>
+<li>The entire synthesis, including blending, now only takes 7 days (depending on when you start)</li>
+<li>No stalling/unexpected behavior</li>
+<li>Consistent 90% yield</li>
+<li>Consistent 1,300-1,350g batch size</li>
+</ul>
+<h3 id="supply-chain-optimization">Supply Chain Optimization</h3>
+<ul>
+<li>New item # was created <strong>CLM-185-Z-BICARB</strong></li>
+<li><strong>CLM-185-Z-BICARB</strong> now is loaded with 46 moles/2,000 g of CO2, which provides enough pressure to complete 2 batches with recovery cylinder.</li>
+<li>Once bulk pressure reaches 500 PSI, the bulk is transferred into the recovery cylinder to increase the effective pressure we are able to deliver to the reactor</li>
+</ul>
+<h2 id="how-has-bicarb-production-been-with-all-of-this-understanding">How has Bicarb production been with all of this understanding?</h2>
+<p><img src="assets\equilibrium-walkthrough\Screenshot 2026-06-22 143155.png"
+     alt="Batch Ledger"
+     style="width: 90%; display: block; margin: 1rem auto;"></p>
+<ul>
+<li>consistent batch size</li>
+<li>consistent pH</li>
+<li>QC has not failed once.</li>
+<li>1,300g / week</li>
+<li>100,000 data points / run</li>
+<li>easily plot, analyze, and visualize collected data allowing for informed decisions on endpoint/blending</li>
+<li>standardized manifold</li>
+<li>no more chasing leaks</li>
+<li>safer and easier to operate</li>
+<li>GL-260 data logging</li>
+<li>GL-260 Data Processing program</li>
+<li>can plot anything  </li>
+</ul>
+<h2 id="questions">Questions?</h2>
+<p><img src="assets\equilibrium-walkthrough\satan.jpg"
+     alt="good boy"
+     style="width: 40%; display: block; margin: 1rem auto;"></p>
+<h2 id="supplementary-sections">Supplementary Sections</h2>
 <h3 id="how-this-connects-to-gl-260-cycle-detection">How This Connects to GL-260 Cycle Detection</h3>
 <p>GL-260 does not need to solve a full kinetic ODE model to use kinetics operationally. The detected cycle provides an integrated uptake event, and the equilibrium solver uses that event as the carbon-loading increment:</p>
 <div class="calculation-map">
@@ -2207,7 +2169,7 @@
 <li><strong>Calibration:</strong> how measured pH anchors correct the cycle trajectory when the real process differs from the modeled ideal.</li>
 </ul>
 <hr>
-<h2 id="cycle-uptake-math">Cycle Uptake Math</h2>
+<h3 id="cycle-uptake-math">Cycle Uptake Math</h3>
 <p>Cycle-level uptake is converted into cumulative carbon loading, which becomes the cycle-by-cycle driver of equilibrium state updates.</p>
 <div class="admonition info">
 <p class="admonition-title">Derivation Walkthrough</p>
@@ -2300,7 +2262,7 @@
 <div class="inline-module-anchor" data-inline-module="cycle-flow-visual"></div>
 
 <hr>
-<h2 id="integrated-worked-examples-from-co2-uptake-to-ph-and-speciation">Integrated Worked Examples: From CO2 Uptake to pH and Speciation</h2>
+<h3 id="integrated-worked-examples-from-co2-uptake-to-ph-and-speciation">Integrated Worked Examples: From CO2 Uptake to pH and Speciation</h3>
 <p>This section brings the preceding derivations together into one repeatable calculation path. Each example starts with a measured cumulative <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msub><mi>O</mi><mrow><mn>2</mn></mrow></msub></mrow></math></span> uptake, converts it to the total-carbon basis, identifies the stoichiometric region, applies the focused HMW/Pitzer activity correction, closes charge balance, and reports the resulting pH and carbonate-family speciation.</p>
 <div class="admonition note">
 <p class="admonition-title">Calculation Legend</p>
@@ -2814,7 +2776,7 @@
 </div>
 
 <hr>
-<h2 id="worked-naoh-pitzer-simulation-table-synthetic-cycles-to-900-g">Worked NaOH-Pitzer Simulation Table (Synthetic Cycles to 900 g)</h2>
+<h3 id="worked-naoh-pitzer-simulation-table-synthetic-cycles-to-900-g">Worked NaOH-Pitzer Simulation Table (Synthetic Cycles to 900 g)</h3>
 <div class="admonition note">
 <p class="admonition-title">Calculation Legend</p>
 <ul>
@@ -2954,91 +2916,206 @@
 <li>Around <code>~385 g</code> cumulative CO2, the system approaches Stage-1 equivalence (NaOH mostly consumed).</li>
 <li>By late cycles, bicarbonate dominates and pH approaches the bicarbonate-buffer region.</li>
 </ul>
-<h2 id="worked-real-world-example-pr-24304-sodium-bicarbonate-batch-1">Worked Real-World Example: PR-24304 Sodium Bicarbonate Batch 1</h2>
-<p>This section connects the derivation to a real GL-260 presentation artifact rather than the locked synthetic cycle sequence.</p>
-<h3 id="profile-basis-and-stoichiometric-translation">Profile Basis and Stoichiometric Translation</h3>
+<h3 id="calculating-speciation-and-ph">Calculating Speciation and pH</h3>
+<p><strong>I dont do any of the following math by hand, i wrote a program to do it for me. Some of the following math requires soklving for quartic roots</strong></p>
 <div class="admonition note">
 <p class="admonition-title">Calculation Legend</p>
 <ul>
-<li><code>profile</code>: saved GL-260 analysis configuration used to reproduce plotting and reaction-basis context.</li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi><mo>&#x0002C;</mo><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub></mrow></math></span>: NaOH charge from the profile [<code>g</code>]</li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>n</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi><mo>&#x0002C;</mo><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub></mrow></math></span>: NaOH moles implied by the profile [<code>mol</code>]</li>
-<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub><mo>&#x0002C;</mo><mi mathvariant="normal">s</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">h</mi></mrow></mrow></msub></mrow></math></span>: CO2 mass required for the ideal one-to-one NaOH-to-NaHCO3 endpoint [<code>g</code>]</li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">N</mi><msup><mi mathvariant="normal">a</mi><mo>&#x0002B;</mo></msup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>: concentration/molarity-like model terms [<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>m</mi><mi>o</mi><mi>l</mi><msup><mi>L</mi><mrow><mo>&#x02212;</mo><mn>1</mn></mrow></msup></mrow></math></span>] or model-consistent concentration basis]</li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>C</mi><mrow><mi>T</mi></mrow></msub></mrow></math></span>: total inorganic carbon concentration on the same basis as reconstructed species</li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003B1;</mi><mn>0</mn></msub></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003B1;</mi><mn>1</mn></msub></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003B1;</mi><mn>2</mn></msub></mrow></math></span>: species fractions</li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>D</mi></mrow></math></span>: shared denominator in alpha-fraction identities</li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>R</mi><mrow><mi>q</mi></mrow></msub></mrow></math></span>: charge-balance residual on concentration basis (target is zero)</li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>x</mi></mrow></math></span>: trial pH used by the numerical root search, with <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><msup><mn>10</mn><mrow><mo>&#x02212;</mo><mi>x</mi></mrow></msup></mrow></math></span></li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003F5;</mi><mrow><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">h</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">g</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub></mrow></math></span>: accepted absolute charge-residual tolerance</li>
 </ul>
 </div>
-<p>The selected profile is:</p>
-<pre><code class="language-text">profiles/PR-24304 CLM-441-MPT Sodium Bicarbonate Batch 1 of 2.json
-</code></pre>
-<p>Its reaction basis is <code>NaOH + CO2 -&gt; NaHCO3</code> with <code>702.0 g</code> sodium hydroxide starting mass.</p>
+<p><strong>We do not obtain <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span> from one isolated rearrangement because <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span> appears in water dissociation, every carbonate fraction, and charge balance at the same time. Instead, the model turns the full chemistry into one scalar function, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>R</mi><mi>q</mi></msub><mo stretchy="false">&#x00028;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo stretchy="false">&#x00029;</mo></mrow></math></span>, and numerically finds the positive <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span> that makes <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>R</mi><mi>q</mi></msub><mo>&#x0003D;</mo><mn>0</mn></mrow></math></span>.</strong></p>
+<div class="admonition info">
+<p class="admonition-title">Derivation Walkthrough</p>
+<p><strong>Goal:</strong> calculate <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span> explicitly by solving charge balance, then recover pH and every carbonate species from that accepted root.</p>
+<p><strong>Step-by-step interpretation:</strong> bracket a trial pH, convert that trial to <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>, calculate <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>D</mi></mrow></math></span>, fractions, species, and hydroxide, evaluate <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>R</mi><mi>q</mi></msub></mrow></math></span>, then move the bracket and repeat until the residual is sufficiently close to zero.</p>
+<p><strong>Why this changes operation:</strong> bicarbonate-control decisions are only trustworthy when one solved state satisfies both speciation and charge closure; otherwise purity guidance can point to the wrong operating region.</p>
+</div>
 <div class="calculation-map">
   <div class="calculation-map-heading">
     <div>
-      <p class="calculation-map-title">PR-24304 Stoichiometry Map</p>
-      <p class="calculation-map-copy">Convert the saved profile NaOH charge into the ideal CO2 requirement for the bicarbonate endpoint.</p>
+      <p class="calculation-map-title">How the Solver Finds [H+], pH, and Speciation</p>
+      <p class="calculation-map-copy">Known carbon and sodium inputs define one charge-residual function. A bracketed root search changes pH until that function reaches zero.</p>
     </div>
     <div class="calculation-map-badge">
       <span>Target</span>
-      <strong>772.4 g</strong>
+      <strong><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>R</mi><mi>q</mi></msub><mo>&#x0003D;</mo><mn>0</mn></mrow></math></span></strong>
     </div>
   </div>
   <div class="calculation-map-grid three-up">
     <div class="calculation-map-step">
-      <span>1. Profile charge</span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi><mo>&#x0002C;</mo><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mn>702.0</mn><mtext>&#x000A0;</mtext><mi>&#x00067;</mi></mrow></math></span>
+      <span>1. Fix the known inputs</span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mo stretchy="false">&#x0007B;</mo><msub><mi>C</mi><mi>T</mi></msub><mo>&#x0002C;</mo><mtext>&#x000A0;</mtext><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">N</mi><msup><mi mathvariant="normal">a</mi><mo>&#x0002B;</mo></msup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0002C;</mo><mtext>&#x000A0;</mtext><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mo>&#x0002C;</mo><mtext>&#x000A0;</mtext><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub><mo>&#x0002C;</mo><mtext>&#x000A0;</mtext><msub><mi>K</mi><mi>w</mi></msub><mo stretchy="false">&#x0007D;</mo></mrow></math></span>
+      <p>These values stay fixed while the solver searches for the one charge-balanced hydrogen concentration.</p>
     </div>
     <div class="calculation-map-step">
-      <span>2. NaOH moles</span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>n</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi><mo>&#x0002C;</mo><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mfrac><mrow><mn>702.0</mn><mtext>&#x000A0;</mtext><mi>&#x00067;</mi></mrow><mrow><mn>40.0</mn><mtext>&#x000A0;</mtext><mrow><mi mathvariant="normal">g</mi><mtext>&#x000A0;</mtext><mi mathvariant="normal">m</mi><mi mathvariant="normal">o</mi><msup><mi mathvariant="normal">l</mi><mrow><mo>&#x02212;</mo><mn>1</mn></mrow></msup></mrow></mrow></mfrac><mo>&#x0003D;</mo><mn>17.55</mn><mtext>&#x000A0;</mtext><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">l</mi></mrow></mrow></math></span>
+      <span>2. Choose a trial pH</span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>x</mi><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>x</mi><mrow><mi>l</mi><mi>o</mi></mrow></msub><mo>&#x0002B;</mo><msub><mi>x</mi><mrow><mi>h</mi><mi>i</mi></mrow></msub></mrow><mrow><mn>2</mn></mrow></mfrac></mrow></math></span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>h</mi><mo>&#x0003D;</mo><msub><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mrow><mi>t</mi><mi>r</mi><mi>i</mi><mi>a</mi><mi>l</mi></mrow></msub><mo>&#x0003D;</mo><msup><mn>10</mn><mrow><mo>&#x02212;</mo><mi>x</mi></mrow></msup></mrow></math></span>
+      <p>The search is performed in pH/log space because <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span> spans many orders of magnitude.</p>
     </div>
     <div class="calculation-map-step">
-      <span>3. Ideal CO2 endpoint</span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>n</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub><mo>&#x0002C;</mo><mi mathvariant="normal">s</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">h</mi></mrow></mrow></msub><mo>&#x0003D;</mo><msub><mi>n</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi><mo>&#x0002C;</mo><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mn>17.55</mn><mtext>&#x000A0;</mtext><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">l</mi></mrow></mrow></math></span>
-      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>2</mn></msub><mo>&#x0002C;</mo><mi mathvariant="normal">s</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">h</mi></mrow></mrow></msub><mo>&#x0003D;</mo><mn>17.55</mn><mtext>&#x000A0;</mtext><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">l</mi></mrow><mo>&#x000D7;</mo><mn>44.01</mn><mtext>&#x000A0;</mtext><mrow><mi mathvariant="normal">g</mi><mtext>&#x000A0;</mtext><mi mathvariant="normal">m</mi><mi mathvariant="normal">o</mi><msup><mi mathvariant="normal">l</mi><mrow><mo>&#x02212;</mo><mn>1</mn></mrow></msup></mrow><mo>&#x02248;</mo><mn>772.4</mn><mtext>&#x000A0;</mtext><mi>&#x00067;</mi></mrow></math></span>
+      <span>3. Build the shared denominator</span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>D</mi><mo stretchy="false">&#x00028;</mo><mi>h</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><msup><mi>h</mi><mn>2</mn></msup><mo>&#x0002B;</mo><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mi>h</mi><mo>&#x0002B;</mo><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub></mrow></math></span>
+      <p>This denominator converts the trial <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>h</mi></mrow></math></span> into a complete carbonate distribution.</p>
     </div>
+    <div class="calculation-map-step">
+      <span>4. Calculate fractions and species</span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>&#x003B1;</mi><mn>0</mn></msub><mo>&#x0003D;</mo><mfrac><mrow><msup><mi>h</mi><mn>2</mn></msup></mrow><mrow><mi>D</mi></mrow></mfrac><mo>&#x0002C;</mo><mspace width="1em" /><msub><mi>&#x003B1;</mi><mn>1</mn></msub><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mi>h</mi></mrow><mrow><mi>D</mi></mrow></mfrac><mo>&#x0002C;</mo><mspace width="1em" /><msub><mi>&#x003B1;</mi><mn>2</mn></msub><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub></mrow><mrow><mi>D</mi></mrow></mfrac></mrow></math></span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><msub><mi>&#x003B1;</mi><mn>0</mn></msub><msub><mi>C</mi><mi>T</mi></msub><mo>&#x0002C;</mo><mspace width="1em" /><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><msub><mi>&#x003B1;</mi><mn>1</mn></msub><msub><mi>C</mi><mi>T</mi></msub><mo>&#x0002C;</mo><mspace width="1em" /><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><msub><mi>&#x003B1;</mi><mn>2</mn></msub><msub><mi>C</mi><mi>T</mi></msub></mrow></math></span>
+    </div>
+    <div class="calculation-map-step">
+      <span>5. Calculate hydroxide and residual</span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>K</mi><mi>w</mi></msub></mrow><mrow><mi>h</mi></mrow></mfrac></mrow></math></span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>R</mi><mi>q</mi></msub><mo stretchy="false">&#x00028;</mo><mi>h</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">N</mi><msup><mi mathvariant="normal">a</mi><mo>&#x0002B;</mo></msup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0002B;</mo><mi>h</mi><mo>&#x02212;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x02212;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x02212;</mo><mn>2</mn><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>
+    </div>
+    <div class="calculation-map-step">
+      <span>6. Move the bracket and repeat</span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>R</mi><mi>q</mi></msub><mo stretchy="false">&#x00028;</mo><msub><mi>x</mi><mrow><mi>l</mi><mi>o</mi></mrow></msub><mo stretchy="false">&#x00029;</mo><msub><mi>R</mi><mi>q</mi></msub><mo stretchy="false">&#x00028;</mo><msub><mi>x</mi><mrow><mi>m</mi><mi>i</mi><mi>d</mi></mrow></msub><mo stretchy="false">&#x00029;</mo><mo>&#x02264;</mo><mn>0</mn><mo>&#x021D2;</mo><msub><mi>x</mi><mrow><mi>h</mi><mi>i</mi></mrow></msub><mo>&#x0003D;</mo><msub><mi>x</mi><mrow><mi>m</mi><mi>i</mi><mi>d</mi></mrow></msub></mrow></math></span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mtext>otherwise</mtext><mspace width="1em" /><msub><mi>x</mi><mrow><mi>l</mi><mi>o</mi></mrow></msub><mo>&#x0003D;</mo><msub><mi>x</mi><mrow><mi>m</mi><mi>i</mi><mi>d</mi></mrow></msub></mrow></math></span>
+      <p>Each iteration halves the remaining pH interval while preserving a sign change around the root.</p>
+    </div>
+  </div>
+  <div class="calculation-map-step">
+    <span>7. Accept [H+] and report the final state</span>
+    <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mo stretchy="false">&#x0007C;</mo><msub><mi>R</mi><mi>q</mi></msub><mo stretchy="false">&#x00028;</mo><msup><mi>h</mi><mo>&#x0002A;</mo></msup><mo stretchy="false">&#x00029;</mo><mo stretchy="false">&#x0007C;</mo><mo>&#x02264;</mo><msub><mi>&#x003F5;</mi><mrow><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">h</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">g</mi><mi mathvariant="normal">e</mi></mrow></mrow></msub></mrow></math></span>
+    <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><msup><mi>h</mi><mo>&#x0002A;</mo></msup><mo>&#x0002C;</mo><mspace width="2em" /><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">H</mi></mrow><mo>&#x0003D;</mo><mo>&#x02212;</mo><msub><mi>log</mi><mrow><mn>10</mn></mrow></msub><mo stretchy="false">&#x00028;</mo><msup><mi>h</mi><mo>&#x0002A;</mo></msup><mo stretchy="false">&#x00029;</mo><mo>&#x0002C;</mo><mspace width="2em" /><mo stretchy="false">&#x0007B;</mo><msub><mi>&#x003B1;</mi><mn>0</mn></msub><mo>&#x0002C;</mo><msub><mi>&#x003B1;</mi><mn>1</mn></msub><mo>&#x0002C;</mo><msub><mi>&#x003B1;</mi><mn>2</mn></msub><mo stretchy="false">&#x0007D;</mo><mo>&#x0003D;</mo><mo stretchy="false">&#x0007B;</mo><msub><mi>&#x003B1;</mi><mn>0</mn></msub><mo stretchy="false">&#x00028;</mo><msup><mi>h</mi><mo>&#x0002A;</mo></msup><mo stretchy="false">&#x00029;</mo><mo>&#x0002C;</mo><msub><mi>&#x003B1;</mi><mn>1</mn></msub><mo stretchy="false">&#x00028;</mo><msup><mi>h</mi><mo>&#x0002A;</mo></msup><mo stretchy="false">&#x00029;</mo><mo>&#x0002C;</mo><msub><mi>&#x003B1;</mi><mn>2</mn></msub><mo stretchy="false">&#x00028;</mo><msup><mi>h</mi><mo>&#x0002A;</mo></msup><mo stretchy="false">&#x00029;</mo><mo stretchy="false">&#x0007D;</mo></mrow></math></span>
+    <p>The accepted root is reused for pH, hydroxide, fractions, and species; these outputs therefore describe the same charge-balanced state.</p>
   </div>
 </div>
 
-<p>This number is a presentation anchor: it is the ideal CO2 requirement for complete conversion to sodium bicarbonate before yield losses, gas holdup uncertainty, incomplete absorption, or measurement corrections are considered.</p>
-<h3 id="reading-the-combined-triple-axis-plot">Reading the Combined Triple-Axis Plot</h3>
-<p><img alt="PR-24304 Batch 1 Day 1-6 combined triple-axis plot" src="assets/equilibrium-walkthrough/pr-24304-batch-1-day-1-6-combined-triple-axis.png"></p>
-<p>The combined triple-axis plot is the process-history view. During a live explanation, read it from left to right as the experimental record:</p>
+<p>Substituting the fraction equations directly into charge balance makes the one-variable solve explicit:</p>
+<p><span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>R</mi><mi>q</mi></msub><mo stretchy="false">&#x00028;</mo><mi>h</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">N</mi><msup><mi mathvariant="normal">a</mi><mo>&#x0002B;</mo></msup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0002B;</mo><mi>h</mi><mo>&#x02212;</mo><mfrac><mrow><msub><mi>K</mi><mi>w</mi></msub></mrow><mrow><mi>h</mi></mrow></mfrac><mo>&#x02212;</mo><msub><mi>C</mi><mi>T</mi></msub><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mi>h</mi><mo>&#x0002B;</mo><mn>2</mn><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub></mrow><mrow><msup><mi>h</mi><mn>2</mn></msup><mo>&#x0002B;</mo><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mi>h</mi><mo>&#x0002B;</mo><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub></mrow></mfrac><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo>&#x0003D;</mo><mn>0</mn></mrow></math></span></p>
+<p>Everything on the right is known except <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>h</mi><mo>&#x0003D;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>. For each trial pH, the solver evaluates this expression. If <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>R</mi><mi>q</mi></msub><mo>&#x0003E;</mo><mn>0</mn></mrow></math></span>, the trial state has excess positive charge relative to the reconstructed anions. If <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>R</mi><mi>q</mi></msub><mo>&#x0003C;</mo><mn>0</mn></mrow></math></span>, it has excess negative charge. The sign tells the bracketed solver which half of the pH interval can still contain the zero crossing.</p>
+<p>The ideal concentration form above is the presentation-level calculation. In the concentrated HMW/Pitzer path, the same root-search flow uses activities and updates activity coefficients around the charge-balance solve. The Python closed-system fallback uses bracketed bisection with a quartic cross-check/fallback, while the accelerated path preserves the same residual-to-root-to-speciation handoff.</p>
+<h3 id="deriving-alpha-fractions-from-the-equilibrium-constants">Deriving Alpha Fractions From the Equilibrium Constants</h3>
+<p>The alpha fractions are not fitted fractions. They fall directly out of the carbonate acid equilibria once <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span> is known.</p>
+<div class="calculation-map">
+  <div class="calculation-map-heading">
+    <div>
+      <p class="calculation-map-title">Alpha Fraction Derivation Map</p>
+      <p class="calculation-map-copy">Express bicarbonate and carbonate relative to the carbonic-acid basis, substitute those ratios into total carbon, then recover the shared denominator.</p>
+    </div>
+    <div class="calculation-map-badge">
+      <span>Closure</span>
+      <strong><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo>&#x02211;</mo><mi>&#x003B1;</mi><mo>&#x0003D;</mo><mn>1</mn></mrow></math></span></strong>
+    </div>
+  </div>
+  <div class="calculation-map-grid">
+    <div class="calculation-map-step">
+      <span>1. First dissociation</span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mo>&#x0003D;</mo><mfrac><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></mfrac></mrow></math></span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub></mrow><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></mfrac><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>
+    </div>
+    <div class="calculation-map-step">
+      <span>2. Second dissociation</span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub><mo>&#x0003D;</mo><mfrac><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></mfrac></mrow></math></span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub></mrow><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></mfrac><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>
+    </div>
+    <div class="calculation-map-step">
+      <span>3. Substitute bicarbonate ratio</span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub></mrow><mrow><msup><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mn>2</mn></msup></mrow></mfrac><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>
+    </div>
+    <div class="calculation-map-step">
+      <span>4. Total carbon closure</span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>C</mi><mi>T</mi></msub><mo>&#x0003D;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0002B;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0002B;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>C</mi><mi>T</mi></msub><mo>&#x0003D;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mn>1</mn><mo>&#x0002B;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub></mrow><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></mfrac><mo>&#x0002B;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub></mrow><mrow><msup><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mn>2</mn></msup></mrow></mfrac><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow></mrow></math></span>
+    </div>
+  </div>
+  <div class="calculation-map-step">
+    <span>5. Shared denominator and fraction closure</span>
+    <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>D</mi><mo>&#x0003D;</mo><msup><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mn>2</mn></msup><mo>&#x0002B;</mo><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo>&#x0002B;</mo><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub></mrow></math></span>
+    <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>&#x003B1;</mi><mn>0</mn></msub><mo>&#x0002B;</mo><msub><mi>&#x003B1;</mi><mn>1</mn></msub><mo>&#x0002B;</mo><msub><mi>&#x003B1;</mi><mn>2</mn></msub><mo>&#x0003D;</mo><mn>1</mn></mrow></math></span>
+  </div>
+</div>
+
+<p>The pH solver is therefore doing one central job: find the <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></math></span> value where these fractions, hydroxide from <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>K</mi><mi>w</mi></msub></mrow></math></span>, sodium charge, and total carbon all agree at the same time.</p>
+<h3 id="naoh-co2-pitzer-hmw-focused-calculation-path-even-more-complex">NaOH-CO2 Pitzer (HMW-Focused) Calculation Path: Even more complex</h3>
+<div class="admonition note">
+<p class="admonition-title">Calculation Legend</p>
 <ul>
-<li>Reactor pressure shows each CO2 contact/reaction event.</li>
-<li>The pressure derivative highlights where pressure is changing fastest, which helps identify uptake windows and cycle boundaries.</li>
-<li>Reactor/manifold temperature traces show whether thermal behavior could be influencing pressure, rate, or inferred gas uptake.</li>
+<li><code>I</code>: ionic strength [<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>m</mi><mi>o</mi><mi>l</mi><mi>k</mi><msup><mi>g</mi><mrow><mo>&#x02212;</mo><mn>1</mn></mrow></msup></mrow></math></span>]</li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>m</mi><mrow><mi>i</mi></mrow></msub></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>m</mi><mrow><mi>j</mi></mrow></msub></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>m</mi><mrow><mi>k</mi></mrow></msub></mrow></math></span>: species molalities [<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>m</mi><mi>o</mi><mi>l</mi><mi>k</mi><msup><mi>g</mi><mrow><mo>&#x02212;</mo><mn>1</mn></mrow></msup></mrow></math></span>]</li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>z</mi><mrow><mi>i</mi></mrow></msub></mrow></math></span>: ion charge number</li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003B3;</mi><mi>i</mi></msub></mrow></math></span>: activity coefficient</li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>B</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>C</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003A8;</mi><mrow><mi>i</mi><mi>j</mi><mi>k</mi></mrow></msub></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>F</mi><mo stretchy="false">&#x00028;</mo><mi>I</mi><mo stretchy="false">&#x00029;</mo></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Z</mi></mrow></math></span>: Pitzer-model terms used in the focused implementation</li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>r</mi><mn>1</mn></msub><mo>&#x0003D;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></msub><mo>&#x0002F;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow></mrow></msub></mrow></math></span>: bicarbonate-to-carbonic-acid ratio [dimensionless]</li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>r</mi><mn>2</mn></msub><mo>&#x0003D;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow></mrow></msub><mo>&#x0002F;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></msub></mrow></math></span>: carbonate-to-bicarbonate ratio [dimensionless]</li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>r</mi><mn>1</mn></msub><msub><mi>r</mi><mn>2</mn></msub><mo>&#x0003D;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow></mrow></msub><mo>&#x0002F;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow></mrow></msub></mrow></math></span>: derived carbonate-to-carbonic-acid ratio used in total-carbon reconstruction [dimensionless]</li>
+<li>In this equilibrium section, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>r</mi><mn>1</mn></msub></mrow></math></span> and <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>r</mi><mn>2</mn></msub></mrow></math></span> are dimensionless species ratios; they are distinct from the kinetic rate symbols introduced in Section 7.</li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>m</mi><mrow><mi>C</mi><mi>T</mi></mrow></msub></mrow></math></span>: total inorganic carbon molality [<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>m</mi><mi>o</mi><mi>l</mi><mi>k</mi><msup><mi>g</mi><mrow><mo>&#x02212;</mo><mn>1</mn></mrow></msup></mrow></math></span>]</li>
 </ul>
-<p>The equilibrium math does not replace this plot. The plot tells GL-260 where the physical events are; the equilibrium model interprets what those events imply for pH and carbonate speciation.</p>
-<h3 id="reading-the-speciation-timeline-plot">Reading the Speciation Timeline Plot</h3>
-<p><img alt="PR-24304 Batch 1 Day 1-6 cycle speciation timeline" src="assets/equilibrium-walkthrough/pr-24304-batch-1-cycle-speciation-timeline-day-1-6.png"></p>
-<p>The speciation timeline maps detected cycle progression and estimated CO2 loading into sodium-basis species fractions:</p>
+</div>
+<p>The NaOH-focused Pitzer path adds activity corrections at high ionic strength while preserving charge and carbon closures each cycle.</p>
+<p>The NaOH Pitzer path uses activity-corrected species balances and charge balance with focused Pitzer interactions (<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><msup><mi>a</mi><mo>&#x0002B;</mo></msup></mrow></math></span> with <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>O</mi><msup><mi>H</mi><mo>&#x02212;</mo></msup></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msup><msubsup><mi>O</mi><mrow><mn>3</mn></mrow><mn>2</mn></msubsup><mo>&#x02212;</mo></msup></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msup><msubsup><mi>O</mi><mrow><mn>3</mn></mrow><mn>2</mn></msubsup><mo>&#x02212;</mo></msup></mrow></math></span>, plus selected <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x003B8;</mi></mrow></math></span>/<span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x003A8;</mi></mrow></math></span> terms).</p>
+<div class="calculation-map">
+  <div class="calculation-map-heading">
+    <div>
+      <p class="calculation-map-title">Focused Pitzer Solver Map</p>
+      <p class="calculation-map-copy">Compute ionic strength, correct activities, use activity-corrected species ratios, then enforce total-carbon and charge closure each cycle.</p>
+    </div>
+    <div class="calculation-map-badge">
+      <span>Path</span>
+      <strong>HMW</strong>
+    </div>
+  </div>
+  <div class="calculation-map-grid">
+    <div class="calculation-map-step">
+      <span>1. Ionic strength</span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>I</mi><mo>&#x0003D;</mo><mfrac><mrow><mn>1</mn></mrow><mrow><mn>2</mn></mrow></mfrac><munder><mo>&#x02211;</mo><mi>i</mi></munder><mo stretchy="false">&#x00028;</mo><msub><mi>m</mi><mi>i</mi></msub><mo>&#x000D7;</mo><msubsup><mi>z</mi><mi>i</mi><mn>2</mn></msubsup><mo stretchy="false">&#x00029;</mo></mrow></math></span>
+    </div>
+    <div class="calculation-map-step">
+      <span>2. Activity coefficients</span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>ln</mi><mo stretchy="false">&#x00028;</mo><msub><mi>&#x003B3;</mi><mi>i</mi></msub><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><mo stretchy="false">&#x00028;</mo><msubsup><mi>z</mi><mi>i</mi><mn>2</mn></msubsup><mo>&#x000D7;</mo><mi>F</mi><mo stretchy="false">&#x00028;</mo><mi>I</mi><mo stretchy="false">&#x00029;</mo><mo stretchy="false">&#x00029;</mo><mo>&#x0002B;</mo><munder><mo>&#x02211;</mo><mi>j</mi></munder><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><msub><mi>m</mi><mi>j</mi></msub><mo>&#x000D7;</mo><mo stretchy="false">&#x00028;</mo><mn>2</mn><mo>&#x000D7;</mo><msub><mi>B</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>&#x0002B;</mo><mi>Z</mi><mo>&#x000D7;</mo><msub><mi>C</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo stretchy="false">&#x00029;</mo><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo>&#x0002B;</mo><munder><mo>&#x02211;</mo><mrow><mi>j</mi><mo>&#x0002C;</mo><mi>k</mi></mrow></munder><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><msub><mi>m</mi><mi>j</mi></msub><mo>&#x000D7;</mo><msub><mi>m</mi><mi>k</mi></msub><mo>&#x000D7;</mo><msub><mi>&#x003A8;</mi><mrow><mi>i</mi><mi>j</mi><mi>k</mi></mrow></msub><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo>&#x0002B;</mo><mo>&#x022EF;</mo></mrow></math></span>
+    </div>
+    <div class="calculation-map-step">
+      <span>3. Bicarbonate ratio</span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>r</mi><mn>1</mn></msub><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>1</mn></mrow></msub></mrow><mrow><msub><mi>&#x003B3;</mi><mrow><mrow><msup><mi mathvariant="normal">H</mi><mo>&#x0002B;</mo></msup></mrow></mrow></msub><mo>&#x000D7;</mo><msub><mi>&#x003B3;</mi><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></msub><mo>&#x000D7;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></mfrac></mrow></math></span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>r</mi><mn>1</mn></msub><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></msub></mrow><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow></mrow></msub></mrow></mfrac></mrow></math></span>
+    </div>
+    <div class="calculation-map-step">
+      <span>4. Carbonate ratio</span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>r</mi><mn>2</mn></msub><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>K</mi><mrow><mi>a</mi><mn>2</mn></mrow></msub><mo>&#x000D7;</mo><msub><mi>&#x003B3;</mi><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></msub></mrow><mrow><msub><mi>&#x003B3;</mi><mrow><mrow><msup><mi mathvariant="normal">H</mi><mo>&#x0002B;</mo></msup></mrow></mrow></msub><mo>&#x000D7;</mo><msub><mi>&#x003B3;</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow></mrow></msub><mo>&#x000D7;</mo><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><msup><mi>H</mi><mo>&#x0002B;</mo></msup><mo stretchy="true" fence="true" form="postfix">]</mo></mrow></mrow></mfrac></mrow></math></span>
+      <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>r</mi><mn>2</mn></msub><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow></mrow></msub></mrow><mrow><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></msub></mrow></mfrac></mrow></math></span>
+    </div>
+  </div>
+  <div class="calculation-map-step">
+    <span>5. Total carbon closure</span>
+    <span class="math-inline math-inline-display" data-math-origin="inline-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>m</mi><mrow><mi>C</mi><mi>T</mi></mrow></msub><mo>&#x0003D;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>2</mn><mo>&#x0002A;</mo></msubsup></mrow></mrow></msub><mo>&#x0002B;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mo>&#x02212;</mo></msubsup></mrow></mrow></msub><mo>&#x0002B;</mo><msub><mi>m</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow></mrow></msub></mrow></math></span>
+  </div>
+  <p class="calculation-map-callout">The charge-balance closure is then solved iteratively each cycle using the corrected activities.</p>
+</div>
+
+<h3 id="advanced-model-information-what-hmw-phreeqc-naco3-pairing-means">Advanced Model Information: What HMW / PHREEQC-NaCO3 Pairing Means</h3>
+<div class="admonition note">
+<p class="admonition-title">Calculation Legend</p>
 <ul>
-<li><code>NaOH %</code> indicates remaining caustic character.</li>
-<li><code>Na2CO3 %</code> indicates carbonate-rich intermediate behavior.</li>
-<li><code>NaHCO3 %</code> indicates the desired bicarbonate-forming endpoint.</li>
-<li>Measured pH anchors, when present, correct the estimated pH and speciation path rather than being treated as separate annotations.</li>
+<li><code>HMW</code>: Harvie-Moller-Weare Pitzer parameter family for concentrated electrolyte solutions.</li>
+<li><code>PHREEQC pitzer.dat</code>: database source for the Pitzer interaction parameters used by the focused GL-260 path.</li>
+<li><code>Na-CO3 pairing</code>: shorthand for explicitly correcting sodium interactions with carbonate-family ions.</li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msup><mi>B</mi><mn>0</mn></msup></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msup><mi>B</mi><mn>1</mn></msup></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msup><mi>C</mi><mn>0</mn></msup></mrow></math></span>: pair-interaction terms for a cation-anion pair.</li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Θ</mi></mrow></math></span>, <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Ψ</mi></mrow></math></span>: same-charge and ternary interaction terms that capture higher-order electrolyte behavior.</li>
 </ul>
-<p>Early in the run, high hydroxide activity drives carbonate formation. <br>
-As CO2 loading increases and hydroxide is consumed, the system moves through the carbonate-rich region and toward bicarbonate dominance. <br>
-The HMW Pitzer model makes that crossover more realistic by correcting sodium-carbonate activities in the concentrated electrolyte regime.</p>
-<h2 id="how-has-bicarb-production-been-with-all-of-this-understanding">How has Bicarb production been with all of this understanding?</h2>
-<p><img src="assets\equilibrium-walkthrough\Screenshot 2026-06-22 143155.png"
-     alt="Batch Ledger"
-     style="width: 90%; display: block; margin: 1rem auto;"></p>
+</div>
+<p>The phrase <strong>HMW / PHREEQC-NaCO3 Pairing</strong> means GL-260 is not just solving carbonate acid-base equations in isolation. It reads the focused Pitzer parameter set from <code>pitzer.dat</code> and applies the sodium-carbonate interaction terms that dominate this chemistry:</p>
 <ul>
-<li>consistent batch size</li>
-<li>consistent pH</li>
-<li>QC has not failed once.</li>
-<li>1,300g / week</li>
-<li>100,000 data points / run</li>
-<li>easily plot, analyze, and visualize collected data allowing for informed decisions on endpoint/blending</li>
-<li>standardized manifold</li>
-<li>no more chasing leaks</li>
-<li>safer and easier to operate</li>
-<li>GL-260 data logging</li>
-<li>GL-260 Data Processing program</li>
-<li>can plot anything  </li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><msup><mi>a</mi><mo>&#x0002B;</mo></msup></mrow></math></span> with <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>O</mi><msup><mi>H</mi><mo>&#x02212;</mo></msup></mrow></math></span></li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><msup><mi>a</mi><mo>&#x0002B;</mo></msup></mrow></math></span> with <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>H</mi><mi>C</mi><msubsup><mi>O</mi><mrow><mn>3</mn></mrow><mo>&#x02212;</mo></msubsup></mrow></math></span></li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><msup><mi>a</mi><mo>&#x0002B;</mo></msup></mrow></math></span> with <span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>C</mi><msubsup><mi>O</mi><mrow><mn>3</mn></mrow><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup></mrow></math></span></li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>Θ</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow></mrow></msub></mrow></math></span></li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>Ψ</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup><mo>&#x0002C;</mo><mi mathvariant="normal">N</mi><msup><mi mathvariant="normal">a</mi><mo>&#x0002B;</mo></msup><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup></mrow></mrow></msub></mrow></math></span></li>
+<li><span class="math-inline" data-math-origin="inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>Ψ</mi><mrow><mrow><mi mathvariant="normal">C</mi><msubsup><mi mathvariant="normal">O</mi><mn>3</mn><mrow><mn>2</mn><mo>&#x02212;</mo></mrow></msubsup><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><msup><mi mathvariant="normal">H</mi><mo>&#x02212;</mo></msup><mo>&#x0002C;</mo><mi mathvariant="normal">N</mi><msup><mi mathvariant="normal">a</mi><mo>&#x0002B;</mo></msup></mrow></mrow></msub></mrow></math></span></li>
 </ul>
-<h2 id="supplementary-sections">Supplementary Sections</h2>
+<p>The model converts these database terms into the compact parameters used by the Rust and Python solver cores:</p>
+<div class="math-display-block" data-math-origin="latex-fence"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mo stretchy="false">&#x0007B;</mo><msubsup><mi>B</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow><mn>0</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>B</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow><mn>1</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>C</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow><mn>0</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>B</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow><mn>0</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>B</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow><mn>1</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>C</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow><mn>0</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>B</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow><mn>0</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>B</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow><mn>1</mn></msubsup><mo>&#x0002C;</mo><msubsup><mi>C</mi><mrow><mrow><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub></mrow></mrow><mn>0</mn></msubsup><mo>&#x0002C;</mo><msub><mi>&#x00398;</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow></msub><mo>&#x0002C;</mo><msub><mi>&#x003A8;</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub><mo>&#x0002C;</mo><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi><mo>&#x0002C;</mo><mi mathvariant="normal">O</mi><mi mathvariant="normal">H</mi></mrow></mrow></msub><mo>&#x0002C;</mo><msub><mi>&#x003A8;</mi><mrow><mrow><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub><mo>&#x0002C;</mo><mi mathvariant="normal">H</mi><mi mathvariant="normal">C</mi><msub><mi mathvariant="normal">O</mi><mn>3</mn></msub><mo>&#x0002C;</mo><mi mathvariant="normal">N</mi><mi mathvariant="normal">a</mi></mrow></mrow></msub><mo stretchy="false">&#x0007D;</mo></mrow></math></div>
+<p>Operationally, this yields more accurate calculations than an ideal model because sodium carbonate and sodium bicarbonate are not passive spectators. Sodium association changes the effective activities of the species present, and those activity changes shift the pH and fraction crossover. That is the specific error mode the HMW path is meant to avoid: a misleading carbonate-buffer plateau or incorrect pH slope when the solution is highly loaded with sodium.</p>
+<hr>
 <h3 id="measured-ph-calibration-hybrid-ml-correction-analysis-mode">Measured-pH Calibration + Hybrid ML Correction (Analysis Mode)</h3>
 <p>Measured anchors reshape the baseline simulation, and ML residual correction is only accepted when anchor quality is preserved.</p>
 <div class="admonition info">
@@ -3364,7 +3441,7 @@ The HMW Pitzer model makes that crossover more realistic by correcting sodium-ca
 <li>Corrected channel is produced by measured-anchor calibration.</li>
 <li>ML-corrected channel is additive and only promoted when anchor guard passes.</li>
 </ul>
-        <div class="footer">Source fingerprint: <code>6def75f90c8cf54f6ab88fc87b9719c2380fd96303b03acd256d3e4d4b753964</code></div>
+        <div class="footer">Source fingerprint: <code>b8994f6f4ac76139fe0a9c3a6644f6ae913b7849890ddbc38214e64652aa476b</code></div>
       </article>
       <section id="cycle-trend-panel" class="surface chart-panel" aria-label="Cycle trend highlights">
         <h2>Cycle Trend Highlights</h2>
@@ -4005,11 +4082,16 @@ The HMW Pitzer model makes that crossover more realistic by correcting sodium-ca
         return content.querySelector('[data-inline-module="' + String(name || "") + '"]');
       }
 
+      /** Resolve or create one inline chart canvas.
+       * Purpose: provide a stable canvas for generated and Slide Studio-rendered charts.
+       * Why: saved slide overrides can retain the mounted canvas after replacing the
+       * original data-inline-chart anchor, so existing canvases must be reusable.
+       * Inputs: config containing the optional anchor, required canvasId, title, copy,
+       * and accessibility labels. Returns: the existing or newly created canvas, or null.
+       * Side effects: creates and mounts chart DOM only when no reusable canvas exists.
+       * Errors: missing identifiers or invalid/missing anchors fail closed with null.
+       */
       function buildInlineChartMount(config) {
-        const anchor = config && config.anchor ? config.anchor : null;
-        if (!anchor || String(anchor.tagName || "").toUpperCase() !== "DIV") {
-          return null;
-        }
         const canvasId = config && config.canvasId ? String(config.canvasId) : "";
         if (!canvasId) {
           return null;
@@ -4017,6 +4099,10 @@ The HMW Pitzer model makes that crossover more realistic by correcting sodium-ca
         const existingCanvas = document.getElementById(canvasId);
         if (existingCanvas) {
           return existingCanvas;
+        }
+        const anchor = config && config.anchor ? config.anchor : null;
+        if (!anchor || String(anchor.tagName || "").toUpperCase() !== "DIV") {
+          return null;
         }
         const mount = document.createElement("section");
         mount.className = "inline-chart-mount";
@@ -4345,7 +4431,6 @@ The HMW Pitzer model makes that crossover more realistic by correcting sodium-ca
           <div class="derivation-stepper-header">
             <div>
               <p class="derivation-stepper-title">Live Derivation Slider</p>
-              <p class="derivation-stepper-copy">Move one step at a time to reveal the calculation chain as if the equations are being built during the presentation.</p>
             </div>
             <div class="derivation-step-count">
               <span>Step</span>
