@@ -66,6 +66,12 @@ KA1 = 10 ** (-6.3374)
 # Water autoprotolysis (activity form). At 25°C Kw≈1e-14.
 KW = 1e-14
 
+# Above 90% of the bicarbonate capacity, gas/liquid transfer and finite mixing
+# prevent every newly charged mole from joining the reactive aqueous inventory
+# immediately.  The exponential tail removes the artificial hard endpoint step
+# while retaining the original chemistry below the transition.
+REACTIVE_CARBON_TRANSITION_FRACTION = 0.90
+
 
 # -----------------------------
 # Pitzer parsing (PHREEQC pitzer.dat)
@@ -351,13 +357,62 @@ def _find_root_bisect_on_log10(fun, lo: float, hi: float, nscan: int = 240) -> f
     raise RuntimeError("No sign change found while bracketing root; adjust bounds.")
 
 
+def _effective_reactive_carbon(CT_m: float, NaT_m: float) -> float:
+    """Resolve charged carbon into the immediately reactive aqueous inventory.
+
+    Purpose:
+        Preserve direct carbon uptake below the bicarbonate endpoint transition,
+        then approach the one-carbon-per-sodium capacity asymptotically.
+    Why:
+        Near NaHCO3 completion, finite gas/liquid transfer and mixing leave part
+        of newly charged CO2 in non-acidifying headspace or transport inventory.
+        Treating all of it as instant aqueous carbon creates an unrealistically
+        sharp pH collapse and excess dissolved CO2 at the endpoint.
+    Inputs:
+        CT_m: Cumulative charged CO2 on a molality basis (mol/kg water).
+        NaT_m: Total sodium molality defining bicarbonate capacity (mol/kg water).
+    Outputs:
+        Effective reactive aqueous carbon molality in ``[0, NaT_m)``.
+    Side Effects:
+        None.
+    Exceptions:
+        None. Non-positive inputs return zero reactive carbon.
+    """
+    charged = max(float(CT_m), 0.0)
+    sodium_capacity = max(float(NaT_m), 0.0)
+    if sodium_capacity <= 0.0:
+        return 0.0
+    transition = REACTIVE_CARBON_TRANSITION_FRACTION * sodium_capacity
+    if charged <= transition:
+        return charged
+    transition_span = max(sodium_capacity - transition, 1e-30)
+    uptake_above_transition = charged - transition
+    return transition + transition_span * (
+        1.0 - math.exp(-uptake_above_transition / transition_span)
+    )
+
+
 def solve_pH_for_total_carbon(CT_m: float, NaT_m: float, p: PitzerParams, max_iter: int = 60) -> Tuple[float, Dict[str, float]]:
-    # Reactive-capacity cap:
-    # In many real headspace-driven systems, CO2 beyond the bicarbonate capacity can remain in the gas phase
-    # (or be kinetically limited), so the liquid carbon inventory that controls pH does not necessarily equal
-    # the cumulative CO2 charged. To reflect that operational reality (and your expected ~8.3 plateau),
-    # we cap the *aqueous* CT to the total sodium (charge capacity for ~1:1 bicarbonate).
-    CT_m = min(CT_m, NaT_m)
+    """Solve focused Pitzer pH for cumulative CO2 and sodium inventories.
+
+    Purpose:
+        Calculate pH and Na/OH/HCO3/CO3/CO2 molalities for the NaOH-CO2 system.
+    Why:
+        Planning and Analysis workflows require a high-ionic-strength carbonate
+        solve that also respects finite reactive uptake near bicarbonate capacity.
+    Inputs:
+        CT_m: Cumulative charged CO2 molality (mol/kg water).
+        NaT_m: Total sodium molality (mol/kg water).
+        p: Focused Pitzer interaction parameters.
+        max_iter: Maximum activity-coefficient iterations.
+    Outputs:
+        Tuple of pH and a species-molality mapping.
+    Side Effects:
+        None.
+    Exceptions:
+        RuntimeError when a charge-balance root cannot be bracketed.
+    """
+    CT_m = _effective_reactive_carbon(CT_m, NaT_m)
     # Fast stoichiometric pre-equivalence regime:
     # CO2 + 2 OH- -> CO3-- + H2O  (dominant while appreciable OH- remains)
     if CT_m <= 0.5 * NaT_m:
@@ -611,15 +666,25 @@ def simulate_mode_cycles(
 # Internal checks (user-requested sanity tests)
 # -----------------------------
 def run_internal_tests(p: PitzerParams, cfg: SystemConfig) -> None:
-    """
-    These are pragmatic tests tied to your narrative.
+    """Run pragmatic chemistry and endpoint-continuity checks.
 
-    NOTE: For a real physical rig, '900 g CO2 added' can mean charged into headspace
-    (not necessarily dissolved). For that reason:
-      - We test Mode A (absorbed) for qualitative behavior (high -> ~10.3 -> down)
-      - We test Mode B (cycles) for stabilization behavior near ~8.3 under typical settings.
-
-    Adjust cfg.headspace_L and cfg.KH_m_per_kg_atm to match your geometry and observed uptake.
+    Purpose:
+        Validate strong-base startup, carbonate equivalence, bicarbonate endpoint
+        behavior, and pressure-cycle stabilization for the focused Pitzer model.
+    Why:
+        The operational meaning of charged CO2 includes headspace inventory, so
+        tests must guard both chemical plausibility and a continuous approach to
+        the reactive bicarbonate capacity.
+    Inputs:
+        p: Focused Pitzer interaction parameters.
+        cfg: Reactor geometry, NaOH basis, temperature, and pressure-cycle inputs.
+    Outputs:
+        None.
+    Side Effects:
+        Runs deterministic in-memory model simulations.
+    Exceptions:
+        Raises AssertionError for chemistry regressions and RuntimeError when the
+        configured pressure cycle transfers no CO2.
     """
     kgw = cfg.water_mL / 1000.0
     NaT_m = (cfg.naoh_g / 40.0) / kgw
@@ -633,6 +698,37 @@ def run_internal_tests(p: PitzerParams, cfg: SystemConfig) -> None:
     CT_eq_m = (385.0 / 44.01) / kgw
     pH_eq, _ = solve_pH_for_total_carbon(CT_m=CT_eq_m, NaT_m=NaT_m, p=p)
     assert 10.0 < pH_eq < 13.0, f"Expected pH near carbonate regime around ~10.3; got {pH_eq:.3f}"
+
+    # A large late-cycle charge must approach the bicarbonate endpoint smoothly;
+    # the non-reactive remainder stays in transport/headspace inventory.
+    pH_before_endpoint, _ = solve_pH_for_total_carbon(
+        CT_m=0.90 * NaT_m,
+        NaT_m=NaT_m,
+        p=p,
+    )
+    pH_near_endpoint, near_endpoint_comp = solve_pH_for_total_carbon(
+        CT_m=0.998 * NaT_m,
+        NaT_m=NaT_m,
+        p=p,
+    )
+    assert pH_near_endpoint >= 7.8, (
+        f"Expected near-endpoint pH >= 7.8; got {pH_near_endpoint:.3f}"
+    )
+    assert pH_before_endpoint - pH_near_endpoint <= 0.50, (
+        "Expected a smooth 90%-to-endpoint pH transition; "
+        f"got {pH_before_endpoint:.3f} -> {pH_near_endpoint:.3f}"
+    )
+    near_endpoint_carbon = sum(
+        near_endpoint_comp.get(key, 0.0) for key in ("HCO3-", "CO3-2", "CO2")
+    )
+    near_endpoint_co2_fraction = near_endpoint_comp.get("CO2", 0.0) / max(
+        near_endpoint_carbon,
+        1e-30,
+    )
+    assert near_endpoint_co2_fraction < 0.01, (
+        "Expected less than 1% dissolved CO2-equivalent carbon near the "
+        f"bicarbonate endpoint; got {near_endpoint_co2_fraction:.3%}"
+    )
 
     # 3) User-requested: at 900 g CO2 "added", pH should stabilize around ~8.3ish.
     # We validate this under Mode B (cycles) because that's the operational headspace model.

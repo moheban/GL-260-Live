@@ -31,6 +31,7 @@ const PITZER_ALPHA_B1: f64 = 2.0;
 const PITZER_KA1: f64 = 4.5983285677e-7;
 const PITZER_KA2: f64 = 4.5782552279169414e-11;
 const PITZER_KW: f64 = 1e-14;
+const PITZER_REACTIVE_CARBON_TRANSITION_FRACTION: f64 = 0.90;
 const RUST_BACKEND_INTERFACE_ID: &str = "gl260_rust_backend";
 const RUST_BACKEND_INTERFACE_VERSION: &str = "3";
 const RUST_BACKEND_MODULE_NAME: &str = env!("CARGO_PKG_NAME");
@@ -761,6 +762,17 @@ where
     Err("No sign change found while bracketing Pitzer root.".to_string())
 }
 
+/// Solve the focused NaOH-CO2 Pitzer equilibrium for charged carbon.
+///
+/// Purpose: returns pH and Na/H/OH/HCO3/CO3/CO2 molalities after resolving the
+/// immediately reactive aqueous-carbon inventory.
+/// Why: native planning calculations must match the finite gas/liquid endpoint
+/// transition used by the Python fallback instead of jumping to a hard carbon cap.
+/// Inputs: charged total carbon and sodium molalities, compact Pitzer parameters,
+/// and the maximum activity-coefficient iteration count.
+/// Output: `(pH, Na, H, OH, HCO3, CO3, CO2)` or an error message.
+/// Side effects: none.
+/// Errors: rejects non-positive sodium or an unbracketed charge-balance root.
 fn solve_pitzer_total_carbon_impl(
     total_carbon_m: f64,
     total_sodium_m: f64,
@@ -770,7 +782,20 @@ fn solve_pitzer_total_carbon_impl(
     if total_sodium_m <= 0.0 {
         return Err("Total sodium molality must be positive.".to_string());
     }
-    let ct = total_carbon_m.min(total_sodium_m).max(0.0);
+    // Near bicarbonate capacity, only part of newly charged CO2 joins the
+    // immediately reactive liquid inventory; the remainder stays in finite-rate
+    // gas/liquid transport or headspace inventory.  This smooth asymptote avoids
+    // a nonphysical one-cycle jump into the dissolved-CO2 endpoint regime.
+    let transition = PITZER_REACTIVE_CARBON_TRANSITION_FRACTION * total_sodium_m;
+    let charged_ct = total_carbon_m.max(0.0);
+    let ct = if charged_ct <= transition {
+        charged_ct
+    } else {
+        let transition_span = (total_sodium_m - transition).max(1e-30);
+        let uptake_above_transition = charged_ct - transition;
+        transition
+            + transition_span * (1.0 - (-uptake_above_transition / transition_span).exp())
+    };
     if ct <= 0.5 * total_sodium_m {
         let m_oh = (total_sodium_m - 2.0 * ct).max(0.0);
         let m_co3 = ct.max(0.0);
