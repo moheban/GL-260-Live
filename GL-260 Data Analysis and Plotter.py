@@ -22060,6 +22060,64 @@ def _normalize_reaction_dashboard_state_payload(
     source_inputs = _string_map(payload.get("source_inputs"))
     if source_inputs or "source_inputs" in payload:
         normalized["source_inputs"] = source_inputs
+
+    # Run records are additive: a profile saved by the former single-form
+    # dashboard becomes one active record rather than losing its typed inputs.
+    normalized_runs: List[Dict[str, Any]] = []
+    raw_runs = payload.get("runs")
+    if isinstance(raw_runs, Sequence) and not isinstance(raw_runs, (str, bytes)):
+        for index, raw_run in enumerate(raw_runs, start=1):
+            if not isinstance(raw_run, Mapping):
+                continue
+            run_id = str(raw_run.get("run_id") or "").strip()
+            if not run_id:
+                continue
+            run_state = _normalize_reaction_dashboard_state_payload(
+                {
+                    "template_id": raw_run.get("template_id"),
+                    "source_mode": raw_run.get("source_mode"),
+                    "ph_enabled": raw_run.get("ph_enabled"),
+                    "template_inputs": raw_run.get("template_inputs"),
+                    "source_inputs": raw_run.get("source_inputs"),
+                }
+            )
+            normalized_runs.append(
+                {
+                    "run_id": run_id,
+                    "name": str(raw_run.get("name") or f"Reaction run {index}").strip()
+                    or f"Reaction run {index}",
+                    "archived": bool(raw_run.get("archived", False)),
+                    "notes": str(raw_run.get("notes") or ""),
+                    "updated_at": str(raw_run.get("updated_at") or ""),
+                    "snapshot": (
+                        dict(raw_run.get("snapshot"))
+                        if isinstance(raw_run.get("snapshot"), Mapping)
+                        else {}
+                    ),
+                    **run_state,
+                }
+            )
+    if not normalized_runs and normalized:
+        normalized_runs.append(
+            {
+                "run_id": "legacy-active",
+                "name": "Current reaction",
+                "archived": False,
+                "notes": "",
+                "updated_at": "",
+                "snapshot": {},
+                **dict(normalized),
+            }
+        )
+    if normalized_runs:
+        normalized["runs"] = normalized_runs
+        requested_active_id = str(payload.get("active_run_id") or "").strip()
+        valid_run_ids = {str(row["run_id"]) for row in normalized_runs}
+        normalized["active_run_id"] = (
+            requested_active_id
+            if requested_active_id in valid_run_ids
+            else str(normalized_runs[0]["run_id"])
+        )
     return normalized
 
 
@@ -34964,17 +35022,30 @@ def _run_reaction_dashboard_core(
         target_reactant_species_id=target_reactant_species_id,
         actual_yield_mass_g=actual_yield_mass_g,
     )
-    if rust_payload is not None:
-        return rust_payload
-    return _python_reaction_dashboard_core(
-        species_rows,
-        step_rows,
-        gas_uptake_mol=gas_uptake_mol,
-        gas_species_id=gas_species_id,
-        yield_species_id=yield_species_id,
-        target_reactant_species_id=target_reactant_species_id,
-        actual_yield_mass_g=actual_yield_mass_g,
+    result = (
+        rust_payload
+        if rust_payload is not None
+        else _python_reaction_dashboard_core(
+            species_rows,
+            step_rows,
+            gas_uptake_mol=gas_uptake_mol,
+            gas_species_id=gas_species_id,
+            yield_species_id=yield_species_id,
+            target_reactant_species_id=target_reactant_species_id,
+            actual_yield_mass_g=actual_yield_mass_g,
+        )
     )
+    completion_pct = _safe_float(result.get("completion_pct"))
+    gas_uptake = _safe_float(result.get("gas_uptake_mol"))
+    if completion_pct is not None and gas_uptake is not None and completion_pct > 1e-12:
+        # This is intentionally backend-neutral so the Rust and Python kernels
+        # expose the same operator-facing gas-to-completion estimate.
+        result["gas_required_mol"] = max(
+            float(gas_uptake) * 100.0 / min(float(completion_pct), 100.0), 0.0
+        )
+    else:
+        result["gas_required_mol"] = None
+    return result
 
 
 def _reaction_dashboard_cycle_metric_series(
@@ -35292,11 +35363,12 @@ def _reaction_dashboard_forecast(
         }
     # Use only the latest positive progress deltas so stalled or duplicate rows
     # do not make an optimistic forecast look more precise than the data allows.
-    deltas = [
+    all_positive_deltas = [
         later - earlier
         for earlier, later in zip(progress, progress[1:])
         if later > earlier + 1e-9
-    ][-4:]
+    ]
+    deltas = all_positive_deltas[-4:]
     if not deltas:
         return {
             "remaining_cycles": None,
@@ -35307,6 +35379,10 @@ def _reaction_dashboard_forecast(
         }
     rate = sum(deltas) / len(deltas)
     remaining_cycles = max((100.0 - float(completion)) / max(rate, 1e-12), 0.0)
+    average_rate = sum(all_positive_deltas) / len(all_positive_deltas)
+    average_remaining_cycles = max(
+        (100.0 - float(completion)) / max(average_rate, 1e-12), 0.0
+    )
     x_values = [_safe_float(row.get("x")) for row in rows]
     x_values = [
         value for value in x_values if value is not None and math.isfinite(value)
@@ -35327,8 +35403,13 @@ def _reaction_dashboard_forecast(
         "remaining_time": remaining_cycles * time_per_cycle
         if time_per_cycle is not None
         else None,
+        "average_remaining_cycles": average_remaining_cycles,
+        "average_remaining_time": average_remaining_cycles * time_per_cycle
+        if time_per_cycle is not None
+        else None,
         "time_unit": x_label if time_per_cycle is not None else "",
         "completion_rate_pct_per_cycle": rate,
+        "average_completion_rate_pct_per_cycle": average_rate,
         "confidence": (
             "Recent positive completion-rate estimate; process changes can invalidate it."
             if time_per_cycle is not None
@@ -71560,6 +71641,83 @@ def _regression_test_cycle_timeline_centered_bottom_reposition_after_layout() ->
         )
 
 
+def _regression_test_reaction_dashboard_run_record_migration() -> None:
+    """Validate legacy Reaction Dashboard state migrates to one named run.
+
+    Purpose:
+        Guard additive run-record persistence for existing workspace profiles.
+    Why:
+        The redesigned workspace must retain prior typed inputs instead of
+        requiring users to reconstruct active reactions after upgrade.
+    Inputs:
+        None; uses a representative legacy single-form payload.
+    Outputs:
+        None.
+    Side Effects:
+        None.
+    Exceptions:
+        Raises AssertionError when migration loses setup fields or active identity.
+    """
+    normalized = _normalize_reaction_dashboard_state_payload(
+        {
+            "template_id": "sodium_methoxide_co_to_sodium_formate",
+            "source_mode": "manual",
+            "template_inputs": {"sodium_metal_mass_g": "12.5"},
+            "source_inputs": {"manual_gas_moles": "0.2"},
+        }
+    )
+    runs = normalized.get("runs") or []
+    if (
+        len(runs) != 1
+        or runs[0].get("template_inputs", {}).get("sodium_metal_mass_g") != "12.5"
+    ):
+        raise AssertionError(
+            "Legacy dashboard state should migrate into one complete run."
+        )
+    if normalized.get("active_run_id") != runs[0].get("run_id"):
+        raise AssertionError("Migrated dashboard run should become the active run.")
+
+
+def _regression_test_reaction_dashboard_dual_forecast() -> None:
+    """Validate recent-rate and all-history Reaction Dashboard forecasts.
+
+    Purpose:
+        Verify the live workspace exposes both approved ETA perspectives.
+    Why:
+        Operators need a conservative recent estimate and an all-history estimate
+        without silently conflating the two rates.
+    Inputs:
+        None; uses deterministic increasing completion cycle rows.
+    Outputs:
+        None.
+    Side Effects:
+        None.
+    Exceptions:
+        Raises AssertionError when either forecast contract is unavailable.
+    """
+    forecast = _reaction_dashboard_forecast(
+        [
+            {"completion_pct": 10.0, "x": 0.0, "x_label": "Time (min)"},
+            {"completion_pct": 25.0, "x": 5.0, "x_label": "Time (min)"},
+            {"completion_pct": 35.0, "x": 10.0, "x_label": "Time (min)"},
+            {"completion_pct": 55.0, "x": 15.0, "x_label": "Time (min)"},
+        ],
+        55.0,
+    )
+    if (
+        _safe_float(forecast.get("remaining_cycles")) is None
+        or _safe_float(forecast.get("average_remaining_cycles")) is None
+    ):
+        raise AssertionError("Reaction dashboard should expose both cycle forecasts.")
+    if (
+        _safe_float(forecast.get("remaining_time")) is None
+        or _safe_float(forecast.get("average_remaining_time")) is None
+    ):
+        raise AssertionError(
+            "Time-based cycle payload should expose both completion ETAs."
+        )
+
+
 def _regression_test_reaction_dashboard_template_roundtrip_and_yield() -> None:
     """Validate Reaction Dashboard template parsing and linked yield math.
 
@@ -73686,6 +73844,14 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
     (
         "CustomTkinter plain Tk DPI compatibility",
         _regression_test_customtkinter_plain_tk_dpi_compat,
+    ),
+    (
+        "Reaction Dashboard run-record migration",
+        _regression_test_reaction_dashboard_run_record_migration,
+    ),
+    (
+        "Reaction Dashboard dual forecast",
+        _regression_test_reaction_dashboard_dual_forecast,
     ),
     (
         "Reaction Dashboard template roundtrip + sodium formate yield",
@@ -100370,6 +100536,12 @@ class UnifiedApp(tk.Tk):
         self._reaction_cycle_focus_var = tk.StringVar(value="Latest")
         self._reaction_dashboard_visual_summary: Dict[str, Any] = {}
         self._reaction_advanced_editor_visible = False
+        self._reaction_run_records: List[Dict[str, Any]] = []
+        self._reaction_active_run_id = ""
+        self._reaction_run_display_var = tk.StringVar(value="")
+        self._reaction_run_name_var = tk.StringVar(value="Current reaction")
+        self._reaction_run_display_to_id: Dict[str, str] = {}
+        self._reaction_run_selector: Optional[ttk.Combobox] = None
         self._solubility_new_visible_var = tk.BooleanVar(
             value=self._solubility_new_tab_visible
         )
@@ -136735,13 +136907,29 @@ class UnifiedApp(tk.Tk):
             if str(key)
         }
 
+        current_state = {
+            "template_id": template_id,
+            "source_mode": source_mode,
+            "ph_enabled": ph_enabled,
+            "template_inputs": template_inputs,
+            "source_inputs": source_inputs,
+        }
+        try:
+            active_run = self._ensure_reaction_dashboard_active_run()
+            active_run.update(current_state)
+            active_run["name"] = (
+                str(self._reaction_run_name_var.get() or "Reaction run").strip()
+                or "Reaction run"
+            )
+        except Exception:
+            pass
         return _normalize_reaction_dashboard_state_payload(
             {
-                "template_id": template_id,
-                "source_mode": source_mode,
-                "ph_enabled": ph_enabled,
-                "template_inputs": template_inputs,
-                "source_inputs": source_inputs,
+                **current_state,
+                "runs": list(getattr(self, "_reaction_run_records", []) or []),
+                "active_run_id": str(
+                    getattr(self, "_reaction_active_run_id", "") or ""
+                ),
             }
         )
 
@@ -137566,6 +137754,28 @@ class UnifiedApp(tk.Tk):
         normalized = _normalize_reaction_dashboard_state_payload(dashboard_state)
         if not normalized:
             return
+        restored_runs = normalized.get("runs")
+        if isinstance(restored_runs, Sequence) and not isinstance(
+            restored_runs, (str, bytes)
+        ):
+            self._reaction_run_records = [
+                dict(row) for row in restored_runs if isinstance(row, Mapping)
+            ]
+            self._reaction_active_run_id = str(normalized.get("active_run_id") or "")
+            active_run = next(
+                (
+                    row
+                    for row in self._reaction_run_records
+                    if row.get("run_id") == self._reaction_active_run_id
+                ),
+                self._reaction_run_records[0] if self._reaction_run_records else {},
+            )
+            if isinstance(active_run, Mapping):
+                normalized = dict(active_run)
+            try:
+                self._refresh_reaction_run_selector()
+            except Exception:
+                pass
 
         template: Optional[ReactionTemplate] = None
         template_id = str(normalized.get("template_id") or "").strip()
@@ -171519,6 +171729,241 @@ class UnifiedApp(tk.Tk):
             raise RuntimeError("No Reaction Dashboard templates are available.")
         return template
 
+    def _reaction_dashboard_current_run_fields(self) -> Dict[str, Any]:
+        """Collect JSON-safe editable setup fields for the active reaction run.
+
+        Purpose:
+            Keep operator inputs separate from derived calculation snapshots.
+        Why:
+            Named runs must preserve their setup without duplicating Cycle Analysis
+            payloads in profile storage.
+        Returns:
+            Template, source, pH, and text-entry values for one run.
+        Side Effects:
+            None.
+        Exceptions:
+            Tk access errors are normalized by the surrounding UI lifecycle.
+        """
+        return {
+            "template_id": str(self._reaction_template_var.get() or "").strip(),
+            "source_mode": str(self._reaction_source_mode_var.get() or "").strip(),
+            "ph_enabled": bool(self._reaction_ph_enabled_var.get()),
+            "template_inputs": {
+                str(key): str(var.get() or "")
+                for key, var in self._reaction_input_vars.items()
+            },
+            "source_inputs": {
+                str(key): str(var.get() or "")
+                for key, var in self._reaction_source_vars.items()
+            },
+        }
+
+    def _reaction_dashboard_result_snapshot(self) -> Dict[str, Any]:
+        """Return the compact auditable output snapshot for a saved reaction run.
+
+        Purpose:
+            Store decisive calculated results and provenance without copying raw
+            Cycle Analysis rows.
+        Why:
+            Saved runs need reproducible conclusions while the cycle payload stays
+            the linked source of truth.
+        Returns:
+            JSON-safe calculated result summary, or an empty mapping before a run.
+        Side Effects:
+            None.
+        Exceptions:
+            Missing result data returns an empty mapping.
+        """
+        result = self._reaction_dashboard_last_result
+        if not isinstance(result, Mapping):
+            return {}
+        core = result.get("core") if isinstance(result.get("core"), Mapping) else {}
+        summary = (
+            result.get("visual_summary")
+            if isinstance(result.get("visual_summary"), Mapping)
+            else {}
+        )
+        return {
+            "captured_at": datetime.now().isoformat(timespec="seconds"),
+            "gas_uptake_mol": _safe_float(core.get("gas_uptake_mol")),
+            "gas_required_mol": _safe_float(core.get("gas_required_mol")),
+            "expected_product_g": _safe_float(core.get("theoretical_yield_g")),
+            "completion_pct": _safe_float(summary.get("completion_pct")),
+            "limiting": str(summary.get("limiting") or ""),
+            "forecast": dict(summary.get("forecast") or {}),
+            "source_mode": str(result.get("source_mode") or ""),
+            "core_backend": str(core.get("backend") or ""),
+            "warnings": [str(item) for item in list(result.get("warnings") or [])],
+        }
+
+    def _ensure_reaction_dashboard_active_run(self) -> Dict[str, Any]:
+        """Return the active run or create an initial editable run record.
+
+        Purpose:
+            Guarantee an owner for the workspace form at all times.
+        Why:
+            Save, duplicate, and archive must operate on named records rather than
+            on unowned global form state.
+        Returns:
+            Active mutable run mapping.
+        Side Effects:
+            Initializes the in-memory run list and active identifier when needed.
+        Exceptions:
+            None.
+        """
+        for row in self._reaction_run_records:
+            if str(row.get("run_id") or "") == self._reaction_active_run_id:
+                return row
+        run = {
+            "run_id": str(uuid.uuid4()),
+            "name": "Current reaction",
+            "archived": False,
+            "notes": "",
+            "updated_at": "",
+            "snapshot": {},
+            **self._reaction_dashboard_current_run_fields(),
+        }
+        self._reaction_run_records.append(run)
+        self._reaction_active_run_id = str(run["run_id"])
+        return run
+
+    def _refresh_reaction_run_selector(self) -> None:
+        """Synchronize the compact active-run selector with non-archived records.
+
+        Purpose:
+            Keep header controls accurate as reaction records are saved or changed.
+        Why:
+            The selected run must always be visually unambiguous during live work.
+        Returns:
+            None.
+        Side Effects:
+            Updates combobox values and display-to-record lookup.
+        Exceptions:
+            Missing startup widgets are safely ignored.
+        """
+        active_rows = [
+            row for row in self._reaction_run_records if not row.get("archived")
+        ]
+        if not active_rows:
+            active_rows = [self._ensure_reaction_dashboard_active_run()]
+        lookup = {
+            str(row.get("name") or "Reaction run"): str(row.get("run_id") or "")
+            for row in active_rows
+        }
+        self._reaction_run_display_to_id = lookup
+        active = self._ensure_reaction_dashboard_active_run()
+        display = next(
+            (label for label, run_id in lookup.items() if run_id == active["run_id"]),
+            next(iter(lookup)),
+        )
+        self._reaction_run_display_var.set(display)
+        self._reaction_run_name_var.set(str(active.get("name") or "Reaction run"))
+        if self._reaction_run_selector is not None:
+            self._reaction_run_selector.configure(values=list(lookup))
+
+    def _save_reaction_dashboard_run(self) -> None:
+        """Commit current setup and a compact calculation snapshot to its run.
+
+        Purpose:
+            Make saved live-reaction state explicit and auditable.
+        Why:
+            The workflow should never silently overwrite a named laboratory run.
+        Returns:
+            None.
+        Side Effects:
+            Updates active record fields, timestamp, and selector labels.
+        Exceptions:
+            None.
+        """
+        run = self._ensure_reaction_dashboard_active_run()
+        run.update(self._reaction_dashboard_current_run_fields())
+        run["name"] = (
+            str(self._reaction_run_name_var.get() or "Reaction run").strip()
+            or "Reaction run"
+        )
+        run["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        run["snapshot"] = self._reaction_dashboard_result_snapshot()
+        self._refresh_reaction_run_selector()
+        self._reaction_warnings_var.set(f"Saved reaction run: {run['name']}")
+
+    def _duplicate_reaction_dashboard_run(self) -> None:
+        """Create a fresh editable reaction run from the current workspace setup.
+
+        Purpose:
+            Support related experiments without overwriting the prior run.
+        Why:
+            Copying setup is safer and faster than re-entering chemistry details.
+        Returns:
+            None.
+        Side Effects:
+            Appends and selects a new active run.
+        Exceptions:
+            None.
+        """
+        source = self._ensure_reaction_dashboard_active_run()
+        duplicate = {
+            "run_id": str(uuid.uuid4()),
+            "name": f"{source.get('name') or 'Reaction run'} copy",
+            "archived": False,
+            "notes": "",
+            "updated_at": "",
+            "snapshot": {},
+            **self._reaction_dashboard_current_run_fields(),
+        }
+        self._reaction_run_records.append(duplicate)
+        self._reaction_active_run_id = str(duplicate["run_id"])
+        self._refresh_reaction_run_selector()
+
+    def _archive_reaction_dashboard_run(self) -> None:
+        """Archive the current run and open a blank active record.
+
+        Purpose:
+            Preserve completed-run history without crowding day-to-day controls.
+        Why:
+            Archived records must stay recoverable while avoiding accidental edits.
+        Returns:
+            None.
+        Side Effects:
+            Saves and archives the active record, then creates a new active run.
+        Exceptions:
+            None.
+        """
+        run = self._ensure_reaction_dashboard_active_run()
+        self._save_reaction_dashboard_run()
+        run["archived"] = True
+        self._reaction_active_run_id = ""
+        self._ensure_reaction_dashboard_active_run()
+        self._refresh_reaction_run_selector()
+
+    def _on_reaction_run_selected(self, _event: Any = None) -> None:
+        """Restore the selected named run into the existing guided controls.
+
+        Purpose:
+            Let an operator continue a previous reaction from the header selector.
+        Why:
+            Named records are useful only when their setup can be safely restored.
+        Returns:
+            None.
+        Side Effects:
+            Applies selected record state to template and source controls.
+        Exceptions:
+            Unknown selector values leave current controls unchanged.
+        """
+        run_id = self._reaction_run_display_to_id.get(
+            str(self._reaction_run_display_var.get() or "").strip()
+        )
+        selected = next(
+            (row for row in self._reaction_run_records if row.get("run_id") == run_id),
+            None,
+        )
+        if not isinstance(selected, Mapping):
+            return
+        self._reaction_active_run_id = str(run_id)
+        self._apply_profile_reaction_dashboard_state(
+            {"runs": self._reaction_run_records, "active_run_id": run_id}
+        )
+        self._reaction_run_name_var.set(str(selected.get("name") or "Reaction run"))
+
     def _refresh_reaction_template_selector(self) -> None:
         """Refresh Reaction Dashboard template selector state.
 
@@ -171614,6 +172059,31 @@ class UnifiedApp(tk.Tk):
         status_box = ttk.LabelFrame(inner, text="Reaction Hub — Live Run State")
         status_box.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 6))
         status_box.grid_columnconfigure(1, weight=1)
+        run_header = ttk.Frame(status_box)
+        run_header.grid(row=0, column=0, columnspan=3, sticky="ew", padx=8, pady=(6, 2))
+        run_header.grid_columnconfigure(1, weight=1)
+        ttk.Label(run_header, text="Active reaction run").grid(
+            row=0, column=0, sticky="w", padx=(0, 6)
+        )
+        run_selector = _ui_combobox(
+            run_header,
+            textvariable=self._reaction_run_display_var,
+            values=(),
+            state="readonly",
+            width=38,
+        )
+        run_selector.grid(row=0, column=1, sticky="ew", padx=(0, 6))
+        run_selector.bind("<<ComboboxSelected>>", self._on_reaction_run_selected)
+        self._reaction_run_selector = run_selector
+        _ui_button(
+            run_header, text="Save", command=self._save_reaction_dashboard_run
+        ).grid(row=0, column=2, padx=2)
+        _ui_button(
+            run_header, text="Duplicate", command=self._duplicate_reaction_dashboard_run
+        ).grid(row=0, column=3, padx=2)
+        _ui_button(
+            run_header, text="Archive", command=self._archive_reaction_dashboard_run
+        ).grid(row=0, column=4, padx=(2, 0))
         self._reaction_status_label = tk.Label(
             status_box,
             textvariable=self._reaction_status_var,
@@ -171622,7 +172092,7 @@ class UnifiedApp(tk.Tk):
             font=("TkDefaultFont", 11, "bold"),
         )
         self._reaction_status_label.grid(
-            row=0, column=0, columnspan=3, sticky="ew", padx=8, pady=(6, 2)
+            row=1, column=0, columnspan=3, sticky="ew", padx=8, pady=(4, 2)
         )
         ttk.Label(
             status_box,
@@ -171630,7 +172100,9 @@ class UnifiedApp(tk.Tk):
             wraplength=980,
             justify="left",
             style="Sol.Help.TLabel",
-        ).grid(row=1, column=0, columnspan=3, sticky="ew", padx=8, pady=(0, 6))
+        ).grid(row=2, column=0, columnspan=3, sticky="ew", padx=8, pady=(0, 6))
+        self._ensure_reaction_dashboard_active_run()
+        self._refresh_reaction_run_selector()
 
         template_box = ttk.LabelFrame(inner, text="1. Reaction Definition")
         template_box.grid(row=1, column=0, sticky="ew", padx=12, pady=6)
@@ -173728,6 +174200,11 @@ class UnifiedApp(tk.Tk):
             self._reaction_warnings_var.set(f"Reaction Dashboard run failed: {exc}")
             return
         self._reaction_dashboard_last_result = result
+        # Keep the active record's in-memory audit snapshot current; persistence
+        # remains explicit through Save or the existing profile-save workflow.
+        active_run = self._ensure_reaction_dashboard_active_run()
+        active_run.update(self._reaction_dashboard_current_run_fields())
+        active_run["snapshot"] = self._reaction_dashboard_result_snapshot()
         self._render_reaction_dashboard_result(result)
         existing_frame, existing_canvas = self._find_plot_tab_canvas(
             REACTION_DASHBOARD_PLOT_KEY
@@ -174010,7 +174487,7 @@ class UnifiedApp(tk.Tk):
         completion_pct = visual_summary.get("completion_pct")
         self._reaction_kpi_vars["gas_uptake"].set(
             f"{gas_meta.get('display', 'Gas')}\n"
-            f"{_fmt(gas_mol, 4)} mol / {_fmt(gas_g, 2, ' g')}"
+            f"Consumed {_fmt(gas_mol, 4)} mol | required {_fmt(core.get('gas_required_mol'), 4)} mol"
         )
         self._reaction_kpi_vars["product"].set(
             f"Theoretical {product_meta.get('display', 'product')}\n"
@@ -174030,6 +174507,8 @@ class UnifiedApp(tk.Tk):
         )
         remaining_cycles = _safe_float(forecast.get("remaining_cycles"))
         remaining_time = _safe_float(forecast.get("remaining_time"))
+        average_remaining_cycles = _safe_float(forecast.get("average_remaining_cycles"))
+        average_remaining_time = _safe_float(forecast.get("average_remaining_time"))
         time_unit = str(forecast.get("time_unit") or "").strip()
         forecast_note = str(forecast.get("confidence") or "")
         self._reaction_kpi_vars["forecast_cycles"].set(
@@ -174037,11 +174516,23 @@ class UnifiedApp(tk.Tk):
             + (f"~{remaining_cycles:.1f} cycles" if remaining_cycles is not None else "--")
         )
         self._reaction_kpi_vars["forecast_time"].set(
-            "Estimated remaining time\n"
+            "ETA — recent / all history\n"
             + (
-                f"~{remaining_time:.2f} {time_unit}"
+                f"~{remaining_time:.2f} / {average_remaining_time:.2f} {time_unit}"
+                if remaining_time is not None
+                and average_remaining_time is not None
+                and time_unit
+                else f"~{remaining_time:.2f} {time_unit}"
                 if remaining_time is not None and time_unit
-                else "Time basis unavailable"
+                else "Time basis unavailable; see cycle estimates"
+            )
+        )
+        self._reaction_kpi_vars["forecast_cycles"].set(
+            "Remaining cycles — recent / all history\n"
+            + (
+                f"~{remaining_cycles:.1f} / {average_remaining_cycles:.1f}"
+                if remaining_cycles is not None and average_remaining_cycles is not None
+                else "--"
             )
         )
         inventory_tree = getattr(self, "_reaction_inventory_tree", None)
