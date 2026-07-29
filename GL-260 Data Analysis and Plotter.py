@@ -1,5 +1,5 @@
 ﻿# GL-260 Data Analysis and Plotter
-# Version: v4.15.15
+# Version: v4.16.0
 # Date: 2026-06-04
 
 import os
@@ -16496,7 +16496,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v4.15.15"
+APP_VERSION = "v4.16.0"
 
 ANALYSIS_ANCHOR_LEARNING_ENABLED_SETTINGS_KEY = "analysis_anchor_learning_enabled"
 ANALYSIS_TERMINAL_PH_RANGE_LOW_SETTINGS_KEY = "analysis_terminal_ph_range_low"
@@ -35239,6 +35239,159 @@ def _reaction_dashboard_cycle_trend(
     }
 
 
+def _reaction_dashboard_forecast(
+    cycle_series: Sequence[Mapping[str, Any]],
+    completion_pct: Optional[float],
+) -> Dict[str, Any]:
+    """Estimate remaining reaction cycles and time from imported cycle history.
+
+    Purpose:
+        Turn the completed portion of a reaction and its recent cycle history
+        into an explicitly labelled, conservative operator forecast.
+    Why:
+        The Reaction Hub should answer how much longer a run may take without
+        claiming a time estimate when the imported x-axis is not time-like.
+    Inputs:
+        cycle_series: Ordered cycle rows carrying completion, x, and x-label
+            values from Cycle Analysis.
+        completion_pct: Current completion percentage on the active template's
+            declared stoichiometric basis.
+    Outputs:
+        Mapping with cycle/time estimates, observed rates, and a confidence note.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid, missing, or non-progressing rows return unavailable estimates.
+    """
+    completion = _safe_float(completion_pct)
+    rows = [dict(row) for row in cycle_series if isinstance(row, Mapping)]
+    if completion is None or not math.isfinite(completion) or completion >= 100.0:
+        return {
+            "remaining_cycles": 0.0
+            if completion is not None and completion >= 100.0
+            else None,
+            "remaining_time": None,
+            "time_unit": "",
+            "completion_rate_pct_per_cycle": None,
+            "confidence": "No forecast needed."
+            if completion is not None and completion >= 100.0
+            else "Completion basis is unavailable.",
+        }
+    progress = [
+        _safe_float(row.get("completion_pct"))
+        for row in rows
+        if _safe_float(row.get("completion_pct")) is not None
+    ]
+    if len(progress) < 2:
+        return {
+            "remaining_cycles": None,
+            "remaining_time": None,
+            "time_unit": "",
+            "completion_rate_pct_per_cycle": None,
+            "confidence": "Import at least two usable cycle points to forecast completion.",
+        }
+    # Use only the latest positive progress deltas so stalled or duplicate rows
+    # do not make an optimistic forecast look more precise than the data allows.
+    deltas = [
+        later - earlier
+        for earlier, later in zip(progress, progress[1:])
+        if later > earlier + 1e-9
+    ][-4:]
+    if not deltas:
+        return {
+            "remaining_cycles": None,
+            "remaining_time": None,
+            "time_unit": "",
+            "completion_rate_pct_per_cycle": None,
+            "confidence": "No positive completion trend is available for a forecast.",
+        }
+    rate = sum(deltas) / len(deltas)
+    remaining_cycles = max((100.0 - float(completion)) / max(rate, 1e-12), 0.0)
+    x_values = [_safe_float(row.get("x")) for row in rows]
+    x_values = [
+        value for value in x_values if value is not None and math.isfinite(value)
+    ]
+    x_label = str(rows[-1].get("x_label") or "").strip()
+    normalized_label = x_label.lower()
+    is_time_axis = any(
+        token in normalized_label
+        for token in ("time", "second", "minute", "hour", "day", " sec", " min", " hr")
+    )
+    time_per_cycle = None
+    if is_time_axis and len(x_values) >= 2:
+        elapsed = x_values[-1] - x_values[0]
+        if elapsed > 0.0:
+            time_per_cycle = elapsed / max(len(x_values) - 1, 1)
+    return {
+        "remaining_cycles": remaining_cycles,
+        "remaining_time": remaining_cycles * time_per_cycle
+        if time_per_cycle is not None
+        else None,
+        "time_unit": x_label if time_per_cycle is not None else "",
+        "completion_rate_pct_per_cycle": rate,
+        "confidence": (
+            "Recent positive completion-rate estimate; process changes can invalidate it."
+            if time_per_cycle is not None
+            else "Cycle forecast only; imported x-axis is not a recognized time basis."
+        ),
+    }
+
+
+def _reaction_dashboard_material_inventory(
+    template: ReactionTemplate,
+    core: Mapping[str, Any],
+) -> List[Dict[str, Any]]:
+    """Build an operator-facing material inventory from reaction-core balances.
+
+    Purpose:
+        Expose starting amount, estimated consumption, and remaining inventory
+        for every declared species in the active reaction template.
+    Why:
+        A reusable reaction hub must make the charge basis visible instead of
+        only presenting a final product number for one reaction family.
+    Inputs:
+        template: Active template defining species identity and molar masses.
+        core: Rust/Python reaction-core result containing initial and final molar
+            inventory mappings.
+    Outputs:
+        Ordered display rows with molar and mass balances for each species.
+    Side Effects:
+        None.
+    Exceptions:
+        Missing inventories are normalized to zero or unavailable values.
+    """
+    initial = (
+        core.get("initial_inventory_mol")
+        if isinstance(core.get("initial_inventory_mol"), Mapping)
+        else {}
+    )
+    final = (
+        core.get("final_inventory_mol")
+        if isinstance(core.get("final_inventory_mol"), Mapping)
+        else {}
+    )
+    rows: List[Dict[str, Any]] = []
+    for species in template.species:
+        starting = _safe_float(initial.get(species.species_id), 0.0) or 0.0
+        ending = _safe_float(final.get(species.species_id), 0.0) or 0.0
+        net_change = float(ending) - float(starting)
+        rows.append(
+            {
+                "species_id": species.species_id,
+                "material": _reaction_dashboard_species_display(
+                    template, species.species_id
+                ).get("display"),
+                "role": species.role.replace("_", " "),
+                "starting_mol": starting,
+                "starting_g": starting * species.molar_mass_g_mol,
+                "consumed_mol": max(-net_change, 0.0),
+                "remaining_mol": ending,
+                "remaining_g": ending * species.molar_mass_g_mol,
+            }
+        )
+    return rows
+
+
 def _reaction_dashboard_cycle_row_status(
     row: Mapping[str, Any],
     *,
@@ -35417,6 +35570,8 @@ def _reaction_dashboard_visual_summary(
                 ),
             }
         )
+    forecast = _reaction_dashboard_forecast(cycle_series, completion_pct)
+    material_inventory = _reaction_dashboard_material_inventory(template, core)
     return {
         "gas": gas_meta,
         "product": product_meta,
@@ -35431,6 +35586,8 @@ def _reaction_dashboard_visual_summary(
         "cycle_status": status,
         "cycle_trend": trend,
         "cycle_rows": cycle_rows,
+        "forecast": forecast,
+        "material_inventory": material_inventory,
         "warnings": warnings,
         "next_action": next_action,
         "status_color": REACTION_DASHBOARD_STATUS_COLORS.get(
@@ -171454,7 +171611,7 @@ class UnifiedApp(tk.Tk):
             lambda: self._bind_reaction_dashboard_mousewheel_recursive(inner)
         )
 
-        status_box = ttk.LabelFrame(inner, text="Reaction Status")
+        status_box = ttk.LabelFrame(inner, text="Reaction Hub — Live Run State")
         status_box.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 6))
         status_box.grid_columnconfigure(1, weight=1)
         self._reaction_status_label = tk.Label(
@@ -171475,7 +171632,7 @@ class UnifiedApp(tk.Tk):
             style="Sol.Help.TLabel",
         ).grid(row=1, column=0, columnspan=3, sticky="ew", padx=8, pady=(0, 6))
 
-        template_box = ttk.LabelFrame(inner, text="Reaction Setup")
+        template_box = ttk.LabelFrame(inner, text="1. Reaction Definition")
         template_box.grid(row=1, column=0, sticky="ew", padx=12, pady=6)
         template_box.grid_columnconfigure(1, weight=1)
         template_label = ttk.Label(template_box, text="Template id")
@@ -171538,12 +171695,12 @@ class UnifiedApp(tk.Tk):
         ).grid(row=1, column=0, sticky="w", padx=8, pady=(0, 8))
 
         self._reaction_inputs_frame = ttk.LabelFrame(
-            inner, text="Charge Basis and Conditions"
+            inner, text="2. Starting Materials & Conditions"
         )
         self._reaction_inputs_frame.grid(row=2, column=0, sticky="ew", padx=12, pady=6)
         self._reaction_inputs_frame.grid_columnconfigure(1, weight=1)
 
-        source_box = ttk.LabelFrame(inner, text="Gas Source and Actions")
+        source_box = ttk.LabelFrame(inner, text="3. Cycle Data Connection & Actions")
         source_box.grid(row=3, column=0, sticky="ew", padx=12, pady=6)
         source_box.grid_columnconfigure(1, weight=1)
         source_label = ttk.Label(source_box, text="Gas uptake source *")
@@ -171670,7 +171827,9 @@ class UnifiedApp(tk.Tk):
             command=self._open_reaction_dashboard_plot_in_new_tab,
         ).grid(row=0, column=2, sticky="w")
 
-        result_box = ttk.LabelFrame(inner, text="Visual Reaction Dashboard")
+        result_box = ttk.LabelFrame(
+            inner, text="4. Independent Reaction Hub — Cycle-Derived Intelligence"
+        )
         result_box.grid(row=4, column=0, sticky="ew", padx=12, pady=(6, 12))
         result_box.grid_columnconfigure(0, weight=1)
         kpi_frame = ttk.Frame(result_box)
@@ -171680,13 +171839,15 @@ class UnifiedApp(tk.Tk):
         for idx, key in enumerate(
             (
                 "gas_uptake",
-                "product",
                 "completion",
+                "forecast_cycles",
+                "forecast_time",
+                "product",
                 "limiting",
                 "yield",
-                "source_backend",
                 "intermediate",
                 "ph",
+                "source_backend",
                 "charge_basis",
             )
         ):
@@ -171802,10 +171963,39 @@ class UnifiedApp(tk.Tk):
         self._reaction_results_tree = result_tree
         ttk.Label(
             result_box,
+            text="Starting-material and estimated inventory balance",
+            style="Sol.Help.TLabel",
+        ).grid(row=5, column=0, sticky="w", padx=8, pady=(2, 0))
+        inventory_columns = (
+            "material",
+            "role",
+            "starting",
+            "consumed",
+            "remaining",
+        )
+        inventory_tree = ttk.Treeview(
+            result_box, columns=inventory_columns, show="headings", height=6
+        )
+        inventory_headings = {
+            "material": "Material",
+            "role": "Reaction role",
+            "starting": "Starting amount",
+            "consumed": "Estimated consumed",
+            "remaining": "Estimated remaining",
+        }
+        for col in inventory_columns:
+            inventory_tree.heading(col, text=inventory_headings[col])
+            inventory_tree.column(
+                col, width=180 if col in {"material", "role"} else 150, anchor="w"
+            )
+        inventory_tree.grid(row=6, column=0, sticky="ew", padx=8, pady=(0, 4))
+        self._reaction_inventory_tree = inventory_tree
+        ttk.Label(
+            result_box,
             textvariable=self._reaction_warnings_var,
             justify="left",
             wraplength=960,
-        ).grid(row=5, column=0, sticky="ew", padx=8, pady=(0, 8))
+        ).grid(row=7, column=0, sticky="ew", padx=8, pady=(0, 8))
 
         advanced_box = ttk.LabelFrame(inner, text="Advanced Template Editor")
         advanced_box.grid(row=5, column=0, sticky="ew", padx=12, pady=(0, 12))
@@ -173833,6 +174023,44 @@ class UnifiedApp(tk.Tk):
         self._reaction_kpi_vars["limiting"].set(
             f"Limiting: {visual_summary.get('limiting') or '--'}"
         )
+        forecast = (
+            visual_summary.get("forecast")
+            if isinstance(visual_summary.get("forecast"), Mapping)
+            else {}
+        )
+        remaining_cycles = _safe_float(forecast.get("remaining_cycles"))
+        remaining_time = _safe_float(forecast.get("remaining_time"))
+        time_unit = str(forecast.get("time_unit") or "").strip()
+        forecast_note = str(forecast.get("confidence") or "")
+        self._reaction_kpi_vars["forecast_cycles"].set(
+            "Estimated remaining\n"
+            + (f"~{remaining_cycles:.1f} cycles" if remaining_cycles is not None else "--")
+        )
+        self._reaction_kpi_vars["forecast_time"].set(
+            "Estimated remaining time\n"
+            + (
+                f"~{remaining_time:.2f} {time_unit}"
+                if remaining_time is not None and time_unit
+                else "Time basis unavailable"
+            )
+        )
+        inventory_tree = getattr(self, "_reaction_inventory_tree", None)
+        if inventory_tree is not None:
+            inventory_tree.delete(*inventory_tree.get_children())
+            for row in list(visual_summary.get("material_inventory") or []):
+                if not isinstance(row, Mapping):
+                    continue
+                inventory_tree.insert(
+                    "",
+                    "end",
+                    values=(
+                        row.get("material", "--"),
+                        row.get("role", "--"),
+                        f"{_fmt(row.get('starting_mol'), 4)} mol / {_fmt(row.get('starting_g'), 2, ' g')}",
+                        f"{_fmt(row.get('consumed_mol'), 4)} mol",
+                        f"{_fmt(row.get('remaining_mol'), 4)} mol / {_fmt(row.get('remaining_g'), 2, ' g')}",
+                    ),
+                )
         cycle_rows = [
             dict(row)
             for row in list(visual_summary.get("cycle_rows") or [])
@@ -173878,6 +174106,8 @@ class UnifiedApp(tk.Tk):
         warnings = [
             str(item) for item in list(result.get("warnings") or []) if str(item)
         ]
+        if forecast_note and remaining_cycles is None:
+            warnings.append(f"Forecast: {forecast_note}")
         self._reaction_warnings_var.set(
             "Warnings: " + "; ".join(warnings) if warnings else "Calculation complete."
         )
