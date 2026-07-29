@@ -172119,6 +172119,11 @@ class UnifiedApp(tk.Tk):
         template_combo.grid(row=0, column=1, sticky="ew", padx=8, pady=(6, 2))
         template_combo.bind("<<ComboboxSelected>>", self._on_reaction_template_selected)
         self._reaction_template_combo = template_combo
+        _ui_button(
+            template_box,
+            text="Create New Reaction",
+            command=self._reaction_dashboard_open_new_definition_wizard,
+        ).grid(row=0, column=2, sticky="e", padx=(0, 8), pady=(6, 2))
         self._attach_tooltip(
             template_label,
             "Choose the saved reaction definition used to calculate material use, gas demand, and expected product.",
@@ -172138,7 +172143,10 @@ class UnifiedApp(tk.Tk):
         self._attach_tooltip(
             name_label, "Read-only description of the reaction definition selected above."
         )
-        self._attach_tooltip(name_entry, "Use the advanced definition manager to create or edit saved reactions.")
+        self._attach_tooltip(
+            name_entry,
+            "Use Create New Reaction for a guided definition; the manager below is for advanced edits.",
+        )
 
         equation_box = ttk.LabelFrame(
             template_box, text="Reaction Equation"
