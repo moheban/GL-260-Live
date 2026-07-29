@@ -172495,7 +172495,7 @@ class UnifiedApp(tk.Tk):
         _ui_button(
             button_row,
             text="New Reaction Definition",
-            command=self._reaction_dashboard_new_template,
+            command=self._reaction_dashboard_open_new_definition_wizard,
         ).grid(row=0, column=0, sticky="w", padx=(0, 6))
         _ui_button(
             button_row,
@@ -172504,7 +172504,7 @@ class UnifiedApp(tk.Tk):
         ).grid(row=0, column=1, sticky="w", padx=(0, 6))
         _ui_button(
             button_row,
-            text="Save Definition",
+            text="Save Advanced Changes",
             command=self._reaction_dashboard_save_custom_template,
         ).grid(row=0, column=2, sticky="w", padx=(0, 6))
         _ui_button(
@@ -173865,6 +173865,167 @@ class UnifiedApp(tk.Tk):
             "New reaction definition created. Update material names, molar masses, "
             "and reaction coefficients before running it."
         )
+
+    def _reaction_dashboard_open_new_definition_wizard(self) -> None:
+        """Open a guided form that creates and saves a simple reaction definition.
+
+        Purpose:
+            Replace the error-prone editor-first creation path with a short,
+            chemistry-focused workflow that produces a valid template directly.
+        Why:
+            Most reactions can begin as one starting material plus one reactant
+            gas producing one product; advanced JSON/species editing should not be
+            required to create that baseline definition.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Opens a dialog and, on save, persists/selects a new custom definition.
+        Exceptions:
+            Invalid numeric entries remain in the dialog with a clear error message.
+        """
+        window = tk.Toplevel(self)
+        window.title("New Reaction Definition")
+        window.transient(self)
+        window.resizable(False, False)
+        host = ttk.Frame(window, padding=14)
+        host.grid(sticky="nsew")
+        host.grid_columnconfigure(1, weight=1)
+        ttk.Label(
+            host,
+            text="Create a reaction in three steps",
+            font=("TkDefaultFont", 11, "bold"),
+        ).grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Label(
+            host,
+            text=(
+                "Enter the starting material, reactant gas, and expected product. "
+                "Use positive stoichiometric amounts; advanced definitions can be "
+                "edited afterward if the reaction has additional steps."
+            ),
+            wraplength=620,
+            justify="left",
+            style="Sol.Help.TLabel",
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(2, 10))
+        fields = {
+            "definition_name": tk.StringVar(value="New reaction"),
+            "starting_name": tk.StringVar(value="Starting material"),
+            "starting_formula": tk.StringVar(value=""),
+            "starting_mw": tk.StringVar(value=""),
+            "gas_name": tk.StringVar(value="Reactant gas"),
+            "gas_formula": tk.StringVar(value=""),
+            "gas_mw": tk.StringVar(value=""),
+            "product_name": tk.StringVar(value="Product"),
+            "product_formula": tk.StringVar(value=""),
+            "product_mw": tk.StringVar(value=""),
+            "starting_coeff": tk.StringVar(value="1"),
+            "gas_coeff": tk.StringVar(value="1"),
+            "product_coeff": tk.StringVar(value="1"),
+        }
+        ttk.Label(host, text="Reaction name").grid(row=2, column=0, sticky="w", pady=2)
+        _ui_entry(host, textvariable=fields["definition_name"], width=42).grid(
+            row=2, column=1, columnspan=2, sticky="ew", pady=2
+        )
+        headers = ("Role", "Name / formula", "Molar mass (g/mol)", "Stoichiometry")
+        for column, header in enumerate(headers):
+            ttk.Label(host, text=header, style="Sol.Help.TLabel").grid(
+                row=3, column=column, sticky="w", padx=(0, 8), pady=(8, 2)
+            )
+        row_specs = (
+            ("Starting material", "starting_name", "starting_formula", "starting_mw", "starting_coeff"),
+            ("Reactant gas", "gas_name", "gas_formula", "gas_mw", "gas_coeff"),
+            ("Expected product", "product_name", "product_formula", "product_mw", "product_coeff"),
+        )
+        for row_index, (role, name_key, formula_key, mw_key, coeff_key) in enumerate(row_specs, start=4):
+            ttk.Label(host, text=role).grid(row=row_index, column=0, sticky="w", pady=2)
+            name_formula = ttk.Frame(host)
+            name_formula.grid(row=row_index, column=1, sticky="ew", padx=(0, 8), pady=2)
+            name_formula.grid_columnconfigure(0, weight=1)
+            _ui_entry(name_formula, textvariable=fields[name_key], width=28).grid(
+                row=0, column=0, sticky="ew"
+            )
+            _ui_entry(name_formula, textvariable=fields[formula_key], width=10).grid(
+                row=0, column=1, padx=(4, 0)
+            )
+            _ui_entry(host, textvariable=fields[mw_key], width=16).grid(
+                row=row_index, column=2, sticky="w", padx=(0, 8), pady=2
+            )
+            _ui_entry(host, textvariable=fields[coeff_key], width=12).grid(
+                row=row_index, column=3, sticky="w", pady=2
+            )
+        status = tk.StringVar(value="Formula entries are optional; molar masses are required.")
+        ttk.Label(host, textvariable=status, style="Sol.Help.TLabel", wraplength=620).grid(
+            row=7, column=0, columnspan=4, sticky="w", pady=(10, 4)
+        )
+
+        def _positive_value(key: str, label: str) -> float:
+            """Read one required positive numeric wizard value."""
+            value = _safe_float(fields[key].get())
+            if value is None or not math.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{label} must be a positive number.")
+            return float(value)
+
+        def _save_definition() -> None:
+            """Validate wizard inputs and persist the resulting reaction definition."""
+            try:
+                name = str(fields["definition_name"].get() or "").strip()
+                starting_name = str(fields["starting_name"].get() or "").strip()
+                gas_name = str(fields["gas_name"].get() or "").strip()
+                product_name = str(fields["product_name"].get() or "").strip()
+                if not all((name, starting_name, gas_name, product_name)):
+                    raise ValueError("Provide a reaction name and names for all three materials.")
+                starting_mw = _positive_value("starting_mw", "Starting-material molar mass")
+                gas_mw = _positive_value("gas_mw", "Reactant-gas molar mass")
+                product_mw = _positive_value("product_mw", "Product molar mass")
+                starting_coeff = _positive_value("starting_coeff", "Starting-material stoichiometry")
+                gas_coeff = _positive_value("gas_coeff", "Reactant-gas stoichiometry")
+                product_coeff = _positive_value("product_coeff", "Product stoichiometry")
+            except ValueError as exc:
+                status.set(str(exc))
+                return
+            template_id = self._reaction_dashboard_unique_template_id(name)
+            payload = {
+                "template_id": template_id,
+                "name": name,
+                "version": "1.0",
+                "description": "Created with the guided reaction-definition form.",
+                "readonly": False,
+                "reaction_family": "custom",
+                "gas_species_id": "reactant_gas",
+                "species": [
+                    {"species_id": "starting_material", "name": starting_name, "formula": fields["starting_formula"].get().strip(), "phase": "solid", "role": "reactant", "molar_mass_g_mol": starting_mw, "initial_moles": 0.0},
+                    {"species_id": "reactant_gas", "name": gas_name, "formula": fields["gas_formula"].get().strip(), "phase": "gas", "role": "reactant", "molar_mass_g_mol": gas_mw, "initial_moles": 0.0},
+                    {"species_id": "product", "name": product_name, "formula": fields["product_formula"].get().strip(), "phase": "solid", "role": "product", "molar_mass_g_mol": product_mw, "initial_moles": 0.0},
+                ],
+                "steps": [{"step_id": "main_reaction", "name": "Main reaction", "stoichiometry": {"starting_material": -starting_coeff, "reactant_gas": -gas_coeff, "product": product_coeff}}],
+                "input_fields": [
+                    {"field_id": "starting_material_mass_g", "label": "Starting material amount", "units": "g", "default": "", "required": True, "target_species_id": "starting_material", "quantity": "mass_g", "group": "charge"},
+                    {"field_id": "actual_product_mass_g", "label": "Measured product mass", "units": "g", "default": "", "required": False, "target_species_id": "product", "quantity": "actual_mass_g", "group": "results"},
+                ],
+                "yield_basis": {"product_species_id": "product", "target_reactant_species_id": "starting_material", "actual_mass_field_id": "actual_product_mass_g", "label": "Product yield"},
+                "equilibrium": {"enabled_by_default": False},
+                "kpi_labels": {},
+            }
+            template = _reaction_template_from_dict(payload)
+            if template is None:
+                status.set("The reaction definition could not be validated. Check the entered values.")
+                return
+            self._reaction_templates[template.template_id] = template
+            self._reaction_template_var.set(template.template_id)
+            settings[REACTION_DASHBOARD_SELECTED_TEMPLATE_KEY] = template.template_id
+            self._persist_reaction_custom_templates()
+            self._refresh_reaction_template_selector()
+            self._load_reaction_template_into_ui(template)
+            self._reaction_warnings_var.set(
+                f"Created reaction definition: {template.name}. Enter the starting-material amount to begin."
+            )
+            window.destroy()
+
+        buttons = ttk.Frame(host)
+        buttons.grid(row=8, column=0, columnspan=4, sticky="e", pady=(6, 0))
+        _ui_button(buttons, text="Cancel", command=window.destroy).grid(row=0, column=0, padx=(0, 6))
+        _ui_button(buttons, text="Create Reaction", command=_save_definition).grid(row=0, column=1)
 
     def _persist_reaction_custom_templates(self) -> None:
         """Persist custom Reaction Dashboard templates to settings.
