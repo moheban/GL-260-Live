@@ -112100,19 +112100,25 @@ class UnifiedApp(tk.Tk):
         x_values: Any,
         y_values: Any,
         max_points: int,
+        preserve_x_values: Any = None,
     ) -> np.ndarray | None:
         """Return decimation indices for one combined SVG export trace.
 
         Purpose:
-            Select a bounded set of vector points while retaining endpoints and
-            non-finite gap boundaries.
+            Select a bounded set of vector points while retaining endpoints,
+            non-finite gap boundaries, global trace extrema, and cycle-marker
+            anchors.
         Why:
             SVG file size scales with point/marker count; decimation should be
-            deterministic and preserve visible discontinuities where practical.
+            deterministic and preserve visible discontinuities, global data
+            maxima/minima, and cycle-marker attachment points.
         Inputs:
             x_values: Source X data sequence for one artist.
             y_values: Source Y data sequence aligned with `x_values`.
             max_points: Target maximum number of points to keep.
+            preserve_x_values: Optional X coordinates whose nearest source points
+                must remain in the reduced trace, such as cycle peak/trough
+                marker anchors.
         Outputs:
             Numpy integer index array, or None when no decimation is needed.
         Side Effects:
@@ -112147,8 +112153,49 @@ class UnifiedApp(tk.Tk):
                 required_idx = neighbor_idx[
                     (neighbor_idx >= 0) & (neighbor_idx < x_array.size)
                 ]
+            finite_idx = np.flatnonzero(~nonfinite_mask)
+            if finite_idx.size:
+                # Keep the original extrema vertices so SVG reduction cannot
+                # shift a trace's displayed minimum or maximum.
+                finite_y = y_float[finite_idx]
+                extrema_idx = finite_idx[
+                    [int(np.argmin(finite_y)), int(np.argmax(finite_y))]
+                ]
+                required_idx = (
+                    extrema_idx
+                    if required_idx is None
+                    else np.unique(np.concatenate([required_idx, extrema_idx]))
+                )
         except Exception:
             required_idx = None
+        if preserve_x_values is not None:
+            try:
+                x_float = np.asarray(x_array, dtype=float)
+                anchor_x = np.asarray(preserve_x_values, dtype=float).reshape(-1)
+                finite_x = np.isfinite(x_float)
+                finite_anchor_x = anchor_x[np.isfinite(anchor_x)]
+                if finite_x.any() and finite_anchor_x.size:
+                    # Retain original vertices at cycle marker X values so SVG
+                    # decimation cannot visually detach markers from the trace.
+                    finite_indices = np.flatnonzero(finite_x)
+                    preserved = [
+                        int(
+                            finite_indices[
+                                int(np.argmin(np.abs(x_float[finite_indices] - anchor)))
+                            ]
+                        )
+                        for anchor in np.unique(finite_anchor_x)
+                    ]
+                    if preserved:
+                        marker_idx = np.asarray(preserved, dtype=int)
+                        required_idx = (
+                            marker_idx
+                            if required_idx is None
+                            else np.unique(np.concatenate([required_idx, marker_idx]))
+                        )
+            except Exception:
+                # Malformed marker offsets must not prevent normal SVG export.
+                pass
         rust_idx = _rust_combined_decimation_indices(
             data_len=int(x_array.size),
             step=int(step),
@@ -112164,6 +112211,45 @@ class UnifiedApp(tk.Tk):
         if required_idx is not None and required_idx.size:
             base_idx = np.unique(np.concatenate([base_idx, required_idx]))
         return np.asarray(sorted(set(int(idx) for idx in base_idx)), dtype=int)
+
+    def _combined_svg_cycle_marker_x_values(self, fig: Figure | None) -> np.ndarray:
+        """Return finite X coordinates used by combined cycle markers.
+
+        Purpose:
+            Read cycle peak/trough scatter offsets before SVG reduction.
+        Why:
+            The export decimator must retain the corresponding source vertices
+            so reduced primary traces remain visually attached to their markers.
+        Inputs:
+            fig: Combined triple-axis export figure, or None.
+        Outputs:
+            One-dimensional float array of unique, finite marker X coordinates.
+        Side Effects:
+            None.
+        Exceptions:
+            Missing or malformed marker artists return an empty array.
+        """
+        if fig is None:
+            return np.asarray([], dtype=float)
+        marker_state = getattr(fig, "_gl260_cycle_marker_artists", None)
+        if not isinstance(marker_state, Mapping):
+            return np.asarray([], dtype=float)
+        marker_x_values: list[np.ndarray] = []
+        for marker_key in ("peak", "trough"):
+            artist = marker_state.get(marker_key)
+            offsets_getter = getattr(artist, "get_offsets", None)
+            if not callable(offsets_getter):
+                continue
+            try:
+                offsets = np.asarray(offsets_getter(), dtype=float)
+                if offsets.ndim == 2 and offsets.shape[1] >= 2:
+                    x_values = offsets[:, 0]
+                    marker_x_values.append(x_values[np.isfinite(x_values)])
+            except Exception:
+                continue
+        if not marker_x_values:
+            return np.asarray([], dtype=float)
+        return np.unique(np.concatenate(marker_x_values))
 
     def _iter_combined_svg_data_artists(self, fig: Figure | None) -> list[Any]:
         """Collect combined plot data artists eligible for SVG reduction.
@@ -112263,6 +112349,7 @@ class UnifiedApp(tk.Tk):
         )
         if fig is None or mode == COMBINED_SVG_REDUCTION_FULL:
             return fig, raster_dpi
+        cycle_marker_x_values = self._combined_svg_cycle_marker_x_values(fig)
         for artist in self._iter_combined_svg_data_artists(fig):
             try:
                 if mode == COMBINED_SVG_REDUCTION_RASTERIZE:
@@ -112275,10 +112362,17 @@ class UnifiedApp(tk.Tk):
                         artist.set_marker("None")
                         continue
                     if mode == COMBINED_SVG_REDUCTION_DECIMATE:
+                        axis = getattr(artist, "axes", None)
+                        preserve_x_values = (
+                            cycle_marker_x_values
+                            if getattr(axis, "_gl260_axis_role", None) == "primary"
+                            else None
+                        )
                         idx = self._combined_svg_decimation_indices(
                             artist.get_xdata(orig=False),
                             artist.get_ydata(orig=False),
                             max_points,
+                            preserve_x_values=preserve_x_values,
                         )
                         if idx is not None:
                             x_array = np.asarray(artist.get_xdata(orig=False)).reshape(
@@ -112299,10 +112393,17 @@ class UnifiedApp(tk.Tk):
                 ):
                     offsets = np.asarray(offsets_getter())
                     if offsets.ndim == 2 and offsets.shape[0] > max_points:
+                        axis = getattr(artist, "axes", None)
+                        preserve_x_values = (
+                            cycle_marker_x_values
+                            if getattr(axis, "_gl260_axis_role", None) == "primary"
+                            else None
+                        )
                         idx = self._combined_svg_decimation_indices(
                             offsets[:, 0],
                             offsets[:, 1],
                             max_points,
+                            preserve_x_values=preserve_x_values,
                         )
                         if idx is not None and idx.size:
                             offsets_setter(offsets[idx])
