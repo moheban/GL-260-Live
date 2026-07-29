@@ -22317,10 +22317,10 @@ def _builtin_reaction_templates() -> Dict[str, ReactionTemplate]:
             ph_species="H+",
         ),
         kpi_labels={
-            "gas_uptake": "CO uptake",
-            "intermediate": "Methyl formate estimate",
-            "product": "Sodium formate theoretical",
-            "yield": "Sodium formate yield",
+            "gas_uptake": "Reactant gas",
+            "intermediate": "Intermediate balance",
+            "product": "Expected product",
+            "yield": "Measured yield",
             "completion": "Reaction completion",
             "ph": "Equilibrium pH",
         },
@@ -172494,19 +172494,24 @@ class UnifiedApp(tk.Tk):
         button_row.grid(row=0, column=0, sticky="w", padx=8, pady=(0, 6))
         _ui_button(
             button_row,
-            text="Duplicate Template",
-            command=self._reaction_dashboard_duplicate_template,
+            text="New Reaction Definition",
+            command=self._reaction_dashboard_new_template,
         ).grid(row=0, column=0, sticky="w", padx=(0, 6))
         _ui_button(
             button_row,
-            text="Save Custom Template",
-            command=self._reaction_dashboard_save_custom_template,
+            text="Duplicate Definition",
+            command=self._reaction_dashboard_duplicate_template,
         ).grid(row=0, column=1, sticky="w", padx=(0, 6))
         _ui_button(
             button_row,
-            text="Edit Template JSON",
+            text="Save Definition",
+            command=self._reaction_dashboard_save_custom_template,
+        ).grid(row=0, column=2, sticky="w", padx=(0, 6))
+        _ui_button(
+            button_row,
+            text="Edit Definition JSON",
             command=self._reaction_dashboard_open_template_json_editor,
-        ).grid(row=0, column=2, sticky="w")
+        ).grid(row=0, column=3, sticky="w")
         species_columns = (
             "species_id",
             "name",
@@ -173414,10 +173419,18 @@ class UnifiedApp(tk.Tk):
             )
         except Exception:
             pass
-        for key, label in template.kpi_labels.items():
+        generic_kpi_placeholders = {
+            "gas_uptake": "Reactant gas: --",
+            "intermediate": "Intermediate balance: --",
+            "product": "Expected product: --",
+            "yield": "Measured yield: --",
+            "completion": "Reaction completion: --",
+            "ph": "Equilibrium estimate: --",
+        }
+        for key, label in generic_kpi_placeholders.items():
             var = self._reaction_kpi_vars.get(key)
             if isinstance(var, tk.StringVar):
-                var.set(f"{label}: --")
+                var.set(label)
         for key in ("source_backend", "limiting"):
             var = self._reaction_kpi_vars.get(key)
             if isinstance(var, tk.StringVar):
@@ -173700,6 +173713,159 @@ class UnifiedApp(tk.Tk):
             raise ValueError("Edited reaction template is invalid.")
         return template
 
+    def _reaction_dashboard_unique_template_id(self, name: str) -> str:
+        """Return a unique persisted identifier for a new reaction definition.
+
+        Purpose:
+            Prevent custom definitions from colliding with built-in or existing
+            custom identifiers when they are created from a starter or JSON copy.
+        Why:
+            A collision previously made a new definition appear to save while the
+            built-in filtering path discarded it from persistent custom storage.
+        Args:
+            name: Operator-supplied reaction-definition name.
+        Returns:
+            Lowercase identifier that is absent from the current template catalog.
+        Side Effects:
+            None.
+        Exceptions:
+            None.
+        """
+        stem = re.sub(r"[^a-z0-9]+", "_", str(name or "").lower()).strip("_")
+        stem = stem or "custom_reaction"
+        existing_ids = set(getattr(self, "_reaction_templates", {}) or {})
+        existing_ids.update(_builtin_reaction_templates())
+        candidate = stem
+        suffix = 2
+        while candidate in existing_ids:
+            candidate = f"{stem}_{suffix}"
+            suffix += 1
+        return candidate
+
+    def _reaction_dashboard_new_template(self) -> None:
+        """Create a usable, chemistry-neutral starter reaction definition.
+
+        Purpose:
+            Give operators a direct path to add a reaction without first cloning
+            or reverse-engineering the built-in chemistry template.
+        Why:
+            The definition manager must support reaction-agnostic work; a starter
+            with generic material, gas, and product rows is easier to edit safely.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Adds and persists a new custom definition, selects it, and loads its
+            generic editor fields into the workspace.
+        Exceptions:
+            Dialog cancellation leaves the active definition unchanged.
+        """
+        name = simpledialog.askstring(
+            "New Reaction Definition",
+            "Name this reaction definition:",
+            parent=self,
+            initialvalue="New reaction",
+        )
+        name = str(name or "").strip()
+        if not name:
+            return
+        template_id = self._reaction_dashboard_unique_template_id(name)
+        payload = {
+            "template_id": template_id,
+            "name": name,
+            "version": "1.0",
+            "description": "Generic editable reaction definition.",
+            "readonly": False,
+            "reaction_family": "custom",
+            "gas_species_id": "reactant_gas",
+            "species": [
+                {
+                    "species_id": "starting_material_1",
+                    "name": "Starting material 1",
+                    "formula": "",
+                    "phase": "solid",
+                    "role": "reactant",
+                    "molar_mass_g_mol": 1.0,
+                    "initial_moles": 0.0,
+                },
+                {
+                    "species_id": "reactant_gas",
+                    "name": "Reactant gas",
+                    "formula": "",
+                    "phase": "gas",
+                    "role": "reactant",
+                    "molar_mass_g_mol": 1.0,
+                    "initial_moles": 0.0,
+                },
+                {
+                    "species_id": "product",
+                    "name": "Product",
+                    "formula": "",
+                    "phase": "solid",
+                    "role": "product",
+                    "molar_mass_g_mol": 1.0,
+                    "initial_moles": 0.0,
+                },
+            ],
+            "steps": [
+                {
+                    "step_id": "main_reaction",
+                    "name": "Main reaction",
+                    "stoichiometry": {
+                        "starting_material_1": -1.0,
+                        "reactant_gas": -1.0,
+                        "product": 1.0,
+                    },
+                    "description": "Replace the default coefficients and materials.",
+                }
+            ],
+            "input_fields": [
+                {
+                    "field_id": "starting_material_1_mass_g",
+                    "label": "Starting material 1 amount",
+                    "units": "g",
+                    "default": "",
+                    "required": True,
+                    "target_species_id": "starting_material_1",
+                    "quantity": "mass_g",
+                    "group": "charge",
+                },
+                {
+                    "field_id": "actual_product_mass_g",
+                    "label": "Measured product mass",
+                    "units": "g",
+                    "default": "",
+                    "required": False,
+                    "target_species_id": "product",
+                    "quantity": "actual_mass_g",
+                    "group": "results",
+                },
+            ],
+            "yield_basis": {
+                "product_species_id": "product",
+                "target_reactant_species_id": "starting_material_1",
+                "actual_mass_field_id": "actual_product_mass_g",
+                "label": "Product yield",
+            },
+            "equilibrium": {"enabled_by_default": False},
+            "kpi_labels": {},
+        }
+        template = _reaction_template_from_dict(payload)
+        if template is None:
+            self._reaction_warnings_var.set("Unable to create the new reaction definition.")
+            return
+        self._reaction_templates[template.template_id] = template
+        self._reaction_template_var.set(template.template_id)
+        settings[REACTION_DASHBOARD_SELECTED_TEMPLATE_KEY] = template.template_id
+        self._persist_reaction_custom_templates()
+        self._refresh_reaction_template_selector()
+        self._load_reaction_template_into_ui(template)
+        self._reaction_warnings_var.set(
+            "New reaction definition created. Update material names, molar masses, "
+            "and reaction coefficients before running it."
+        )
+
     def _persist_reaction_custom_templates(self) -> None:
         """Persist custom Reaction Dashboard templates to settings.
 
@@ -173803,10 +173969,15 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             JSON/validation errors are displayed in the editor status.
         """
-        base_payload = _reaction_template_to_dict(self._reaction_active_template())
+        source_template = self._reaction_active_template()
+        base_payload = _reaction_template_to_dict(source_template)
+        base_payload["name"] = f"Custom {source_template.name}"
+        base_payload["template_id"] = self._reaction_dashboard_unique_template_id(
+            base_payload["name"]
+        )
         base_payload["readonly"] = False
         window = tk.Toplevel(self)
-        window.title("Reaction Template JSON Editor")
+        window.title("Reaction Definition JSON Editor")
         window.transient(self)
         window.geometry("900x650")
         host = ttk.Frame(window, padding=8)
@@ -173816,7 +173987,7 @@ class UnifiedApp(tk.Tk):
         text = tk.Text(host, wrap="none")
         text.grid(row=0, column=0, sticky="nsew")
         text.insert("1.0", json.dumps(base_payload, indent=2))
-        status = tk.StringVar(value="Edit JSON, then save as a custom template.")
+        status = tk.StringVar(value="Edit JSON, then save as a new custom reaction definition.")
         ttk.Label(host, textvariable=status).grid(
             row=1, column=0, sticky="ew", pady=(6, 4)
         )
@@ -173847,7 +174018,7 @@ class UnifiedApp(tk.Tk):
             self._load_reaction_template_into_ui(template)
             status.set(f"Saved custom template: {template.name}")
 
-        _ui_button(host, text="Save Custom Template", command=_save_from_json).grid(
+        _ui_button(host, text="Save Reaction Definition", command=_save_from_json).grid(
             row=2, column=0, sticky="w"
         )
 
