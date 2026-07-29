@@ -85376,6 +85376,51 @@ def build_cycle_analysis_summary(
         else:
             lines.append(f"=== {title} ===")
 
+    def _temperature_result_text() -> str:
+        """Summarize temperatures used by the current cycle calculation.
+
+        Purpose:
+            Make the temperature-column selection auditable in the top-level
+            Cycle Analysis Summary.
+        Why:
+            The selected source column changes per-cycle gas calculations, so
+            the summary must show the resulting temperatures instead of only
+            echoing the source-column name.
+        Args:
+            None. Reads ``T_mean_C`` values from ``per_cycle_rows`` captured
+            from the enclosing summary calculation.
+        Returns:
+            A concise human-readable mean/range/count description, or an
+            unavailable message when no finite per-cycle temperatures exist.
+        Side Effects:
+            None.
+        Exceptions:
+            Invalid row values are ignored so a partial dataset remains usable.
+        """
+        temperatures: list[float] = []
+        # Use the calculated per-cycle values so this stays aligned with the
+        # exact temperature series passed to the gas-model calculation.
+        for row in per_cycle_rows:
+            try:
+                temperature_c = float(row.get("T_mean_C", float("nan")))
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(temperature_c):
+                temperatures.append(temperature_c)
+        if not temperatures:
+            return "Temperature result: unavailable (no usable per-cycle temperatures)"
+        temperature_mean = sum(temperatures) / len(temperatures)
+        temperature_low = min(temperatures)
+        temperature_high = max(temperatures)
+        if temperature_low == temperature_high:
+            range_text = f"{temperature_mean:.2f} C"
+        else:
+            range_text = f"{temperature_low:.2f}-{temperature_high:.2f} C"
+        return (
+            f"Temperature result: mean {temperature_mean:.2f} C "
+            f"(range {range_text}; {len(temperatures)}/{cycle_count} cycles)"
+        )
+
     _section("Inputs used", leading_blank=bool(lines))
     lines.append(f"Mode: {resolved_inputs.selection_mode}")
     lines.append(f"Valid cycles: {cycle_count}")
@@ -85439,6 +85484,7 @@ def build_cycle_analysis_summary(
                 lines.append(f"Temp basis: {temp_label} (no defaults used)")
     else:
         lines.append(f"Temp basis: {temp_label}")
+    lines.append(_temperature_result_text())
 
     _section("Gas model inputs used")
     lines.append(f"Preset: {resolved_inputs.vdw_gas_label}")
