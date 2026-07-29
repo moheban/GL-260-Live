@@ -172104,10 +172104,10 @@ class UnifiedApp(tk.Tk):
         self._ensure_reaction_dashboard_active_run()
         self._refresh_reaction_run_selector()
 
-        template_box = ttk.LabelFrame(inner, text="1. Reaction Definition")
+        template_box = ttk.LabelFrame(inner, text="1. Define the Reaction")
         template_box.grid(row=1, column=0, sticky="ew", padx=12, pady=6)
         template_box.grid_columnconfigure(1, weight=1)
-        template_label = ttk.Label(template_box, text="Template id")
+        template_label = ttk.Label(template_box, text="Reaction model")
         template_label.grid(row=0, column=0, sticky="w", padx=8, pady=(6, 2))
         template_combo = _ui_combobox(
             template_box,
@@ -172121,13 +172121,13 @@ class UnifiedApp(tk.Tk):
         self._reaction_template_combo = template_combo
         self._attach_tooltip(
             template_label,
-            "Choose the reaction template that owns the species, inputs, and yield basis.",
+            "Choose the saved reaction definition used to calculate material use, gas demand, and expected product.",
         )
         self._attach_tooltip(
             template_combo,
-            "Built-in templates are read-only; duplicate one before editing chemistry.",
+            "Saved definitions provide the reaction equation and the inputs needed for this run.",
         )
-        name_label = ttk.Label(template_box, text="Template name")
+        name_label = ttk.Label(template_box, text="Reaction definition")
         name_label.grid(row=1, column=0, sticky="w", padx=8, pady=(0, 4))
         name_entry = _ui_entry(
             template_box,
@@ -172136,12 +172136,12 @@ class UnifiedApp(tk.Tk):
         )
         name_entry.grid(row=1, column=1, sticky="ew", padx=8, pady=(0, 4))
         self._attach_tooltip(
-            name_label, "Display name for the selected reaction template."
+            name_label, "Read-only description of the reaction definition selected above."
         )
-        self._attach_tooltip(name_entry, "Custom templates use this name when saved.")
+        self._attach_tooltip(name_entry, "Use the advanced definition manager to create or edit saved reactions.")
 
         equation_box = ttk.LabelFrame(
-            template_box, text="Interactive Reaction Equation"
+            template_box, text="Reaction Equation"
         )
         equation_box.grid(row=2, column=0, columnspan=2, sticky="ew", padx=8, pady=6)
         equation_box.grid_columnconfigure(0, weight=1)
@@ -172158,11 +172158,11 @@ class UnifiedApp(tk.Tk):
         self._reaction_equation_text = equation_text
         self._attach_tooltip(
             equation_text,
-            "Click a species in the equation to jump to its related inputs or species row.",
+            "Click a material in the equation to jump to its related input.",
         )
         ttk.Label(
             equation_box,
-            text="Click species to jump to inputs. Required fields are marked with *.",
+            text="Use this equation to confirm the selected reaction. Required inputs are marked with *.",
             style="Sol.Help.TLabel",
         ).grid(row=1, column=0, sticky="w", padx=8, pady=(0, 8))
 
@@ -172172,10 +172172,10 @@ class UnifiedApp(tk.Tk):
         self._reaction_inputs_frame.grid(row=2, column=0, sticky="ew", padx=12, pady=6)
         self._reaction_inputs_frame.grid_columnconfigure(1, weight=1)
 
-        source_box = ttk.LabelFrame(inner, text="3. Cycle Data Connection & Actions")
+        source_box = ttk.LabelFrame(inner, text="3. Reactant-Gas Measurement & Run")
         source_box.grid(row=3, column=0, sticky="ew", padx=12, pady=6)
         source_box.grid_columnconfigure(1, weight=1)
-        source_label = ttk.Label(source_box, text="Gas uptake source *")
+        source_label = ttk.Label(source_box, text="Reactant-gas measurement source *")
         source_label.grid(row=0, column=0, sticky="w", padx=8, pady=(6, 2))
         source_labels = [label for _key, label in REACTION_DASHBOARD_SOURCE_MODES]
         self._reaction_source_label_to_key = {
@@ -172201,21 +172201,21 @@ class UnifiedApp(tk.Tk):
         self._reaction_source_combo = source_combo
         self._attach_tooltip(
             source_label,
-            "Select how the active template gas uptake amount should be calculated.",
+            "Choose how consumed reactant gas should be measured for this run.",
         )
         self._attach_tooltip(
             source_combo,
-            "Cycle payload is preferred after Cycle Analysis; external runs can use pressure, cylinder mass, or manual gas entry.",
+            "Cycle Analysis is linked automatically when available; pressure, cylinder mass, and manual entry remain available for external measurements.",
         )
         ph_check = _ui_checkbutton(
             source_box,
-            text="Enable pH engine calculation",
+            text="Include equilibrium estimate",
             variable=self._reaction_ph_enabled_var,
         )
         ph_check.grid(row=0, column=2, sticky="w", padx=8, pady=(6, 2))
         self._attach_tooltip(
             ph_check,
-            "Optional ChemPy equilibrium solve. Yield and completion still run if pH is unavailable.",
+            "Optional equilibrium estimate. Material balance, gas demand, and completion still run when it is unavailable.",
         )
         source_fields = ttk.Frame(source_box)
         source_fields.grid(row=1, column=0, columnspan=3, sticky="ew", padx=8, pady=2)
@@ -172300,7 +172300,7 @@ class UnifiedApp(tk.Tk):
         ).grid(row=0, column=2, sticky="w")
 
         result_box = ttk.LabelFrame(
-            inner, text="4. Independent Reaction Hub — Cycle-Derived Intelligence"
+            inner, text="4. Live Reaction Summary"
         )
         result_box.grid(row=4, column=0, sticky="ew", padx=12, pady=(6, 12))
         result_box.grid_columnconfigure(0, weight=1)
@@ -172469,7 +172469,7 @@ class UnifiedApp(tk.Tk):
             wraplength=960,
         ).grid(row=7, column=0, sticky="ew", padx=8, pady=(0, 8))
 
-        advanced_box = ttk.LabelFrame(inner, text="Advanced Template Editor")
+        advanced_box = ttk.LabelFrame(inner, text="Manage Reaction Definitions")
         advanced_box.grid(row=5, column=0, sticky="ew", padx=12, pady=(0, 12))
         advanced_box.grid_columnconfigure(0, weight=1)
         advanced_header = ttk.Frame(advanced_box)
@@ -172477,13 +172477,13 @@ class UnifiedApp(tk.Tk):
         advanced_header.grid_columnconfigure(1, weight=1)
         self._reaction_advanced_editor_button = _ui_button(
             advanced_header,
-            text="Show Advanced Template Editor",
+            text="Show Reaction Definition Manager",
             command=self._toggle_reaction_advanced_editor,
         )
         self._reaction_advanced_editor_button.grid(row=0, column=0, sticky="w")
         ttk.Label(
             advanced_header,
-            text="Template editing is hidden by default so the dashboard stays operational.",
+            text="Definition editing is separate from live run controls so the workspace stays focused.",
             style="Sol.Help.TLabel",
         ).grid(row=0, column=1, sticky="w", padx=(8, 0))
         editor_box = ttk.Frame(advanced_box)
@@ -172611,9 +172611,9 @@ class UnifiedApp(tk.Tk):
             try:
                 button.configure(
                     text=(
-                        "Hide Advanced Template Editor"
+                        "Hide Reaction Definition Manager"
                         if visible
-                        else "Show Advanced Template Editor"
+                        else "Show Reaction Definition Manager"
                     )
                 )
             except Exception:
@@ -173161,7 +173161,7 @@ class UnifiedApp(tk.Tk):
             value = str(var.get() if var is not None else "").strip()
             parsed = _safe_float(value)
             if not value or parsed is None or not math.isfinite(parsed):
-                missing.append(field_spec.label)
+                missing.append("required reaction input")
                 if not first_missing_field:
                     first_missing_field = field_spec.field_id
         if first_missing_field:
@@ -173255,16 +173255,67 @@ class UnifiedApp(tk.Tk):
             self._reaction_input_fields_by_species = {}
             grouped_fields: Dict[str, List[ReactionInputField]] = {}
             group_labels = {
-                "charge": "Sodium / methanol charge",
-                "conditions": "Run conditions",
-                "results": "Yield result",
-                "template": "Template inputs",
+                "charge": "Starting materials",
+                "conditions": "Operating conditions",
+                "results": "Measured outcome",
+                "template": "Additional inputs",
             }
+
+            def _operator_input_label(
+                field_spec: ReactionInputField,
+                group_key: str,
+                ordinal: int,
+            ) -> str:
+                """Return a reaction-agnostic label for one operator input.
+
+                Purpose:
+                    Hide chemistry-specific field names from the live workspace.
+                Why:
+                    The dashboard is a reusable operator surface; the reaction
+                    equation and definition own material identity, while the form
+                    communicates the role of each required entry consistently.
+                Args:
+                    field_spec: Template field retained for units and validation.
+                    group_key: Template grouping key for the input.
+                    ordinal: One-based position within the visible group.
+                Returns:
+                    Generic operator-facing label.
+                Side Effects:
+                    None.
+                Exceptions:
+                    None.
+                """
+                _ = field_spec
+                if group_key == "charge":
+                    return f"Starting material {ordinal} amount"
+                if group_key == "conditions":
+                    return f"Operating condition {ordinal}"
+                if group_key == "results":
+                    return "Measured product mass"
+                return f"Additional input {ordinal}"
             for field_spec in template.input_fields:
                 grouped_fields.setdefault(field_spec.group or "template", []).append(
                     field_spec
                 )
-            row_idx = 0
+            ttk.Label(
+                inputs_frame,
+                text=(
+                    "Enter amounts in the same order as the reaction equation. "
+                    "The selected reaction definition controls units, validation, "
+                    "and all material-balance calculations."
+                ),
+                wraplength=920,
+                justify="left",
+                style="Sol.Help.TLabel",
+            ).grid(
+                row=0,
+                column=0,
+                columnspan=3,
+                sticky="ew",
+                padx=8,
+                pady=(6, 4),
+            )
+            row_idx = 1
             for group_key, fields in grouped_fields.items():
                 heading = ttk.Label(
                     inputs_frame,
@@ -173282,8 +173333,11 @@ class UnifiedApp(tk.Tk):
                     pady=(6 if row_idx else 2, 2),
                 )
                 row_idx += 1
-                for field_spec in fields:
-                    label_text = field_spec.label + (
+                for field_ordinal, field_spec in enumerate(fields, start=1):
+                    operator_label = _operator_input_label(
+                        field_spec, group_key, field_ordinal
+                    )
+                    label_text = operator_label + (
                         " *" if field_spec.required else ""
                     )
                     label_widget = ttk.Label(inputs_frame, text=label_text)
@@ -173312,10 +173366,10 @@ class UnifiedApp(tk.Tk):
                         padx=4,
                         pady=2,
                     )
-                    tip = field_spec.tooltip or (
-                        f"Enter {field_spec.label} in {field_spec.units}."
+                    tip = (
+                        f"Enter {operator_label.lower()} in {field_spec.units}."
                         if field_spec.units
-                        else f"Enter {field_spec.label}."
+                        else f"Enter {operator_label.lower()}."
                     )
                     self._attach_tooltip(label_widget, tip)
                     self._attach_tooltip(entry_widget, tip)
@@ -173838,20 +173892,20 @@ class UnifiedApp(tk.Tk):
     def _reaction_dashboard_species_rows_with_inputs(
         self, template: ReactionTemplate
     ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
-        """Return species rows with template and charge-basis inputs applied.
+        """Return species rows with reaction-definition inputs applied.
 
         Purpose:
-            Convert field values such as sodium/methanol charge basis and NaOH
-            mass into initial species moles.
+            Convert template-specific starting-material values into initial
+            species moles for the selected reaction definition.
         Why:
             Run calculations should respect template-specific required inputs
-            while preserving editable species defaults and v4.15.8 sodium
-            methoxide availability math.
+            while preserving editable species defaults and any definition-owned
+            availability calculations.
         Args:
             template: Active reaction template.
         Returns:
             Tuple of species row mappings ready for Rust/Python compute and an
-            optional charge-basis diagnostic mapping.
+            optional input-derived diagnostic mapping.
         Side Effects:
             None.
         Exceptions:
@@ -174022,8 +174076,8 @@ class UnifiedApp(tk.Tk):
                         "name": step_name,
                         "species_id": naoh_species_id,
                         "reason": (
-                            f"{step_name} deferred until Explicit NaOH charge is "
-                            "entered; sodium formate yield is not final."
+                            f"{step_name} deferred until the required reaction input "
+                            "is entered; final completion is not available."
                         ),
                     }
                 )
@@ -174261,9 +174315,8 @@ class UnifiedApp(tk.Tk):
                 return "--"
             return f"{parsed:.{digits}f}{suffix}"
 
-        labels = template.kpi_labels
         self._reaction_kpi_vars["gas_uptake"].set(
-            f"{labels.get('gas_uptake', 'Gas uptake')}: "
+            "Reactant gas measured: "
             f"{_fmt(core.get('gas_uptake_mol'), 4)} mol / "
             f"{_fmt(core.get('gas_uptake_g'), 2, ' g')}"
         )
@@ -174286,7 +174339,7 @@ class UnifiedApp(tk.Tk):
             else None
         )
         self._reaction_kpi_vars["intermediate"].set(
-            f"{labels.get('intermediate', 'Intermediate')}: "
+            "Intermediate balance: "
             f"{_fmt(intermediate_moles, 4)} mol"
         )
         product_value = (
@@ -174301,16 +174354,16 @@ class UnifiedApp(tk.Tk):
             "deferred" if final_deferred else _fmt(core.get("completion_pct"), 1, "%")
         )
         self._reaction_kpi_vars["product"].set(
-            f"{labels.get('product', 'Product')}: {product_value}"
+            f"Expected product: {product_value}"
         )
         self._reaction_kpi_vars["yield"].set(
-            f"{labels.get('yield', 'Yield')}: {yield_value}"
+            f"Measured yield: {yield_value}"
         )
         self._reaction_kpi_vars["completion"].set(
-            f"{labels.get('completion', 'Completion')}: {completion_value}"
+            f"Reaction completion: {completion_value}"
         )
         self._reaction_kpi_vars["ph"].set(
-            f"{labels.get('ph', 'Equilibrium pH')}: {_fmt(equilibrium.get('ph'), 2)}"
+            f"Equilibrium estimate: {_fmt(equilibrium.get('ph'), 2)}"
         )
         source_label = getattr(self, "_reaction_source_key_to_label", {}).get(
             str(result.get("source_mode") or ""),
@@ -174318,7 +174371,7 @@ class UnifiedApp(tk.Tk):
         )
         self._reaction_kpi_vars["source_backend"].set(
             f"{source_label}\ncore={core.get('backend', '--')} | "
-            f"charge={charge_basis.get('backend', '--')} | "
+            f"inputs={charge_basis.get('backend', '--')} | "
             f"pH={equilibrium.get('backend', '--')}"
         )
         limiting_values: List[str] = []
@@ -174331,15 +174384,13 @@ class UnifiedApp(tk.Tk):
             if limiting_text and limiting_text not in limiting_values:
                 limiting_values.append(limiting_text)
         self._reaction_kpi_vars["limiting"].set(
-            "Limiting: " + (", ".join(limiting_values) if limiting_values else "--")
+            "Limiting material: "
+            + ("identified" if limiting_values else "not identified")
         )
         charge_text = (
-            "Charge basis: "
-            f"NaOMe {_fmt(charge_basis.get('sodium_methoxide_mol'), 4)} mol | "
-            f"NaOH {_fmt(charge_basis.get('total_naoh_mol'), 4)} mol | "
-            f"H2O {_fmt(charge_basis.get('water_mol'), 4)} mol"
+            "Calculation basis: derived from starting-material entries"
             if charge_basis
-            else "Charge basis: --"
+            else "Calculation basis: --"
         )
         self._reaction_kpi_vars["charge_basis"].set(charge_text)
         self._reaction_charge_basis_var.set(charge_text)
@@ -174350,26 +174401,26 @@ class UnifiedApp(tk.Tk):
         )
         rows = [
             {
-                "metric": "Template",
+                "metric": "Reaction definition",
                 "value": result.get("template_name", ""),
                 "notes": result.get("template_id", ""),
             },
             {
-                "metric": "Source mode",
+                "metric": "Gas measurement source",
                 "value": result.get("source_mode", ""),
-                "notes": "Selected gas uptake source",
+                "notes": "Selected reactant-gas measurement source",
             },
             {
-                "metric": "Final product moles",
+                "metric": "Expected product amount",
                 "value": (
                     "deferred"
                     if final_deferred
                     else _fmt(core.get("yield_species_moles"), 6)
                 ),
-                "notes": core.get("yield_species_id", ""),
+                "notes": "moles",
             },
             {
-                "metric": "Theoretical yield",
+                "metric": "Expected product mass",
                 "value": (
                     "deferred"
                     if final_deferred
@@ -174378,13 +174429,13 @@ class UnifiedApp(tk.Tk):
                 "notes": "grams",
             },
             {
-                "metric": "Actual yield",
+                "metric": "Measured yield",
                 "value": (
                     "deferred"
                     if final_deferred
                     else _fmt(core.get("actual_yield_pct"), 2)
                 ),
-                "notes": "percent when actual mass is provided",
+                "notes": "percent when measured product mass is entered",
             },
             {
                 "metric": "Equilibrium pH",
@@ -174392,37 +174443,12 @@ class UnifiedApp(tk.Tk):
                 "notes": "; ".join(equilibrium.get("warnings") or []),
             },
         ]
-        if charge_basis:
-            rows.extend(
-                [
-                    {
-                        "metric": "Computed sodium methoxide",
-                        "value": _fmt(charge_basis.get("sodium_methoxide_mol"), 6),
-                        "notes": "mol after water consumes sodium",
-                    },
-                    {
-                        "metric": "Generated NaOH",
-                        "value": _fmt(charge_basis.get("generated_naoh_mol"), 6),
-                        "notes": "mol from sodium-water side reaction",
-                    },
-                    {
-                        "metric": "Total hydrolysis NaOH",
-                        "value": _fmt(charge_basis.get("total_naoh_mol"), 6),
-                        "notes": "explicit NaOH plus generated NaOH",
-                    },
-                    {
-                        "metric": "Remaining methanol",
-                        "value": _fmt(charge_basis.get("remaining_methanol_mol"), 6),
-                        "notes": "mol after sodium methoxide formation",
-                    },
-                ]
-            )
         for deferred_step in deferred_steps:
             rows.append(
                 {
-                    "metric": "Deferred step",
-                    "value": str(deferred_step.get("name") or ""),
-                    "notes": str(deferred_step.get("reason") or ""),
+                    "metric": "Deferred reaction step",
+                    "value": "Awaiting required input",
+                    "notes": "Enter the highlighted required reaction input to calculate final completion.",
                 }
             )
         for step in list(core.get("step_results") or []):
