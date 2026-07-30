@@ -46502,13 +46502,13 @@ def _regression_test_combined_outer_axis_none_selection_controls_zero_line() -> 
 
 
 def _regression_test_combined_exclusion_coordinate_mapping() -> None:
-    """Validate normalized exclusions compress and invert combined x coordinates.
+    """Validate exclusions retain elapsed-time coordinates and mask their spans.
 
     Purpose:
-        Cover the source/display mapping used by direct range selection.
+        Cover the source-coordinate masking used by direct range selection.
     Why:
-        A broken inverse mapping would save later selections at the wrong source
-        time after one or more compressed gaps are already visible.
+        A display-only exclusion must not recalculate elapsed time after the
+        hidden span, and later selections must retain source coordinates.
     Inputs:
         None.
     Returns:
@@ -46516,21 +46516,22 @@ def _regression_test_combined_exclusion_coordinate_mapping() -> None:
     Side Effects:
         None.
     Exceptions:
-        Raises AssertionError when normalization, masking, or inversion regresses.
+        Raises AssertionError when normalization, masking, or coordinate
+        preservation regresses.
     """
     ranges = _normalize_combined_exclusion_ranges(
         [(4.0, 6.0), (5.5, 8.0), (12.0, 14.0)]
     )
     if ranges != [(4.0, 8.0), (12.0, 14.0)]:
         raise AssertionError(f"Unexpected normalized exclusions: {ranges!r}")
-    compressed = _combined_exclusion_display_x(
+    display = _combined_exclusion_display_x(
         np.asarray([0.0, 4.0, 8.0, 10.0, 12.0, 15.0]), ranges
     )
-    expected = np.asarray([0.0, np.nan, np.nan, 6.0, np.nan, 9.0])
-    if not np.allclose(compressed, expected, equal_nan=True):
-        raise AssertionError(f"Unexpected compressed x coordinates: {compressed!r}")
-    if abs(_combined_exclusion_source_x(6.0, ranges) - 10.0) > 1e-9:
-        raise AssertionError("Compressed selection did not invert to source x=10.")
+    expected = np.asarray([0.0, np.nan, np.nan, 10.0, np.nan, 15.0])
+    if not np.allclose(display, expected, equal_nan=True):
+        raise AssertionError(f"Unexpected elapsed-time coordinates: {display!r}")
+    if abs(_combined_exclusion_source_x(10.0, ranges) - 10.0) > 1e-9:
+        raise AssertionError("Selection coordinate did not retain source x=10.")
 
 
 def _regression_test_combined_outer_axis_none_skips_third_axis_render() -> None:
@@ -94665,18 +94666,18 @@ def _normalize_combined_exclusion_ranges(value: Any) -> list[tuple[float, float]
 def _combined_exclusion_display_x(
     values: Any, ranges: list[tuple[float, float]]
 ) -> np.ndarray:
-    """Map source x values to the combined plot's gap-compressed x coordinates.
+    """Mask excluded source x values without changing elapsed-time coordinates.
 
     Purpose:
-        Remove the cumulative width of earlier exclusions using NumPy operations.
+        Preserve the original elapsed-time basis while hiding selected samples.
     Why:
-        Combined traces can contain many samples, so compression must avoid
-        Python per-sample loops in the interactive rendering path.
+        Excluding a span is a display-only omission: subsequent samples must
+        remain at their source elapsed times instead of being shifted left.
     Inputs:
         values: Numeric source x-array.
         ranges: Normalized excluded source x pairs.
     Returns:
-        Float ndarray in compressed display coordinates; excluded samples are NaN.
+        Float ndarray in source display coordinates; excluded samples are NaN.
     Side Effects:
         None.
     Exceptions:
@@ -94691,26 +94692,24 @@ def _combined_exclusion_display_x(
     for start, end in ranges:
         hidden = valid & (source >= start) & (source <= end)
         display[hidden] = np.nan
-        after = valid & (source > end)
-        display[after] -= end - start
     return display
 
 
 def _combined_exclusion_source_x(
     display_value: float, ranges: list[tuple[float, float]]
 ) -> float:
-    """Invert one compressed combined-plot x coordinate to its source value.
+    """Return a combined-plot selection coordinate in source elapsed-time units.
 
     Purpose:
-        Translate a live span-selector coordinate back before persisting it.
+        Preserve a live span-selector coordinate for persistence.
     Why:
-        Subsequent selections are made after compression but exclusions must
-        remain anchored to the unmodified data source.
+        Combined exclusions retain source coordinates, so later selections are
+        already anchored to the unmodified elapsed-time axis.
     Inputs:
         display_value: Current combined-plot x coordinate.
         ranges: Normalized excluded source x pairs.
     Returns:
-        Source x coordinate as a float.
+        Unchanged source x coordinate as a float.
     Side Effects:
         None.
     Exceptions:
@@ -94718,15 +94717,7 @@ def _combined_exclusion_source_x(
     """
     if not math.isfinite(display_value):
         return display_value
-    source = float(display_value)
-    removed = 0.0
-    for start, end in ranges:
-        compressed_start = start - removed
-        if display_value < compressed_start:
-            break
-        source += end - start
-        removed += end - start
-    return source
+    return float(display_value)
 
 
 def build_combined_triple_axis_figure(
@@ -95891,24 +95882,6 @@ def build_combined_triple_axis_figure(
     if exclusion_ranges:
         fig._gl260_combined_exclusion_ranges = tuple(exclusion_ranges)  # type: ignore[attr-defined]
         fig._gl260_combined_source_x = source_x  # type: ignore[attr-defined]
-        # Compact diagonal strokes signal every compressed join without adding
-        # blank overnight space or changing the established elapsed-time labels.
-        for start, end in exclusion_ranges:
-            join_x = start - sum(
-                prior_end - prior_start
-                for prior_start, prior_end in exclusion_ranges
-                if prior_end <= start
-            )
-            if time_range[0] < join_x < time_range[1]:
-                ax.plot(
-                    [join_x - 0.006, join_x + 0.006],
-                    [-0.012, 0.012],
-                    transform=ax.get_xaxis_transform(),
-                    color="#4b5563",
-                    clip_on=False,
-                    linewidth=1.1,
-                    zorder=10_000,
-                )
     ax.set_ylim(*primary_settings["ylim"])
     ax.set_zorder(axis_layer_zorders["left"])
     # Keep the primary axes background transparent so high-z primary layers never
