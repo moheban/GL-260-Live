@@ -79505,10 +79505,35 @@ def create_temperature_colorbar(
             cax=cax,
             orientation="vertical" if vertical else "horizontal",
         )
+        # A detached colorbar is a peer plot axis, so inherit the largest active
+        # plot typography instead of Matplotlib's smaller colorbar defaults.
+        label_sizes: List[float] = []
+        tick_sizes: List[float] = []
+        for candidate_axis in fig.get_axes():
+            if candidate_axis is cax or not candidate_axis.get_visible():
+                continue
+            try:
+                label_size = float(candidate_axis.yaxis.label.get_fontsize())
+                if label_size > 0.0 and math.isfinite(label_size):
+                    label_sizes.append(label_size)
+            except Exception:
+                pass
+            try:
+                for tick_label in candidate_axis.get_yticklabels():
+                    tick_size = float(tick_label.get_fontsize())
+                    if tick_size > 0.0 and math.isfinite(tick_size):
+                        tick_sizes.append(tick_size)
+            except Exception:
+                pass
+        label_fontsize = max(label_sizes, default=10.0)
+        tick_fontsize = max(tick_sizes, default=10.0)
         if location == "right":
-            colorbar.set_label(visual.config["label"], rotation=270)
+            colorbar.set_label(
+                visual.config["label"], rotation=270, fontsize=label_fontsize
+            )
         else:
-            colorbar.set_label(visual.config["label"])
+            colorbar.set_label(visual.config["label"], fontsize=label_fontsize)
+        cax.tick_params(labelsize=tick_fontsize)
         register_layout_artist(
             fig,
             "temperature_colorbar_axes",
@@ -79521,11 +79546,57 @@ def create_temperature_colorbar(
             colorbar,
             layout_manager=layout_manager,
         )
+        fig._gl260_temperature_colorbar_layout = {  # type: ignore[attr-defined]
+            "host_axis": ax,
+            "visual": visual,
+            "layout_manager": layout_manager,
+            "detached_axis_pad_pts": detached_axis_pad_pts,
+        }
         status["created"] = True
         return colorbar
     except Exception as exc:
         status["error"] = type(exc).__name__
         return None
+
+
+def reflow_temperature_colorbar(fig: Figure) -> Any:
+    """Rebuild a managed temperature colorbar after a subplot-layout change.
+
+    Purpose:
+        Keep a detached colorbar outside the final data-axis geometry.
+    Why:
+        Layout Health can legitimately change subplot margins after the initial
+        render; a colorbar placed before that adjustment otherwise remains in
+        stale figure coordinates and can be covered by the expanded main plot.
+    Inputs:
+        fig: Figure that may carry managed temperature-colorbar metadata.
+    Outputs:
+        Rebuilt Matplotlib Colorbar, or None when no compatible managed bar
+        exists.
+    Side Effects:
+        Replaces the colorbar axes using its recorded host, visual settings, and
+        detached-axis gap. It may reserve additional right margin when needed.
+    Exceptions:
+        Invalid or stale metadata returns None without interrupting layout work.
+    """
+    if fig is None:
+        return None
+    metadata = getattr(fig, "_gl260_temperature_colorbar_layout", None)
+    if not isinstance(metadata, Mapping):
+        return None
+    host_axis = metadata.get("host_axis")
+    visual = metadata.get("visual")
+    if not isinstance(host_axis, Axes) or host_axis not in fig.get_axes():
+        return None
+    if visual is None or getattr(visual, "mappable", None) is None:
+        return None
+    return create_temperature_colorbar(
+        fig,
+        host_axis,
+        visual,
+        layout_manager=metadata.get("layout_manager"),
+        detached_axis_pad_pts=metadata.get("detached_axis_pad_pts"),
+    )
 
 
 def _resolve_temperature_visual_for_series(
@@ -92313,6 +92384,7 @@ def _layout_health_general_figure_audit(
         "xticks_bbox": None,
         "xlabel_bbox": None,
         "xlabel_tick_gap_pts": None,
+        "colorbar_axis": None,
     }
     if fig is None or renderer is None:
         return audit
@@ -92455,6 +92527,7 @@ def _layout_health_general_figure_audit(
         if isinstance(layout_artists, Mapping)
         else None
     )
+    audit["colorbar_axis"] = colorbar_axis
     if colorbar_expected and not isinstance(colorbar_axis, Axes):
         _add_issue("temperature_colorbar_missing")
     elif colorbar_expected and isinstance(colorbar_status, Mapping) and not bool(
@@ -92480,6 +92553,18 @@ def _layout_health_general_figure_audit(
             or measured_colorbar_bbox.y1 > 1.001
         ):
             _add_issue("temperature_colorbar_off_canvas")
+        # Check the strip itself against plot rectangles, not only text.  A
+        # stale detached bar can be entirely inside the data area without
+        # touching any axis label, which the former audit could not see.
+        for axis in fig.get_axes():
+            if axis is colorbar_axis or getattr(axis, "_gl260_legend_only", False):
+                continue
+            try:
+                if axis.get_visible() and colorbar_bbox.overlaps(axis.get_position()):
+                    _add_issue("temperature_colorbar_plot_overlap")
+                    break
+            except Exception:
+                continue
         for axis in fig.get_axes():
             if axis is colorbar_axis or getattr(axis, "_gl260_legend_only", False):
                 continue
@@ -93402,6 +93487,17 @@ def layout_health_autofix(
                         right_edge_candidates.append(float(spine_x_fig))
                 except Exception:
                     pass
+            colorbar_axis = (
+                general_audit.get("colorbar_axis")
+                if isinstance(general_audit, Mapping)
+                else None
+            )
+            colorbar_bbox = _layout_health_bbox_in_fig(fig, colorbar_axis, renderer)
+            if colorbar_bbox is not None:
+                # The managed bar is part of the usable exterior band.  Counting
+                # it prevents whitespace recovery from expanding the plot back
+                # through a colorbar that was already safely placed.
+                right_edge_candidates.append(float(colorbar_bbox.x1))
             if right_edge_candidates:
                 # The detached axis may be valid but leave a wide unused band to
                 # its right; detect that separately from label/tick collisions.
@@ -94530,6 +94626,9 @@ def layout_health_autofix(
                 fig.canvas.draw_idle()
             if authoritative_timeline_bottom is not None:
                 fig.subplots_adjust(bottom=float(authoritative_timeline_bottom))
+            # The health pass may have changed subplot coordinates. Rebuild the
+            # managed detached bar only after those final coordinates are known.
+            reflow_temperature_colorbar(fig)
         except Exception:
             pass
 
