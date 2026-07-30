@@ -94998,9 +94998,39 @@ def _resolve_combined_right_axis_bindings(
     third_axis_disabled = str(third_key or "").strip().lower() == "none"
 
     def _is_available(key: str) -> bool:
-        """Check dataset availability for right-axis role assignment."""
+        """Check whether a dataset can populate a combined right-side axis.
+
+        Purpose:
+            Recognize both legacy single-series data and Columns-tab grouped
+            trace entries when assigning temperature or derivative axes.
+        Why:
+            Grouped traces are the authoritative representation for multi-column
+            selections, so ignoring them can remove valid detached axes in a
+            full preview/export rebuild.
+        Inputs:
+            key: Dataset role key such as ``"y2"``, ``"z"``, or ``"z2"``.
+        Outputs:
+            True when the selected dataset has a direct series or at least one
+            valid grouped trace entry; otherwise False.
+        Side Effects:
+            None.
+        Exceptions:
+            Malformed metadata is treated as unavailable.
+        """
         meta = dataset_meta.get(key) or {}
-        return bool(meta.get("series") is not None and meta.get("selected"))
+        if not meta.get("selected"):
+            return False
+        if meta.get("series") is not None:
+            return True
+        entries = meta.get("entries")
+        return bool(
+            isinstance(entries, Sequence)
+            and not isinstance(entries, (str, bytes))
+            and any(
+                isinstance(entry, Mapping) and entry.get("series") is not None
+                for entry in entries
+            )
+        )
 
     temp_keys_available = [key for key in ("z", "z2") if _is_available(key)]
     temperature_available = bool(temp_axis_active and temp_keys_available)
@@ -96045,11 +96075,35 @@ def build_combined_triple_axis_figure(
         }
 
     def _axis_enabled(meta: Mapping[str, Any]) -> bool:
-        """Perform axis enabled.
-        Used to keep the workflow logic localized and testable."""
+        """Determine whether a combined-axis dataset is eligible to render.
+
+        Purpose:
+            Apply selection and semantic-axis visibility gates to direct or
+            grouped Columns-tab trace data.
+        Why:
+            A grouped trace can have no legacy role-level series while still
+            being valid data for a detached temperature or derivative axis.
+        Inputs:
+            meta: Dataset metadata for one combined-axis candidate.
+        Outputs:
+            True when the selected dataset has renderable data and its semantic
+            axis is enabled; otherwise False.
+        Side Effects:
+            None.
+        Exceptions:
+            Missing or malformed metadata resolves to False.
+        """
         axis_kind = meta.get("axis_type", "primary")
-        has_series = meta.get("series") is not None
-        if not has_series or not meta.get("selected"):
+        entries = meta.get("entries")
+        has_renderable_data = meta.get("series") is not None or bool(
+            isinstance(entries, Sequence)
+            and not isinstance(entries, (str, bytes))
+            and any(
+                isinstance(entry, Mapping) and entry.get("series") is not None
+                for entry in entries
+            )
+        )
+        if not has_renderable_data or not meta.get("selected"):
             return False
         if axis_kind == "temperature":
             return temp_axis_active
@@ -241470,16 +241524,24 @@ class UnifiedApp(tk.Tk):
             Inputs:
                 meta: Dataset metadata dict for one combined-axis candidate.
             Outputs:
-                True when the dataset is selected, has series data, and its axis
-                role is currently active; otherwise False.
+                True when the dataset is selected, has direct or grouped trace
+                data, and its axis role is currently active; otherwise False.
             Side Effects:
                 None.
             Exceptions:
                 None; missing keys are treated as inactive defaults.
             """
             axis_kind = meta.get("axis_type", "primary")
-            has_series = meta.get("series") is not None
-            if not has_series or not meta.get("selected"):
+            entries = meta.get("entries")
+            has_renderable_data = meta.get("series") is not None or bool(
+                isinstance(entries, Sequence)
+                and not isinstance(entries, (str, bytes))
+                and any(
+                    isinstance(entry, Mapping) and entry.get("series") is not None
+                    for entry in entries
+                )
+            )
+            if not has_renderable_data or not meta.get("selected"):
                 return False
             if axis_kind == "temperature":
                 return temp_axis_active
