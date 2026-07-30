@@ -79018,6 +79018,15 @@ DEFAULT_TEMPERATURE_LINE = {
 }
 TEMPERATURE_VISUALIZATION_MODES = ("axis", "background", "linecolor")
 TEMPERATURE_COLORBAR_LOCATIONS = ("right", "left", "top", "bottom")
+TEMPERATURE_COLORMAPS = (
+    "viridis",
+    "plasma",
+    "inferno",
+    "magma",
+    "cividis",
+    "turbo",
+    "coolwarm",
+)
 
 
 def _normalize_temperature_visualization_settings(source: Any) -> Dict[str, Any]:
@@ -79297,7 +79306,13 @@ def draw_temperature_colored_pressure(ax: Axes, x_values: Any, pressure_values: 
         return None
 
 
-def create_temperature_colorbar(fig: Figure, ax: Axes, visual: TemperatureVisual, *, layout_manager: Any = None) -> Any:
+def create_temperature_colorbar(
+    fig: Figure,
+    ax: Axes,
+    visual: TemperatureVisual,
+    *,
+    layout_manager: Any = None,
+) -> Any:
     """Create and register a layout-aware inset colorbar for a temperature visual.
 
     Purpose:
@@ -79310,11 +79325,17 @@ def create_temperature_colorbar(fig: Figure, ax: Axes, visual: TemperatureVisual
     Outputs:
         Matplotlib Colorbar, or None when disabled/unavailable.
     Side Effects:
-        Creates and registers an inset Axes and colorbar artist.
+        Creates and registers an inset Axes and colorbar artist above data and
+        overlay axes so its scale remains visible in combined plots.
     Exceptions:
         Inset/colorbar failures return None.
     """
-    if fig is None or ax is None or not visual.valid or not visual.config.get("show_colorbar"):
+    if (
+        fig is None
+        or ax is None
+        or not visual.valid
+        or not visual.config.get("show_colorbar")
+    ):
         return None
     try:
         from mpl_toolkits.axes_grid1.inset_locator import inset_axes
@@ -79353,12 +79374,43 @@ def create_temperature_colorbar(fig: Figure, ax: Axes, visual: TemperatureVisual
             anchor = (0.0, 1.0 + pad, 1.0, width)
         else:
             anchor = (0.0, -pad - width, 1.0, width)
-        cax = inset_axes(ax, width="100%", height="100%", loc="lower left", bbox_to_anchor=anchor, bbox_transform=ax.transAxes, borderpad=0)
+        cax = inset_axes(
+            ax,
+            width="100%",
+            height="100%",
+            loc="lower left",
+            bbox_to_anchor=anchor,
+            bbox_transform=ax.transAxes,
+            borderpad=0,
+        )
         cax._gl260_temperature_colorbar = True  # type: ignore[attr-defined]
-        colorbar = fig.colorbar(visual.mappable, cax=cax, orientation="vertical" if vertical else "horizontal")
+        # Combined plots add a high-z-order marker overlay axis. The colorbar is
+        # a separate inset axis, so it must be lifted above that overlay to avoid
+        # being hidden even though it is created after the data axes.
+        visible_axis_zorders = [
+            float(candidate.get_zorder())
+            for candidate in fig.get_axes()
+            if candidate is not cax and candidate.get_visible()
+        ]
+        cax.set_zorder(max(visible_axis_zorders, default=0.0) + 1.0)
+        colorbar = fig.colorbar(
+            visual.mappable,
+            cax=cax,
+            orientation="vertical" if vertical else "horizontal",
+        )
         colorbar.set_label(visual.config["label"])
-        register_layout_artist(fig, "temperature_colorbar_axes", cax, layout_manager=layout_manager)
-        register_layout_artist(fig, "temperature_colorbar", colorbar, layout_manager=layout_manager)
+        register_layout_artist(
+            fig,
+            "temperature_colorbar_axes",
+            cax,
+            layout_manager=layout_manager,
+        )
+        register_layout_artist(
+            fig,
+            "temperature_colorbar",
+            colorbar,
+            layout_manager=layout_manager,
+        )
         return colorbar
     except Exception:
         return None
@@ -102594,12 +102646,19 @@ class UnifiedApp(tk.Tk):
         self.temperature_line_enabled = tk.BooleanVar(
             value=temperature_visual_settings["temperature_line"]["enabled"]
         )
+        self.temperature_colormap = tk.StringVar(
+            value=temperature_visual_settings["temperature_background"]["colormap"]
+        )
         self._register_var_default(
             self.temperature_visualization,
             temperature_visual_settings["temperature_visualization"],
         )
         self._register_var_default(
             self.temperature_source, temperature_visual_settings["temperature_source"]
+        )
+        self._register_var_default(
+            self.temperature_colormap,
+            temperature_visual_settings["temperature_background"]["colormap"],
         )
 
         enable_deriv_default = settings.get(
@@ -145427,6 +145486,16 @@ class UnifiedApp(tk.Tk):
             text="Enable line-color mode",
             variable=self.temperature_line_enabled,
         ).grid(row=2, column=2, columnspan=2, sticky="w", padx=6, pady=4)
+        ttk.Label(lf_axes, text="Temperature color scheme").grid(
+            row=2, column=4, sticky="e", padx=6, pady=4
+        )
+        ttk.Combobox(
+            lf_axes,
+            textvariable=self.temperature_colormap,
+            values=TEMPERATURE_COLORMAPS,
+            state="readonly",
+            width=10,
+        ).grid(row=2, column=5, sticky="w", padx=6, pady=4)
 
         fr_axis_offset = ttk.Frame(lf_axes)
 
@@ -146840,6 +146909,16 @@ class UnifiedApp(tk.Tk):
             text="Enable Line Color mode",
             variable=self.temperature_line_enabled,
         ).grid(row=1, column=2, columnspan=2, sticky="w", padx=6, pady=3)
+        ttk.Label(temperature_visual_frame, text="Color scheme").grid(
+            row=2, column=0, sticky="w", padx=6, pady=3
+        )
+        ttk.Combobox(
+            temperature_visual_frame,
+            textvariable=self.temperature_colormap,
+            values=TEMPERATURE_COLORMAPS,
+            state="readonly",
+            width=12,
+        ).grid(row=2, column=1, sticky="w", padx=6, pady=3)
 
         auto_range_frame = ttk.Labelframe(lf_axes, text="Auto-Range Targets")
         auto_range_frame.grid(
@@ -238004,6 +238083,14 @@ class UnifiedApp(tk.Tk):
         temperature_visual_settings["temperature_line"]["enabled"] = bool(
             self.temperature_line_enabled.get()
         )
+        selected_colormap = self.temperature_colormap.get().strip()
+        if selected_colormap in TEMPERATURE_COLORMAPS:
+            temperature_visual_settings["temperature_background"]["colormap"] = (
+                selected_colormap
+            )
+            temperature_visual_settings["temperature_line"]["colormap"] = (
+                selected_colormap
+            )
         settings.update(
             _normalize_temperature_visualization_settings(temperature_visual_settings)
         )
@@ -243605,6 +243692,14 @@ class UnifiedApp(tk.Tk):
         temperature_visual_settings["temperature_line"]["enabled"] = bool(
             self.temperature_line_enabled.get()
         )
+        selected_colormap = self.temperature_colormap.get().strip()
+        if selected_colormap in TEMPERATURE_COLORMAPS:
+            temperature_visual_settings["temperature_background"]["colormap"] = (
+                selected_colormap
+            )
+            temperature_visual_settings["temperature_line"]["colormap"] = (
+                selected_colormap
+            )
         settings.update(
             _normalize_temperature_visualization_settings(temperature_visual_settings)
         )
