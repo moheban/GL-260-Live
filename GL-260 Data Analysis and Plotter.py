@@ -1,6 +1,6 @@
 ﻿# GL-260 Data Analysis and Plotter
-# Version: v4.16.0
-# Date: 2026-06-04
+# Version: v4.17.0
+# Date: 2026-07-30
 
 import os
 import sys
@@ -1031,6 +1031,9 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.lines import Line2D
+from matplotlib.collections import LineCollection
+from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
 from matplotlib.transforms import Bbox, blended_transform_factory
 
 from matplotlib.ticker import (
@@ -16504,7 +16507,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v4.16.0"
+APP_VERSION = "v4.17.0"
 
 ANALYSIS_ANCHOR_LEARNING_ENABLED_SETTINGS_KEY = "analysis_anchor_learning_enabled"
 ANALYSIS_TERMINAL_PH_RANGE_LOW_SETTINGS_KEY = "analysis_terminal_ph_range_low"
@@ -46756,6 +46759,7 @@ def _regression_test_cycle_trace_legend_payloads_are_multi_trace_gated() -> None
             ]
         },
     }
+
     fingerprint = DataFingerprint(
         file_path="",
         sheet_key=("",),
@@ -78987,6 +78991,378 @@ DEFAULT_AXIS_AUTO_RANGE = {
     "derivative": True,
 }
 
+# Temperature visualization defaults intentionally keep the legacy detached axis
+# selected until a user explicitly chooses one of the color-encoded modes.
+DEFAULT_TEMPERATURE_BACKGROUND = {
+    "enabled": True,
+    "colormap": "viridis",
+    "alpha": 0.18,
+    "interpolation": "bilinear",
+    "zorder": -20.0,
+    "show_colorbar": True,
+    "colorbar_location": "right",
+    "colorbar_width": 0.018,
+    "colorbar_pad": 0.015,
+    "label": "External Temperature (°C)",
+}
+DEFAULT_TEMPERATURE_LINE = {
+    "enabled": False,
+    "colormap": "viridis",
+    "linewidth": 2.5,
+    "alpha": 1.0,
+    "show_colorbar": True,
+    "colorbar_location": "right",
+    "colorbar_width": 0.018,
+    "colorbar_pad": 0.015,
+    "label": "External Temperature (°C)",
+}
+TEMPERATURE_VISUALIZATION_MODES = ("axis", "background", "linecolor")
+TEMPERATURE_COLORBAR_LOCATIONS = ("right", "left", "top", "bottom")
+
+
+def _normalize_temperature_visualization_settings(source: Any) -> Dict[str, Any]:
+    """Normalize persisted temperature-visualization settings.
+
+    Purpose:
+        Provide one backwards-compatible configuration contract for temperature
+        axes, background context, and temperature-colored pressure traces.
+    Why:
+        Settings can originate from legacy JSON, profiles, Compare overrides, or
+        the Plot Settings UI and must never make plotting fail.
+    Inputs:
+        source: Candidate mapping containing temperature visualization settings.
+    Outputs:
+        Dict with canonical mode, source, and per-mode visual properties.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid values are replaced with safe defaults.
+    """
+    raw = source if isinstance(source, Mapping) else {}
+    mode = str(raw.get("temperature_visualization", "axis") or "axis").strip().lower()
+    if mode not in TEMPERATURE_VISUALIZATION_MODES:
+        mode = "axis"
+    source_key = str(raw.get("temperature_source", "auto") or "auto").strip().lower()
+    if source_key not in {"auto", "z", "z2"}:
+        source_key = "auto"
+
+    def _mode_config(defaults: Mapping[str, Any], key: str) -> Dict[str, Any]:
+        """Normalize one mode-specific configuration mapping.
+
+        Purpose: Merge persisted values with supported visual defaults.
+        Why: Mode renderers should receive typed, bounded values.
+        Inputs: defaults: Canonical default values. key: Settings mapping key.
+        Outputs: Sanitized configuration dictionary.
+        Side Effects: None.
+        Exceptions: Invalid numeric/colorbar values use defaults.
+        """
+        merged = dict(defaults)
+        candidate = raw.get(key)
+        if isinstance(candidate, Mapping):
+            merged.update(candidate)
+        merged["enabled"] = bool(merged.get("enabled", defaults["enabled"]))
+        merged["colormap"] = str(merged.get("colormap") or defaults["colormap"])
+        try:
+            merged["alpha"] = max(0.0, min(1.0, float(merged.get("alpha"))))
+        except Exception:
+            merged["alpha"] = float(defaults["alpha"])
+        for numeric_key in ("colorbar_width", "colorbar_pad"):
+            try:
+                value = float(merged.get(numeric_key))
+                merged[numeric_key] = value if math.isfinite(value) and value >= 0 else float(defaults[numeric_key])
+            except Exception:
+                merged[numeric_key] = float(defaults[numeric_key])
+        if "linewidth" in defaults:
+            try:
+                value = float(merged.get("linewidth"))
+                merged["linewidth"] = value if math.isfinite(value) and value > 0 else float(defaults["linewidth"])
+            except Exception:
+                merged["linewidth"] = float(defaults["linewidth"])
+        if "zorder" in defaults:
+            try:
+                value = float(merged.get("zorder"))
+                merged["zorder"] = value if math.isfinite(value) else float(defaults["zorder"])
+            except Exception:
+                merged["zorder"] = float(defaults["zorder"])
+        location = str(merged.get("colorbar_location") or "right").strip().lower()
+        merged["colorbar_location"] = location if location in TEMPERATURE_COLORBAR_LOCATIONS else "right"
+        merged["show_colorbar"] = bool(merged.get("show_colorbar", defaults["show_colorbar"]))
+        merged["label"] = str(merged.get("label") or defaults["label"])
+        return merged
+
+    return {
+        "temperature_visualization": mode,
+        "temperature_source": source_key,
+        "temperature_background": _mode_config(DEFAULT_TEMPERATURE_BACKGROUND, "temperature_background"),
+        "temperature_line": _mode_config(DEFAULT_TEMPERATURE_LINE, "temperature_line"),
+    }
+
+
+class TemperatureVisual:
+    """Own normalized temperature-to-color state for one figure render.
+
+    Purpose:
+        Centralize colormap, normalization, and scalar-mappable construction for
+        every temperature visualization mode.
+    Why:
+        Background images, LineCollections, and colorbars must use identical
+        limits and colors to remain scientifically interpretable.
+    Inputs:
+        x_values: Elapsed-time values aligned with `temperature_values`.
+        temperature_values: Temperature samples in degrees Celsius.
+        config: Sanitized mode-specific visualization configuration.
+        source_key: Selected logical source (`z` or `z2`).
+    Outputs:
+        A reusable visual state object; `valid` reports finite aligned data.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid inputs yield an invalid object for caller-controlled axis fallback.
+    """
+
+    def __init__(self, x_values: Any, temperature_values: Any, config: Mapping[str, Any], source_key: str) -> None:
+        """Initialize reusable scalar color state without creating plot artists.
+
+        Purpose: Prepare finite arrays and one shared Matplotlib Normalize object.
+        Why: Rendering helpers must not independently infer color scales.
+        Inputs: See class docstring.
+        Outputs: None.
+        Side Effects: Stores arrays, normalization, and ScalarMappable state.
+        Exceptions: Coercion failures leave `valid` False.
+        """
+        self.config = dict(config)
+        self.source_key = source_key
+        self.x_values = np.asarray([], dtype=float)
+        self.temperature_values = np.asarray([], dtype=float)
+        self.normalize: Optional[Normalize] = None
+        self.mappable: Optional[ScalarMappable] = None
+        self.valid = False
+        try:
+            x_arr = np.asarray(x_values, dtype=float).reshape(-1)
+            temp_arr = np.asarray(temperature_values, dtype=float).reshape(-1)
+            count = min(x_arr.size, temp_arr.size)
+            x_arr, temp_arr = x_arr[:count], temp_arr[:count]
+            finite = np.isfinite(x_arr) & np.isfinite(temp_arr)
+            if int(np.count_nonzero(finite)) < 2:
+                return
+            finite_temp = temp_arr[finite]
+            low, high = float(np.min(finite_temp)), float(np.max(finite_temp))
+            if low == high:
+                low, high = low - 0.5, high + 0.5
+            self.x_values = x_arr
+            self.temperature_values = temp_arr
+            self.normalize = Normalize(vmin=low, vmax=high, clip=True)
+            self.mappable = ScalarMappable(norm=self.normalize, cmap=self.config["colormap"])
+            self.mappable.set_array(finite_temp)
+            self.valid = True
+        except Exception:
+            return
+
+
+def register_layout_artist(fig: Figure, key: str, artist: Any, *, layout_manager: Any = None) -> None:
+    """Register a temperature artist with figure and layout-health metadata.
+
+    Purpose:
+        Preserve discoverability of inset axes, colorbars, images, and collections.
+    Why:
+        Matplotlib's inset artists are not always visible through normal legend
+        or primary-axis discovery used by the Layout Health Wizard.
+    Inputs:
+        fig: Owning Figure. key: Stable registration name. artist: Artist/axes.
+        layout_manager: Optional PlotLayoutManager receiving the same artist.
+    Outputs:
+        None.
+    Side Effects:
+        Stores artist metadata on the Figure and manager.
+    Exceptions:
+        Registration is best-effort and never interrupts rendering.
+    """
+    if fig is None or artist is None:
+        return
+    try:
+        registry = getattr(fig, "_gl260_layout_artists", None)
+        if not isinstance(registry, dict):
+            registry = {}
+            fig._gl260_layout_artists = registry  # type: ignore[attr-defined]
+        registry[str(key)] = artist
+        artist._gl260_layout_artist_key = str(key)  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    if layout_manager is not None:
+        try:
+            layout_manager.register_artist(str(key), artist)
+        except Exception:
+            pass
+
+
+def draw_temperature_background(ax: Axes, visual: TemperatureVisual) -> Any:
+    """Render a subtle full-height temperature field behind a pressure axis.
+
+    Purpose:
+        Encode temperature by color without allocating a detached y-axis.
+    Why:
+        A two-row image provides continuous visual context with O(n) data storage.
+    Inputs:
+        ax: Pressure Axes. visual: Valid TemperatureVisual state.
+    Outputs:
+        AxesImage, or None when state/limits are unavailable.
+    Side Effects:
+        Adds an image artist below existing pressure and annotation layers.
+    Exceptions:
+        Rendering failures return None.
+    """
+    if ax is None or not visual.valid:
+        return None
+    try:
+        x0, x1 = ax.get_xlim()
+        y0, y1 = ax.get_ylim()
+        field = np.broadcast_to(visual.temperature_values[np.newaxis, :], (2, visual.temperature_values.size))
+        image = ax.imshow(
+            field,
+            extent=(x0, x1, y0, y1),
+            origin="lower",
+            aspect="auto",
+            cmap=visual.config["colormap"],
+            norm=visual.normalize,
+            alpha=visual.config["alpha"],
+            interpolation=visual.config.get("interpolation", "bilinear"),
+            zorder=visual.config["zorder"],
+        )
+        image._gl260_temperature_visual = "background"  # type: ignore[attr-defined]
+        return image
+    except Exception:
+        return None
+
+
+def draw_temperature_colored_pressure(ax: Axes, x_values: Any, pressure_values: Any, visual: TemperatureVisual, *, label: str) -> Any:
+    """Render one pressure trace as temperature-colored finite line segments.
+
+    Purpose:
+        Keep pressure on its pressure scale while encoding temperature by color.
+    Why:
+        A LineCollection efficiently colors segments and preserves gaps at NaNs.
+    Inputs:
+        ax: Pressure Axes. x_values/pressure_values: Aligned plotted samples.
+        visual: Shared temperature color state. label: Legend label for the trace.
+    Outputs:
+        LineCollection, or None when fewer than two valid adjacent samples exist.
+    Side Effects:
+        Adds one collection to `ax`.
+    Exceptions:
+        Invalid data returns None without changing existing artists.
+    """
+    if ax is None or not visual.valid:
+        return None
+    try:
+        x_arr = np.asarray(x_values, dtype=float).reshape(-1)
+        y_arr = np.asarray(pressure_values, dtype=float).reshape(-1)
+        count = min(x_arr.size, y_arr.size, visual.temperature_values.size)
+        x_arr, y_arr, temp_arr = x_arr[:count], y_arr[:count], visual.temperature_values[:count]
+        finite = np.isfinite(x_arr) & np.isfinite(y_arr) & np.isfinite(temp_arr)
+        segment_mask = finite[:-1] & finite[1:]
+        if not np.any(segment_mask):
+            return None
+        points = np.column_stack((x_arr, y_arr)).reshape(-1, 1, 2)
+        segments = np.concatenate((points[:-1], points[1:]), axis=1)[segment_mask]
+        colors = ((temp_arr[:-1] + temp_arr[1:]) / 2.0)[segment_mask]
+        collection = LineCollection(
+            segments,
+            cmap=visual.config["colormap"],
+            norm=visual.normalize,
+            linewidth=float(visual.config["linewidth"]),
+            alpha=float(visual.config["alpha"]),
+            label=label,
+            zorder=2.0,
+        )
+        collection.set_array(colors)
+        collection._gl260_temperature_visual = "linecolor"  # type: ignore[attr-defined]
+        ax.add_collection(collection)
+        return collection
+    except Exception:
+        return None
+
+
+def create_temperature_colorbar(fig: Figure, ax: Axes, visual: TemperatureVisual, *, layout_manager: Any = None) -> Any:
+    """Create and register a layout-aware inset colorbar for a temperature visual.
+
+    Purpose:
+        Expose the color scale without creating another data y-axis.
+    Why:
+        Inset axes keep colorbar geometry configurable and measurable by layout tools.
+    Inputs:
+        fig: Owning Figure. ax: Host pressure Axes. visual: Shared color state.
+        layout_manager: Optional active PlotLayoutManager.
+    Outputs:
+        Matplotlib Colorbar, or None when disabled/unavailable.
+    Side Effects:
+        Creates and registers an inset Axes and colorbar artist.
+    Exceptions:
+        Inset/colorbar failures return None.
+    """
+    if fig is None or ax is None or not visual.valid or not visual.config.get("show_colorbar"):
+        return None
+    try:
+        from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+
+        location = visual.config["colorbar_location"]
+        width, pad = float(visual.config["colorbar_width"]), float(visual.config["colorbar_pad"])
+        vertical = location in {"left", "right"}
+        if location == "right":
+            anchor = (1.0 + pad, 0.0, width, 1.0)
+        elif location == "left":
+            anchor = (-pad - width, 0.0, width, 1.0)
+        elif location == "top":
+            anchor = (0.0, 1.0 + pad, 1.0, width)
+        else:
+            anchor = (0.0, -pad - width, 1.0, width)
+        cax = inset_axes(ax, width="100%", height="100%", loc="lower left", bbox_to_anchor=anchor, bbox_transform=ax.transAxes, borderpad=0)
+        cax._gl260_temperature_colorbar = True  # type: ignore[attr-defined]
+        colorbar = fig.colorbar(visual.mappable, cax=cax, orientation="vertical" if vertical else "horizontal")
+        colorbar.set_label(visual.config["label"])
+        register_layout_artist(fig, "temperature_colorbar_axes", cax, layout_manager=layout_manager)
+        register_layout_artist(fig, "temperature_colorbar", colorbar, layout_manager=layout_manager)
+        return colorbar
+    except Exception:
+        return None
+
+
+def _resolve_temperature_visual_for_series(
+    source_settings: Any, x_values: Any, z_values: Any, z2_values: Any
+) -> Tuple[str, Optional[TemperatureVisual]]:
+    """Resolve the active temperature rendering mode and shared visual state.
+
+    Purpose:
+        Apply selection, source preference, enabled flags, and safe fallback in
+        one place for core and Combined plot builders.
+    Why:
+        Every render target must choose the same source and preserve legacy-axis
+        behavior when optional visual data is not usable.
+    Inputs:
+        source_settings: Persisted settings/profile mapping.
+        x_values: Shared elapsed-time series.
+        z_values/z2_values: Internal and external temperature candidates.
+    Outputs:
+        `(mode, visual)` where mode is `axis` on any safe fallback.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid input returns `("axis", None)`.
+    """
+    normalized = _normalize_temperature_visualization_settings(source_settings)
+    mode = normalized["temperature_visualization"]
+    if mode == "axis":
+        return ("axis", None)
+    requested_source = normalized["temperature_source"]
+    candidates = (("z2", z2_values), ("z", z_values)) if requested_source == "auto" else ((requested_source, z2_values if requested_source == "z2" else z_values),)
+    config = normalized["temperature_background" if mode == "background" else "temperature_line"]
+    if not config.get("enabled"):
+        return ("axis", None)
+    for source_key, values in candidates:
+        visual = TemperatureVisual(x_values, values, config, source_key)
+        if visual.valid:
+            return (mode, visual)
+    return ("axis", None)
+
 
 def _sanitize_axis_auto_range_settings(value):
     """Sanitize axis auto range settings.
@@ -84005,6 +84381,7 @@ settings["dev_disable_startup_tab_cycling"] = bool(
 )
 _layout_health_settings = _normalize_layout_health_settings(settings)
 settings.update(_layout_health_settings)
+settings.update(_normalize_temperature_visualization_settings(settings))
 settings["layout_profiles"] = _normalize_layout_profiles(
     settings.get("layout_profiles")
 )
@@ -89128,6 +89505,18 @@ def main_plotting_function(
         or bool(z2_entries)
     )
     deriv_axis_selected = bool(y2_entries)
+    temperature_render_mode, temperature_visual = _resolve_temperature_visual_for_series(
+        settings, x, z, z2
+    )
+    fig1_linecolor_drawn = False
+    calculation_trace = data_ctx.get("calculation_trace") or settings.get(
+        "calculation_trace", {}
+    )
+    calculation_column = (
+        str(calculation_trace.get("column") or "").strip()
+        if isinstance(calculation_trace, Mapping)
+        else ""
+    )
 
     fig1 = None
     if build_fig1:
@@ -89140,23 +89529,43 @@ def main_plotting_function(
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
     
-        fig1.subplots_adjust(bottom=0.175, top=0.91, left=0.071, right=0.924)
+        if temperature_render_mode == "axis":
+            fig1.subplots_adjust(bottom=0.175, top=0.91, left=0.071, right=0.924)
     
         handles = []
     
         for trace_entry in y1_entries:
-            artist = _plot_series(
-                ax,
-                x,
-                trace_entry.get("series"),
-                label=fmt(trace_entry.get("label", "y1")),
-                color=trace_entry.get("color", "blue"),
-                zorder=2,
-                line_style=trace_entry.get("line_style") or plot_linestyle,
-                series_key=trace_entry.get("series_key", "y1"),
-                scatter_config=scatter_config,
-                scatter_series_configs=scatter_series_configs,
+            trace_column = str(
+                trace_entry.get("column") or trace_entry.get("source_column") or ""
+            ).strip()
+            use_temperature_line = (
+                temperature_render_mode == "linecolor"
+                and temperature_visual is not None
+                and not fig1_linecolor_drawn
+                and (not calculation_column or calculation_column == trace_column)
             )
+            if use_temperature_line:
+                artist = draw_temperature_colored_pressure(
+                    ax,
+                    x,
+                    trace_entry.get("series"),
+                    temperature_visual,
+                    label=fmt(trace_entry.get("label", "y1")),
+                )
+                fig1_linecolor_drawn = artist is not None
+            else:
+                artist = _plot_series(
+                    ax,
+                    x,
+                    trace_entry.get("series"),
+                    label=fmt(trace_entry.get("label", "y1")),
+                    color=trace_entry.get("color", "blue"),
+                    zorder=2,
+                    line_style=trace_entry.get("line_style") or plot_linestyle,
+                    series_key=trace_entry.get("series_key", "y1"),
+                    scatter_config=scatter_config,
+                    scatter_series_configs=scatter_series_configs,
+                )
     
             if artist is not None:
                 handles.append(artist)
@@ -89181,6 +89590,10 @@ def main_plotting_function(
         ax.set_xlim(*time_range)
     
         ax.set_ylim(*y_lim)
+        if temperature_render_mode == "background" and temperature_visual is not None:
+            background_artist = draw_temperature_background(ax, temperature_visual)
+            if background_artist is not None:
+                register_layout_artist(fig1, "temperature_background", background_artist)
     
         ax.set_xlabel("")
     
@@ -89190,7 +89603,7 @@ def main_plotting_function(
             labelpad=fig1_primary_labelpad,
         )
     
-        if enable_temp_axis and temp_axis_selected:
+        if temperature_render_mode == "axis" and enable_temp_axis and temp_axis_selected:
     
             ax2 = ax.twinx()
             try:
@@ -89304,7 +89717,7 @@ def main_plotting_function(
             tick_fontsize=fig1_tick_fontsize,
             label_fontsize=fig1_label_fontsize,
         )
-        if enable_temp_axis and temp_axis_selected:
+        if temperature_render_mode == "axis" and enable_temp_axis and temp_axis_selected:
             _enforce_axis_text_style(
                 ax2,
                 font_family=fig1_font_family,
@@ -89315,7 +89728,7 @@ def main_plotting_function(
         fig1_peak_artist, fig1_trough_artist = _draw_cycle_markers(ax)
     
         axes_for_title = (
-            [ax, ax2] if enable_temp_axis and temp_axis_selected else [ax]
+            [ax, ax2] if temperature_render_mode == "axis" and enable_temp_axis and temp_axis_selected else [ax]
         )
         _center_titles_to_axes_union(
             fig1,
@@ -89401,7 +89814,9 @@ def main_plotting_function(
             core_profile=fig1_core_profile,
             base_legend_font=fig1_base_legend_font,
         )
-    
+        if temperature_render_mode != "axis" and temperature_visual is not None:
+            create_temperature_colorbar(fig1, ax, temperature_visual)
+
     fig2 = None
     if build_fig2:
         # Figure 2: pressure + derivative
@@ -94024,8 +94439,14 @@ class PlotLayoutManager:
         """Perform axes union position.
         Used to keep the workflow logic localized and testable."""
         positions = []
-        # Iterate over self._axes to apply the per-item logic.
-        for ax in self._axes:
+        registered = getattr(self.fig, "_gl260_layout_artists", {})
+        extra_axes = (
+            [artist for artist in registered.values() if isinstance(artist, Axes)]
+            if isinstance(registered, Mapping)
+            else []
+        )
+        # Inset colorbar axes are registered separately because they are not data axes.
+        for ax in [*self._axes, *extra_axes]:
             try:
                 if not ax.get_visible():
                     continue
@@ -94044,8 +94465,15 @@ class PlotLayoutManager:
         """Perform axes tight union.
         Used to keep the workflow logic localized and testable."""
         bboxes = []
-        # Iterate over self._axes to apply the per-item logic.
-        for ax in self._axes:
+        registered = getattr(self.fig, "_gl260_layout_artists", {})
+        extra_axes = (
+            [artist for artist in registered.values() if isinstance(artist, Axes)]
+            if isinstance(registered, Mapping)
+            else []
+        )
+        # Include inset colorbar axes in measured bounds without assigning extra
+        # external geometry to background images or LineCollections.
+        for ax in [*self._axes, *extra_axes]:
             try:
                 if not ax.get_visible():
                     continue
@@ -95525,6 +95953,19 @@ def build_combined_triple_axis_figure(
         },
     }
 
+    temperature_render_mode, temperature_visual = _resolve_temperature_visual_for_series(
+        settings, x, z, z2
+    )
+    temperature_layout_artists: List[Any] = []
+    linecolor_target_drawn = [False]
+    calculation_trace = data_ctx.get("calculation_trace") or settings.get(
+        "calculation_trace", {}
+    )
+    calculation_column = (
+        str(calculation_trace.get("column") or "").strip()
+        if isinstance(calculation_trace, Mapping)
+        else ""
+    )
     valid_dataset_keys: Set[str] = set(dataset_meta.keys())
 
     def _is_available(meta: Mapping[str, Any]) -> bool:
@@ -95535,7 +95976,7 @@ def build_combined_triple_axis_figure(
             return bool(entries)
         return bool(meta.get("series") is not None and meta.get("selected"))
 
-    temp_axis_active = bool(enable_temp_axis) and (
+    temp_axis_active = temperature_render_mode == "axis" and bool(enable_temp_axis) and (
         _is_available(dataset_meta["z"]) or _is_available(dataset_meta["z2"])
     )
     deriv_axis_active = bool(enable_deriv_axis) and _is_available(dataset_meta["y2"])
@@ -95673,6 +96114,36 @@ def build_combined_triple_axis_figure(
             if series is None:
                 continue
             series_key = trace_entry.get("series_key") or meta.get("series_key")
+            trace_column = str(
+                trace_entry.get("column") or trace_entry.get("source_column") or ""
+            ).strip()
+            is_calculation_trace = (
+                str(meta.get("series_key") or "") == "y1"
+                and not linecolor_target_drawn[0]
+                and (not calculation_column or calculation_column == trace_column)
+            )
+            if (
+                temperature_render_mode == "linecolor"
+                and temperature_visual is not None
+                and is_calculation_trace
+            ):
+                artist = draw_temperature_colored_pressure(
+                    ax_target,
+                    x,
+                    series,
+                    temperature_visual,
+                    label=str(trace_entry.get("label") or meta.get("label") or "Pressure"),
+                )
+                if artist is not None:
+                    linecolor_target_drawn[0] = True
+                    try:
+                        artist._gl260_series_key = series_key  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                    line_map[str(series_key)] = artist
+                    rendered_artists.append(artist)
+                    temperature_layout_artists.append(artist)
+                    continue
             default_zorder = default_zorders.get(meta.get("series_key"), 2)
             resolved_zorder = _resolve_effective_trace_zorder(
                 resolved_trace_zorders.get(meta.get("series_key"), default_zorder),
@@ -96146,6 +96617,11 @@ def build_combined_triple_axis_figure(
             time_range,
         )
     ax.set_ylim(*primary_settings["ylim"])
+    if temperature_render_mode == "background" and temperature_visual is not None:
+        background_artist = draw_temperature_background(ax, temperature_visual)
+        if background_artist is not None:
+            temperature_layout_artists.append(background_artist)
+            register_layout_artist(fig, "temperature_background", background_artist)
     ax.set_zorder(axis_layer_zorders["left"])
     # Keep the primary axes background transparent so high-z primary layers never
     # occlude right/third-axis traces after dynamic axis z-order updates.
@@ -96635,6 +97111,19 @@ def build_combined_triple_axis_figure(
         legend_anchor_y=legend_anchor_y,
         xlabel_pad_pts=xlabel_pad_value,
     )
+    # Register non-axis temperature artists before solving so the Layout Health
+    # Wizard can discover their colorbar/inset geometry on every render target.
+    for artist_index, temperature_artist in enumerate(temperature_layout_artists):
+        register_layout_artist(
+            fig,
+            f"temperature_visual_{artist_index}",
+            temperature_artist,
+            layout_manager=layout_manager,
+        )
+    if temperature_render_mode != "axis" and temperature_visual is not None:
+        create_temperature_colorbar(
+            fig, ax, temperature_visual, layout_manager=layout_manager
+        )
     layout_manager.register_axes(ax, ax_temp, ax_deriv)
     layout_manager.register_artist("title", title_artist)
     layout_manager.register_artist("suptitle", suptitle_artist)
@@ -101973,6 +102462,26 @@ class UnifiedApp(tk.Tk):
         )
         self.enable_temp_axis = tk.BooleanVar(value=enable_temp_default)
         self._register_var_default(self.enable_temp_axis, enable_temp_default)
+        temperature_visual_settings = _normalize_temperature_visualization_settings(settings)
+        self.temperature_visualization = tk.StringVar(
+            value=temperature_visual_settings["temperature_visualization"]
+        )
+        self.temperature_source = tk.StringVar(
+            value=temperature_visual_settings["temperature_source"]
+        )
+        self.temperature_background_enabled = tk.BooleanVar(
+            value=temperature_visual_settings["temperature_background"]["enabled"]
+        )
+        self.temperature_line_enabled = tk.BooleanVar(
+            value=temperature_visual_settings["temperature_line"]["enabled"]
+        )
+        self._register_var_default(
+            self.temperature_visualization,
+            temperature_visual_settings["temperature_visualization"],
+        )
+        self._register_var_default(
+            self.temperature_source, temperature_visual_settings["temperature_source"]
+        )
 
         enable_deriv_default = settings.get(
             "enable_deriv_axis", initial_enable_deriv_axis
@@ -137075,6 +137584,10 @@ class UnifiedApp(tk.Tk):
             "suptitle_text",
             "enable_temp_axis",
             "enable_deriv_axis",
+            "temperature_visualization",
+            "temperature_source",
+            "temperature_background",
+            "temperature_line",
             "min_cycle_drop",
             "peak_prominence",
             "peak_distance",
@@ -144764,6 +145277,37 @@ class UnifiedApp(tk.Tk):
         ttk.Checkbutton(
             lf_axes, text="Enable Derivative Axis", variable=self.enable_deriv_axis
         ).grid(row=0, column=1, sticky="w", padx=6, pady=4)
+
+        ttk.Label(lf_axes, text="Temperature visualization").grid(
+            row=1, column=2, sticky="e", padx=6, pady=4
+        )
+        ttk.Combobox(
+            lf_axes,
+            textvariable=self.temperature_visualization,
+            values=TEMPERATURE_VISUALIZATION_MODES,
+            state="readonly",
+            width=12,
+        ).grid(row=1, column=3, sticky="w", padx=6, pady=4)
+        ttk.Label(lf_axes, text="Source").grid(
+            row=1, column=4, sticky="e", padx=6, pady=4
+        )
+        ttk.Combobox(
+            lf_axes,
+            textvariable=self.temperature_source,
+            values=("auto", "z", "z2"),
+            state="readonly",
+            width=6,
+        ).grid(row=1, column=5, sticky="w", padx=6, pady=4)
+        ttk.Checkbutton(
+            lf_axes,
+            text="Enable background mode",
+            variable=self.temperature_background_enabled,
+        ).grid(row=2, column=0, columnspan=2, sticky="w", padx=6, pady=4)
+        ttk.Checkbutton(
+            lf_axes,
+            text="Enable line-color mode",
+            variable=self.temperature_line_enabled,
+        ).grid(row=2, column=2, columnspan=2, sticky="w", padx=6, pady=4)
 
         fr_axis_offset = ttk.Frame(lf_axes)
 
@@ -242824,6 +243368,25 @@ class UnifiedApp(tk.Tk):
         settings["deriv_minor_tick"] = deriv_min_tick
 
         settings["enable_temp_axis"] = enable_temp_axis
+
+        temperature_visual_settings = _normalize_temperature_visualization_settings(
+            settings
+        )
+        temperature_visual_settings["temperature_visualization"] = (
+            self.temperature_visualization.get().strip().lower()
+        )
+        temperature_visual_settings["temperature_source"] = (
+            self.temperature_source.get().strip().lower()
+        )
+        temperature_visual_settings["temperature_background"]["enabled"] = bool(
+            self.temperature_background_enabled.get()
+        )
+        temperature_visual_settings["temperature_line"]["enabled"] = bool(
+            self.temperature_line_enabled.get()
+        )
+        settings.update(
+            _normalize_temperature_visualization_settings(temperature_visual_settings)
+        )
 
         settings["enable_deriv_axis"] = enable_deriv_axis
 

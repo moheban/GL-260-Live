@@ -729,6 +729,20 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 - Latest Analysis run payload restores after restart when workspace context/signatures match persisted `sol_analysis_last_result_v2` metadata.
 - Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.
 
+### v4.17.0 Release Note (Temperature Visualization Modes)
+- Plot Settings now provides `axis`, `background`, and `linecolor` temperature visualization modes. `axis` remains the default and preserves existing v4.16.x figures.
+- **Background** mode draws a subtle temperature color field behind the pressure trace; use it when temperature context matters more than an additional scale. **Line Color** mode colors the calculation pressure trace by temperature; use it when pressure/temperature correlation is the primary question.
+- Configure `temperature_source` as `auto`, `z`, or `z2`; `auto` prefers external `z2` when available. Invalid or missing temperature data safely falls back to the legacy axis.
+- `temperature_background` and `temperature_line` support colormap, opacity/linewidth, colorbar visibility, location, width, padding, and label. Use `viridis`, `cividis`, or `plasma`; avoid rainbow maps for quantitative interpretation.
+- Colorbars are layout-aware inset axes. The Layout Health Wizard now discovers their bounds along with temperature images and LineCollections. For large datasets, Background mode uses a two-row vectorized image and Line Color mode uses one vectorized collection, avoiding one artist per sample.
+
+Example configuration:
+```python
+temperature_visualization = "axis"       # legacy detached temperature axis
+temperature_visualization = "background" # temperature color context behind pressure
+temperature_visualization = "linecolor"  # calculation pressure trace colored by temperature
+```
+
 ### v4.15.14 Release Note (Layout Health and Main Legend Controls)
 - Main combined legends now auto-fit no-wrap layouts by keeping labels unwrapped when one row fits and falling back to bounded rows only when needed to avoid clipping.
 - Layout Health Wizard checks now audit visible axes, titles, labels, tick labels, legends, and plot text for overlap, clipping, excessive spacing, and wasted whitespace across live plots, generated tabs, and Plot Preview windows.

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="89eb9a881d53ccba03206159a6569e389362281696062d2b5780745adc4ef535">
+  <meta name="manual-source-sha256" content="af07007e40b7dcd4e2bc432c2a6d5ed08d99456eaa6989e3e227c28c52dd10a8">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -266,7 +266,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>89eb9a881d53ccba</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>af07007e40b7dcd4</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -395,6 +395,7 @@
 <li><a href="#inputs_11">Inputs</a></li>
 <li><a href="#step-by-step-actions_11">Step-by-step actions</a></li>
 <li><a href="#expected-outputs_11">Expected outputs</a></li>
+<li><a href="#v4170-release-note-temperature-visualization-modes">v4.17.0 Release Note (Temperature Visualization Modes)</a></li>
 <li><a href="#v41514-release-note-layout-health-and-main-legend-controls">v4.15.14 Release Note (Layout Health and Main Legend Controls)</a></li>
 <li><a href="#v41513-release-note-multi-sheet-stitched-datetime-auto-apply">v4.15.13 Release Note (Multi-Sheet Stitched Date/Time Auto-Apply)</a></li>
 <li><a href="#v41512-release-note-layout-health-wizard">v4.15.12 Release Note (Layout Health Wizard)</a></li>
@@ -1280,6 +1281,19 @@
 <li>Latest Analysis run payload restores after restart when workspace context/signatures match persisted <code>sol_analysis_last_result_v2</code> metadata.</li>
 <li>Measured-pH anchored learning history and measured-anchor library persist in global settings stores and are reused across profiles when chemistry/model compatibility gates pass.</li>
 </ul>
+<h3 id="v4170-release-note-temperature-visualization-modes">v4.17.0 Release Note (Temperature Visualization Modes)<a class="headerlink" href="#v4170-release-note-temperature-visualization-modes" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Plot Settings now provides <code>axis</code>, <code>background</code>, and <code>linecolor</code> temperature visualization modes. <code>axis</code> remains the default and preserves existing v4.16.x figures.</li>
+<li><strong>Background</strong> mode draws a subtle temperature color field behind the pressure trace; use it when temperature context matters more than an additional scale. <strong>Line Color</strong> mode colors the calculation pressure trace by temperature; use it when pressure/temperature correlation is the primary question.</li>
+<li>Configure <code>temperature_source</code> as <code>auto</code>, <code>z</code>, or <code>z2</code>; <code>auto</code> prefers external <code>z2</code> when available. Invalid or missing temperature data safely falls back to the legacy axis.</li>
+<li><code>temperature_background</code> and <code>temperature_line</code> support colormap, opacity/linewidth, colorbar visibility, location, width, padding, and label. Use <code>viridis</code>, <code>cividis</code>, or <code>plasma</code>; avoid rainbow maps for quantitative interpretation.</li>
+<li>Colorbars are layout-aware inset axes. The Layout Health Wizard now discovers their bounds along with temperature images and LineCollections. For large datasets, Background mode uses a two-row vectorized image and Line Color mode uses one vectorized collection, avoiding one artist per sample.</li>
+</ul>
+<p>Example configuration:</p>
+<pre><code class="language-python">temperature_visualization = &quot;axis&quot;       # legacy detached temperature axis
+temperature_visualization = &quot;background&quot; # temperature color context behind pressure
+temperature_visualization = &quot;linecolor&quot;  # calculation pressure trace colored by temperature
+</code></pre>
 <h3 id="v41514-release-note-layout-health-and-main-legend-controls">v4.15.14 Release Note (Layout Health and Main Legend Controls)<a class="headerlink" href="#v41514-release-note-layout-health-and-main-legend-controls" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Main combined legends now auto-fit no-wrap layouts by keeping labels unwrapped when one row fits and falling back to bounded rows only when needed to avoid clipping.</li>

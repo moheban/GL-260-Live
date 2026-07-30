@@ -1,9 +1,11 @@
-# GL-260 Data Analysis and Plotter (v4.15.15)
+# GL-260 Data Analysis and Plotter (v4.17.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.15.15`:
+Latest workflow highlights in `v4.17.0`:
+- `v4.17.0`: Added opt-in temperature Background and Line Color visualization modes for core and Combined pressure plots. The legacy detached temperature axis remains the default, selected by `temperature_visualization: "axis"`.
+- `v4.17.0`: Added configurable temperature-source selection, shared colorbars, and Layout Health registration for colorbar inset axes, temperature images, and LineCollections.
 - Current working tree: Constrained Analysis corrected pH from Rust/Python anchor calibration and guarded ML residual correction to non-increasing cumulative-cycle behavior, preventing learned anchors/history from creating unrealistic upward pH reversals after additional CO2 dosing.
 - `v4.15.15`: Added monotonic corrected-pH enforcement across the Rust backend, Python fallback, and hybrid ML pH overlay so cycle-to-cycle corrected pH mirrors cumulative acidification while preserving anchor learning and ML diagnostics.
 - `v4.15.15`: Cycle Analysis marker tweak buttons now honor a clicked peak/trough selection first, with a visible selection ring and existing hover-nearest behavior retained as fallback.
@@ -26,8 +28,8 @@ Latest workflow highlights in `v4.15.15`:
 - `v4.15.0`: Preserved startup performance hardening, bounded caching, and heavy-tab optimization baseline.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.15.15`
-- `APP_VERSION = "v4.15.15"`
+- `# Version: v4.17.0`
+- `APP_VERSION = "v4.17.0"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
