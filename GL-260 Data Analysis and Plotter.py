@@ -94748,8 +94748,8 @@ def _apply_combined_exclusion_time_axis(
     """Configure compressed x ticks to display original stitched elapsed time.
 
     Purpose:
-        Position tick marks on the compacted plot while displaying source-time
-        labels after one or more excluded intervals.
+        Position major and minor tick marks on the compacted plot while
+        displaying source-time labels after one or more excluded intervals.
     Why:
         A normal locator interprets compressed positions as recalculated elapsed
         time, which incorrectly relabels data after an axis break.
@@ -94776,16 +94776,34 @@ def _apply_combined_exclusion_time_axis(
     if source_max < source_min:
         source_min, source_max = source_max, source_min
     try:
-        major_locator = AutoLocator() if auto_time_ticks else MultipleLocator(major_tick)
+        major_locator = (
+            AutoLocator() if auto_time_ticks else MultipleLocator(major_tick)
+        )
         major_source = major_locator.tick_values(source_min, source_max)
         major_display = _combined_exclusion_display_x(major_source, normalized)
-        axis.xaxis.set_major_locator(FixedLocator(major_display[np.isfinite(major_display)]))
-        if not auto_time_ticks:
-            minor_source = MultipleLocator(minor_tick).tick_values(source_min, source_max)
-            minor_display = _combined_exclusion_display_x(minor_source, normalized)
-            axis.xaxis.set_minor_locator(FixedLocator(minor_display[np.isfinite(minor_display)]))
+        visible_major_source = major_source[np.isfinite(major_display)]
+        axis.xaxis.set_major_locator(
+            FixedLocator(major_display[np.isfinite(major_display)])
+        )
+        if auto_time_ticks:
+            # Derive minor positions in source time instead of subdividing the
+            # compressed display gaps, which creates misleading minor ticks.
+            minor_candidates: List[float] = []
+            for low, high in zip(visible_major_source[:-1], visible_major_source[1:]):
+                step = (float(high) - float(low)) / 5.0
+                if step > 0.0:
+                    minor_candidates.extend(
+                        float(low) + (step * index) for index in range(1, 5)
+                    )
+            minor_source = np.asarray(minor_candidates, dtype=float)
         else:
-            axis.xaxis.set_minor_locator(AutoMinorLocator())
+            minor_source = MultipleLocator(minor_tick).tick_values(
+                source_min, source_max
+            )
+        minor_display = _combined_exclusion_display_x(minor_source, normalized)
+        axis.xaxis.set_minor_locator(
+            FixedLocator(minor_display[np.isfinite(minor_display)])
+        )
         axis.xaxis.set_major_formatter(
             FuncFormatter(
                 lambda value, _position: f"{_combined_exclusion_source_x(float(value), normalized):g}"
@@ -94794,6 +94812,63 @@ def _apply_combined_exclusion_time_axis(
     except Exception:
         # Keep the established locator behavior if unusual user tick values fail.
         return
+
+
+def _draw_combined_exclusion_break_labels(
+    axis: Axes,
+    ranges: Sequence[Tuple[float, float]],
+    display_time_range: Tuple[float, float],
+) -> None:
+    """Draw source-time labels immediately before and after each axis break.
+
+    Purpose:
+        Make both sides of every compacted exclusion explicit to the viewer.
+    Why:
+        Major ticks can reasonably skip a narrow span, but a publication plot
+        must still show the elapsed-time values that define the discontinuity.
+    Inputs:
+        axis: Primary combined Matplotlib axis.
+        ranges: Normalized source-time exclusion pairs.
+        display_time_range: Visible compressed x-axis limits.
+    Returns:
+        None.
+    Side Effects:
+        Adds two annotation artists per visible axis break.
+    Exceptions:
+        Malformed ranges are ignored after normalization.
+    """
+    normalized = _normalize_combined_exclusion_ranges(ranges)
+    display_min, display_max = display_time_range
+    removed = 0.0
+    for start, end in normalized:
+        join_x = start - removed
+        removed += end - start
+        if not (display_min < join_x < display_max):
+            continue
+        # Offset labels outward so the paired source values remain legible at
+        # the single compressed coordinate occupied by the break marker.
+        axis.annotate(
+            f"{start:g}",
+            xy=(join_x, 0.0),
+            xycoords=("data", "axes fraction"),
+            xytext=(-5, -16),
+            textcoords="offset points",
+            ha="right",
+            va="top",
+            fontsize="small",
+            annotation_clip=False,
+        )
+        axis.annotate(
+            f"{end:g}",
+            xy=(join_x, 0.0),
+            xycoords=("data", "axes fraction"),
+            xytext=(5, -16),
+            textcoords="offset points",
+            ha="left",
+            va="top",
+            fontsize="small",
+            annotation_clip=False,
+        )
 
 
 def build_combined_triple_axis_figure(
@@ -95977,6 +96052,11 @@ def build_combined_triple_axis_figure(
                     linewidth=1.1,
                     zorder=10_000,
                 )
+        _draw_combined_exclusion_break_labels(
+            ax,
+            exclusion_ranges,
+            time_range,
+        )
     ax.set_ylim(*primary_settings["ylim"])
     ax.set_zorder(axis_layer_zorders["left"])
     # Keep the primary axes background transparent so high-z primary layers never
