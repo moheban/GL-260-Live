@@ -237896,7 +237896,18 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             Missing canvas/axis state displays no selector rather than failing.
         """
+        existing_window = getattr(self, "_combined_exclusion_manager_window", None)
+        try:
+            if existing_window is not None and existing_window.winfo_exists():
+                existing_window.deiconify()
+                existing_window.lift()
+                existing_window.focus_force()
+                return
+        except Exception:
+            # A stale Tk window reference must not prevent opening the manager.
+            pass
         window = tk.Toplevel(self)
+        self._combined_exclusion_manager_window = window
         window.title("Combined Plot Exclusions")
         window.transient(self)
         screen_height = max(1, int(window.winfo_screenheight()))
@@ -238021,6 +238032,28 @@ class UnifiedApp(tk.Tk):
         ttk.Button(actions, text="Remove Selected", command=_remove_selected).pack(side="left", padx=(6, 0))
         ttk.Button(actions, text="Clear All", command=_clear_all).pack(side="left", padx=(6, 0))
         ttk.Button(actions, text="Close", command=window.destroy).pack(side="right")
+
+        def _clear_window_reference(_event: Any = None) -> None:
+            """Clear the manager reference once its Tk window has closed.
+
+            Purpose:
+                Keep the single-instance guard accurate after the dialog closes.
+            Why:
+                A destroyed window must never block opening a fresh manager.
+            Inputs:
+                _event: Optional Tk destroy event.
+            Returns:
+                None.
+            Side Effects:
+                Removes this dialog's instance reference from the application.
+            Exceptions:
+                Ignores unrelated child-widget destroy events.
+            """
+            if _event is None or _event.widget is window:
+                if getattr(self, "_combined_exclusion_manager_window", None) is window:
+                    self._combined_exclusion_manager_window = None
+
+        window.bind("<Destroy>", _clear_window_reference, add="+")
         _refresh_list()
 
     def _compute_combined_plot_data(self, snapshot: Dict[str, Any]) -> RenderPacket:
