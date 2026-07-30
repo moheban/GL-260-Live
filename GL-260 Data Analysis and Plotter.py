@@ -79325,33 +79325,38 @@ def create_temperature_colorbar(
     *,
     layout_manager: Any = None,
 ) -> Any:
-    """Create and register a layout-aware inset colorbar for a temperature visual.
+    """Create and register one visible, layout-aware colorbar for a temperature visual.
 
     Purpose:
         Expose the color scale without creating another data y-axis.
     Why:
-        Inset axes keep colorbar geometry configurable and measurable by layout tools.
+        Explicit figure axes reserve room for tick labels and titles instead of
+        relying on a pre-layout inset that can be clipped by later layout work.
     Inputs:
         fig: Owning Figure. ax: Host pressure Axes. visual: Shared color state.
         layout_manager: Optional active PlotLayoutManager.
     Outputs:
         Matplotlib Colorbar, or None when disabled/unavailable.
     Side Effects:
-        Creates and registers an inset Axes and colorbar artist above data and
-        overlay axes so its scale remains visible in combined plots.
+        Replaces any prior temperature colorbar, creates and registers a colorbar
+        Axes and artist above data/overlay axes, and records render status.
     Exceptions:
-        Inset/colorbar failures return None.
+        Failures return None after recording their exception type for Layout Health.
     """
-    if (
-        fig is None
-        or ax is None
-        or not visual.valid
-        or not visual.config.get("show_colorbar")
-    ):
+    if fig is None:
+        return None
+    status = {
+        "expected": bool(
+            ax is not None and visual.valid and visual.config.get("show_colorbar")
+        ),
+        "created": False,
+        "error": None,
+        "location": visual.config.get("colorbar_location"),
+    }
+    fig._gl260_temperature_colorbar_status = status  # type: ignore[attr-defined]
+    if not status["expected"]:
         return None
     try:
-        from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-
         location = visual.config["colorbar_location"]
         width = float(visual.config["colorbar_width"])
         pad = float(visual.config["colorbar_pad"])
@@ -79362,6 +79367,14 @@ def create_temperature_colorbar(
             fig.set_canvas(canvas)
         canvas.draw()
         renderer = canvas.get_renderer()
+        existing = getattr(fig, "_gl260_layout_artists", {})
+        existing_axis = (
+            existing.get("temperature_colorbar_axes")
+            if isinstance(existing, Mapping)
+            else None
+        )
+        if isinstance(existing_axis, Axes) and existing_axis in fig.get_axes():
+            fig.delaxes(existing_axis)
         host_position = ax.get_position()
         occupied_boxes = []
         for candidate_axis in fig.get_axes():
@@ -79372,32 +79385,88 @@ def create_temperature_colorbar(
             except Exception:
                 continue
         occupied = Bbox.union(occupied_boxes) if occupied_boxes else host_position
+        # A colorbar needs readable tick labels and a label outside the color strip.
+        # Reserve that space before creating the axis; a 0.018 host-width strip alone
+        # is too narrow to keep the colorbar legend inside a saved figure.
+        label_clearance = 0.065 if vertical else 0.055
+        host_span = host_position.width if vertical else host_position.height
+        bar_span = max(host_span * width, 0.018)
+        pad_span = host_span * pad
+        if (
+            location == "right"
+            and occupied.x1 + pad_span + bar_span + label_clearance > 0.995
+        ):
+            # Reserve figure space before placing the strip.  This moves subplot-based
+            # host/twin axes together and avoids placing a readable colorbar on top of
+            # a detached right-axis label in combined figures.
+            reserved_right = max(0.55, 1.0 - (pad_span + bar_span + label_clearance))
+            fig.subplots_adjust(right=min(float(fig.subplotpars.right), reserved_right))
+            canvas.draw()
+            host_position = ax.get_position()
+            occupied_boxes = []
+            for candidate_axis in fig.get_axes():
+                try:
+                    bbox = candidate_axis.get_tightbbox(renderer)
+                    if bbox is not None and candidate_axis.get_visible():
+                        occupied_boxes.append(
+                            bbox.transformed(fig.transFigure.inverted())
+                        )
+                except Exception:
+                    continue
+            occupied = Bbox.union(occupied_boxes) if occupied_boxes else host_position
+            bar_span = max(host_position.width * width, 0.018)
+            pad_span = host_position.width * pad
         if location == "right":
-            clearance = max(0.0, float(occupied.x1 - host_position.x1))
-            requested_x = 1.0 + (clearance / host_position.width) + pad
-            max_x = (1.0 - host_position.x0) / host_position.width - width
-            anchor = (min(requested_x, max_x), 0.0, width, 1.0)
+            right_edge = min(
+                1.0 - label_clearance,
+                max(host_position.x1, occupied.x1) + pad_span + bar_span,
+            )
+            bounds = (
+                right_edge - bar_span,
+                host_position.y0,
+                bar_span,
+                host_position.height,
+            )
         elif location == "left":
-            clearance = max(0.0, float(host_position.x0 - occupied.x0))
-            requested_x = -(clearance / host_position.width) - pad - width
-            min_x = -host_position.x0 / host_position.width
-            anchor = (max(requested_x, min_x), 0.0, width, 1.0)
+            left_edge = max(
+                label_clearance,
+                min(host_position.x0, occupied.x0) - pad_span - bar_span,
+            )
+            bounds = (
+                left_edge,
+                host_position.y0,
+                bar_span,
+                host_position.height,
+            )
         elif location == "top":
-            anchor = (0.0, 1.0 + pad, 1.0, width)
+            top_edge = min(
+                1.0 - label_clearance,
+                max(host_position.y1, occupied.y1) + pad_span + bar_span,
+            )
+            bounds = (
+                host_position.x0,
+                top_edge - bar_span,
+                host_position.width,
+                bar_span,
+            )
         else:
-            anchor = (0.0, -pad - width, 1.0, width)
-        cax = inset_axes(
-            ax,
-            width="100%",
-            height="100%",
-            loc="lower left",
-            bbox_to_anchor=anchor,
-            bbox_transform=ax.transAxes,
-            borderpad=0,
-        )
+            # Horizontal colorbars draw tick labels below the strip, so their
+            # bottom placement needs more clearance than the strip thickness.
+            bottom_clearance = max(label_clearance, 0.14)
+            bottom_edge = max(
+                bottom_clearance,
+                min(host_position.y0, occupied.y0) - pad_span - bar_span,
+            )
+            bounds = (
+                host_position.x0,
+                bottom_edge,
+                host_position.width,
+                bar_span,
+            )
+        cax = fig.add_axes(bounds)
         cax._gl260_temperature_colorbar = True  # type: ignore[attr-defined]
         # Combined plots add a high-z-order marker overlay axis. The colorbar is
-        # a separate inset axis, so it must be lifted above that overlay to avoid
+        # a separate figure axis, so it must be lifted above that overlay to avoid
         # being hidden even though it is created after the data axes.
         visible_axis_zorders = [
             float(candidate.get_zorder())
@@ -79423,8 +79492,10 @@ def create_temperature_colorbar(
             colorbar,
             layout_manager=layout_manager,
         )
+        status["created"] = True
         return colorbar
-    except Exception:
+    except Exception as exc:
+        status["error"] = type(exc).__name__
         return None
 
 
@@ -89610,6 +89681,15 @@ def main_plotting_function(
     temperature_render_mode, temperature_visual = _resolve_temperature_visual_for_series(
         settings, x, z, z2
     )
+    if temperature_render_mode != "axis" and temperature_visual is not None:
+        fig_temperature_status = {
+            "expected": bool(temperature_visual.config.get("show_colorbar")),
+            "created": False,
+            "error": None,
+            "location": temperature_visual.config.get("colorbar_location"),
+        }
+    else:
+        fig_temperature_status = None
     fig1_linecolor_drawn = False
     calculation_trace = data_ctx.get("calculation_trace") or settings.get(
         "calculation_trace", {}
@@ -89625,6 +89705,8 @@ def main_plotting_function(
         # Figure 1: pressure + optional temps
     
         fig1, ax = plt.subplots(figsize=target_figsize)
+        if fig_temperature_status is not None:
+            fig1._gl260_temperature_colorbar_status = dict(fig_temperature_status)  # type: ignore[attr-defined]
         try:
             ax._gl260_axis_role = "primary"
         except Exception:
@@ -92333,18 +92415,40 @@ def _layout_health_general_figure_audit(
             _add_issue("legend_off_canvas")
 
     layout_artists = getattr(fig, "_gl260_layout_artists", {})
+    colorbar_status = getattr(fig, "_gl260_temperature_colorbar_status", {})
+    colorbar_expected = bool(
+        colorbar_status.get("expected", False)
+        if isinstance(colorbar_status, Mapping)
+        else False
+    )
     colorbar_axis = (
         layout_artists.get("temperature_colorbar_axes")
         if isinstance(layout_artists, Mapping)
         else None
     )
+    if colorbar_expected and not isinstance(colorbar_axis, Axes):
+        _add_issue("temperature_colorbar_missing")
+    elif colorbar_expected and isinstance(colorbar_status, Mapping) and not bool(
+        colorbar_status.get("created", False)
+    ):
+        _add_issue("temperature_colorbar_failed")
     colorbar_bbox = _layout_health_bbox_in_fig(fig, colorbar_axis, renderer)
     if colorbar_bbox is not None:
+        colorbar_tight_bbox = None
+        try:
+            tight_bbox = colorbar_axis.get_tightbbox(renderer)
+            if tight_bbox is not None:
+                colorbar_tight_bbox = tight_bbox.transformed(
+                    fig.transFigure.inverted()
+                )
+        except Exception:
+            colorbar_tight_bbox = None
+        measured_colorbar_bbox = colorbar_tight_bbox or colorbar_bbox
         if (
-            colorbar_bbox.x0 < -0.001
-            or colorbar_bbox.x1 > 1.001
-            or colorbar_bbox.y0 < -0.001
-            or colorbar_bbox.y1 > 1.001
+            measured_colorbar_bbox.x0 < -0.001
+            or measured_colorbar_bbox.x1 > 1.001
+            or measured_colorbar_bbox.y0 < -0.001
+            or measured_colorbar_bbox.y1 > 1.001
         ):
             _add_issue("temperature_colorbar_off_canvas")
         for axis in fig.get_axes():
@@ -92355,7 +92459,7 @@ def _layout_health_general_figure_audit(
             except Exception:
                 label_artist = None
             label_bbox = _layout_health_bbox_in_fig(fig, label_artist, renderer)
-            if _layout_health_bbox_overlap_area(colorbar_bbox, label_bbox) > 1e-8:
+            if _layout_health_bbox_overlap_area(measured_colorbar_bbox, label_bbox) > 1e-8:
                 _add_issue("temperature_colorbar_axis_label_overlap")
                 break
 
@@ -96179,6 +96283,13 @@ def build_combined_triple_axis_figure(
     temperature_render_mode, temperature_visual = _resolve_temperature_visual_for_series(
         settings, x, z, z2
     )
+    if temperature_render_mode != "axis" and temperature_visual is not None:
+        fig._gl260_temperature_colorbar_status = {  # type: ignore[attr-defined]
+            "expected": bool(temperature_visual.config.get("show_colorbar")),
+            "created": False,
+            "error": None,
+            "location": temperature_visual.config.get("colorbar_location"),
+        }
     temperature_layout_artists: List[Any] = []
     linecolor_target_drawn = [False]
     calculation_trace = data_ctx.get("calculation_trace") or settings.get(
@@ -97367,10 +97478,6 @@ def build_combined_triple_axis_figure(
             temperature_artist,
             layout_manager=layout_manager,
         )
-    if temperature_render_mode != "axis" and temperature_visual is not None:
-        create_temperature_colorbar(
-            fig, ax, temperature_visual, layout_manager=layout_manager
-        )
     layout_manager.register_axes(ax, ax_temp, ax_deriv)
     layout_manager.register_artist("title", title_artist)
     layout_manager.register_artist("suptitle", suptitle_artist)
@@ -97385,6 +97492,12 @@ def build_combined_triple_axis_figure(
         layout_manager.solve()
     else:
         layout_manager.solve(max_passes=1, allow_draw=False)
+    if temperature_render_mode != "axis" and temperature_visual is not None:
+        # Create after the primary layout solve so its reserved figure bounds are
+        # based on final display/export geometry instead of a transient inset host.
+        create_temperature_colorbar(
+            fig, ax, temperature_visual, layout_manager=layout_manager
+        )
     fig._gl260_title_state = {
         "suptitle": suptitle_display,
         "title_fs": title_fontsize_value,
