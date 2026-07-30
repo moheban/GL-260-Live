@@ -46501,6 +46501,38 @@ def _regression_test_combined_outer_axis_none_selection_controls_zero_line() -> 
             settings["combined_include_zero_line"] = previous_zero
 
 
+def _regression_test_combined_exclusion_coordinate_mapping() -> None:
+    """Validate normalized exclusions compress and invert combined x coordinates.
+
+    Purpose:
+        Cover the source/display mapping used by direct range selection.
+    Why:
+        A broken inverse mapping would save later selections at the wrong source
+        time after one or more compressed gaps are already visible.
+    Inputs:
+        None.
+    Returns:
+        None.
+    Side Effects:
+        None.
+    Exceptions:
+        Raises AssertionError when normalization, masking, or inversion regresses.
+    """
+    ranges = _normalize_combined_exclusion_ranges(
+        [(4.0, 6.0), (5.5, 8.0), (12.0, 14.0)]
+    )
+    if ranges != [(4.0, 8.0), (12.0, 14.0)]:
+        raise AssertionError(f"Unexpected normalized exclusions: {ranges!r}")
+    compressed = _combined_exclusion_display_x(
+        np.asarray([0.0, 4.0, 8.0, 10.0, 12.0, 15.0]), ranges
+    )
+    expected = np.asarray([0.0, np.nan, np.nan, 6.0, np.nan, 9.0])
+    if not np.allclose(compressed, expected, equal_nan=True):
+        raise AssertionError(f"Unexpected compressed x coordinates: {compressed!r}")
+    if abs(_combined_exclusion_source_x(6.0, ranges) - 10.0) > 1e-9:
+        raise AssertionError("Compressed selection did not invert to source x=10.")
+
+
 def _regression_test_combined_outer_axis_none_skips_third_axis_render() -> None:
     """Validate outer-right None suppresses detached axis rendering.
 
@@ -74757,6 +74789,10 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
         _regression_test_combined_outer_axis_none_selection_controls_zero_line,
     ),
     (
+        "Combined exclusion coordinate mapping",
+        _regression_test_combined_exclusion_coordinate_mapping,
+    ),
+    (
         "Combined outer-right None skips third axis render",
         _regression_test_combined_outer_axis_none_skips_third_axis_render,
     ),
@@ -94577,6 +94613,122 @@ def _resolve_combined_right_axis_bindings(
     }
 
 
+def _normalize_combined_exclusion_ranges(value: Any) -> list[tuple[float, float]]:
+    """Normalize reversible source-x exclusions for the combined plot.
+
+    Purpose:
+        Convert saved or newly selected ranges into sorted, merged finite pairs.
+    Why:
+        A canonical range list makes compression deterministic and prevents
+        overlapping selections from subtracting time more than once.
+    Inputs:
+        value: Iterable of two-value range candidates in source x-axis units.
+    Returns:
+        Sorted non-overlapping ``(start, end)`` float pairs.
+    Side Effects:
+        None.
+    Exceptions:
+        Malformed or non-finite candidates are ignored.
+    """
+    candidates: list[tuple[float, float]] = []
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return candidates
+    for item in value:
+        if (
+            not isinstance(item, Sequence)
+            or isinstance(item, (str, bytes))
+            or len(item) < 2
+        ):
+            continue
+        start = _coerce_float(item[0])
+        end = _coerce_float(item[1])
+        if (
+            start is None
+            or end is None
+            or not math.isfinite(start)
+            or not math.isfinite(end)
+        ):
+            continue
+        low, high = sorted((float(start), float(end)))
+        if high - low > 1e-12:
+            candidates.append((low, high))
+    candidates.sort()
+    merged: list[tuple[float, float]] = []
+    for start, end in candidates:
+        if merged and start <= merged[-1][1] + 1e-12:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _combined_exclusion_display_x(
+    values: Any, ranges: list[tuple[float, float]]
+) -> np.ndarray:
+    """Map source x values to the combined plot's gap-compressed x coordinates.
+
+    Purpose:
+        Remove the cumulative width of earlier exclusions using NumPy operations.
+    Why:
+        Combined traces can contain many samples, so compression must avoid
+        Python per-sample loops in the interactive rendering path.
+    Inputs:
+        values: Numeric source x-array.
+        ranges: Normalized excluded source x pairs.
+    Returns:
+        Float ndarray in compressed display coordinates; excluded samples are NaN.
+    Side Effects:
+        None.
+    Exceptions:
+        Non-numeric values become NaN through NumPy coercion.
+    """
+    try:
+        source = np.asarray(values, dtype=float)
+    except Exception:
+        return np.asarray([], dtype=float)
+    display = source.astype(float, copy=True)
+    valid = np.isfinite(display)
+    for start, end in ranges:
+        hidden = valid & (source >= start) & (source <= end)
+        display[hidden] = np.nan
+        after = valid & (source > end)
+        display[after] -= end - start
+    return display
+
+
+def _combined_exclusion_source_x(
+    display_value: float, ranges: list[tuple[float, float]]
+) -> float:
+    """Invert one compressed combined-plot x coordinate to its source value.
+
+    Purpose:
+        Translate a live span-selector coordinate back before persisting it.
+    Why:
+        Subsequent selections are made after compression but exclusions must
+        remain anchored to the unmodified data source.
+    Inputs:
+        display_value: Current combined-plot x coordinate.
+        ranges: Normalized excluded source x pairs.
+    Returns:
+        Source x coordinate as a float.
+    Side Effects:
+        None.
+    Exceptions:
+        Non-finite input is returned unchanged.
+    """
+    if not math.isfinite(display_value):
+        return display_value
+    source = float(display_value)
+    removed = 0.0
+    for start, end in ranges:
+        compressed_start = start - removed
+        if display_value < compressed_start:
+            break
+        source += end - start
+        removed += end - start
+    return source
+
+
 def build_combined_triple_axis_figure(
     min_time,
     max_time,
@@ -94744,11 +94896,60 @@ def build_combined_triple_axis_figure(
     y3 = series_np.get("y3", series_map.get("y3", globals().get("y3")))
     z = series_np.get("z", series_map.get("z", globals().get("z")))
     z2 = series_np.get("z2", series_map.get("z2", globals().get("z2")))
+    exclusion_ranges = _normalize_combined_exclusion_ranges(
+        data_ctx.get("combined_exclusion_ranges")
+    )
+    source_x = x
+    if exclusion_ranges and x is not None:
+        display_x = _combined_exclusion_display_x(x, exclusion_ranges)
+
+        def _mask_excluded_series(values: Any) -> Any:
+            """Mask one trace where the shared combined x-series is excluded.
+
+            Purpose:
+                Preserve source arrays while forcing Matplotlib to split lines at
+                every omitted span in this display-only render.
+            Why:
+                Plotting a compressed x array alone would bridge the omitted data.
+            Inputs:
+                values: Trace values aligned with the shared x-series.
+            Returns:
+                Float ndarray with excluded rows set to NaN, or original values
+                when alignment/coercion is unavailable.
+            Side Effects:
+                None.
+            Exceptions:
+                Conversion or shape failures retain the original series safely.
+            """
+            if values is None:
+                return None
+            try:
+                masked = np.asarray(values, dtype=float).copy()
+                if masked.shape != display_x.shape:
+                    return values
+                masked[~np.isfinite(display_x)] = np.nan
+                return masked
+            except Exception:
+                return values
+
+        x = display_x
+        y1, y2, y3 = (
+            _mask_excluded_series(y1),
+            _mask_excluded_series(y2),
+            _mask_excluded_series(y3),
+        )
+        z, z2 = _mask_excluded_series(z), _mask_excluded_series(z2)
+        finite_x = x[np.isfinite(x)]
+        if finite_x.size:
+            time_range = (float(np.min(finite_x)), float(np.max(finite_x)))
+        else:
+            time_range = (min_time, max_time)
+    else:
+        time_range = (min_time, max_time)
     fmt = _format_axis_label
     svg_safe = _svg_safe_text
     handles = []
     line_map: Dict[str, Any] = {}
-    time_range = (min_time, max_time)
     ax_temp: Optional[Axes] = None
     ax_deriv: Optional[Axes] = None
     ax_overlay: Optional[Axes] = None
@@ -95031,6 +95232,12 @@ def build_combined_triple_axis_figure(
             data_ctx, "z2", fallback_series=z2, fallback_label=label_z2
         ),
     }
+    if exclusion_ranges and x is not None:
+        # Grouped traces bypass the canonical y variables, so apply the same
+        # display-only NaN mask to keep every visible line discontinuous at gaps.
+        for entries in grouped_entries.values():
+            for entry in entries:
+                entry["series"] = _mask_excluded_series(entry.get("series"))
 
     selected_map = {
         "y1": _is_selected(selected_columns.get("y1", "y1")),
@@ -95468,8 +95675,28 @@ def build_combined_triple_axis_figure(
             ax_target, min_z=CYCLE_MARKER_MIN_ZORDER, pad=CYCLE_MARKER_ZORDER_PAD
         )
         peak_artist = trough_artist = None
-        peaks = markers_overlay.get("peak_points") or []
-        troughs = markers_overlay.get("trough_points") or []
+        def _visible_marker_points(points: Sequence[Any]) -> List[Tuple[float, float]]:
+            """Return retained markers in the combined compressed x coordinate.
+
+            Purpose/Why: Preserve alignment with display-compressed traces while
+            cycle analysis continues to operate on unmodified source data.
+            Inputs: Source-coordinate ``(x, y)`` marker pairs.
+            Returns: Visible transformed marker pairs.
+            Side Effects/Errors: None; malformed or excluded points are skipped.
+            """
+            visible: List[Tuple[float, float]] = []
+            for point in points:
+                try:
+                    point_x, point_y = float(point[0]), float(point[1])
+                except Exception:
+                    continue
+                mapped = _combined_exclusion_display_x([point_x], exclusion_ranges)
+                if mapped.size and math.isfinite(float(mapped[0])):
+                    visible.append((float(mapped[0]), point_y))
+            return visible
+
+        peaks = _visible_marker_points(markers_overlay.get("peak_points") or [])
+        troughs = _visible_marker_points(markers_overlay.get("trough_points") or [])
         if peaks:
             px, py = zip(*peaks)
             peak_artist = ax_target.scatter(
@@ -95661,6 +95888,27 @@ def build_combined_triple_axis_figure(
             handles.extend(_iter_artist_handles(artist))
 
     ax.set_xlim(*time_range)
+    if exclusion_ranges:
+        fig._gl260_combined_exclusion_ranges = tuple(exclusion_ranges)  # type: ignore[attr-defined]
+        fig._gl260_combined_source_x = source_x  # type: ignore[attr-defined]
+        # Compact diagonal strokes signal every compressed join without adding
+        # blank overnight space or changing the established elapsed-time labels.
+        for start, end in exclusion_ranges:
+            join_x = start - sum(
+                prior_end - prior_start
+                for prior_start, prior_end in exclusion_ranges
+                if prior_end <= start
+            )
+            if time_range[0] < join_x < time_range[1]:
+                ax.plot(
+                    [join_x - 0.006, join_x + 0.006],
+                    [-0.012, 0.012],
+                    transform=ax.get_xaxis_transform(),
+                    color="#4b5563",
+                    clip_on=False,
+                    linewidth=1.1,
+                    zorder=10_000,
+                )
     ax.set_ylim(*primary_settings["ylim"])
     ax.set_zorder(axis_layer_zorders["left"])
     # Keep the primary axes background transparent so high-z primary layers never
@@ -127416,6 +127664,17 @@ class UnifiedApp(tk.Tk):
                 )
                 btn_layout_health.pack(side="right", padx=4)
             elif uses_combined_toolbar:
+                if plot_key == "fig_combined":
+                    btn_exclusions = _build_topbar_button(
+                        topbar_action_host,
+                        text="Exclude ranges…",
+                        command=lambda: self._open_combined_exclusion_manager(
+                            canvas.figure, canvas
+                        ),
+                        ctk_width=148,
+                        ttk_width=15,
+                    )
+                    btn_exclusions.pack(side="right", padx=4)
                 btn_elements = _build_topbar_button(
                     topbar_action_host,
                     text="Plot Elements...",
@@ -237227,6 +237486,7 @@ class UnifiedApp(tk.Tk):
             "cycle_temp_column": str(cycle_temp_column or ""),
             "elapsed_unit": self._elapsed_unit_label(),
             "prep_signature": self._data_prep_signature(),
+            "combined_exclusion_ranges": self._combined_exclusion_ranges(),
             "multi_sheet": bool(self.multi_sheet_enabled),
             "volume": self.v_volume.get(),
             "a_const": self.v_a.get(),
@@ -237349,6 +237609,226 @@ class UnifiedApp(tk.Tk):
             target=target,
         )
 
+    def _combined_exclusion_context_key(self) -> str:
+        """Return the persistence key for this loaded combined-plot data context.
+
+        Purpose:
+            Scope exclusions to one file, sheet selection, and column mapping.
+        Why:
+            A manual overnight selection should restore for the same dataset but
+            must never leak into unrelated data.
+        Inputs:
+            None.
+        Returns:
+            Stable string key derived from the prepared-data fingerprint.
+        Side Effects:
+            None.
+        Exceptions:
+            Falls back to an empty key when no source context is available.
+        """
+        try:
+            fingerprint = self._build_data_fingerprint()
+            return repr(fingerprint)
+        except Exception:
+            return ""
+
+    def _combined_exclusion_ranges(self) -> List[Tuple[float, float]]:
+        """Return normalized exclusions saved for the active data context.
+
+        Purpose:
+            Resolve the combined-only display mask without altering raw data.
+        Why:
+            Render and export paths need one shared persisted source of truth.
+        Inputs:
+            None.
+        Returns:
+            Normalized source-x exclusion pairs.
+        Side Effects:
+            None.
+        Exceptions:
+            Missing or malformed saved state resolves to an empty list.
+        """
+        store = settings.get("combined_plot_exclusions_by_context", {})
+        if not isinstance(store, Mapping):
+            return []
+        return _normalize_combined_exclusion_ranges(store.get(self._combined_exclusion_context_key()))
+
+    def _set_combined_exclusion_ranges(self, ranges: Sequence[Tuple[float, float]]) -> None:
+        """Persist normalized combined display exclusions and invalidate its figure.
+
+        Purpose:
+            Save reversible source-x ranges for the active data context.
+        Why:
+            Immediate regeneration must use new ranges while source/cycle data
+            and all non-combined plots remain unchanged.
+        Inputs:
+            ranges: Candidate source-x exclusion pairs.
+        Returns:
+            None.
+        Side Effects:
+            Updates settings, writes settings storage, and invalidates combined reuse.
+        Exceptions:
+            Persistence failures are contained after in-memory state is updated.
+        """
+        key = self._combined_exclusion_context_key()
+        if not key:
+            return
+        store = settings.get("combined_plot_exclusions_by_context")
+        if not isinstance(store, dict):
+            store = {}
+            settings["combined_plot_exclusions_by_context"] = store
+        normalized = _normalize_combined_exclusion_ranges(ranges)
+        if normalized:
+            store[key] = [[start, end] for start, end in normalized]
+        else:
+            store.pop(key, None)
+        self._invalidate_combined_plot_reuse_cache("combined exclusion ranges changed")
+        try:
+            _save_settings_to_disk()
+        except Exception:
+            pass
+
+    def _open_combined_exclusion_manager(self, fig: Figure, canvas: Any) -> None:
+        """Open the reversible combined-plot exclusion manager and selector.
+
+        Purpose:
+            Let users inspect, remove, clear, and add excluded horizontal ranges.
+        Why:
+            Direct plot selection is fast for overnight spans but needs a clear,
+            non-destructive way to review and undo saved choices.
+        Inputs:
+            fig: Active combined figure.
+            canvas: Matplotlib Tk canvas hosting the figure.
+        Returns:
+            None.
+        Side Effects:
+            Creates a Tk dialog, temporarily attaches a SpanSelector, persists
+            accepted ranges, and regenerates the combined plot.
+        Exceptions:
+            Missing canvas/axis state displays no selector rather than failing.
+        """
+        window = tk.Toplevel(self)
+        window.title("Combined Plot Exclusions")
+        window.transient(self)
+        window.geometry("440x300")
+        body = ttk.Frame(window, padding=12)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text="Excluded combined-plot ranges (source time units)").pack(anchor="w")
+        tree = ttk.Treeview(body, columns=("start", "end"), show="headings", height=8)
+        tree.heading("start", text="Start")
+        tree.heading("end", text="End")
+        tree.column("start", width=185, anchor="e")
+        tree.column("end", width=185, anchor="e")
+        tree.pack(fill="both", expand=True, pady=(6, 8))
+
+        def _refresh_list() -> None:
+            """Refresh the manager's persisted-range table.
+
+            Purpose/Why: Keep reversible exclusions visible after every edit.
+            Inputs/Returns: None; reads the active data-context store.
+            Side Effects/Errors: Replaces Treeview rows; malformed ranges are
+            already normalized by the store resolver.
+            """
+            tree.delete(*tree.get_children())
+            for index, (start, end) in enumerate(self._combined_exclusion_ranges()):
+                tree.insert("", "end", iid=str(index), values=(f"{start:g}", f"{end:g}"))
+
+        def _rerender() -> None:
+            """Regenerate the combined view after an exclusion change.
+
+            Purpose/Why: Apply display-only compression immediately without
+            touching source data or analysis results.
+            Inputs/Returns: None.
+            Side Effects/Errors: Rebuilds the combined tab; UI failures are ignored.
+            """
+            try:
+                self.generate_combined_plot()
+            except Exception:
+                pass
+
+        def _remove_selected() -> None:
+            """Remove selected exclusions and regenerate the combined plot.
+
+            Purpose/Why: Provide a reversible correction path for drag selections.
+            Inputs/Returns: None; reads selected Treeview row IDs.
+            Side Effects/Errors: Updates persisted exclusions and rerenders; invalid
+            row IDs are skipped.
+            """
+            selected = tree.selection()
+            ranges = self._combined_exclusion_ranges()
+            for item_id in sorted(selected, key=lambda item: int(item), reverse=True):
+                try:
+                    ranges.pop(int(item_id))
+                except (TypeError, ValueError, IndexError):
+                    continue
+            self._set_combined_exclusion_ranges(ranges)
+            _refresh_list()
+            _rerender()
+
+        def _clear_all() -> None:
+            """Clear this data context's exclusions and regenerate the plot.
+
+            Purpose/Why: Restore the complete combined timeline in one action.
+            Inputs/Returns: None.
+            Side Effects/Errors: Removes persisted display state and rerenders;
+            persistence errors are handled by the owning setter.
+            """
+            self._set_combined_exclusion_ranges([])
+            _refresh_list()
+            _rerender()
+
+        def _select_range() -> None:
+            """Arm a one-shot horizontal selector on the current combined plot.
+
+            Purpose/Why: Let the operator choose unwanted data directly in view.
+            Inputs/Returns: None; uses the live primary axis.
+            Side Effects/Errors: Attaches a selector to the canvas; no action is
+            taken when the primary axis is unavailable.
+            """
+            axes = [axis for axis in fig.get_axes() if getattr(axis, "_gl260_axis_role", "") == "primary"]
+            if not axes:
+                return
+            active_ranges = self._combined_exclusion_ranges()
+
+            def _commit(display_start: float, display_end: float) -> None:
+                """Convert a selected display span to source coordinates and save it.
+
+                Purpose/Why: Persist selections against source data even after
+                earlier exclusions have compressed the visible x-axis.
+                Inputs: Display-x start/end floats from Matplotlib.
+                Returns: None.
+                Side Effects/Errors: Saves one normalized range, disables the
+                selector, refreshes the table, and rerenders; selector failures
+                are ignored.
+                """
+                low, high = sorted((float(display_start), float(display_end)))
+                source_range = (
+                    _combined_exclusion_source_x(low, active_ranges),
+                    _combined_exclusion_source_x(high, active_ranges),
+                )
+                self._set_combined_exclusion_ranges([*active_ranges, source_range])
+                try:
+                    selector.set_active(False)
+                except Exception:
+                    pass
+                _refresh_list()
+                _rerender()
+
+            selector = SpanSelector(
+                axes[0], _commit, "horizontal", useblit=False, interactive=False,
+                props={"facecolor": "#64748b", "edgecolor": "#1e293b", "alpha": 0.28},
+            )
+            self._combined_exclusion_selector = selector
+            ttk.Label(body, text="Drag across the combined plot to exclude that span.").pack(anchor="w")
+
+        actions = ttk.Frame(body)
+        actions.pack(fill="x")
+        ttk.Button(actions, text="Select on Plot", command=_select_range).pack(side="left")
+        ttk.Button(actions, text="Remove Selected", command=_remove_selected).pack(side="left", padx=(6, 0))
+        ttk.Button(actions, text="Clear All", command=_clear_all).pack(side="left", padx=(6, 0))
+        ttk.Button(actions, text="Close", command=window.destroy).pack(side="right")
+        _refresh_list()
+
     def _compute_combined_plot_data(self, snapshot: Dict[str, Any]) -> RenderPacket:
         """Compute combined plot data for UI-thread rendering.
 
@@ -237377,6 +237857,12 @@ class UnifiedApp(tk.Tk):
 
         data_fingerprint, data_ctx = self._resolve_prepared_data_context(
             apply_globals=False, perf=perf_run, snapshot=snapshot
+        )
+        data_ctx = dict(data_ctx or {})
+        # Keep exclusions out of prepared/cycle caches: they are a combined-only
+        # display transform and must never change analysis or source data.
+        data_ctx["combined_exclusion_ranges"] = _normalize_combined_exclusion_ranges(
+            snapshot.get("combined_exclusion_ranges")
         )
 
         if snapshot.get("cycle_overlays_enabled"):
