@@ -127610,7 +127610,10 @@ class UnifiedApp(tk.Tk):
             textvariable=frame._plot_layer_status_var,
             justify="left",
             anchor="w",
-            width=28,
+            # Combined tabs reserve their action bar for several text buttons.
+            # The concise status still communicates state without collapsing a
+            # leftmost action into an unlabeled sliver on typical window widths.
+            width=12 if uses_combined_toolbar else 28,
         )
         layer_status_label.pack(side="right", padx=(0, 8))
         if plot_id:
@@ -127709,12 +127712,12 @@ class UnifiedApp(tk.Tk):
                 btn_layout_health.pack(side="right", padx=4)
                 btn_trace_settings = _build_topbar_button(
                     topbar_action_host,
-                    text="Data Trace Settings...",
+                    text="Trace Settings...",
                     command=lambda: self._open_data_trace_settings_dialog(
                         plot_id=plot_id
                     ),
-                    ctk_width=168,
-                    ttk_width=16,
+                    ctk_width=136,
+                    ttk_width=13,
                 )
                 btn_trace_settings.pack(side="right", padx=4)
             else:
