@@ -7790,6 +7790,7 @@ def _normalize_layout_profile(value: Any, plot_id: Optional[str]) -> Dict[str, A
             "axis_labelpads": {},
             "detached_spine_offset": None,
             "detached_labelpad": None,
+            "colorbar_detached_pad_pts": None,
         },
         "export": {
             "margins": _default_layout_margins(plot_id, "export"),
@@ -7804,6 +7805,7 @@ def _normalize_layout_profile(value: Any, plot_id: Optional[str]) -> Dict[str, A
             "axis_labelpads": {},
             "detached_spine_offset": None,
             "detached_labelpad": None,
+            "colorbar_detached_pad_pts": None,
         },
         "mirror_detached_labelpad": False,
     }
@@ -7849,6 +7851,7 @@ def _normalize_layout_profile(value: Any, plot_id: Optional[str]) -> Dict[str, A
             "xlabel_pad_pts": None,
             "detached_spine_offset": None,
             "detached_labelpad": None,
+            "colorbar_detached_pad_pts": None,
             "legend_anchor_y": None,
         }
         raw_anchor_y = section.get("legend_anchor_y")
@@ -7896,6 +7899,14 @@ def _normalize_layout_profile(value: Any, plot_id: Optional[str]) -> Dict[str, A
                 pad_value = None
             if pad_value is not None and math.isfinite(pad_value):
                 normalized_section["detached_labelpad"] = pad_value
+        raw_colorbar_pad = section.get("colorbar_detached_pad_pts")
+        if raw_colorbar_pad is not None:
+            try:
+                pad_value = float(raw_colorbar_pad)
+            except Exception:
+                pad_value = None
+            if pad_value is not None and math.isfinite(pad_value):
+                normalized_section["colorbar_detached_pad_pts"] = max(0.0, pad_value)
         normalized[mode] = normalized_section
     return normalized
 
@@ -79324,6 +79335,7 @@ def create_temperature_colorbar(
     visual: TemperatureVisual,
     *,
     layout_manager: Any = None,
+    detached_axis_pad_pts: Optional[float] = None,
 ) -> Any:
     """Create and register one visible, layout-aware colorbar for a temperature visual.
 
@@ -79335,6 +79347,8 @@ def create_temperature_colorbar(
     Inputs:
         fig: Owning Figure. ax: Host pressure Axes. visual: Shared color state.
         layout_manager: Optional active PlotLayoutManager.
+        detached_axis_pad_pts: Optional gap in points from the outer combined
+            y-axis geometry to the colorbar; None uses the mode colorbar pad.
     Outputs:
         Matplotlib Colorbar, or None when disabled/unavailable.
     Side Effects:
@@ -79392,35 +79406,47 @@ def create_temperature_colorbar(
         host_span = host_position.width if vertical else host_position.height
         bar_span = max(host_span * width, 0.018)
         pad_span = host_span * pad
-        if (
-            location == "right"
-            and occupied.x1 + pad_span + bar_span + label_clearance > 0.995
-        ):
-            # Reserve figure space before placing the strip.  This moves subplot-based
-            # host/twin axes together and avoids placing a readable colorbar on top of
-            # a detached right-axis label in combined figures.
-            reserved_right = max(0.55, 1.0 - (pad_span + bar_span + label_clearance))
-            fig.subplots_adjust(right=min(float(fig.subplotpars.right), reserved_right))
-            canvas.draw()
-            host_position = ax.get_position()
-            occupied_boxes = []
-            for candidate_axis in fig.get_axes():
-                try:
-                    bbox = candidate_axis.get_tightbbox(renderer)
-                    if bbox is not None and candidate_axis.get_visible():
-                        occupied_boxes.append(
-                            bbox.transformed(fig.transFigure.inverted())
-                        )
-                except Exception:
-                    continue
-            occupied = Bbox.union(occupied_boxes) if occupied_boxes else host_position
-            bar_span = max(host_position.width * width, 0.018)
-            pad_span = host_position.width * pad
+        if vertical and detached_axis_pad_pts is not None:
+            try:
+                requested_pad = float(detached_axis_pad_pts)
+            except Exception:
+                requested_pad = None
+            if requested_pad is not None and math.isfinite(requested_pad):
+                pad_span = max(0.0, requested_pad / max(fig.get_figwidth() * 72.0, 1.0))
         if location == "right":
-            right_edge = min(
-                1.0 - label_clearance,
-                max(host_position.x1, occupied.x1) + pad_span + bar_span,
-            )
+            # The detached third axis extends with the subplot width.  Reserve the
+            # measured overflow itself, then remeasure, so the bar is external to
+            # that axis rather than being clamped back into the plot area.
+            for _ in range(3):
+                required_right = occupied.x1 + pad_span + bar_span + label_clearance
+                overflow = required_right - 0.995
+                if overflow <= 1e-4:
+                    break
+                current_right = float(fig.subplotpars.right)
+                target_right = max(0.55, current_right - overflow)
+                if target_right >= current_right - 1e-5:
+                    break
+                fig.subplots_adjust(right=target_right)
+                canvas.draw()
+                host_position = ax.get_position()
+                occupied_boxes = []
+                for candidate_axis in fig.get_axes():
+                    try:
+                        bbox = candidate_axis.get_tightbbox(renderer)
+                        if bbox is not None and candidate_axis.get_visible():
+                            occupied_boxes.append(
+                                bbox.transformed(fig.transFigure.inverted())
+                            )
+                    except Exception:
+                        continue
+                occupied = (
+                    Bbox.union(occupied_boxes) if occupied_boxes else host_position
+                )
+                bar_span = max(host_position.width * width, 0.018)
+                if detached_axis_pad_pts is None:
+                    pad_span = host_position.width * pad
+        if location == "right":
+            right_edge = max(host_position.x1, occupied.x1) + pad_span + bar_span
             bounds = (
                 right_edge - bar_span,
                 host_position.y0,
@@ -79479,7 +79505,10 @@ def create_temperature_colorbar(
             cax=cax,
             orientation="vertical" if vertical else "horizontal",
         )
-        colorbar.set_label(visual.config["label"])
+        if location == "right":
+            colorbar.set_label(visual.config["label"], rotation=270)
+        else:
+            colorbar.set_label(visual.config["label"])
         register_layout_artist(
             fig,
             "temperature_colorbar_axes",
@@ -95762,6 +95791,7 @@ def build_combined_triple_axis_figure(
     baseline_margins=None,
     legend_anchor_y=None,
     xlabel_pad_pts=None,
+    colorbar_detached_pad_pts=None,
     axis_label_overrides=None,
     labelpad_overrides=None,
     left_dataset_key="y1",
@@ -95795,6 +95825,8 @@ def build_combined_triple_axis_figure(
         legend_anchor/cycle_legend_anchor: (x, y) tuple in normalized figure or
             axes fraction coordinates (0-1 with small tolerance).
         cycle_legend_anchor_space: "figure" or "axes" to interpret the anchor.
+        colorbar_detached_pad_pts: Optional colorbar gap from the outer combined
+            y-axis, in points; used only for a right-side temperature colorbar.
         mode: "display" or "export" to control layout solving behavior.
         fig_size: Optional (width, height) in inches for display rendering.
         render_ctx: Optional RenderContext payload for prepared data/overlays.
@@ -97496,7 +97528,11 @@ def build_combined_triple_axis_figure(
         # Create after the primary layout solve so its reserved figure bounds are
         # based on final display/export geometry instead of a transient inset host.
         create_temperature_colorbar(
-            fig, ax, temperature_visual, layout_manager=layout_manager
+            fig,
+            ax,
+            temperature_visual,
+            layout_manager=layout_manager,
+            detached_axis_pad_pts=colorbar_detached_pad_pts,
         )
     fig._gl260_title_state = {
         "suptitle": suptitle_display,
@@ -114670,6 +114706,14 @@ class UnifiedApp(tk.Tk):
                 or 20.0
             )
         )
+        combined_colorbar_detached_pad_var = tk.DoubleVar(
+            value=float(
+                _safe_float(
+                    combined_display_section.get("colorbar_detached_pad_pts"), 6.0
+                )
+                or 0.0
+            )
+        )
         combined_inner_right_labelpad_var = tk.DoubleVar(
             value=float(
                 _safe_float(
@@ -114724,6 +114768,14 @@ class UnifiedApp(tk.Tk):
                     settings.get("combined_deriv_labelpad", 20.0),
                 )
                 or 20.0
+            )
+        )
+        combined_export_colorbar_detached_pad_var = tk.DoubleVar(
+            value=float(
+                _safe_float(
+                    combined_export_section.get("colorbar_detached_pad_pts"), 6.0
+                )
+                or 0.0
             )
         )
         combined_export_inner_right_labelpad_var = tk.DoubleVar(
@@ -115058,6 +115110,15 @@ class UnifiedApp(tk.Tk):
             )
             _build_combined_spin(
                 combined_row + 8,
+                "Display colorbar gap from detached axis",
+                combined_colorbar_detached_pad_var,
+                0.0,
+                72.0,
+                0.5,
+                "pt",
+            )
+            _build_combined_spin(
+                combined_row + 9,
                 "Export left margin",
                 combined_export_margin_left_var,
                 0.0,
@@ -115066,7 +115127,7 @@ class UnifiedApp(tk.Tk):
                 "figure",
             )
             _build_combined_spin(
-                combined_row + 9,
+                combined_row + 10,
                 "Export right margin",
                 combined_export_margin_right_var,
                 0.55,
@@ -115075,7 +115136,7 @@ class UnifiedApp(tk.Tk):
                 "figure",
             )
             _build_combined_spin(
-                combined_row + 10,
+                combined_row + 11,
                 "Export top margin",
                 combined_export_margin_top_var,
                 0.55,
@@ -115084,7 +115145,7 @@ class UnifiedApp(tk.Tk):
                 "figure",
             )
             _build_combined_spin(
-                combined_row + 11,
+                combined_row + 12,
                 "Export bottom margin",
                 combined_export_margin_bottom_var,
                 0.02,
@@ -115093,7 +115154,7 @@ class UnifiedApp(tk.Tk):
                 "figure",
             )
             _build_combined_spin(
-                combined_row + 12,
+                combined_row + 13,
                 "Export X-label pad",
                 combined_export_xlabel_pad_var,
                 -24.0,
@@ -115102,7 +115163,7 @@ class UnifiedApp(tk.Tk):
                 "pt",
             )
             _build_combined_spin(
-                combined_row + 13,
+                combined_row + 14,
                 "Export second Y label pad",
                 combined_export_inner_right_labelpad_var,
                 -48.0,
@@ -115111,7 +115172,7 @@ class UnifiedApp(tk.Tk):
                 "pt",
             )
             _build_combined_spin(
-                combined_row + 14,
+                combined_row + 15,
                 "Export detached axis offset",
                 combined_export_detached_offset_var,
                 0.0,
@@ -115120,7 +115181,7 @@ class UnifiedApp(tk.Tk):
                 "axes",
             )
             _build_combined_spin(
-                combined_row + 15,
+                combined_row + 16,
                 "Export detached label pad",
                 combined_export_detached_labelpad_var,
                 -48.0,
@@ -115128,7 +115189,16 @@ class UnifiedApp(tk.Tk):
                 0.5,
                 "pt",
             )
-            next_control_row = combined_row + 16
+            _build_combined_spin(
+                combined_row + 17,
+                "Export colorbar gap from detached axis",
+                combined_export_colorbar_detached_pad_var,
+                0.0,
+                72.0,
+                0.5,
+                "pt",
+            )
+            next_control_row = combined_row + 18
 
         timeline_widgets: List[tk.Widget] = []
         if has_timeline_target:
@@ -115400,6 +115470,10 @@ class UnifiedApp(tk.Tk):
                     combined_detached_labelpad_var,
                     20.0,
                 ),
+                "colorbar_detached_pad_pts": _var_value(
+                    combined_colorbar_detached_pad_var,
+                    6.0,
+                ),
                 "axis_labelpads": {
                     "x": _var_value(combined_xlabel_pad_var, 0.0),
                     "right": _var_value(combined_inner_right_labelpad_var, 20.0),
@@ -115416,6 +115490,10 @@ class UnifiedApp(tk.Tk):
                 "detached_labelpad": _var_value(
                     combined_export_detached_labelpad_var,
                     20.0,
+                ),
+                "colorbar_detached_pad_pts": _var_value(
+                    combined_export_colorbar_detached_pad_var,
+                    6.0,
                 ),
                 "axis_labelpads": {
                     "x": _var_value(combined_export_xlabel_pad_var, 0.0),
@@ -131064,8 +131142,8 @@ class UnifiedApp(tk.Tk):
             silently rewriting saved profile settings.
         Inputs:
             suggestions: Mapping keyed by layout mode with margins, x-label pad,
-                detached offset, detached labelpad, and semantic axis-label
-                padding suggestions.
+            detached offset, detached labelpad, colorbar-to-detached-axis gap,
+            and semantic axis-label padding suggestions.
             refresh_open_preview: When True, rebuild an open Plot Preview after
                 settings are persisted.
         Outputs:
@@ -131202,6 +131280,21 @@ class UnifiedApp(tk.Tk):
                 detached_labelpads.append(float(detached_labelpad_value))
                 if section.get("detached_labelpad") != detached_labelpad_value:
                     section["detached_labelpad"] = detached_labelpad_value
+                    changed = True
+            colorbar_detached_pad = payload.get("colorbar_detached_pad_pts")
+            try:
+                colorbar_detached_pad_value = float(colorbar_detached_pad)
+            except Exception:
+                colorbar_detached_pad_value = None
+            if colorbar_detached_pad_value is not None and math.isfinite(
+                colorbar_detached_pad_value
+            ):
+                colorbar_detached_pad_value = max(0.0, colorbar_detached_pad_value)
+                if (
+                    section.get("colorbar_detached_pad_pts")
+                    != colorbar_detached_pad_value
+                ):
+                    section["colorbar_detached_pad_pts"] = colorbar_detached_pad_value
                     changed = True
             detached_offset = payload.get("detached_spine_offset")
             try:
@@ -240772,6 +240865,7 @@ class UnifiedApp(tk.Tk):
         profile_xlabel_pad = layout_section.get("xlabel_pad_pts")
         profile_detached_offset = layout_section.get("detached_spine_offset")
         profile_detached_labelpad = layout_section.get("detached_labelpad")
+        profile_colorbar_detached_pad = layout_section.get("colorbar_detached_pad_pts")
         mirror_detached_labelpad = bool(
             layout_profile.get("mirror_detached_labelpad", False)
         )
@@ -240876,6 +240970,7 @@ class UnifiedApp(tk.Tk):
             "baseline_margins": profile_margins,
             "legend_anchor_y": profile_legend_anchor_y,
             "xlabel_pad_value": xlabel_pad_value,
+            "colorbar_detached_pad_pts": profile_colorbar_detached_pad,
             "axis_label_overrides": axis_label_overrides,
             "labelpad_overrides": labelpad_overrides,
             "layout_section": layout_section,
@@ -241188,6 +241283,7 @@ class UnifiedApp(tk.Tk):
             config.get("suptitle_y_value"),
             config.get("top_margin_pct"),
             config.get("xlabel_pad_value"),
+            config.get("colorbar_detached_pad_pts"),
             tuple(sorted(baseline_margins.items())),
             tuple(sorted(labelpad_overrides.items())),
             tuple(sorted(label_overrides.items())),
@@ -243090,6 +243186,40 @@ class UnifiedApp(tk.Tk):
                     )
             self._combined_layout_state = layout_sig
             self._combined_layout_dirty = False
+            layout_artists = getattr(fig, "_gl260_layout_artists", {})
+            existing_colorbar = (
+                layout_artists.get("temperature_colorbar")
+                if isinstance(layout_artists, Mapping)
+                else None
+            )
+            if (
+                existing_colorbar is not None
+                and getattr(existing_colorbar, "mappable", None) is not None
+            ):
+                temperature_settings = _normalize_temperature_visualization_settings(
+                    settings
+                )
+                temperature_mode = temperature_settings["temperature_visualization"]
+                if temperature_mode in {"background", "linecolor"}:
+                    # Reuse the existing ScalarMappable so a layout-only refresh
+                    # moves the colorbar without recomputing temperature data.
+                    mode_key = (
+                        "temperature_background"
+                        if temperature_mode == "background"
+                        else "temperature_line"
+                    )
+                    colorbar_visual = SimpleNamespace(
+                        valid=True,
+                        config=temperature_settings[mode_key],
+                        mappable=existing_colorbar.mappable,
+                    )
+                    create_temperature_colorbar(
+                        fig,
+                        ax,
+                        colorbar_visual,
+                        layout_manager=layout_mgr,
+                        detached_axis_pad_pts=config.get("colorbar_detached_pad_pts"),
+                    )
         fig._gl260_layout_manager = layout_mgr  # type: ignore[attr-defined]
 
         try:
@@ -243395,6 +243525,7 @@ class UnifiedApp(tk.Tk):
                 baseline_margins=profile_margins,
                 legend_anchor_y=profile_legend_anchor_y,
                 xlabel_pad_pts=xlabel_pad_value,
+                colorbar_detached_pad_pts=config.get("colorbar_detached_pad_pts"),
                 mode=mode,
                 fig_size=fig_size,
                 render_ctx=render_ctx,
