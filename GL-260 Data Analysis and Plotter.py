@@ -238980,8 +238980,8 @@ class UnifiedApp(tk.Tk):
         Returns:
             None.
         Side Effects:
-            Creates a Tk dialog, temporarily attaches a SpanSelector, persists
-            accepted ranges, and regenerates the combined plot.
+            Creates a Tk dialog, temporarily attaches a SpanSelector, stages
+            accepted ranges, and regenerates the combined plot only on Apply.
         Exceptions:
             Missing canvas/axis state displays no selector rather than failing.
         """
@@ -239007,30 +239007,36 @@ class UnifiedApp(tk.Tk):
         window.minsize(440, min(380, dialog_height))
         body = ttk.Frame(window, padding=12)
         body.pack(fill="both", expand=True)
-        ttk.Label(body, text="Excluded combined-plot ranges (source time units)").pack(anchor="w")
+        ttk.Label(body, text="Staged combined-plot ranges (source time units)").pack(
+            anchor="w"
+        )
         tree = ttk.Treeview(body, columns=("start", "end"), show="headings", height=8)
         tree.heading("start", text="Start")
         tree.heading("end", text="End")
         tree.column("start", width=185, anchor="e")
         tree.column("end", width=185, anchor="e")
         tree.pack(fill="both", expand=True, pady=(6, 8))
+        # Draft ranges keep every drag reversible until the user explicitly
+        # applies the complete set, avoiding repeated expensive plot rebuilds.
+        draft_ranges = self._combined_exclusion_ranges()
 
         def _refresh_list() -> None:
-            """Refresh the manager's persisted-range table.
+            """Refresh the manager's staged-range table.
 
-            Purpose/Why: Keep reversible exclusions visible after every edit.
-            Inputs/Returns: None; reads the active data-context store.
+            Purpose/Why: Keep pending exclusions visible after every edit before
+            Apply commits them to the active data context.
+            Inputs/Returns: None; reads the dialog-local draft range list.
             Side Effects/Errors: Replaces Treeview rows; malformed ranges are
             already normalized by the store resolver.
             """
             tree.delete(*tree.get_children())
-            for index, (start, end) in enumerate(self._combined_exclusion_ranges()):
+            for index, (start, end) in enumerate(draft_ranges):
                 tree.insert("", "end", iid=str(index), values=(f"{start:g}", f"{end:g}"))
 
         def _rerender() -> None:
-            """Regenerate the combined view after an exclusion change.
+            """Regenerate the combined view after applying staged exclusions.
 
-            Purpose/Why: Apply display-only compression immediately without
+            Purpose/Why: Apply the final display-only compression once without
             touching source data or analysis results.
             Inputs/Returns: None.
             Side Effects/Errors: Rebuilds the combined tab; UI failures are ignored.
@@ -239041,86 +239047,130 @@ class UnifiedApp(tk.Tk):
                 pass
 
         def _remove_selected() -> None:
-            """Remove selected exclusions and regenerate the combined plot.
+            """Remove selected exclusions from the staged range set.
 
-            Purpose/Why: Provide a reversible correction path for drag selections.
+            Purpose/Why: Provide a reversible correction path for drag selections
+            before the user commits the complete set.
             Inputs/Returns: None; reads selected Treeview row IDs.
-            Side Effects/Errors: Updates persisted exclusions and rerenders; invalid
-            row IDs are skipped.
+            Side Effects/Errors: Updates the dialog-local drafts and refreshes the
+            table; invalid row IDs are skipped.
             """
             selected = tree.selection()
-            ranges = self._combined_exclusion_ranges()
             for item_id in sorted(selected, key=lambda item: int(item), reverse=True):
                 try:
-                    ranges.pop(int(item_id))
+                    draft_ranges.pop(int(item_id))
                 except (TypeError, ValueError, IndexError):
                     continue
-            self._set_combined_exclusion_ranges(ranges)
             _refresh_list()
-            _rerender()
 
         def _clear_all() -> None:
-            """Clear this data context's exclusions and regenerate the plot.
+            """Clear all staged exclusions without altering the current plot.
 
-            Purpose/Why: Restore the complete combined timeline in one action.
+            Purpose/Why: Let users discard the current proposed range set before
+            deciding whether to apply it.
             Inputs/Returns: None.
-            Side Effects/Errors: Removes persisted display state and rerenders;
-            persistence errors are handled by the owning setter.
+            Side Effects/Errors: Empties the dialog-local draft list and refreshes
+            the table; persistence is deferred until Apply.
             """
-            self._set_combined_exclusion_ranges([])
+            draft_ranges.clear()
             _refresh_list()
-            _rerender()
 
         def _select_range() -> None:
-            """Arm a one-shot horizontal selector on the current combined plot.
+            """Arm a horizontal selector that stages multiple plot ranges.
 
-            Purpose/Why: Let the operator choose unwanted data directly in view.
+            Purpose/Why: Let the operator choose several unwanted spans directly
+            in view before one explicit Apply.
             Inputs/Returns: None; uses the live primary axis.
             Side Effects/Errors: Attaches a selector to the canvas; no action is
             taken when the primary axis is unavailable.
             """
-            axes = [axis for axis in fig.get_axes() if getattr(axis, "_gl260_axis_role", "") == "primary"]
+            axes = [
+                axis
+                for axis in fig.get_axes()
+                if getattr(axis, "_gl260_axis_role", "") == "primary"
+            ]
             if not axes:
                 return
+            previous_selector = getattr(self, "_combined_exclusion_selector", None)
+            try:
+                if previous_selector is not None:
+                    previous_selector.set_active(False)
+            except Exception:
+                # An already-disconnected selector must not block a fresh one.
+                pass
             active_ranges = self._combined_exclusion_ranges()
 
             def _commit(display_start: float, display_end: float) -> None:
-                """Convert a selected display span to source coordinates and save it.
+                """Convert a selected display span to source coordinates and stage it.
 
-                Purpose/Why: Persist selections against source data even after
-                earlier exclusions have compressed the visible x-axis.
+                Purpose/Why: Preserve selections against source data even after
+                earlier saved exclusions have compressed the visible x-axis.
                 Inputs: Display-x start/end floats from Matplotlib.
                 Returns: None.
-                Side Effects/Errors: Saves one normalized range, disables the
-                selector, refreshes the table, and rerenders; selector failures
-                are ignored.
+                Side Effects/Errors: Adds one normalized range to the dialog-local
+                drafts and refreshes the table. The active selector remains armed
+                for further drags; malformed selections are ignored.
                 """
                 low, high = sorted((float(display_start), float(display_end)))
                 source_range = (
                     _combined_exclusion_source_x(low, active_ranges),
                     _combined_exclusion_source_x(high, active_ranges),
                 )
-                self._set_combined_exclusion_ranges([*active_ranges, source_range])
-                try:
-                    selector.set_active(False)
-                except Exception:
-                    pass
+                draft_ranges[:] = _normalize_combined_exclusion_ranges(
+                    [*draft_ranges, source_range]
+                )
                 _refresh_list()
-                _rerender()
 
             selector = SpanSelector(
-                axes[0], _commit, "horizontal", useblit=False, interactive=False,
+                axes[0],
+                _commit,
+                "horizontal",
+                useblit=False,
+                interactive=False,
                 props={"facecolor": "#64748b", "edgecolor": "#1e293b", "alpha": 0.28},
             )
             self._combined_exclusion_selector = selector
-            ttk.Label(body, text="Drag across the combined plot to exclude that span.").pack(anchor="w")
+            ttk.Label(
+                body,
+                text="Drag across the combined plot to stage ranges, then click Apply.",
+            ).pack(anchor="w")
+
+        def _apply() -> None:
+            """Persist staged exclusions and rebuild the combined plot once.
+
+            Purpose/Why: Commit the user's complete range set only after they
+            finish selecting, avoiding a blocking rebuild after every drag.
+            Inputs/Returns: None; uses the dialog-local draft range list.
+            Side Effects/Errors: Saves normalized exclusions, rerenders the
+            combined plot, and closes the dialog. Persistence errors are handled
+            by the owning setter.
+            """
+            self._set_combined_exclusion_ranges(draft_ranges)
+            _rerender()
+            window.destroy()
+
+        def _cancel() -> None:
+            """Close the dialog without persisting staged exclusion changes.
+
+            Purpose/Why: Preserve the existing combined plot when a user decides
+            not to apply the proposed range set.
+            Inputs/Returns: None.
+            Side Effects/Errors: Destroys the dialog and leaves saved exclusions
+            unchanged.
+            """
+            window.destroy()
 
         actions = ttk.Frame(body)
         actions.pack(fill="x")
         ttk.Button(actions, text="Select on Plot", command=_select_range).pack(side="left")
-        ttk.Button(actions, text="Remove Selected", command=_remove_selected).pack(side="left", padx=(6, 0))
-        ttk.Button(actions, text="Clear All", command=_clear_all).pack(side="left", padx=(6, 0))
-        ttk.Button(actions, text="Close", command=window.destroy).pack(side="right")
+        ttk.Button(actions, text="Remove Selected", command=_remove_selected).pack(
+            side="left", padx=(6, 0)
+        )
+        ttk.Button(actions, text="Clear All", command=_clear_all).pack(
+            side="left", padx=(6, 0)
+        )
+        ttk.Button(actions, text="Apply", command=_apply).pack(side="right")
+        ttk.Button(actions, text="Cancel", command=_cancel).pack(side="right", padx=(0, 6))
 
         def _clear_window_reference(_event: Any = None) -> None:
             """Clear the manager reference once its Tk window has closed.
@@ -239134,11 +239184,19 @@ class UnifiedApp(tk.Tk):
             Returns:
                 None.
             Side Effects:
-                Removes this dialog's instance reference from the application.
+                Deactivates this dialog's selector and removes its instance
+                reference from the application.
             Exceptions:
                 Ignores unrelated child-widget destroy events.
             """
             if _event is None or _event.widget is window:
+                selector = getattr(self, "_combined_exclusion_selector", None)
+                try:
+                    if selector is not None:
+                        selector.set_active(False)
+                except Exception:
+                    # The figure may already be destroyed during Tk teardown.
+                    pass
                 if getattr(self, "_combined_exclusion_manager_window", None) is window:
                     self._combined_exclusion_manager_window = None
 
