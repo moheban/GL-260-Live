@@ -146684,9 +146684,47 @@ class UnifiedApp(tk.Tk):
             fr_axis_offset, textvariable=self.combined_deriv_axis_offset, width=6
         ).grid(row=0, column=1, padx=6)
 
+        temperature_visual_frame = ttk.Labelframe(
+            lf_axes, text="Temperature Visualization"
+        )
+        temperature_visual_frame.grid(
+            row=2, column=0, columnspan=4, sticky="ew", padx=6, pady=(4, 2)
+        )
+        temperature_visual_frame.grid_columnconfigure(1, weight=1)
+        ttk.Label(temperature_visual_frame, text="Mode").grid(
+            row=0, column=0, sticky="w", padx=6, pady=3
+        )
+        ttk.Combobox(
+            temperature_visual_frame,
+            textvariable=self.temperature_visualization,
+            values=TEMPERATURE_VISUALIZATION_MODES,
+            state="readonly",
+            width=14,
+        ).grid(row=0, column=1, sticky="w", padx=6, pady=3)
+        ttk.Label(temperature_visual_frame, text="Temperature source").grid(
+            row=0, column=2, sticky="w", padx=6, pady=3
+        )
+        ttk.Combobox(
+            temperature_visual_frame,
+            textvariable=self.temperature_source,
+            values=("auto", "z", "z2"),
+            state="readonly",
+            width=8,
+        ).grid(row=0, column=3, sticky="w", padx=6, pady=3)
+        ttk.Checkbutton(
+            temperature_visual_frame,
+            text="Enable Background mode",
+            variable=self.temperature_background_enabled,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=3)
+        ttk.Checkbutton(
+            temperature_visual_frame,
+            text="Enable Line Color mode",
+            variable=self.temperature_line_enabled,
+        ).grid(row=1, column=2, columnspan=2, sticky="w", padx=6, pady=3)
+
         auto_range_frame = ttk.Labelframe(lf_axes, text="Auto-Range Targets")
         auto_range_frame.grid(
-            row=2, column=0, columnspan=4, sticky="ew", padx=6, pady=(6, 4)
+            row=3, column=0, columnspan=4, sticky="ew", padx=6, pady=(6, 4)
         )
         auto_range_frame.grid_columnconfigure(0, weight=1)
         auto_range_frame.grid_columnconfigure(1, weight=1)
@@ -146713,7 +146751,7 @@ class UnifiedApp(tk.Tk):
             text="Open Auto-Axis Dialog...",
             command=self._open_axis_range_preferences,
         )
-        btn_auto_axis_settings.grid(row=3, column=0, sticky="w", padx=6, pady=(4, 2))
+        btn_auto_axis_settings.grid(row=4, column=0, sticky="w", padx=6, pady=(4, 2))
 
         self._attach_tooltip(
             fr_axis_offset,
@@ -205623,7 +205661,6 @@ class UnifiedApp(tk.Tk):
             structure_sig,
             layout_sig,
         )
-
     def _apply_combined_title_override(
         self, fig: Figure, title_override: str
     ) -> None:
