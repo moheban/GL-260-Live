@@ -79341,10 +79341,14 @@ def create_temperature_colorbar(fig: Figure, ax: Axes, visual: TemperatureVisual
         occupied = Bbox.union(occupied_boxes) if occupied_boxes else host_position
         if location == "right":
             clearance = max(0.0, float(occupied.x1 - host_position.x1))
-            anchor = (1.0 + (clearance / host_position.width) + pad, 0.0, width, 1.0)
+            requested_x = 1.0 + (clearance / host_position.width) + pad
+            max_x = (1.0 - host_position.x0) / host_position.width - width
+            anchor = (min(requested_x, max_x), 0.0, width, 1.0)
         elif location == "left":
             clearance = max(0.0, float(host_position.x0 - occupied.x0))
-            anchor = (-(clearance / host_position.width) - pad - width, 0.0, width, 1.0)
+            requested_x = -(clearance / host_position.width) - pad - width
+            min_x = -host_position.x0 / host_position.width
+            anchor = (max(requested_x, min_x), 0.0, width, 1.0)
         elif location == "top":
             anchor = (0.0, 1.0 + pad, 1.0, width)
         else:
