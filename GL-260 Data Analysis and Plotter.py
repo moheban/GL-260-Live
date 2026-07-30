@@ -1033,7 +1033,14 @@ from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.lines import Line2D
 from matplotlib.transforms import Bbox, blended_transform_factory
 
-from matplotlib.ticker import FuncFormatter, ScalarFormatter
+from matplotlib.ticker import (
+    AutoLocator,
+    AutoMinorLocator,
+    FixedLocator,
+    FuncFormatter,
+    MultipleLocator,
+    ScalarFormatter,
+)
 from matplotlib import font_manager, mathtext
 from matplotlib.ft2font import FT2Font
 
@@ -46502,13 +46509,13 @@ def _regression_test_combined_outer_axis_none_selection_controls_zero_line() -> 
 
 
 def _regression_test_combined_exclusion_coordinate_mapping() -> None:
-    """Validate exclusions retain elapsed-time coordinates and mask their spans.
+    """Validate exclusions compact the plot without relabeling elapsed time.
 
     Purpose:
-        Cover the source-coordinate masking used by direct range selection.
+        Cover compressed display coordinates and their source-time inverse.
     Why:
-        A display-only exclusion must not recalculate elapsed time after the
-        hidden span, and later selections must retain source coordinates.
+        A combined axis break must remove excluded width while labels and later
+        selections retain elapsed time calculated before exclusions.
     Inputs:
         None.
     Returns:
@@ -46516,22 +46523,22 @@ def _regression_test_combined_exclusion_coordinate_mapping() -> None:
     Side Effects:
         None.
     Exceptions:
-        Raises AssertionError when normalization, masking, or coordinate
-        preservation regresses.
+        Raises AssertionError when normalization, compression, or source-time
+        inversion regresses.
     """
     ranges = _normalize_combined_exclusion_ranges(
         [(4.0, 6.0), (5.5, 8.0), (12.0, 14.0)]
     )
     if ranges != [(4.0, 8.0), (12.0, 14.0)]:
         raise AssertionError(f"Unexpected normalized exclusions: {ranges!r}")
-    display = _combined_exclusion_display_x(
+    compressed = _combined_exclusion_display_x(
         np.asarray([0.0, 4.0, 8.0, 10.0, 12.0, 15.0]), ranges
     )
-    expected = np.asarray([0.0, np.nan, np.nan, 10.0, np.nan, 15.0])
-    if not np.allclose(display, expected, equal_nan=True):
-        raise AssertionError(f"Unexpected elapsed-time coordinates: {display!r}")
-    if abs(_combined_exclusion_source_x(10.0, ranges) - 10.0) > 1e-9:
-        raise AssertionError("Selection coordinate did not retain source x=10.")
+    expected = np.asarray([0.0, np.nan, np.nan, 6.0, np.nan, 9.0])
+    if not np.allclose(compressed, expected, equal_nan=True):
+        raise AssertionError(f"Unexpected compressed coordinates: {compressed!r}")
+    if abs(_combined_exclusion_source_x(6.0, ranges) - 10.0) > 1e-9:
+        raise AssertionError("Compressed coordinate did not recover source x=10.")
 
 
 def _regression_test_combined_outer_axis_none_skips_third_axis_render() -> None:
@@ -94666,18 +94673,18 @@ def _normalize_combined_exclusion_ranges(value: Any) -> list[tuple[float, float]
 def _combined_exclusion_display_x(
     values: Any, ranges: list[tuple[float, float]]
 ) -> np.ndarray:
-    """Mask excluded source x values without changing elapsed-time coordinates.
+    """Map source x values to gap-compressed combined-plot coordinates.
 
     Purpose:
-        Preserve the original elapsed-time basis while hiding selected samples.
+        Remove excluded spans from the rendered width while masking their samples.
     Why:
-        Excluding a span is a display-only omission: subsequent samples must
-        remain at their source elapsed times instead of being shifted left.
+        The plot needs a compact visual break, while tick labels continue to
+        represent the original stitched elapsed-time coordinates.
     Inputs:
         values: Numeric source x-array.
         ranges: Normalized excluded source x pairs.
     Returns:
-        Float ndarray in source display coordinates; excluded samples are NaN.
+        Float ndarray in compressed display coordinates; excluded samples are NaN.
     Side Effects:
         None.
     Exceptions:
@@ -94692,24 +94699,26 @@ def _combined_exclusion_display_x(
     for start, end in ranges:
         hidden = valid & (source >= start) & (source <= end)
         display[hidden] = np.nan
+        after = valid & (source > end)
+        display[after] -= end - start
     return display
 
 
 def _combined_exclusion_source_x(
     display_value: float, ranges: list[tuple[float, float]]
 ) -> float:
-    """Return a combined-plot selection coordinate in source elapsed-time units.
+    """Invert a compressed combined-plot coordinate to source elapsed time.
 
     Purpose:
-        Preserve a live span-selector coordinate for persistence.
+        Translate a display coordinate for source-range persistence and labeling.
     Why:
-        Combined exclusions retain source coordinates, so later selections are
-        already anchored to the unmodified elapsed-time axis.
+        The visible axis removes excluded width, but selections and labels must
+        continue to use the elapsed time calculated during data stitching.
     Inputs:
         display_value: Current combined-plot x coordinate.
         ranges: Normalized excluded source x pairs.
     Returns:
-        Unchanged source x coordinate as a float.
+        Source elapsed-time coordinate as a float.
     Side Effects:
         None.
     Exceptions:
@@ -94717,7 +94726,74 @@ def _combined_exclusion_source_x(
     """
     if not math.isfinite(display_value):
         return display_value
-    return float(display_value)
+    source = float(display_value)
+    removed = 0.0
+    for start, end in ranges:
+        compressed_start = start - removed
+        if display_value < compressed_start:
+            break
+        source += end - start
+        removed += end - start
+    return source
+
+
+def _apply_combined_exclusion_time_axis(
+    axis: Axes,
+    ranges: Sequence[Tuple[float, float]],
+    source_time_range: Tuple[float, float],
+    auto_time_ticks: bool,
+    major_tick: float,
+    minor_tick: float,
+) -> None:
+    """Configure compressed x ticks to display original stitched elapsed time.
+
+    Purpose:
+        Position tick marks on the compacted plot while displaying source-time
+        labels after one or more excluded intervals.
+    Why:
+        A normal locator interprets compressed positions as recalculated elapsed
+        time, which incorrectly relabels data after an axis break.
+    Inputs:
+        axis: Primary combined Matplotlib axis.
+        ranges: Normalized source-time exclusions.
+        source_time_range: Minimum and maximum unmodified elapsed times.
+        auto_time_ticks: Whether automatic major tick selection is enabled.
+        major_tick: Manual major tick interval when automatic ticks are disabled.
+        minor_tick: Manual minor tick interval when automatic ticks are disabled.
+    Returns:
+        None.
+    Side Effects:
+        Replaces x-axis locators and formatter on ``axis``.
+    Exceptions:
+        Invalid ranges or intervals fall back to Matplotlib's standard locators.
+    """
+    normalized = _normalize_combined_exclusion_ranges(ranges)
+    if not normalized:
+        return
+    source_min, source_max = source_time_range
+    if not (math.isfinite(source_min) and math.isfinite(source_max)):
+        return
+    if source_max < source_min:
+        source_min, source_max = source_max, source_min
+    try:
+        major_locator = AutoLocator() if auto_time_ticks else MultipleLocator(major_tick)
+        major_source = major_locator.tick_values(source_min, source_max)
+        major_display = _combined_exclusion_display_x(major_source, normalized)
+        axis.xaxis.set_major_locator(FixedLocator(major_display[np.isfinite(major_display)]))
+        if not auto_time_ticks:
+            minor_source = MultipleLocator(minor_tick).tick_values(source_min, source_max)
+            minor_display = _combined_exclusion_display_x(minor_source, normalized)
+            axis.xaxis.set_minor_locator(FixedLocator(minor_display[np.isfinite(minor_display)]))
+        else:
+            axis.xaxis.set_minor_locator(AutoMinorLocator())
+        axis.xaxis.set_major_formatter(
+            FuncFormatter(
+                lambda value, _position: f"{_combined_exclusion_source_x(float(value), normalized):g}"
+            )
+        )
+    except Exception:
+        # Keep the established locator behavior if unusual user tick values fail.
+        return
 
 
 def build_combined_triple_axis_figure(
@@ -95882,6 +95958,25 @@ def build_combined_triple_axis_figure(
     if exclusion_ranges:
         fig._gl260_combined_exclusion_ranges = tuple(exclusion_ranges)  # type: ignore[attr-defined]
         fig._gl260_combined_source_x = source_x  # type: ignore[attr-defined]
+        fig._gl260_combined_source_time_range = (min_time, max_time)  # type: ignore[attr-defined]
+        # Short diagonal strokes identify where source elapsed time jumps across
+        # a hidden range, rather than implying a continuous measurement.
+        for start, end in exclusion_ranges:
+            join_x = start - sum(
+                prior_end - prior_start
+                for prior_start, prior_end in exclusion_ranges
+                if prior_end <= start
+            )
+            if time_range[0] < join_x < time_range[1]:
+                ax.plot(
+                    [join_x - 0.006, join_x + 0.006],
+                    [-0.012, 0.012],
+                    transform=ax.get_xaxis_transform(),
+                    color="#4b5563",
+                    clip_on=False,
+                    linewidth=1.1,
+                    zorder=10_000,
+                )
     ax.set_ylim(*primary_settings["ylim"])
     ax.set_zorder(axis_layer_zorders["left"])
     # Keep the primary axes background transparent so high-z primary layers never
@@ -96115,6 +96210,16 @@ def build_combined_triple_axis_figure(
     else:
         ax.xaxis.set_major_locator(MultipleLocator(xmaj_tick))
         ax.xaxis.set_minor_locator(MultipleLocator(xmin_tick))
+
+    if exclusion_ranges:
+        _apply_combined_exclusion_time_axis(
+            ax,
+            exclusion_ranges,
+            (float(min_time), float(max_time)),
+            bool(auto_time_ticks),
+            float(xmaj_tick),
+            float(xmin_tick),
+        )
 
     _apply_axis_ticks(
         ax,
@@ -240872,6 +240977,28 @@ class UnifiedApp(tk.Tk):
             else:
                 ax.xaxis.set_major_locator(MultipleLocator(xmaj_tick))
                 ax.xaxis.set_minor_locator(MultipleLocator(xmin_tick))
+            reuse_exclusion_ranges = _normalize_combined_exclusion_ranges(
+                getattr(fig, "_gl260_combined_exclusion_ranges", ())
+            )
+            reuse_source_time_range = getattr(
+                fig, "_gl260_combined_source_time_range", None
+            )
+            if (
+                reuse_exclusion_ranges
+                and isinstance(reuse_source_time_range, Sequence)
+                and len(reuse_source_time_range) >= 2
+            ):
+                _apply_combined_exclusion_time_axis(
+                    ax,
+                    reuse_exclusion_ranges,
+                    (
+                        float(reuse_source_time_range[0]),
+                        float(reuse_source_time_range[1]),
+                    ),
+                    bool(auto_time_ticks),
+                    float(xmaj_tick),
+                    float(xmin_tick),
+                )
             _apply_axis_ticks(ax, auto_y_ticks, ymaj_tick, ymin_tick)
             ax.tick_params(
                 axis="both", which="major", labelcolor="black", labelsize=tick_fontsize
