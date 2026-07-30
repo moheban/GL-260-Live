@@ -205546,8 +205546,24 @@ class UnifiedApp(tk.Tk):
         export_profile: str,
         title_override: str,
     ) -> Optional[Tuple[Any, ...]]:
-        """Export cache key.
-        Used by combined workflows to export cache key."""
+        """Build an export cache key that includes combined display exclusions.
+
+        Purpose:
+            Identify an export artifact generated from the current combined view.
+        Why:
+            Excluded ranges change the rendered figure and must never reuse an
+            earlier unexcluded export artifact.
+        Inputs:
+            fig_size: Requested export dimensions in inches.
+            export_profile: Active final-report export profile.
+            title_override: Optional report-specific combined title.
+        Returns:
+            Immutable cache-key tuple, or ``None`` when data is unavailable.
+        Side Effects:
+            Resolves prepared data and cycle context for the current dataset.
+        Exceptions:
+            Returns ``None`` when the required render context cannot be built.
+        """
         try:
             data_fingerprint, data_ctx = self._resolve_prepared_data_context(
                 apply_globals=True
@@ -205603,6 +205619,7 @@ class UnifiedApp(tk.Tk):
             title_override or "",
             self._get_export_dpi(),
             data_fingerprint,
+            tuple(self._combined_exclusion_ranges()),
             structure_sig,
             layout_sig,
         )
@@ -237988,6 +238005,10 @@ class UnifiedApp(tk.Tk):
         data_fingerprint, data_ctx = self._resolve_prepared_data_context(
             apply_globals=True, perf=perf_run
         )
+        data_ctx = dict(data_ctx or {})
+        if plot_kind_value in {"fig_combined", "combined"}:
+            # Preview and export must share the same display-only transform.
+            data_ctx["combined_exclusion_ranges"] = self._combined_exclusion_ranges()
 
         gates_ctx = {
             "show_cycle_markers": bool(
