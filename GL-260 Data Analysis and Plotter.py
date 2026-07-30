@@ -93965,6 +93965,10 @@ def layout_health_autofix(
                     break_label.set_position(
                         (float(offset_x), float(offset_y) - required_shift_pts)
                     )
+                    # Annotation offsets are in points. Mark this as a full
+                    # layout adjustment so export performs another renderer pass
+                    # and verifies the first break after the shifted labels land.
+                    adjusted = True
                     result["applied"] = True
                 except Exception:
                     continue
@@ -95900,6 +95904,68 @@ def _draw_combined_exclusion_break_labels(
         pass
 
 
+def _suppress_combined_break_tick_label_collisions(axis: Axes) -> None:
+    """Hide only major tick labels that collide with exclusion-break labels.
+
+    Purpose:
+        Preserve the explicit source-time labels at a compressed-axis break.
+    Why:
+        A normal major locator can place a tick label at the same rendered join,
+        duplicating and overlapping the more informative before/after labels in
+        export previews and saved figures.
+    Inputs:
+        axis: Combined plot primary axis with registered break-label annotations.
+    Outputs:
+        None.
+    Side Effects:
+        Draws the figure for measurement and hides colliding major tick-label
+        artists while retaining their tick marks and all non-colliding labels.
+    Exceptions:
+        Missing canvas, renderer, or annotation geometry leaves tick labels
+        unchanged.
+    """
+    if axis is None or axis.figure is None:
+        return
+    break_labels = list(
+        getattr(axis.figure, "_gl260_combined_exclusion_break_label_artists", [])
+        or []
+    )
+    if not break_labels:
+        return
+    try:
+        canvas = axis.figure.canvas
+        if canvas is None:
+            canvas = FigureCanvasAgg(axis.figure)
+            axis.figure.set_canvas(canvas)
+        canvas.draw()
+        renderer = canvas.get_renderer()
+    except Exception:
+        return
+    for tick_label in axis.get_xticklabels():
+        try:
+            if not tick_label.get_visible():
+                continue
+            tick_bbox = tick_label.get_window_extent(renderer=renderer)
+        except Exception:
+            continue
+        # A small pixel tolerance catches antialiasing/rounding at a join while
+        # avoiding removal of legitimate neighbouring major tick labels.
+        tick_clearance = Bbox.from_extents(
+            tick_bbox.x0 - 1.0,
+            tick_bbox.y0 - 2.0,
+            tick_bbox.x1 + 1.0,
+            tick_bbox.y1 + 2.0,
+        )
+        for break_label in break_labels:
+            try:
+                label_bbox = break_label.get_window_extent(renderer=renderer)
+            except Exception:
+                continue
+            if tick_clearance.overlaps(label_bbox):
+                tick_label.set_visible(False)
+                break
+
+
 def build_combined_triple_axis_figure(
     min_time,
     max_time,
@@ -97712,6 +97778,10 @@ def build_combined_triple_axis_figure(
     except Exception:
         # Best-effort guard; ignore failures to avoid interrupting the workflow.
         pass
+    if exclusion_ranges:
+        # Run after the final renderer pass so only a tick label that actually
+        # collides with a source-time break label is suppressed in preview/export.
+        _suppress_combined_break_tick_label_collisions(ax)
 
     # Cycle legend offsets are normalized against a reference axis so detached
     # spines export consistently across DPI and canvas sizes.
