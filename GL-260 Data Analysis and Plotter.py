@@ -79216,7 +79216,22 @@ def draw_temperature_background(ax: Axes, visual: TemperatureVisual) -> Any:
     try:
         x0, x1 = ax.get_xlim()
         y0, y1 = ax.get_ylim()
-        field = np.broadcast_to(visual.temperature_values[np.newaxis, :], (2, visual.temperature_values.size))
+        finite = np.isfinite(visual.x_values) & np.isfinite(
+            visual.temperature_values
+        )
+        source_x = visual.x_values[finite]
+        source_temp = visual.temperature_values[finite]
+        order = np.argsort(source_x)
+        source_x, source_temp = source_x[order], source_temp[order]
+        source_x, unique_indices = np.unique(source_x, return_index=True)
+        source_temp = source_temp[unique_indices]
+        if source_x.size < 2:
+            return None
+        # `imshow` spaces columns uniformly; resampling onto the displayed time
+        # range prevents irregular source intervals from collapsing into stripes.
+        display_x = np.linspace(float(x0), float(x1), source_x.size)
+        display_temp = np.interp(display_x, source_x, source_temp)
+        field = np.broadcast_to(display_temp[np.newaxis, :], (2, display_temp.size))
         image = ax.imshow(
             field,
             extent=(x0, x1, y0, y1),
@@ -79305,12 +79320,31 @@ def create_temperature_colorbar(fig: Figure, ax: Axes, visual: TemperatureVisual
         from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
         location = visual.config["colorbar_location"]
-        width, pad = float(visual.config["colorbar_width"]), float(visual.config["colorbar_pad"])
+        width = float(visual.config["colorbar_width"])
+        pad = float(visual.config["colorbar_pad"])
         vertical = location in {"left", "right"}
+        canvas = fig.canvas
+        if canvas is None:
+            canvas = FigureCanvasAgg(fig)
+            fig.set_canvas(canvas)
+        canvas.draw()
+        renderer = canvas.get_renderer()
+        host_position = ax.get_position()
+        occupied_boxes = []
+        for candidate_axis in fig.get_axes():
+            try:
+                bbox = candidate_axis.get_tightbbox(renderer)
+                if bbox is not None and candidate_axis.get_visible():
+                    occupied_boxes.append(bbox.transformed(fig.transFigure.inverted()))
+            except Exception:
+                continue
+        occupied = Bbox.union(occupied_boxes) if occupied_boxes else host_position
         if location == "right":
-            anchor = (1.0 + pad, 0.0, width, 1.0)
+            clearance = max(0.0, float(occupied.x1 - host_position.x1))
+            anchor = (1.0 + (clearance / host_position.width) + pad, 0.0, width, 1.0)
         elif location == "left":
-            anchor = (-pad - width, 0.0, width, 1.0)
+            clearance = max(0.0, float(host_position.x0 - occupied.x0))
+            anchor = (-(clearance / host_position.width) - pad - width, 0.0, width, 1.0)
         elif location == "top":
             anchor = (0.0, 1.0 + pad, 1.0, width)
         else:
@@ -92229,6 +92263,33 @@ def _layout_health_general_figure_audit(
             continue
         if bbox.x0 < -0.001 or bbox.x1 > 1.001 or bbox.y0 < -0.001 or bbox.y1 > 1.001:
             _add_issue("legend_off_canvas")
+
+    layout_artists = getattr(fig, "_gl260_layout_artists", {})
+    colorbar_axis = (
+        layout_artists.get("temperature_colorbar_axes")
+        if isinstance(layout_artists, Mapping)
+        else None
+    )
+    colorbar_bbox = _layout_health_bbox_in_fig(fig, colorbar_axis, renderer)
+    if colorbar_bbox is not None:
+        if (
+            colorbar_bbox.x0 < -0.001
+            or colorbar_bbox.x1 > 1.001
+            or colorbar_bbox.y0 < -0.001
+            or colorbar_bbox.y1 > 1.001
+        ):
+            _add_issue("temperature_colorbar_off_canvas")
+        for axis in fig.get_axes():
+            if axis is colorbar_axis or getattr(axis, "_gl260_legend_only", False):
+                continue
+            try:
+                label_artist = axis.yaxis.get_label()
+            except Exception:
+                label_artist = None
+            label_bbox = _layout_health_bbox_in_fig(fig, label_artist, renderer)
+            if _layout_health_bbox_overlap_area(colorbar_bbox, label_bbox) > 1e-8:
+                _add_issue("temperature_colorbar_axis_label_overlap")
+                break
 
     for text_artist in (
         getattr(fig, "_gl260_xlabel_text", None),
