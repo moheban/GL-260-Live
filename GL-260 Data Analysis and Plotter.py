@@ -237713,7 +237713,12 @@ class UnifiedApp(tk.Tk):
         window = tk.Toplevel(self)
         window.title("Combined Plot Exclusions")
         window.transient(self)
-        window.geometry("440x300")
+        screen_height = max(1, int(window.winfo_screenheight()))
+        # The range table and its action row need room at high-DPI scaling; cap
+        # the preferred size below the usable screen height for smaller displays.
+        dialog_height = min(420, max(300, screen_height - 160))
+        window.geometry(f"440x{dialog_height}")
+        window.minsize(440, min(380, dialog_height))
         body = ttk.Frame(window, padding=12)
         body.pack(fill="both", expand=True)
         ttk.Label(body, text="Excluded combined-plot ranges (source time units)").pack(anchor="w")
