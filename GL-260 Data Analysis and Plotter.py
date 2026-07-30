@@ -91790,6 +91790,24 @@ def _layout_health_general_figure_audit(
         elif gap_pts > float(max_gap_pts) + 0.25:
             _add_issue("xlabel_xticklabels_gap_high")
 
+    break_labels = list(
+        getattr(fig, "_gl260_combined_exclusion_break_label_artists", []) or []
+    )
+    if break_labels and primary_xticks_bbox is not None:
+        break_label_gap_pts = None
+        for break_label in break_labels:
+            break_bbox = _layout_health_bbox_in_fig(fig, break_label, renderer)
+            if break_bbox is None:
+                continue
+            gap_pts = float((primary_xticks_bbox.y0 - break_bbox.y1) * fig_h_pts)
+            if break_label_gap_pts is None or gap_pts < break_label_gap_pts:
+                break_label_gap_pts = gap_pts
+            if _layout_health_bbox_overlap_area(break_bbox, primary_xticks_bbox) > 1e-8:
+                _add_issue("combined_break_label_xticklabels_overlap")
+            elif gap_pts < float(min_gap_pts) - 0.25:
+                _add_issue("combined_break_label_xticklabels_gap_low")
+        audit["break_label_tick_gap_pts"] = break_label_gap_pts
+
     for legend in _collect_gl260_legends(fig):
         bbox = _layout_health_bbox_in_fig(fig, legend, renderer)
         if bbox is None:
@@ -93085,6 +93103,39 @@ def layout_health_autofix(
                     except Exception:
                         pass
 
+        if any(
+            issue_name in issues
+            for issue_name in (
+                "combined_break_label_xticklabels_overlap",
+                "combined_break_label_xticklabels_gap_low",
+            )
+        ):
+            break_label_gap_pts = general_audit.get("break_label_tick_gap_pts")
+            required_shift_pts = float(min_gap_pts)
+            if break_label_gap_pts is not None:
+                try:
+                    required_shift_pts = max(
+                        required_shift_pts,
+                        float(min_gap_pts) - float(break_label_gap_pts),
+                    )
+                except Exception:
+                    pass
+            for break_label in list(
+                getattr(
+                    fig,
+                    "_gl260_combined_exclusion_break_label_artists",
+                    [],
+                )
+                or []
+            ):
+                try:
+                    offset_x, offset_y = break_label.get_position()
+                    break_label.set_position(
+                        (float(offset_x), float(offset_y) - required_shift_pts)
+                    )
+                    result["applied"] = True
+                except Exception:
+                    continue
         if any(
             issue_name in issues
             for issue_name in (
@@ -94868,6 +94919,7 @@ def _draw_combined_exclusion_break_labels(
     normalized = _normalize_combined_exclusion_ranges(ranges)
     display_min, display_max = display_time_range
     removed = 0.0
+    break_label_artists: List[Any] = []
     for start, end in normalized:
         join_x = start - removed
         removed += end - start
@@ -94875,28 +94927,36 @@ def _draw_combined_exclusion_break_labels(
             continue
         # Offset labels outward so the paired source values remain legible at
         # the single compressed coordinate occupied by the break marker.
-        axis.annotate(
-            f"{start:.4g}",
-            xy=(join_x, 0.0),
-            xycoords=("data", "axes fraction"),
-            xytext=(-5, -16),
-            textcoords="offset points",
-            ha="right",
-            va="top",
-            fontsize="small",
-            annotation_clip=False,
+        break_label_artists.append(
+            axis.annotate(
+                f"{start:.4g}",
+                xy=(join_x, 0.0),
+                xycoords=("data", "axes fraction"),
+                xytext=(-5, -28),
+                textcoords="offset points",
+                ha="right",
+                va="top",
+                fontsize="small",
+                annotation_clip=False,
+            )
         )
-        axis.annotate(
-            f"{end:.4g}",
-            xy=(join_x, 0.0),
-            xycoords=("data", "axes fraction"),
-            xytext=(5, -16),
-            textcoords="offset points",
-            ha="left",
-            va="top",
-            fontsize="small",
-            annotation_clip=False,
+        break_label_artists.append(
+            axis.annotate(
+                f"{end:.4g}",
+                xy=(join_x, 0.0),
+                xycoords=("data", "axes fraction"),
+                xytext=(5, -28),
+                textcoords="offset points",
+                ha="left",
+                va="top",
+                fontsize="small",
+                annotation_clip=False,
+            )
         )
+    try:
+        axis.figure._gl260_combined_exclusion_break_label_artists = break_label_artists  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
 
 def build_combined_triple_axis_figure(
