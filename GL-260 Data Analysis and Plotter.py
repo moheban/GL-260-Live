@@ -237884,8 +237884,22 @@ class UnifiedApp(tk.Tk):
         self.save_settings()
 
     def _collect_plot_args(self):
-        """Collect plot args.
-        Used to gather plot args into a structured payload."""
+        """Collect live plot arguments and synchronize temperature visual settings.
+
+        Purpose:
+            Return current UI values for every display, preview, and export render.
+        Why:
+            Temperature visualization controls must affect rendering immediately,
+            without requiring a separate Save Settings action.
+        Inputs:
+            None; reads the active Tk variables owned by this application.
+        Outputs:
+            Tuple consumed by core and Combined plot builders.
+        Side Effects:
+            Updates the in-memory temperature visualization settings mapping.
+        Exceptions:
+            Invalid UI values are normalized to safe legacy-compatible defaults.
+        """
 
         min_time = self._safe_get_var(self.min_time, float)
         max_time = self._safe_get_var(self.max_time, float)
@@ -237910,6 +237924,24 @@ class UnifiedApp(tk.Tk):
         show_cycle_markers_on_core = bool(self.show_cycle_markers_on_core.get())
         show_cycle_legend_on_core = bool(self.show_cycle_legend_on_core.get())
         include_moles_core_legend = bool(self.include_moles_core_legend.get())
+        temperature_visual_settings = _normalize_temperature_visualization_settings(
+            settings
+        )
+        temperature_visual_settings["temperature_visualization"] = (
+            self.temperature_visualization.get().strip().lower()
+        )
+        temperature_visual_settings["temperature_source"] = (
+            self.temperature_source.get().strip().lower()
+        )
+        temperature_visual_settings["temperature_background"]["enabled"] = bool(
+            self.temperature_background_enabled.get()
+        )
+        temperature_visual_settings["temperature_line"]["enabled"] = bool(
+            self.temperature_line_enabled.get()
+        )
+        settings.update(
+            _normalize_temperature_visualization_settings(temperature_visual_settings)
+        )
 
         self._last_plot_args = (
             min_time,
@@ -240651,6 +240683,9 @@ class UnifiedApp(tk.Tk):
         base_args = config.get("base_args") or ()
         enable_temp_axis = bool(base_args[22]) if len(base_args) > 22 else False
         enable_deriv_axis = bool(base_args[23]) if len(base_args) > 23 else False
+        temperature_visual_signature = _normalize_temperature_visualization_settings(
+            settings
+        )
         cycle_sig = None
         if isinstance(cycle_overlay, dict):
             peaks = cycle_overlay.get("peak_points") or []
@@ -240675,6 +240710,7 @@ class UnifiedApp(tk.Tk):
             bool(config.get("show_cycle_legend")),
             bool(config.get("include_moles_core")),
             bool(config.get("include_zero_line", True)),
+            repr(temperature_visual_signature),
             self._combined_scatter_signature(
                 ("y1", "y3", "y2", "z", "z2"),
                 scatter_config=scatter_config,
