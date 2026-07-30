@@ -79348,7 +79348,9 @@ def create_temperature_colorbar(
         fig: Owning Figure. ax: Host pressure Axes. visual: Shared color state.
         layout_manager: Optional active PlotLayoutManager.
         detached_axis_pad_pts: Optional gap in points from the outer combined
-            y-axis geometry to the colorbar; None uses the mode colorbar pad.
+            y-axis geometry to the colorbar. The same point value is used as
+            the colorbar label pad so the Layout Health Wizard control keeps
+            the label clear of the colorbar tick-label column.
     Outputs:
         Matplotlib Colorbar, or None when disabled/unavailable.
     Side Effects:
@@ -79406,6 +79408,7 @@ def create_temperature_colorbar(
         host_span = host_position.width if vertical else host_position.height
         bar_span = max(host_span * width, 0.018)
         pad_span = host_span * pad
+        colorbar_labelpad_pts = 6.0
         if vertical and detached_axis_pad_pts is not None:
             try:
                 requested_pad = float(detached_axis_pad_pts)
@@ -79413,6 +79416,7 @@ def create_temperature_colorbar(
                 requested_pad = None
             if requested_pad is not None and math.isfinite(requested_pad):
                 pad_span = max(0.0, requested_pad / max(fig.get_figwidth() * 72.0, 1.0))
+                colorbar_labelpad_pts = max(0.0, requested_pad)
         if location == "right":
             # The detached third axis extends with the subplot width.  Reserve the
             # measured overflow itself, then remeasure, so the bar is external to
@@ -79529,10 +79533,17 @@ def create_temperature_colorbar(
         tick_fontsize = max(tick_sizes, default=10.0)
         if location == "right":
             colorbar.set_label(
-                visual.config["label"], rotation=270, fontsize=label_fontsize
+                visual.config["label"],
+                rotation=270,
+                fontsize=label_fontsize,
+                labelpad=colorbar_labelpad_pts,
             )
         else:
-            colorbar.set_label(visual.config["label"], fontsize=label_fontsize)
+            colorbar.set_label(
+                visual.config["label"],
+                fontsize=label_fontsize,
+                labelpad=colorbar_labelpad_pts,
+            )
         cax.tick_params(labelsize=tick_fontsize)
         register_layout_artist(
             fig,
@@ -92385,6 +92396,7 @@ def _layout_health_general_figure_audit(
         "xlabel_bbox": None,
         "xlabel_tick_gap_pts": None,
         "colorbar_axis": None,
+        "colorbar_label_tick_gap_pts": None,
     }
     if fig is None or renderer is None:
         return audit
@@ -92576,6 +92588,27 @@ def _layout_health_general_figure_audit(
             if _layout_health_bbox_overlap_area(measured_colorbar_bbox, label_bbox) > 1e-8:
                 _add_issue("temperature_colorbar_axis_label_overlap")
                 break
+        try:
+            colorbar_label = colorbar_axis.yaxis.get_label()
+        except Exception:
+            colorbar_label = None
+        colorbar_label_bbox = _layout_health_bbox_in_fig(
+            fig, colorbar_label, renderer
+        )
+        colorbar_ticks_bbox = _layout_health_axis_ticklabels_bbox(
+            fig, colorbar_axis.yaxis, renderer
+        )
+        if colorbar_label_bbox is not None and colorbar_ticks_bbox is not None:
+            # A right-side colorbar label is outside its tick column; this
+            # measured gap is the authoritative test for label-pad adequacy.
+            colorbar_gap_pts = float(
+                (colorbar_label_bbox.x0 - colorbar_ticks_bbox.x1) * fig_w_pts
+            )
+            audit["colorbar_label_tick_gap_pts"] = colorbar_gap_pts
+            if _layout_health_bbox_overlap_area(
+                colorbar_label_bbox, colorbar_ticks_bbox
+            ) > 1e-8 or colorbar_gap_pts < float(min_axis_label_tick_gap_pts) - 0.25:
+                _add_issue("temperature_colorbar_label_tick_overlap")
 
     for text_artist in (
         getattr(fig, "_gl260_xlabel_text", None),
@@ -93570,6 +93603,32 @@ def layout_health_autofix(
         )
 
         adjusted = False
+        if "temperature_colorbar_label_tick_overlap" in issues:
+            colorbar_axis = general_audit.get("colorbar_axis")
+            colorbar_gap_pts = _safe_float(
+                general_audit.get("colorbar_label_tick_gap_pts")
+            )
+            if isinstance(colorbar_axis, Axes) and colorbar_gap_pts is not None:
+                required_pad_pts = max(
+                    0.0,
+                    float(min_axis_label_tick_gap_pts) - float(colorbar_gap_pts),
+                )
+                try:
+                    current_pad_pts = float(colorbar_axis.yaxis.labelpad)
+                except Exception:
+                    current_pad_pts = 0.0
+                new_pad_pts = min(96.0, current_pad_pts + required_pad_pts)
+                if new_pad_pts > current_pad_pts + 1e-6:
+                    try:
+                        colorbar_axis.yaxis.labelpad = new_pad_pts
+                        metadata = getattr(
+                            fig, "_gl260_temperature_colorbar_layout", None
+                        )
+                        if isinstance(metadata, dict):
+                            metadata["detached_axis_pad_pts"] = new_pad_pts
+                        adjusted = True
+                    except Exception:
+                        pass
         if (
             legend_conflict_checks_enabled
             and timeline_mode
@@ -115209,7 +115268,7 @@ class UnifiedApp(tk.Tk):
             )
             _build_combined_spin(
                 combined_row + 8,
-                "Display colorbar gap from detached axis",
+                "Display colorbar label/axis gap",
                 combined_colorbar_detached_pad_var,
                 0.0,
                 72.0,
@@ -115290,7 +115349,7 @@ class UnifiedApp(tk.Tk):
             )
             _build_combined_spin(
                 combined_row + 17,
-                "Export colorbar gap from detached axis",
+                "Export colorbar label/axis gap",
                 combined_export_colorbar_detached_pad_var,
                 0.0,
                 72.0,
