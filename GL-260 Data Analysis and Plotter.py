@@ -1038,6 +1038,7 @@ from matplotlib.ticker import (
     AutoMinorLocator,
     FixedLocator,
     FuncFormatter,
+    MaxNLocator,
     MultipleLocator,
     ScalarFormatter,
 )
@@ -94776,30 +94777,57 @@ def _apply_combined_exclusion_time_axis(
     if source_max < source_min:
         source_min, source_max = source_max, source_min
     try:
-        major_locator = (
-            AutoLocator() if auto_time_ticks else MultipleLocator(major_tick)
+        segments: List[Tuple[float, float]] = []
+        cursor = source_min
+        for start, end in normalized:
+            if start > cursor:
+                segments.append((cursor, min(start, source_max)))
+            cursor = max(cursor, end)
+        if cursor < source_max:
+            segments.append((cursor, source_max))
+        total_visible_width = sum(
+            max(0.0, high - low) for low, high in segments
         )
-        major_source = major_locator.tick_values(source_min, source_max)
+        major_candidates: List[float] = []
+        minor_candidates: List[float] = []
+        for low, high in segments:
+            if high <= low:
+                continue
+            if auto_time_ticks:
+                width_fraction = (high - low) / max(total_visible_width, 1e-12)
+                major_locator = MaxNLocator(
+                    nbins=max(2, min(5, round(2 + (width_fraction * 8)))),
+                    min_n_ticks=2,
+                )
+            else:
+                major_locator = MultipleLocator(major_tick)
+            segment_major = major_locator.tick_values(low, high)
+            segment_major = segment_major[
+                (segment_major >= low - 1e-12) & (segment_major <= high + 1e-12)
+            ]
+            major_candidates.extend(float(value) for value in segment_major)
+            if auto_time_ticks:
+                for major_low, major_high in zip(
+                    segment_major[:-1], segment_major[1:]
+                ):
+                    step = (float(major_high) - float(major_low)) / 5.0
+                    minor_candidates.extend(
+                        float(major_low) + (step * index)
+                        for index in range(1, 5)
+                    )
+            else:
+                segment_minor = MultipleLocator(minor_tick).tick_values(low, high)
+                minor_candidates.extend(
+                    float(value)
+                    for value in segment_minor
+                    if low - 1e-12 <= value <= high + 1e-12
+                )
+        major_source = np.asarray(sorted(set(major_candidates)), dtype=float)
+        minor_source = np.asarray(sorted(set(minor_candidates)), dtype=float)
         major_display = _combined_exclusion_display_x(major_source, normalized)
-        visible_major_source = major_source[np.isfinite(major_display)]
         axis.xaxis.set_major_locator(
             FixedLocator(major_display[np.isfinite(major_display)])
         )
-        if auto_time_ticks:
-            # Derive minor positions in source time instead of subdividing the
-            # compressed display gaps, which creates misleading minor ticks.
-            minor_candidates: List[float] = []
-            for low, high in zip(visible_major_source[:-1], visible_major_source[1:]):
-                step = (float(high) - float(low)) / 5.0
-                if step > 0.0:
-                    minor_candidates.extend(
-                        float(low) + (step * index) for index in range(1, 5)
-                    )
-            minor_source = np.asarray(minor_candidates, dtype=float)
-        else:
-            minor_source = MultipleLocator(minor_tick).tick_values(
-                source_min, source_max
-            )
         minor_display = _combined_exclusion_display_x(minor_source, normalized)
         axis.xaxis.set_minor_locator(
             FixedLocator(minor_display[np.isfinite(minor_display)])
@@ -94848,7 +94876,7 @@ def _draw_combined_exclusion_break_labels(
         # Offset labels outward so the paired source values remain legible at
         # the single compressed coordinate occupied by the break marker.
         axis.annotate(
-            f"{start:g}",
+            f"{start:.4g}",
             xy=(join_x, 0.0),
             xycoords=("data", "axes fraction"),
             xytext=(-5, -16),
@@ -94859,7 +94887,7 @@ def _draw_combined_exclusion_break_labels(
             annotation_clip=False,
         )
         axis.annotate(
-            f"{end:g}",
+            f"{end:.4g}",
             xy=(join_x, 0.0),
             xycoords=("data", "axes fraction"),
             xytext=(5, -16),
