@@ -2182,6 +2182,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from collections import OrderedDict, defaultdict
+from collections.abc import Sequence as SequenceABC
 
 from dataclasses import asdict, dataclass, field, replace
 
@@ -46543,6 +46544,17 @@ def _regression_test_combined_exclusion_coordinate_mapping() -> None:
         raise AssertionError(f"Unexpected compressed coordinates: {compressed!r}")
     if abs(_combined_exclusion_source_x(6.0, ranges) - 10.0) > 1e-9:
         raise AssertionError("Compressed coordinate did not recover source x=10.")
+    visible_range = _combined_exclusion_display_range((2.0, 16.0), ranges)
+    if not np.allclose(visible_range, (2.0, 10.0)):
+        raise AssertionError(
+            "Configured combined x-range should map to compacted coordinates, "
+            f"got {visible_range!r}."
+        )
+    hidden_range = _combined_exclusion_display_range((5.0, 7.0), ranges)
+    if not (hidden_range[0] < 4.0 < hidden_range[1]):
+        raise AssertionError(
+            "An all-hidden configured range should remain localized at its axis break."
+        )
 
 
 def _regression_test_combined_outer_axis_none_skips_third_axis_render() -> None:
@@ -95364,6 +95376,69 @@ def _combined_exclusion_source_x(
     return source
 
 
+def _combined_exclusion_display_range(
+    source_time_range: tuple[float, float], ranges: SequenceABC[tuple[float, float]]
+) -> tuple[float, float]:
+    """Map configured source-time bounds into compacted plot coordinates.
+
+    Purpose:
+        Preserve a user-selected combined-plot time range when excluded spans
+        compress the displayed x-axis.
+    Why:
+        Mapping the data array masks points inside exclusions, which is correct
+        for traces but cannot be used for axis endpoints because it replaces the
+        configured range with the remaining data extent.
+    Inputs:
+        source_time_range: Requested `(minimum, maximum)` elapsed-time bounds in
+            unmodified source coordinates.
+        ranges: Candidate excluded source-coordinate intervals.
+    Returns:
+        `(minimum, maximum)` bounds in compacted display coordinates. Bounds
+        inside an exclusion collapse to that break's visible join.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid bounds are returned unchanged so Matplotlib retains its existing
+        defensive limit handling.
+    """
+    try:
+        source_min, source_max = (
+            float(source_time_range[0]),
+            float(source_time_range[1]),
+        )
+    except (TypeError, ValueError, IndexError):
+        return source_time_range
+    if not (math.isfinite(source_min) and math.isfinite(source_max)):
+        return (source_min, source_max)
+    normalized = _normalize_combined_exclusion_ranges(ranges)
+
+    def _display_coordinate(source_value: float) -> float:
+        """Return one source coordinate's compacted position.
+
+        Points inside a hidden interval are placed at the interval's join so an
+        explicitly selected all-hidden range remains empty instead of expanding
+        back to the full data extent.
+        """
+        removed = 0.0
+        for start, end in normalized:
+            if source_value < start:
+                break
+            if source_value <= end:
+                return start - removed
+            removed += end - start
+        return source_value - removed
+
+    display_min = _display_coordinate(source_min)
+    display_max = _display_coordinate(source_max)
+    if display_min == display_max:
+        # Matplotlib auto-expands identical limits, so retain an intentionally
+        # empty selected window with a minimal finite span at the break join.
+        epsilon = max(1.0, abs(display_min)) * 1e-9
+        display_min -= epsilon
+        display_max += epsilon
+    return (display_min, display_max)
+
+
 def _apply_combined_exclusion_time_axis(
     axis: Axes,
     ranges: Sequence[Tuple[float, float]],
@@ -95744,11 +95819,12 @@ def build_combined_triple_axis_figure(
             _mask_excluded_series(y3),
         )
         z, z2 = _mask_excluded_series(z), _mask_excluded_series(z2)
-        finite_x = x[np.isfinite(x)]
-        if finite_x.size:
-            time_range = (float(np.min(finite_x)), float(np.max(finite_x)))
-        else:
-            time_range = (min_time, max_time)
+        # Axis bounds describe the user's requested source-time window, not the
+        # remaining trace extent after exclusions. Convert endpoints separately
+        # because excluded samples intentionally map to NaN in `display_x`.
+        time_range = _combined_exclusion_display_range(
+            (float(min_time), float(max_time)), exclusion_ranges
+        )
     else:
         time_range = (min_time, max_time)
     fmt = _format_axis_label
