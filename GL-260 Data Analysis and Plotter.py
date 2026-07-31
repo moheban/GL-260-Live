@@ -157237,6 +157237,9 @@ class UnifiedApp(tk.Tk):
             Inputs:
                 target_frame: Plot tab frame hosting the combined plot.
                 force_clear: When True, clear even if readiness signals are missing.
+                from_debounce: When True, this invocation was queued by the
+                    geometry-settle debounce and may clear after the second
+                    matching geometry observation.
             Outputs:
                 None.
             Side Effects:
@@ -157435,8 +157438,10 @@ class UnifiedApp(tk.Tk):
                         "Combined overlay hold; geometry not yet stable (stable_draws=%s)."
                         % stable_count
                     )
-                    return
-                if not from_debounce:
+                # A first stable observation does not itself cause another draw
+                # event. Queue the second observation explicitly so this hold
+                # cannot wait indefinitely for unrelated UI activity.
+                if stable_count < 2 or not from_debounce:
                     scheduled_finalize_after_id = getattr(
                         target_frame, "_combined_overlay_finalize_after_id", None
                     )
