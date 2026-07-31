@@ -67246,13 +67246,14 @@ def _regression_test_simulation_auto_export_triggers_success_only() -> None:
 
 
 def _regression_test_cycle_timeline_generated_tab_profile_mapping() -> None:
-    """Validate generated timeline tab profile maps to cycle-timeline plot identity.
+    """Validate combined-style toolbar routing for core and generated plot tabs.
 
     Purpose:
-        Verify the profile registration contract for generated timeline tabs.
+        Verify the toolbar routing contract for the core combined tab and generated
+        timeline tabs.
     Why:
-        New generated-tab workflows must resolve plot-key/plot-id/toolbar parity
-        through one profile mapping path.
+        The core combined tab owns the Plot Preview action, while generated tabs
+        resolve parity through their profile mapping; both routes must remain valid.
     Inputs:
         None.
     Outputs:
@@ -67275,6 +67276,33 @@ def _regression_test_cycle_timeline_generated_tab_profile_mapping() -> None:
         @staticmethod
         def _open_cycle_timeline_plot_preview() -> None:
             """No-op preview callback hook for profile registration checks."""
+
+        @staticmethod
+        def _build_reaction_dashboard_plot_tab_figure(
+            *,
+            mode: str,
+            fig_size: Optional[Tuple[float, float]],
+        ) -> Optional[Figure]:
+            """Provide the dashboard builder dependency for profile validation.
+
+            Purpose:
+                Supply the callable referenced by the dashboard profile.
+            Why:
+                Profile construction resolves every registered builder before the
+                timeline-specific assertions can run.
+            Inputs:
+                mode: Requested display or export render mode.
+                fig_size: Optional requested figure dimensions in inches.
+            Outputs:
+                None, because the profile test validates metadata only.
+            Side Effects:
+                None.
+            Exceptions:
+                None.
+            """
+            _ = mode
+            _ = fig_size
+            return None
 
         @staticmethod
         def _build_cycle_timeline_plot_tab_figure(
@@ -67301,6 +67329,10 @@ def _regression_test_cycle_timeline_generated_tab_profile_mapping() -> None:
         raise AssertionError("Plot-key mapping should resolve generated timeline tab plot ID.")
     if not bool(UnifiedApp._plot_tab_uses_combined_toolbar(harness, "fig_cycle_timeline_tab")):
         raise AssertionError("Generated timeline tab should opt into combined-style toolbar parity.")
+    if not bool(UnifiedApp._plot_tab_uses_combined_toolbar(harness, "fig_combined")):
+        raise AssertionError(
+            "Core combined tab should expose combined toolbar actions."
+        )
     if bool(UnifiedApp._internal_refresh_force_full_rebuild(harness, "fig_cycle_timeline_tab")):
         raise AssertionError("Generated timeline tab should use adaptive refresh (no forced full rebuild).")
 
@@ -120367,9 +120399,7 @@ class UnifiedApp(tk.Tk):
             None.
         """
         if str(plot_key or "").strip().lower() == "fig_combined":
-            # A compatible figure is refreshed in-place; renderer signatures
-            # still force a rebuild whenever data or structure changes.
-            return False
+            return True
         profile = self._plot_tab_profile(plot_key)
         return bool(isinstance(profile, Mapping) and profile.get("combined_toolbar_parity"))
 
