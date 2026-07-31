@@ -1,6 +1,6 @@
 ﻿# GL-260 Data Analysis and Plotter
-# Version: v4.17.0
-# Date: 2026-07-30
+# Version: v4.17.1
+# Date: 2026-07-31
 
 import os
 import sys
@@ -16519,7 +16519,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v4.17.0"
+APP_VERSION = "v4.17.1"
 
 ANALYSIS_ANCHOR_LEARNING_ENABLED_SETTINGS_KEY = "analysis_anchor_learning_enabled"
 ANALYSIS_TERMINAL_PH_RANGE_LOW_SETTINGS_KEY = "analysis_terminal_ph_range_low"
@@ -58084,15 +58084,15 @@ def _regression_test_build_tab_target_slider_sync_hooks_present() -> None:
         )
 
 
-def _regression_test_generate_selected_plots_forces_combined_full_rebuild() -> None:
-    """Validate selected-plot generation forces combined full-rebuild rendering.
+def _regression_test_generate_selected_plots_permit_combined_reuse() -> None:
+    """Validate selected-plot generation permits compatible combined reuse.
 
     Purpose:
-        Ensure `_generate_selected_plots` routes combined generation through
-        deterministic full-rebuild async rendering.
+        Ensure `_generate_selected_plots` permits renderer-side reuse for a
+        structure-compatible combined figure.
     Why:
-        Combined initial-generate layout stability should not depend on adaptive
-        reuse when users click `Generate Plot`.
+        Rebuilding an unchanged combined figure duplicates expensive UI-thread
+        Matplotlib work without improving layout stability.
     Inputs:
         None.
     Outputs:
@@ -58101,7 +58101,7 @@ def _regression_test_generate_selected_plots_forces_combined_full_rebuild() -> N
         Executes `_generate_selected_plots` with a local harness and temporary
         `settings` selection-state overrides.
     Exceptions:
-        Raises AssertionError when combined generation does not force rebuild.
+        Raises AssertionError when combined generation forces a rebuild.
     """
 
     class _VarStub:
@@ -58207,19 +58207,19 @@ def _regression_test_generate_selected_plots_forces_combined_full_rebuild() -> N
 
     if len(harness.start_calls) != 1:
         raise AssertionError("Expected one combined async-start call from selected plot generation.")
-    if not bool(harness.start_calls[0].get("force_full_rebuild")):
-        raise AssertionError("Selected combined generation should force full rebuild.")
+    if bool(harness.start_calls[0].get("force_full_rebuild")):
+        raise AssertionError("Selected combined generation should permit compatible reuse.")
 
 
-def _regression_test_generate_combined_plot_forces_full_rebuild() -> None:
-    """Validate combined-only generation forces full-rebuild async rendering.
+def _regression_test_generate_combined_plot_permits_reuse() -> None:
+    """Validate combined-only generation permits compatible figure reuse.
 
     Purpose:
-        Ensure `generate_combined_plot` always starts combined rendering with
-        `force_full_rebuild=True`.
+        Ensure `generate_combined_plot` permits the renderer to reuse a
+        structure-compatible existing combined figure.
     Why:
-        Combined-only generate path should match deterministic stabilization used
-        by selected-plot generation and manual refresh behavior.
+        Full rebuilds on every click duplicate expensive Matplotlib work even
+        when renderer signatures already prove the figure is compatible.
     Inputs:
         None.
     Outputs:
@@ -58227,7 +58227,7 @@ def _regression_test_generate_combined_plot_forces_full_rebuild() -> None:
     Side Effects:
         Executes `generate_combined_plot` through a local harness.
     Exceptions:
-        Raises AssertionError when combined-only generation omits forced rebuild.
+        Raises AssertionError when combined-only generation forces a rebuild.
     """
 
     class _Harness:
@@ -58308,8 +58308,8 @@ def _regression_test_generate_combined_plot_forces_full_rebuild() -> None:
     if len(harness.start_calls) != 1:
         raise AssertionError("Expected one combined async-start call from combined-only generation.")
     call = harness.start_calls[0]
-    if not bool(call.get("force_full_rebuild")):
-        raise AssertionError("Combined-only generation should force full rebuild.")
+    if bool(call.get("force_full_rebuild")):
+        raise AssertionError("Combined-only generation should permit compatible reuse.")
     if not callable(call.get("on_success")):
         raise AssertionError("Combined-only generation should provide an on_success callback.")
 
@@ -58318,10 +58318,10 @@ def _regression_test_internal_refresh_force_full_rebuild_policy() -> None:
     """Validate internal refresh rebuild policy by plot key.
 
     Purpose:
-        Confirm internal refresh policy forces rebuild only for combined plots.
+        Confirm internal refresh policy permits combined reuse by default.
     Why:
-        Post-first-draw combined stabilization should bypass adaptive reuse
-        without changing internal refresh behavior for non-combined plots.
+        Post-first-draw combined stabilization should avoid duplicate rebuilds;
+        renderer signatures still force rebuilds for structural changes.
     Inputs:
         None.
     Outputs:
@@ -58333,12 +58333,74 @@ def _regression_test_internal_refresh_force_full_rebuild_policy() -> None:
     """
 
     harness = object()
-    if UnifiedApp._internal_refresh_force_full_rebuild(harness, "fig_combined") is not True:
-        raise AssertionError("Combined internal refresh policy should force full rebuild.")
+    if UnifiedApp._internal_refresh_force_full_rebuild(harness, "fig_combined") is not False:
+        raise AssertionError("Combined internal refresh policy should permit reuse.")
     if UnifiedApp._internal_refresh_force_full_rebuild(harness, "fig1") is not False:
         raise AssertionError("Non-combined internal refresh policy should not force full rebuild.")
     if UnifiedApp._internal_refresh_force_full_rebuild(harness, None) is not False:
         raise AssertionError("Empty plot key should not force full rebuild.")
+
+
+def _regression_test_multi_sheet_timestamp_exclusions_rebase() -> None:
+    """Validate multi-sheet exclusions survive an earlier-sheet elapsed rebase.
+
+    Purpose:
+        Prove the timestamp persistence adapter maps one excluded real-world
+        interval into the correct elapsed-time interval after sheet expansion.
+    Why:
+        A numeric elapsed range becomes wrong when a newly added sheet precedes
+        the original stitch origin.
+    Inputs:
+        None.
+    Outputs:
+        None.
+    Side Effects:
+        Temporarily replaces the timestamp exclusion settings store for a local
+        in-memory harness, then restores its prior value.
+    Exceptions:
+        Raises AssertionError when timestamp rebasing changes the excluded span.
+    """
+    class _Harness:
+        """Minimal multi-sheet timestamp exclusion harness."""
+
+        multi_sheet_enabled = True
+        file_path = "timestamp-rebase.xlsx"
+        columns = {"dt": "Date & Time", "x": "__GL260_ELAPSED__", "y1": "P"}
+        _stitched_dt_col = "__GL260_DATETIME__"
+        _combined_exclusion_timestamp_context_key = (
+            UnifiedApp._combined_exclusion_timestamp_context_key
+        )
+
+        @staticmethod
+        def _elapsed_unit_seconds() -> float:
+            """Return the deterministic day conversion for the regression."""
+            return 86400.0
+
+    sentinel = object()
+    previous = settings.get("combined_plot_exclusions_by_timestamp_context", sentinel)
+    try:
+        harness = _Harness()
+        harness.df = pd.DataFrame(
+            {"__GL260_DATETIME__": pd.to_datetime(["2026-01-02", "2026-01-04"])}
+        )
+        timestamp_ranges = UnifiedApp._combined_timestamp_ranges_from_source_ranges(
+            harness, [(1.0, 2.0)]
+        )
+        key = UnifiedApp._combined_exclusion_timestamp_context_key(harness)
+        settings["combined_plot_exclusions_by_timestamp_context"] = {
+            key: [list(item) for item in timestamp_ranges]
+        }
+        harness.df = pd.DataFrame(
+            {"__GL260_DATETIME__": pd.to_datetime(["2026-01-01", "2026-01-04"])}
+        )
+        rebased = UnifiedApp._combined_source_ranges_from_timestamp_store(harness)
+        if rebased != [(2.0, 3.0)]:
+            raise AssertionError(f"Expected rebased exclusion [(2.0, 3.0)], got {rebased!r}.")
+    finally:
+        if previous is sentinel:
+            settings.pop("combined_plot_exclusions_by_timestamp_context", None)
+        else:
+            settings["combined_plot_exclusions_by_timestamp_context"] = previous
 
 
 def _regression_test_render_cache_singleflight_prepared() -> None:
@@ -75157,16 +75219,20 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
         _regression_test_build_tab_target_slider_sync_hooks_present,
     ),
     (
-        "Selected combined generate forces full rebuild",
-        _regression_test_generate_selected_plots_forces_combined_full_rebuild,
+        "Selected combined generate permits reuse",
+        _regression_test_generate_selected_plots_permit_combined_reuse,
     ),
     (
-        "Combined-only generate forces full rebuild",
-        _regression_test_generate_combined_plot_forces_full_rebuild,
+        "Combined-only generate permits reuse",
+        _regression_test_generate_combined_plot_permits_reuse,
     ),
     (
         "Internal refresh rebuild policy",
         _regression_test_internal_refresh_force_full_rebuild_policy,
+    ),
+    (
+        "Multi-sheet timestamp exclusions rebase",
+        _regression_test_multi_sheet_timestamp_exclusions_rebase,
     ),
     (
         "Render cache prepared singleflight",
@@ -96136,6 +96202,17 @@ def build_combined_triple_axis_figure(
     y3 = series_np.get("y3", series_map.get("y3", globals().get("y3")))
     z = series_np.get("z", series_map.get("z", globals().get("z")))
     z2 = series_np.get("z2", series_map.get("z2", globals().get("z2")))
+    display_series = data_ctx.get("combined_display_series") or {}
+    display_x = data_ctx.get("combined_display_x")
+    if display_x is not None and isinstance(display_series, Mapping):
+        # The worker creates this pixel-budgeted payload before the UI-thread
+        # figure build, preventing dense source arrays from blocking Tk draws.
+        x = display_x
+        y1 = display_series.get("y1", y1)
+        y2 = display_series.get("y2", y2)
+        y3 = display_series.get("y3", y3)
+        z = display_series.get("z", z)
+        z2 = display_series.get("z2", z2)
     exclusion_ranges = _normalize_combined_exclusion_ranges(
         data_ctx.get("combined_exclusion_ranges")
     )
@@ -113009,10 +113086,17 @@ class UnifiedApp(tk.Tk):
         parts = [
             "Combined render:",
             "worker=%.2fms" % float(combined.get("worker_ms", 0.0) or 0.0),
+            "decimation=%.2fms" % float(combined.get("decimation_ms", 0.0) or 0.0),
             "build=%.2fms" % float(combined.get("build_ms", 0.0) or 0.0),
             "layout=%.2fms" % float(combined.get("layout_ms", 0.0) or 0.0),
             "install=%.2fms" % float(combined.get("install_ms", 0.0) or 0.0),
             "finalize=%.2fms" % float(combined.get("finalize_ms", 0.0) or 0.0),
+            "total=%.2fms" % float(combined.get("total_ms", 0.0) or 0.0),
+            "target=%s" % (
+                "pass"
+                if float(combined.get("total_ms", float("inf")) or float("inf")) <= 30000.0
+                else "over-30s"
+            ),
             "passes=%s" % int(combined.get("auto_refresh_passes", 0) or 0),
             "mode=%s" % str(combined.get("auto_refresh_mode") or ""),
         ]
@@ -120283,7 +120367,9 @@ class UnifiedApp(tk.Tk):
             None.
         """
         if str(plot_key or "").strip().lower() == "fig_combined":
-            return True
+            # A compatible figure is refreshed in-place; renderer signatures
+            # still force a rebuild whenever data or structure changes.
+            return False
         profile = self._plot_tab_profile(plot_key)
         return bool(isinstance(profile, Mapping) and profile.get("combined_toolbar_parity"))
 
@@ -122952,19 +123038,19 @@ class UnifiedApp(tk.Tk):
         Purpose:
             Centralize internal refresh rebuild policy by plot key.
         Why:
-            Combined post-first-draw stabilization must always follow a full
-            rebuild path so generate-time layout matches manual Refresh output.
+            Compatible combined figures should avoid a duplicate post-draw
+            rebuild; renderer signatures remain responsible for escalation.
         Inputs:
             plot_key: Plot key for the active tab callback.
         Outputs:
-            bool: True when internal refresh should force full rebuild.
+            bool: True only when the active non-combined profile requires it.
         Side Effects:
             None.
         Exceptions:
             None.
         """
         if str(plot_key or "").strip().lower() == "fig_combined":
-            return True
+            return False
         profile_resolver = getattr(self, "_plot_tab_profile", None)
         profile = profile_resolver(plot_key) if callable(profile_resolver) else None
         if isinstance(profile, Mapping):
@@ -229884,6 +229970,10 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             Persistence and UI refresh failures are handled best-effort.
         """
+        # Translate legacy elapsed-time exclusions while the previous stitched
+        # origin is still available; the new sheet set may rebase that origin.
+        if self.multi_sheet_enabled and list(sheets) != list(self.selected_sheets):
+            self._migrate_active_combined_exclusions_to_timestamps()
         self.selected_sheets = list(sheets)
         settings["selected_sheets"] = list(self.selected_sheets)
         if persist:
@@ -239072,6 +239162,12 @@ class UnifiedApp(tk.Tk):
             "plot_id": plot_id,
             "target": target,
             "fig_size": fig_size,
+            "combined_display_target_points": int(
+                max(
+                    1,
+                    float((fig_size or (11.0, 8.5))[0]) * 100.0 * 3.0,
+                )
+            ),
             "file_path": file_path,
             "sheet_key": sheet_key,
             "columns_snapshot": dict(self.columns or {}),
@@ -239231,6 +239327,165 @@ class UnifiedApp(tk.Tk):
         except Exception:
             return ""
 
+    def _combined_exclusion_timestamp_context_key(self) -> str:
+        """Return a workbook-and-mapping key for multi-sheet timestamp exclusions.
+
+        Purpose:
+            Scope absolute-time exclusions to the source workbook and its active
+            timestamp/column mapping instead of the volatile selected-sheet list.
+        Why:
+            Adding a sheet can change the stitched elapsed-time origin, while an
+            exclusion must continue to describe the same real-world time span.
+        Inputs:
+            None.
+        Outputs:
+            Stable string key, or an empty string when the workbook is unknown.
+        Side Effects:
+            None.
+        Exceptions:
+            Invalid path or mapping state returns an empty key without raising.
+        """
+        if not bool(getattr(self, "multi_sheet_enabled", False)):
+            return ""
+        try:
+            file_path = os.path.abspath(str(self.file_path or ""))
+        except Exception:
+            file_path = str(getattr(self, "file_path", "") or "")
+        if not file_path:
+            return ""
+        try:
+            mappings = tuple(
+                sorted(
+                    (str(key), str(value or ""))
+                    for key, value in (self.columns or {}).items()
+                    if str(key) in {"dt", "x", "y1", "y2", "y3", "z", "z2"}
+                )
+            )
+        except Exception:
+            mappings = ()
+        return repr((file_path, self._stitched_dt_col, mappings))
+
+    def _combined_timestamp_ranges_from_source_ranges(
+        self, ranges: Sequence[Tuple[float, float]]
+    ) -> List[Tuple[str, str]]:
+        """Translate stitched elapsed-time exclusions into absolute timestamps.
+
+        Purpose:
+            Convert display selections into a sheet-selection-independent form.
+        Why:
+            Stitched elapsed time is rebased when an earlier sheet is added.
+        Inputs:
+            ranges: Normalized elapsed-time pairs in the active display unit.
+        Outputs:
+            Sorted ISO-8601 timestamp pairs, or an empty list when unavailable.
+        Side Effects:
+            None.
+        Exceptions:
+            Missing dataframe/timestamp values return an empty list safely.
+        """
+        frame = getattr(self, "df", None)
+        if frame is None or self._stitched_dt_col not in frame.columns:
+            return []
+        try:
+            timestamps = pd.to_datetime(frame[self._stitched_dt_col], errors="coerce")
+            origin = timestamps.min()
+        except Exception:
+            return []
+        if pd.isna(origin):
+            return []
+        seconds_per_unit = self._elapsed_unit_seconds()
+        converted: List[Tuple[str, str]] = []
+        for start, end in _normalize_combined_exclusion_ranges(ranges):
+            try:
+                lower = origin + pd.to_timedelta(float(start) * seconds_per_unit, unit="s")
+                upper = origin + pd.to_timedelta(float(end) * seconds_per_unit, unit="s")
+            except Exception:
+                continue
+            converted.append((lower.isoformat(), upper.isoformat()))
+        return converted
+
+    def _combined_source_ranges_from_timestamp_store(self) -> List[Tuple[float, float]]:
+        """Resolve saved multi-sheet timestamp exclusions for the active stitch.
+
+        Purpose:
+            Rebase absolute exclusion ranges into current elapsed-time values.
+        Why:
+            The compressed-axis renderer consumes numeric elapsed-time spans.
+        Inputs:
+            None.
+        Outputs:
+            Normalized source-x range pairs for the current stitched dataframe.
+        Side Effects:
+            None.
+        Exceptions:
+            Missing/malformed persistence or timestamps returns an empty list.
+        """
+        key = self._combined_exclusion_timestamp_context_key()
+        store = settings.get("combined_plot_exclusions_by_timestamp_context", {})
+        frame = getattr(self, "df", None)
+        if not key or not isinstance(store, Mapping) or frame is None:
+            return []
+        if self._stitched_dt_col not in frame.columns:
+            return []
+        try:
+            origin = pd.to_datetime(frame[self._stitched_dt_col], errors="coerce").min()
+        except Exception:
+            return []
+        if pd.isna(origin):
+            return []
+        seconds_per_unit = self._elapsed_unit_seconds()
+        ranges: List[Tuple[float, float]] = []
+        for value in store.get(key, []):
+            try:
+                start, end = value
+                lower = pd.to_datetime(start, errors="coerce")
+                upper = pd.to_datetime(end, errors="coerce")
+                if pd.isna(lower) or pd.isna(upper):
+                    continue
+                ranges.append(
+                    (
+                        (lower - origin).total_seconds() / seconds_per_unit,
+                        (upper - origin).total_seconds() / seconds_per_unit,
+                    )
+                )
+            except Exception:
+                continue
+        return _normalize_combined_exclusion_ranges(ranges)
+
+    def _migrate_active_combined_exclusions_to_timestamps(self) -> None:
+        """Migrate active legacy numeric exclusions before a sheet-set change.
+
+        Purpose:
+            Preserve old context-key exclusions when multi-sheet membership changes.
+        Why:
+            Once selected sheets change, the legacy fingerprint can no longer
+            identify the prior range's elapsed-time origin.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Writes timestamp exclusion ranges into in-memory settings only.
+        Exceptions:
+            Unresolvable legacy state is retained unchanged and does not raise.
+        """
+        key = self._combined_exclusion_timestamp_context_key()
+        if not key:
+            return
+        store = settings.get("combined_plot_exclusions_by_timestamp_context")
+        if not isinstance(store, dict):
+            store = {}
+            settings["combined_plot_exclusions_by_timestamp_context"] = store
+        if store.get(key):
+            return
+        legacy_store = settings.get("combined_plot_exclusions_by_context", {})
+        legacy = legacy_store.get(self._combined_exclusion_context_key()) if isinstance(legacy_store, Mapping) else None
+        converted = self._combined_timestamp_ranges_from_source_ranges(
+            _normalize_combined_exclusion_ranges(legacy)
+        )
+        if converted:
+            store[key] = [[start, end] for start, end in converted]
+
     def _combined_exclusion_ranges(self) -> List[Tuple[float, float]]:
         """Return normalized exclusions saved for the active data context.
 
@@ -239247,6 +239502,9 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             Missing or malformed saved state resolves to an empty list.
         """
+        timestamp_ranges = self._combined_source_ranges_from_timestamp_store()
+        if timestamp_ranges:
+            return timestamp_ranges
         store = settings.get("combined_plot_exclusions_by_context", {})
         if not isinstance(store, Mapping):
             return []
@@ -239277,6 +239535,18 @@ class UnifiedApp(tk.Tk):
             store = {}
             settings["combined_plot_exclusions_by_context"] = store
         normalized = _normalize_combined_exclusion_ranges(ranges)
+        timestamp_key = self._combined_exclusion_timestamp_context_key()
+        timestamp_ranges = self._combined_timestamp_ranges_from_source_ranges(normalized)
+        if timestamp_key and timestamp_ranges:
+            timestamp_store = settings.get("combined_plot_exclusions_by_timestamp_context")
+            if not isinstance(timestamp_store, dict):
+                timestamp_store = {}
+                settings["combined_plot_exclusions_by_timestamp_context"] = timestamp_store
+            timestamp_store[timestamp_key] = [list(item) for item in timestamp_ranges]
+        elif timestamp_key:
+            timestamp_store = settings.get("combined_plot_exclusions_by_timestamp_context")
+            if isinstance(timestamp_store, dict):
+                timestamp_store.pop(timestamp_key, None)
         if normalized:
             store[key] = [[start, end] for start, end in normalized]
         else:
@@ -239554,6 +239824,30 @@ class UnifiedApp(tk.Tk):
             apply_globals=False, perf=perf_run, snapshot=snapshot
         )
         data_ctx = dict(data_ctx or {})
+        decimation_start = time.perf_counter() if perf_run is not None else None
+        series_map = data_ctx.get("series") or {}
+        series_np = data_ctx.get("series_np") or {}
+        display_x, display_series = self._combined_preview_decimate(
+            None,
+            None,
+            series_np.get("x", series_map.get("x")),
+            {
+                key: series_np.get(key, series_map.get(key))
+                for key in ("y1", "y2", "y3", "z", "z2")
+            },
+            series_arrays=series_np,
+            series_nan_mask=data_ctx.get("series_nan_mask") or {},
+            target_points=snapshot.get("combined_display_target_points"),
+        )
+        # Keep a worker-prepared display payload separate from analysis arrays.
+        # Matplotlib only needs pixel-scale samples, while cycle analysis retains
+        # the complete source series in the existing prepared context.
+        data_ctx["combined_display_x"] = display_x
+        data_ctx["combined_display_series"] = display_series
+        if perf_run is not None and decimation_start is not None:
+            perf_run.setdefault("stages", {}).setdefault("combined", {})[
+                "decimation_ms"
+            ] = (time.perf_counter() - decimation_start) * 1000.0
         # Keep exclusions out of prepared/cycle caches: they are a combined-only
         # display transform and must never change analysis or source data.
         data_ctx["combined_exclusion_ranges"] = _normalize_combined_exclusion_ranges(
@@ -240393,6 +240687,9 @@ class UnifiedApp(tk.Tk):
                 combined_stage["ui_render_ms"] = (
                     time.perf_counter() - ui_render_start
                 ) * 1000.0
+                combined_stage["total_ms"] = float(
+                    combined_stage.get("worker_ms", 0.0) or 0.0
+                ) + float(combined_stage["ui_render_ms"])
                 combined_stage["runner_end"] = {
                     "task_runner": _runner_diag(getattr(self, "_task_runner", None)),
                     "combined_runner": _runner_diag(
@@ -240558,7 +240855,7 @@ class UnifiedApp(tk.Tk):
                 warn_on_failure=not bool(core_keys),
                 frame=combined_frame,
                 canvas=combined_canvas,
-                force_full_rebuild=True,
+                force_full_rebuild=False,
             )
 
     def update_plots(self, *, include_cycle: bool = True):
@@ -240884,7 +241181,7 @@ class UnifiedApp(tk.Tk):
             frame=combined_frame,
             canvas=combined_canvas,
             on_success=_export_after_render,
-            force_full_rebuild=True,
+            force_full_rebuild=False,
         )
 
     def _combined_plot_config(
@@ -241682,6 +241979,7 @@ class UnifiedApp(tk.Tk):
         *,
         series_arrays: Optional[Dict[str, Any]] = None,
         series_nan_mask: Optional[Dict[str, Any]] = None,
+        target_points: Optional[int] = None,
     ) -> Tuple[Any, Dict[str, Any]]:
         """Decimate combined preview series with endpoint/non-finite retention guards.
 
@@ -241697,6 +241995,8 @@ class UnifiedApp(tk.Tk):
             series_values: Mapping of series keys to y-like values.
             series_arrays: Optional precomputed ndarray mapping.
             series_nan_mask: Optional precomputed NaN mask mapping.
+            target_points: Optional worker-safe point budget. When supplied,
+                bypasses Tk/canvas geometry reads for background preparation.
         Returns:
             Tuple `(x_decimated, decimated_series_map)`.
         Side Effects:
@@ -241730,9 +242030,15 @@ class UnifiedApp(tk.Tk):
                 width_px = int(max(fig.get_size_inches()[0] * fig.dpi, 1.0))
             except Exception:
                 width_px = None
-        if width_px is None or width_px <= 0:
+        if target_points is not None:
+            try:
+                target_points = max(1, int(target_points))
+            except Exception:
+                target_points = None
+        if target_points is None and (width_px is None or width_px <= 0):
             return x_values, series_values
-        target_points = int(max(width_px * 3.0, 1.0))
+        if target_points is None:
+            target_points = int(max(width_px * 3.0, 1.0))
         if x_array.size <= target_points:
             return x_array, series_values
         step = int(math.ceil(x_array.size / float(target_points)))
@@ -242672,7 +242978,16 @@ class UnifiedApp(tk.Tk):
             "z": series_np.get("z", series_map.get("z", globals().get("z"))),
             "z2": series_np.get("z2", series_map.get("z2", globals().get("z2"))),
         }
-        x_values = series_np.get("x", series_map.get("x", globals().get("x")))
+        worker_display_series = data_ctx.get("combined_display_series") or {}
+        x_values = data_ctx.get(
+            "combined_display_x",
+            series_np.get("x", series_map.get("x", globals().get("x"))),
+        )
+        if isinstance(worker_display_series, Mapping):
+            series_values = {
+                key: worker_display_series.get(key, value)
+                for key, value in series_values.items()
+            }
         x_plot, decimated = self._combined_preview_decimate(
             fig,
             canvas,
