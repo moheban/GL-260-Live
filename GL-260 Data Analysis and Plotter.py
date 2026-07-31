@@ -22077,6 +22077,12 @@ def _normalize_reaction_dashboard_state_payload(
         if ph_enabled is not None:
             normalized["ph_enabled"] = ph_enabled
 
+    limiting_reagent_id = str(
+        payload.get("limiting_reagent_override_species_id") or ""
+    ).strip()
+    if limiting_reagent_id:
+        normalized["limiting_reagent_override_species_id"] = limiting_reagent_id
+
     template_inputs = _string_map(payload.get("template_inputs"))
     if template_inputs or "template_inputs" in payload:
         normalized["template_inputs"] = template_inputs
@@ -22100,6 +22106,9 @@ def _normalize_reaction_dashboard_state_payload(
                     "template_id": raw_run.get("template_id"),
                     "source_mode": raw_run.get("source_mode"),
                     "ph_enabled": raw_run.get("ph_enabled"),
+                    "limiting_reagent_override_species_id": raw_run.get(
+                        "limiting_reagent_override_species_id"
+                    ),
                     "template_inputs": raw_run.get("template_inputs"),
                     "source_inputs": raw_run.get("source_inputs"),
                 }
@@ -35634,6 +35643,16 @@ def _reaction_dashboard_visual_summary(
         ).strip()
         if limiting and limiting not in limiting_values:
             limiting_values.append(limiting)
+    calculated_limiting = ", ".join(limiting_values) if limiting_values else "--"
+    limiting_override = (
+        result.get("limiting_reagent_override")
+        if isinstance(result.get("limiting_reagent_override"), Mapping)
+        else {}
+    )
+    manual_limiting = str(limiting_override.get("display") or "").strip()
+    reported_limiting = (
+        f"{manual_limiting} (manual)" if manual_limiting else calculated_limiting
+    )
     if warnings:
         next_action = "Review warnings before using product prediction."
     elif completion_pct is None:
@@ -35686,7 +35705,9 @@ def _reaction_dashboard_visual_summary(
         "headline_product_mol": headline_product_mol,
         "completion_pct": completion_pct,
         "actual_yield_pct": _safe_float(core.get("actual_yield_pct")),
-        "limiting": ", ".join(limiting_values) if limiting_values else "--",
+        "limiting": reported_limiting,
+        "calculated_limiting": calculated_limiting,
+        "limiting_source": "manual" if manual_limiting else "calculated",
         "cycle_status": status,
         "cycle_trend": trend,
         "cycle_rows": cycle_rows,
@@ -71824,6 +71845,7 @@ def _regression_test_reaction_dashboard_run_record_migration() -> None:
         {
             "template_id": "sodium_methoxide_co_to_sodium_formate",
             "source_mode": "manual",
+            "limiting_reagent_override_species_id": "carbon_monoxide",
             "template_inputs": {"sodium_metal_mass_g": "12.5"},
             "source_inputs": {"manual_gas_moles": "0.2"},
         }
@@ -71838,6 +71860,11 @@ def _regression_test_reaction_dashboard_run_record_migration() -> None:
         )
     if normalized.get("active_run_id") != runs[0].get("run_id"):
         raise AssertionError("Migrated dashboard run should become the active run.")
+    if (
+        normalized.get("limiting_reagent_override_species_id") != "carbon_monoxide"
+        or runs[0].get("limiting_reagent_override_species_id") != "carbon_monoxide"
+    ):
+        raise AssertionError("Limiting-reagent override should persist in run state.")
 
 
 def _regression_test_reaction_dashboard_dual_forecast() -> None:
@@ -102278,6 +102305,12 @@ class UnifiedApp(tk.Tk):
             )
         )
         self._reaction_ph_enabled_var = tk.BooleanVar(value=False)
+        self._reaction_limiting_reagent_override_var = tk.StringVar(value="")
+        self._reaction_limiting_reagent_display_var = tk.StringVar(
+            value="Auto (calculated)"
+        )
+        self._reaction_limiting_reagent_display_to_id: Dict[str, str] = {}
+        self._reaction_limiting_reagent_selector: Optional[ttk.Combobox] = None
         self._reaction_equation_var = tk.StringVar(value="")
         self._reaction_input_vars: Dict[str, tk.StringVar] = {}
         self._reaction_source_vars: Dict[str, tk.StringVar] = {}
@@ -138868,6 +138901,13 @@ class UnifiedApp(tk.Tk):
         except Exception:
             ph_enabled = False
 
+        try:
+            limiting_reagent_override_species_id = str(
+                self._reaction_limiting_reagent_override_var.get() or ""
+            ).strip()
+        except Exception:
+            limiting_reagent_override_species_id = ""
+
         template_inputs = {
             str(key): _string_var_value(var)
             for key, var in getattr(self, "_reaction_input_vars", {}).items()
@@ -138883,6 +138923,7 @@ class UnifiedApp(tk.Tk):
             "template_id": template_id,
             "source_mode": source_mode,
             "ph_enabled": ph_enabled,
+            "limiting_reagent_override_species_id": limiting_reagent_override_species_id,
             "template_inputs": template_inputs,
             "source_inputs": source_inputs,
         }
@@ -139803,6 +139844,21 @@ class UnifiedApp(tk.Tk):
                     ph_var.set(bool(normalized.get("ph_enabled")))
                 except Exception:
                     pass
+
+        limiting_override_id = str(
+            normalized.get("limiting_reagent_override_species_id") or ""
+        ).strip()
+        override_var = getattr(self, "_reaction_limiting_reagent_override_var", None)
+        if override_var is not None:
+            try:
+                override_var.set(limiting_override_id)
+            except Exception:
+                pass
+        if template is not None:
+            try:
+                self._refresh_reaction_limiting_reagent_selector(template)
+            except Exception:
+                pass
 
         template_inputs = normalized.get("template_inputs")
         if isinstance(template_inputs, Mapping):
@@ -173795,6 +173851,103 @@ class UnifiedApp(tk.Tk):
             raise RuntimeError("No Reaction Dashboard templates are available.")
         return template
 
+    def _refresh_reaction_limiting_reagent_selector(
+        self, template: ReactionTemplate
+    ) -> None:
+        """Populate the manual limiting-reagent selector for one reaction template.
+
+        Purpose:
+            Offer only species actually consumed by the template as manual
+            limiting-material designations.
+        Why:
+            A saved operator designation must remain chemically meaningful while
+            preserving automatic material-balance calculations as the source of
+            reaction extents.
+        Args:
+            template: Active reaction definition used to identify reactants.
+        Returns:
+            None.
+        Side Effects:
+            Updates selector choices, display-to-id lookup, and Tk variables;
+            clears an override that is invalid for the newly selected template.
+        Exceptions:
+            Missing widgets or Tk variables are tolerated during startup/tests.
+        """
+        reactant_ids = {
+            str(species_id).strip()
+            for step in template.steps
+            for species_id, coefficient in step.stoichiometry.items()
+            if float(coefficient) < 0.0 and str(species_id).strip()
+        }
+        display_to_id = {"Auto (calculated)": ""}
+        for species in template.species:
+            if species.species_id in reactant_ids:
+                display_to_id[
+                    f"{species.name or species.species_id} ({species.species_id})"
+                ] = species.species_id
+        self._reaction_limiting_reagent_display_to_id = display_to_id
+        override_var = getattr(self, "_reaction_limiting_reagent_override_var", None)
+        selected_id = ""
+        if override_var is not None:
+            try:
+                selected_id = str(override_var.get() or "").strip()
+            except Exception:
+                selected_id = ""
+        if selected_id not in reactant_ids:
+            selected_id = ""
+            if override_var is not None:
+                try:
+                    override_var.set("")
+                except Exception:
+                    pass
+        display = next(
+            (
+                label
+                for label, species_id in display_to_id.items()
+                if species_id == selected_id
+            ),
+            "Auto (calculated)",
+        )
+        display_var = getattr(self, "_reaction_limiting_reagent_display_var", None)
+        if display_var is not None:
+            try:
+                display_var.set(display)
+            except Exception:
+                pass
+        selector = getattr(self, "_reaction_limiting_reagent_selector", None)
+        if selector is not None:
+            try:
+                selector.configure(values=list(display_to_id))
+            except Exception:
+                pass
+
+    def _on_reaction_limiting_reagent_selected(self, _event: Any = None) -> None:
+        """Store the operator's selected limiting-reagent designation.
+
+        Purpose:
+            Translate the readable selector label into the persisted species id.
+        Why:
+            UI labels can change with a template while stable species ids keep
+            saved reaction-run records and result snapshots auditable.
+        Args:
+            _event: Optional Tk combobox-selection event.
+        Returns:
+            None.
+        Side Effects:
+            Updates the manual override Tk variable only; no calculation runs.
+        Exceptions:
+            Unknown display text is safely treated as automatic calculation.
+        """
+        try:
+            display = str(self._reaction_limiting_reagent_display_var.get() or "")
+        except Exception:
+            display = ""
+        selected_id = self._reaction_limiting_reagent_display_to_id.get(display, "")
+        try:
+            self._reaction_limiting_reagent_override_var.set(selected_id)
+        except Exception:
+            pass
+
     def _reaction_dashboard_current_run_fields(self) -> Dict[str, Any]:
         """Collect JSON-safe editable setup fields for the active reaction run.
 
@@ -173814,6 +173967,9 @@ class UnifiedApp(tk.Tk):
             "template_id": str(self._reaction_template_var.get() or "").strip(),
             "source_mode": str(self._reaction_source_mode_var.get() or "").strip(),
             "ph_enabled": bool(self._reaction_ph_enabled_var.get()),
+            "limiting_reagent_override_species_id": str(
+                self._reaction_limiting_reagent_override_var.get() or ""
+            ).strip(),
             "template_inputs": {
                 str(key): str(var.get() or "")
                 for key, var in self._reaction_input_vars.items()
@@ -173856,6 +174012,8 @@ class UnifiedApp(tk.Tk):
             "expected_product_g": _safe_float(core.get("theoretical_yield_g")),
             "completion_pct": _safe_float(summary.get("completion_pct")),
             "limiting": str(summary.get("limiting") or ""),
+            "calculated_limiting": str(summary.get("calculated_limiting") or ""),
+            "limiting_source": str(summary.get("limiting_source") or ""),
             "forecast": dict(summary.get("forecast") or {}),
             "source_mode": str(result.get("source_mode") or ""),
             "core_backend": str(core.get("backend") or ""),
@@ -174290,6 +174448,28 @@ class UnifiedApp(tk.Tk):
         self._attach_tooltip(
             ph_check,
             "Optional equilibrium estimate. Material balance, gas demand, and completion still run when it is unavailable.",
+        )
+        limiting_label = ttk.Label(source_box, text="Limiting reagent")
+        limiting_label.grid(row=0, column=3, sticky="w", padx=(8, 2), pady=(6, 2))
+        limiting_selector = _ui_combobox(
+            source_box,
+            textvariable=self._reaction_limiting_reagent_display_var,
+            values=("Auto (calculated)",),
+            state="readonly",
+            width=30,
+        )
+        limiting_selector.grid(row=0, column=4, sticky="ew", padx=(0, 8), pady=(6, 2))
+        limiting_selector.bind(
+            "<<ComboboxSelected>>", self._on_reaction_limiting_reagent_selected
+        )
+        self._reaction_limiting_reagent_selector = limiting_selector
+        self._attach_tooltip(
+            limiting_label,
+            "Optionally designate the limiting reactant for this run. The calculated material-balance limiter remains available in the results for auditability.",
+        )
+        self._attach_tooltip(
+            limiting_selector,
+            "Choose Auto to report the calculated limiter, or select a consumed reactant to record an operator designation without permitting an impossible material balance.",
         )
         source_fields = ttk.Frame(source_box)
         source_fields.grid(row=1, column=0, columnspan=3, sticky="ew", padx=8, pady=2)
@@ -175487,6 +175667,7 @@ class UnifiedApp(tk.Tk):
             steps_text.delete("1.0", "end")
             steps_text.insert("1.0", json.dumps(steps_payload, indent=2))
         self._refresh_reaction_equation_widget(template)
+        self._refresh_reaction_limiting_reagent_selector(template)
         try:
             self._reaction_ph_enabled_var.set(
                 bool(template.equilibrium.enabled_by_default)
@@ -176616,6 +176797,24 @@ class UnifiedApp(tk.Tk):
                 ),
                 actual_yield_mass_g=actual_mass,
             )
+            limiting_override_id = str(
+                self._reaction_limiting_reagent_override_var.get() or ""
+            ).strip()
+            reactant_ids = {
+                str(species_id).strip()
+                for step in step_rows
+                for species_id, coefficient in dict(
+                    step.get("stoichiometry") or {}
+                ).items()
+                if float(coefficient) < 0.0 and str(species_id).strip()
+            }
+            limiting_override = (
+                _reaction_dashboard_species_display(template, limiting_override_id)
+                if limiting_override_id in reactant_ids
+                else None
+            )
+            if limiting_override is None:
+                limiting_override_id = ""
             liquid_volume = self._reaction_dashboard_input_float("liquid_volume_l")
             equilibrium = _solve_reaction_dashboard_equilibrium_with_chempy(
                 template,
@@ -176642,6 +176841,8 @@ class UnifiedApp(tk.Tk):
                 if self._reaction_source_mode_var.get() == "cycle_payload"
                 else [],
                 "charge_basis": charge_basis or {},
+                "limiting_reagent_override_species_id": limiting_override_id,
+                "limiting_reagent_override": limiting_override or {},
                 "species_rows": species_rows,
                 "step_rows": step_rows,
                 "deferred_steps": deferred_steps,
@@ -176651,6 +176852,11 @@ class UnifiedApp(tk.Tk):
                 + list(equilibrium.get("warnings") or [])
                 + [item["reason"] for item in deferred_steps],
             }
+            if limiting_override_id:
+                result["warnings"].append(
+                    "Manual limiting-reagent designation recorded; reaction extents "
+                    "remain constrained by calculated material balances."
+                )
             result["visual_summary"] = _reaction_dashboard_visual_summary(
                 template,
                 result,
@@ -176849,6 +177055,24 @@ class UnifiedApp(tk.Tk):
                 "notes": "; ".join(equilibrium.get("warnings") or []),
             },
         ]
+        limiting_override = (
+            result.get("limiting_reagent_override")
+            if isinstance(result.get("limiting_reagent_override"), Mapping)
+            else {}
+        )
+        manual_limiting = str(limiting_override.get("display") or "").strip()
+        calculated_limiting = ", ".join(limiting_values) if limiting_values else "--"
+        rows.append(
+            {
+                "metric": "Limiting reagent",
+                "value": manual_limiting or calculated_limiting,
+                "notes": (
+                    f"Manual designation; calculated: {calculated_limiting}"
+                    if manual_limiting
+                    else "Calculated from available material and stoichiometry"
+                ),
+            }
+        )
         for deferred_step in deferred_steps:
             rows.append(
                 {
@@ -176930,7 +177154,8 @@ class UnifiedApp(tk.Tk):
             f"Trend: {(visual_summary.get('cycle_trend') or {}).get('label', '--')}"
         )
         self._reaction_kpi_vars["limiting"].set(
-            f"Limiting: {visual_summary.get('limiting') or '--'}"
+            f"Limiting: {visual_summary.get('limiting') or '--'}\n"
+            f"Calculated: {visual_summary.get('calculated_limiting') or '--'}"
         )
         forecast = (
             visual_summary.get("forecast")
