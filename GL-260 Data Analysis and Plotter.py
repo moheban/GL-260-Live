@@ -71564,12 +71564,12 @@ def _regression_test_cycle_marker_selection_drives_nudge_target() -> None:
         raise AssertionError("Hover-nearest fallback should remain available.")
 
 
-def _regression_test_cycle_exact_marker_add_uses_monotonic_target() -> None:
-    """Validate exact marker buttons use a valid target without extremum snapping.
+def _regression_test_cycle_exact_marker_mode_uses_monotonic_click() -> None:
+    """Validate one-shot exact marker mode uses a click without extrema snapping.
 
     Purpose:
-        Verify button-driven manual placement can add a trough on a pressure
-        series that continues falling past the chosen sample.
+        Verify armed manual placement can add a trough on a pressure series that
+        continues falling past the clicked sample.
     Why:
         Shift-click intentionally resolves local extrema, while exact placement
         must support operator-declared cycle boundaries on monotonic segments.
@@ -71592,9 +71592,15 @@ def _regression_test_cycle_exact_marker_add_uses_monotonic_target() -> None:
             UnifiedApp._cycle_marker_snapshots_equal
         )
         _push_cycle_marker_undo = UnifiedApp._push_cycle_marker_undo
-        _add_manual_cycle_marker_at_target = (
-            UnifiedApp._add_manual_cycle_marker_at_target
+        _commit_exact_cycle_marker = UnifiedApp._commit_exact_cycle_marker
+        _update_cycle_exact_marker_placement_controls = (
+            UnifiedApp._update_cycle_exact_marker_placement_controls
         )
+        _clear_cycle_exact_marker_preview = UnifiedApp._clear_cycle_exact_marker_preview
+        _cancel_cycle_exact_marker_placement = (
+            UnifiedApp._cancel_cycle_exact_marker_placement
+        )
+        _arm_cycle_exact_marker_placement = UnifiedApp._arm_cycle_exact_marker_placement
 
         def __init__(self) -> None:
             """Initialize a monotonic pressure trace and empty manual edits."""
@@ -71610,6 +71616,10 @@ def _regression_test_cycle_exact_marker_add_uses_monotonic_target() -> None:
             self._cycle_marker_tweak_target = {"index": 3, "x_value": 3.0}
             self._cycle_selected_marker = None
             self._cycle_manual_revision = 0
+            self._cycle_exact_marker_mode = None
+            self._cycle_exact_preview_artist = None
+            self._cycle_exact_preview_index = None
+            self._cycle_exact_preview_kind = None
             self.recompute_calls: list[dict[str, bool]] = []
 
         @staticmethod
@@ -71640,7 +71650,16 @@ def _regression_test_cycle_exact_marker_add_uses_monotonic_target() -> None:
             self.recompute_calls.append(dict(kwargs))
 
     harness = _Harness()
-    harness._add_manual_cycle_marker_at_target("trough")
+    harness._arm_cycle_exact_marker_placement("trough")
+    if harness._cycle_exact_marker_mode != "trough":
+        raise AssertionError("Exact trough mode should arm before the canvas click.")
+    if not harness._commit_exact_cycle_marker("trough", 3):
+        raise AssertionError(
+            "Exact trough click should commit the chosen valid sample."
+        )
+    harness._cancel_cycle_exact_marker_placement()
+    if harness._cycle_exact_marker_mode is not None:
+        raise AssertionError("Exact placement should disarm after one committed click.")
     if harness._add_troughs != {3}:
         raise AssertionError(
             "Exact trough placement should retain the clicked monotonic sample."
@@ -71656,7 +71675,10 @@ def _regression_test_cycle_exact_marker_add_uses_monotonic_target() -> None:
             "Exact placement should recompute with manual-edit view preservation."
         )
 
-    harness._add_manual_cycle_marker_at_target("peak")
+    harness._arm_cycle_exact_marker_placement("peak")
+    if not harness._commit_exact_cycle_marker("peak", 3):
+        raise AssertionError("Exact peak click should commit at the same raw sample.")
+    harness._cancel_cycle_exact_marker_placement()
     if harness._add_peaks != {3} or harness._add_troughs:
         raise AssertionError(
             "Exact peak placement should clear an opposite manual trough at its sample."
@@ -74355,8 +74377,8 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
         _regression_test_cycle_marker_selection_drives_nudge_target,
     ),
     (
-        "Cycle Analysis exact marker add uses monotonic target",
-        _regression_test_cycle_exact_marker_add_uses_monotonic_target,
+        "Cycle Analysis exact marker mode uses monotonic click",
+        _regression_test_cycle_exact_marker_mode_uses_monotonic_click,
     ),
     (
         "Cycle Analysis Primary Y legacy marker migration",
@@ -149603,10 +149625,10 @@ class UnifiedApp(tk.Tk):
         for col in range(2):
             exact_frame.grid_columnconfigure(col, weight=1)
 
-        make_button(
+        self._cycle_exact_peak_button = make_button(
             exact_frame,
-            text="Add Peak Here",
-            command=lambda: self._add_manual_cycle_marker_at_target("peak"),
+            text="Place Exact Peak",
+            command=lambda: self._arm_cycle_exact_marker_placement("peak"),
             grid_kwargs={
                 "row": 0,
                 "column": 0,
@@ -149615,14 +149637,14 @@ class UnifiedApp(tk.Tk):
                 "pady": scale_pad((0, 0)),
             },
             tooltip=(
-                "Hover or click the pressure trace, then add a peak at the nearest "
-                "valid sample exactly there. This does not require a local maximum."
+                "Arm one exact peak placement, then click the pressure trace. "
+                "The next unmodified left-click uses the nearest valid sample."
             ),
         )
-        make_button(
+        self._cycle_exact_trough_button = make_button(
             exact_frame,
-            text="Add Trough Here",
-            command=lambda: self._add_manual_cycle_marker_at_target("trough"),
+            text="Place Exact Trough",
+            command=lambda: self._arm_cycle_exact_marker_placement("trough"),
             grid_kwargs={
                 "row": 0,
                 "column": 1,
@@ -149631,8 +149653,8 @@ class UnifiedApp(tk.Tk):
                 "pady": scale_pad((0, 0)),
             },
             tooltip=(
-                "Hover or click the pressure trace, then add a trough at the nearest "
-                "valid sample exactly there. This supports a trace that is still falling."
+                "Arm one exact trough placement, then click the pressure trace. "
+                "This supports a trace that is still falling."
             ),
         )
 
@@ -149844,7 +149866,7 @@ class UnifiedApp(tk.Tk):
             "Marker editing:\n"
             "* SHIFT + Left-click  = Peak\n"
             "* SHIFT + Right-click = Trough\n"
-            "* Hover/click, then Add Peak/Trough Here = exact sample\n"
+            "* Place Exact Peak/Trough, then click plot = exact sample\n"
             "* Right-click (no SHIFT) = remove nearest Peak/Trough\n"
             "Tip: Peaks/troughs snap to local extrema near your click. Use the "
             "tweak buttons after hovering or clicking near a marker."
@@ -150096,6 +150118,10 @@ class UnifiedApp(tk.Tk):
         self._cycle_preview_peak_artist = None
         self._cycle_preview_trough_artist = None
         self._cycle_preview_payload = None
+        self._cycle_exact_marker_mode = None
+        self._cycle_exact_preview_artist = None
+        self._cycle_exact_preview_index = None
+        self._cycle_exact_preview_kind = None
 
         preloaded_markers = getattr(self, "_preloaded_cycle_markers", None) or {}
         if not preloaded_markers:
@@ -151132,8 +151158,22 @@ class UnifiedApp(tk.Tk):
         self._shade_selection(self._cycle_pending_range)
 
     def _on_cycle_key_press(self, event):
-        """Handle cycle key press.
-        Used as an event callback for cycle key press."""
+        """Handle Cycle Analysis keyboard input for selection and placement modes.
+
+        Purpose:
+            Route Ctrl to range selection and Escape to exact-placement cancel.
+        Why:
+            One-shot placement needs a keyboard exit that does not alter marker
+            data or interfere with the existing Ctrl-drag selection workflow.
+        Inputs:
+            event: Matplotlib key event from the Cycle Analysis canvas.
+        Outputs:
+            None.
+        Side Effects:
+            Activates the range selector or clears transient exact-placement UI.
+        Exceptions:
+            Missing selector/canvas state is handled without raising.
+        """
 
         # Enable span selection only while Ctrl is held
 
@@ -151142,6 +151182,10 @@ class UnifiedApp(tk.Tk):
             if getattr(event, "key", None)
             else ""
         )
+
+        if key == "escape":
+            self._cancel_cycle_exact_marker_placement()
+            return
 
         if key in ("control", "ctrl"):
 
@@ -151278,8 +151322,24 @@ class UnifiedApp(tk.Tk):
         self._set_cycle_selection_text("Selection: (choose an analysis range)")
 
     def _on_cycle_click(self, event):
-        """Handle cycle click.
-        Used as an event callback for cycle click."""
+        """Route Cycle Analysis clicks across exact, snapped, and edit workflows.
+
+        Purpose:
+            Preserve existing Shift and removal interactions while reserving an
+            armed unmodified left-click for one-shot exact placement.
+        Why:
+            Exact placement must use the user's actual canvas click instead of a
+            stale target captured before a button received focus.
+        Inputs:
+            event: Matplotlib button event over the Cycle Analysis axes.
+        Outputs:
+            None.
+        Side Effects:
+            May select, add, remove, or recompute cycle markers and may cancel
+            one-shot exact placement after a successful commit.
+        Exceptions:
+            Invalid events or unavailable data return without changing state.
+        """
 
         if event.inaxes != getattr(self, "_cycle_ax", None) or event.xdata is None:
 
@@ -151323,7 +151383,7 @@ class UnifiedApp(tk.Tk):
 
                 except Exception:
 
-                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    # Ignore GUI state access failures so cycle interactions stay available.
                     pass
 
         # Data must be ready
@@ -151338,6 +151398,32 @@ class UnifiedApp(tk.Tk):
 
         if getattr(mask, "sum", lambda: 0)() < 3:
 
+            return
+
+        control = False
+        key_text = str(getattr(event, "key", "") or "").lower()
+        if "control" in key_text or "ctrl" in key_text:
+            control = True
+        mods = getattr(event, "modifiers", None)
+        if mods and any(
+            "control" in str(modifier).lower()
+            or "ctrl" in str(modifier).lower()
+            for modifier in mods
+        ):
+            control = True
+        gui_event = getattr(event, "guiEvent", None)
+        try:
+            control = control or bool(int(getattr(gui_event, "state", 0)) & 0x0004)
+        except Exception:
+            pass
+
+        exact_mode = str(getattr(self, "_cycle_exact_marker_mode", "") or "")
+        if not shift and not control and btn == 1 and exact_mode in {"peak", "trough"}:
+            target_idx = self._nearest_index_by_x(event.xdata)
+            if target_idx is not None and self._commit_exact_cycle_marker(
+                exact_mode, int(target_idx)
+            ):
+                self._cancel_cycle_exact_marker_placement()
             return
 
         # No SHIFT: left-click selects nearest marker; right-click removes nearest.
@@ -151771,48 +151857,38 @@ class UnifiedApp(tk.Tk):
             "x_value": float(event.xdata),
         }
 
-    def _add_manual_cycle_marker_at_target(self, marker_kind: str) -> None:
-        """Add an exact manual peak or trough at the latest plot target.
+    def _commit_exact_cycle_marker(self, marker_kind: str, target_idx: int) -> bool:
+        """Commit one exact peak or trough at a clicked valid sample.
 
         Purpose:
-            Commit a manual marker at the nearest valid sample last hovered or
-            clicked in the Cycle Analysis plot.
+            Apply the one-shot canvas placement request without local-extremum
+            snapping.
         Why:
-            Operators sometimes need to declare a cycle boundary before the
-            pressure trace forms a local extremum, which Shift-click snapping
-            intentionally cannot guarantee.
+            Operators need to declare cycle boundaries on monotonic pressure
+            segments, where an extrema-based placement policy is unsuitable.
         Inputs:
-            marker_kind: ``"peak"`` or ``"trough"`` identifying the marker to
-                add at the stored plot target.
+            marker_kind: ``"peak"`` or ``"trough"`` marker family to add.
+            target_idx: Source-sample index selected by the canvas click.
         Outputs:
-            None.
+            True when marker state changed; otherwise False.
         Side Effects:
-            Updates manual marker sets, clears the opposite marker type at the
-            same sample, records undo state, persists the active trace state,
-            selects the new marker, and recomputes Cycle Analysis.
+            Updates marker sets, undo history, selection state, per-trace
+            persistence, and the Cycle Analysis display.
         Exceptions:
-            Invalid targets or unavailable data show an informational message
-            and leave marker state unchanged.
+            Invalid data or sample indices return False without mutation.
         """
         if not self._cycle_ready():
-            return
+            return False
         marker_kind_normalized = str(marker_kind).strip().lower()
         if marker_kind_normalized not in {"peak", "trough"}:
-            return
-        target = getattr(self, "_cycle_marker_tweak_target", {}) or {}
-        try:
-            target_idx = int(target.get("index"))
-        except Exception:
-            target_idx = -1
+            return False
         x_series, y_series, _temp = self._get_xy()
         try:
             xv = np.asarray(x_series, dtype=float)
             yv = np.asarray(y_series, dtype=float)
             mask = np.asarray(self._current_mask(), dtype=bool)
         except Exception:
-            xv = np.zeros(0, dtype=float)
-            yv = np.zeros(0, dtype=float)
-            mask = np.zeros(0, dtype=bool)
+            return False
         data_len = min(int(xv.size), int(yv.size), int(mask.size))
         if (
             target_idx < 0
@@ -151821,15 +151897,7 @@ class UnifiedApp(tk.Tk):
             or not math.isfinite(float(xv[target_idx]))
             or not math.isfinite(float(yv[target_idx]))
         ):
-            try:
-                messagebox.showinfo(
-                    "Cycle Analysis",
-                    "Hover or click a valid point on the pressure trace before "
-                    "adding an exact marker.",
-                )
-            except Exception:
-                pass
-            return
+            return False
 
         self._push_cycle_marker_undo()
         changed = False
@@ -151865,7 +151933,7 @@ class UnifiedApp(tk.Tk):
                 self._add_troughs.add(target_idx)
                 changed = True
         if not changed:
-            return
+            return False
         self._cycle_selected_marker = {
             "kind": marker_kind_normalized,
             "index": int(target_idx),
@@ -151879,6 +151947,206 @@ class UnifiedApp(tk.Tk):
         self._recompute_cycle_analysis(
             auto_detect=False, ignore_min_drop=True, preserve_view=True
         )
+        return True
+
+    def _update_cycle_exact_marker_placement_controls(self) -> None:
+        """Refresh exact-placement button labels from the active one-shot mode.
+
+        Purpose:
+            Make the armed placement state visible before the next canvas click.
+        Why:
+            Exact placement must not rely on focus or a stale hover target, so
+            the controls explicitly communicate which marker will be placed.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Updates exact-placement button labels when their widgets are live.
+        Exceptions:
+            Destroyed or unavailable widgets are ignored.
+        """
+        active_mode = str(getattr(self, "_cycle_exact_marker_mode", "") or "")
+        labels = {
+            "peak": "Exact Peak Armed — click plot",
+            "trough": "Exact Trough Armed — click plot",
+        }
+        for marker_kind, attr_name, default_text in (
+            ("peak", "_cycle_exact_peak_button", "Place Exact Peak"),
+            ("trough", "_cycle_exact_trough_button", "Place Exact Trough"),
+        ):
+            button = getattr(self, attr_name, None)
+            if button is None:
+                continue
+            try:
+                button_text = (
+                    labels[marker_kind]
+                    if active_mode == marker_kind
+                    else default_text
+                )
+                button.configure(text=button_text)
+            except Exception:
+                pass
+
+    def _clear_cycle_exact_marker_preview(self) -> None:
+        """Remove the transient preview used by armed exact marker placement.
+
+        Purpose:
+            Clear the raw-sample placement guide when a mode ends or the cursor
+            leaves the Cycle Analysis axes.
+        Why:
+            A preview must never imply that an exact-placement request remains
+            armed after it has been committed or cancelled.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Removes the preview artist, clears its cached index, and requests a
+            canvas redraw when possible.
+        Exceptions:
+            Removed artists and unavailable canvases are ignored.
+        """
+        artist = getattr(self, "_cycle_exact_preview_artist", None)
+        if artist is not None:
+            try:
+                artist.remove()
+            except Exception:
+                pass
+        self._cycle_exact_preview_artist = None
+        self._cycle_exact_preview_index = None
+        self._cycle_exact_preview_kind = None
+        canvas = getattr(self, "_cycle_canvas", None)
+        if canvas is not None:
+            try:
+                canvas.draw_idle()
+            except Exception:
+                pass
+
+    def _cancel_cycle_exact_marker_placement(self) -> None:
+        """Cancel any armed exact Cycle Analysis placement request.
+
+        Purpose:
+            Return the canvas to normal marker selection without changing data.
+        Why:
+            Operators need a safe exit for one-shot placement after choosing the
+            wrong marker family or deciding not to place a point.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Clears placement mode, preview feedback, and button armed labels.
+        Exceptions:
+            UI cleanup failures are ignored.
+        """
+        self._cycle_exact_marker_mode = None
+        self._clear_cycle_exact_marker_preview()
+        self._update_cycle_exact_marker_placement_controls()
+
+    def _arm_cycle_exact_marker_placement(self, marker_kind: str) -> None:
+        """Arm or cancel one exact peak/trough placement on the Cycle plot.
+
+        Purpose:
+            Prepare the next unmodified left-click to commit an exact raw sample.
+        Why:
+            Separating mode selection from the canvas click keeps the intended
+            pressure-trace position under the cursor during placement.
+        Inputs:
+            marker_kind: ``"peak"`` or ``"trough"`` mode requested by a button.
+        Outputs:
+            None.
+        Side Effects:
+            Sets or clears transient placement state and refreshes button labels.
+        Exceptions:
+            Invalid modes or unavailable cycle data leave state unchanged.
+        """
+        if not self._cycle_ready():
+            return
+        requested_mode = str(marker_kind).strip().lower()
+        if requested_mode not in {"peak", "trough"}:
+            return
+        if requested_mode == getattr(self, "_cycle_exact_marker_mode", None):
+            self._cancel_cycle_exact_marker_placement()
+            return
+        self._cycle_exact_marker_mode = requested_mode
+        self._clear_cycle_exact_marker_preview()
+        self._update_cycle_exact_marker_placement_controls()
+
+    def _update_cycle_exact_marker_preview(self, event) -> None:
+        """Show the exact raw sample that an armed canvas click will place.
+
+        Purpose:
+            Provide a live visual guide for one-shot exact peak/trough placement.
+        Why:
+            The direct-placement workflow must make clear that it bypasses the
+            local-extremum snapping used by Shift-click gestures.
+        Inputs:
+            event: Matplotlib motion event over the Cycle Analysis axes.
+        Outputs:
+            None.
+        Side Effects:
+            Replaces the exact-placement preview artist and caches its sample.
+        Exceptions:
+            Invalid events or unavailable data clear the preview safely.
+        """
+        marker_kind = str(getattr(self, "_cycle_exact_marker_mode", "") or "")
+        if (
+            marker_kind not in {"peak", "trough"}
+            or event is None
+            or event.inaxes is not getattr(self, "_cycle_ax", None)
+            or event.xdata is None
+        ):
+            self._clear_cycle_exact_marker_preview()
+            return
+        target_idx = self._nearest_index_by_x(event.xdata)
+        x_series, y_series, _temp = self._get_xy()
+        try:
+            xv = np.asarray(x_series, dtype=float)
+            yv = np.asarray(y_series, dtype=float)
+            mask = np.asarray(self._current_mask(), dtype=bool)
+        except Exception:
+            self._clear_cycle_exact_marker_preview()
+            return
+        data_len = min(int(xv.size), int(yv.size), int(mask.size))
+        if (
+            target_idx is None
+            or target_idx < 0
+            or target_idx >= data_len
+            or not bool(mask[target_idx])
+            or not math.isfinite(float(xv[target_idx]))
+            or not math.isfinite(float(yv[target_idx]))
+        ):
+            self._clear_cycle_exact_marker_preview()
+            return
+        if (
+            getattr(self, "_cycle_exact_preview_index", None) == int(target_idx)
+            and getattr(self, "_cycle_exact_preview_kind", None) == marker_kind
+        ):
+            return
+        self._clear_cycle_exact_marker_preview()
+        marker_style = get_cycle_trace_style()
+        marker_symbol = (
+            marker_style["peak_marker"]
+            if marker_kind == "peak"
+            else marker_style["trough_marker"]
+        )
+        try:
+            self._cycle_exact_preview_artist = self._cycle_ax.scatter(
+                [float(xv[target_idx])],
+                [float(yv[target_idx])],
+                marker=marker_symbol,
+                s=max(float(marker_style["marker_size"]) * 2.1, 72.0),
+                facecolors="none",
+                edgecolors="#f57c00",
+                linewidths=1.8,
+                zorder=_compute_top_overlay_zorder(self._cycle_ax) + 0.7,
+            )
+            self._cycle_exact_preview_index = int(target_idx)
+            self._cycle_exact_preview_kind = marker_kind
+            self._cycle_canvas.draw_idle()
+        except Exception:
+            self._clear_cycle_exact_marker_preview()
 
     def _select_nearest_cycle_marker(self, event) -> bool:
         """Select the nearest effective peak/trough marker for tweak buttons.
@@ -152630,14 +152898,13 @@ class UnifiedApp(tk.Tk):
             pass
 
     def _on_cycle_motion(self, event) -> None:
-        """Refresh hover preview candidates for Shift-based manual marker placement.
+        """Refresh exact or Shift-snapped placement feedback for the Cycle plot.
 
         Purpose:
-            Keep transient peak/trough ghost markers aligned to the current cursor
-            position while Shift is held over the cycle plot.
+            Keep the correct transient marker guide aligned to the current cursor.
         Why:
-            Manual placement preview should be generated from the same snapped
-            candidates that would be committed on click.
+            Operators need visible confirmation of whether a click will use exact
+            raw-sample placement or the existing Shift-click snapping workflow.
         Args:
             event: Matplotlib motion event on the cycle figure canvas.
         Returns:
@@ -152665,8 +152932,16 @@ class UnifiedApp(tk.Tk):
             if isinstance(key, str) and "shift" in key.lower():
                 shift = True
         if not shift:
+            if str(getattr(self, "_cycle_exact_marker_mode", "") or "") in {
+                "peak",
+                "trough",
+            }:
+                self._clear_cycle_hover_preview()
+                self._update_cycle_exact_marker_preview(event)
+                return
             self._clear_cycle_hover_preview()
             return
+        self._clear_cycle_exact_marker_preview()
         peak_candidate = self._find_manual_marker_index(
             event.xdata, prefer_peak=True, ydata=getattr(event, "ydata", None)
         )
@@ -233883,6 +234158,7 @@ class UnifiedApp(tk.Tk):
             Invalid selections fall back to the active/first Primary Y trace.
         """
 
+        self._cancel_cycle_exact_marker_placement()
         choices = self._cycle_primary_y_trace_choices()
         valid_columns = [choice["column"] for choice in choices]
         target_column = self._normalize_column_choice(column_name)
