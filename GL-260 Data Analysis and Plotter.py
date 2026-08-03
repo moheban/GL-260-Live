@@ -474,6 +474,9 @@ def _update_bootstrap_startup_splash(
     try:
         overlay.lift()
         overlay.update_idletasks()
+        # Heavy imports can begin immediately after a milestone; force its text
+        # and bar to paint before the bootstrap event loop is occupied again.
+        overlay.update()
     except Exception:
         # Best-effort guard; ignore failures to avoid interrupting the workflow.
         pass
@@ -117876,6 +117879,47 @@ class UnifiedApp(tk.Tk):
             )
         return base_text
 
+    def _paint_loading_feedback(self, widget: Optional[tk.Misc]) -> None:
+        """Flush one guarded paint cycle for a loading widget.
+
+        Purpose:
+            Present the latest splash or overlay state before a following phase
+            can occupy the Tk event loop.
+        Why:
+            `update_idletasks()` settles geometry but does not necessarily
+            process the expose event that paints a newly shown progress update.
+            A guard prevents the nested callbacks processed by `update()` from
+            recursively entering another full paint cycle.
+        Inputs:
+            widget: Existing Tk widget that owns the loading feedback surface.
+        Outputs:
+            None.
+        Side Effects:
+            Flushes idle/layout work and processes one Tk event cycle on the
+            main thread. Records a transient re-entrancy guard on the app.
+        Exceptions:
+            Missing, destroyed, non-main-thread, or Tk update failures are
+            ignored so status feedback never interrupts the owning workflow.
+        """
+        if widget is None or threading.current_thread() is not threading.main_thread():
+            return
+        if bool(getattr(self, "_loading_feedback_paint_active", False)):
+            return
+        try:
+            if not widget.winfo_exists():
+                return
+        except Exception:
+            return
+        self._loading_feedback_paint_active = True
+        try:
+            widget.update_idletasks()
+            widget.update()
+        except Exception:
+            # Best-effort guard; progress repaint must not break the workflow.
+            pass
+        finally:
+            self._loading_feedback_paint_active = False
+
     def _stop_plot_loading_overlay_heartbeat(self, frame) -> None:
         """Stop one plot loading overlay heartbeat timer.
 
@@ -118210,6 +118254,7 @@ class UnifiedApp(tk.Tk):
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+        self._paint_loading_feedback(overlay)
 
     def _schedule_plot_auto_refresh(self, frame, canvas) -> None:
         """Schedule the one-time plot auto refresh after initial render.
@@ -129869,11 +129914,7 @@ class UnifiedApp(tk.Tk):
                 pass
         window = getattr(self, "_combined_plot_preview_window", None)
         if window is not None:
-            try:
-                window.update_idletasks()
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
+            self._paint_loading_feedback(window)
 
     def _hide_combined_plot_preview_loading(self, *, defer: bool = True) -> None:
         """Hide the combined Plot Preview loading overlay.
@@ -194502,11 +194543,7 @@ class UnifiedApp(tk.Tk):
                 pass
         window = getattr(self, "_cycle_timeline_preview_window", None)
         if window is not None:
-            try:
-                window.update_idletasks()
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
+            self._paint_loading_feedback(window)
 
     def _hide_cycle_timeline_preview_loading(self) -> None:
         """Hide the cycle timeline Plot Preview overlay.
@@ -201569,7 +201606,7 @@ class UnifiedApp(tk.Tk):
             overlay.lift()
             if bar is not None:
                 bar.start(12)
-            overlay.update_idletasks()
+            self._paint_loading_feedback(overlay)
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
@@ -212790,15 +212827,7 @@ class UnifiedApp(tk.Tk):
             self._stop_operation_splash_heartbeat()
         else:
             self._start_operation_splash_heartbeat()
-        try:
-            window.update_idletasks()
-            # A synchronous render/save immediately follows this call.  Process one
-            # event cycle now so Tk maps and paints the splash before that work
-            # blocks its normal event loop.
-            window.update()
-        except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-            pass
+        self._paint_loading_feedback(window)
 
     def _hide_operation_splash(self, *, context: Optional[str] = None) -> None:
         """Hide and tear down the shared operation splash safely.
@@ -213232,11 +213261,7 @@ class UnifiedApp(tk.Tk):
             self._stop_final_report_preview_splash_heartbeat()
         else:
             self._start_final_report_preview_splash_heartbeat()
-        try:
-            window.update_idletasks()
-        except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-            pass
+        self._paint_loading_feedback(window)
 
     def _hide_final_report_preview_splash(self) -> None:
         """Hide and tear down the Final Report preview splash safely.
@@ -223169,11 +223194,7 @@ class UnifiedApp(tk.Tk):
             self._compare_stop_load_splash_heartbeat()
         else:
             self._compare_start_load_splash_heartbeat()
-        try:
-            window.update_idletasks()
-        except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-            pass
+        self._paint_loading_feedback(window)
 
     def _compare_hide_load_splash(self) -> None:
         """Hide and destroy the Compare load splash safely.
