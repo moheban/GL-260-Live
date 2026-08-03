@@ -71564,6 +71564,110 @@ def _regression_test_cycle_marker_selection_drives_nudge_target() -> None:
         raise AssertionError("Hover-nearest fallback should remain available.")
 
 
+def _regression_test_cycle_exact_marker_add_uses_monotonic_target() -> None:
+    """Validate exact marker buttons use a valid target without extremum snapping.
+
+    Purpose:
+        Verify button-driven manual placement can add a trough on a pressure
+        series that continues falling past the chosen sample.
+    Why:
+        Shift-click intentionally resolves local extrema, while exact placement
+        must support operator-declared cycle boundaries on monotonic segments.
+    Inputs:
+        None.
+    Outputs:
+        None.
+    Side Effects:
+        Exercises marker add/remove state through an in-memory harness.
+    Exceptions:
+        Raises AssertionError when exact placement, conflict clearing, undo, or
+        recompute behavior regresses.
+    """
+
+    class _Harness:
+        """Minimal Cycle Analysis harness for exact marker placement."""
+
+        _cycle_marker_snapshot = UnifiedApp._cycle_marker_snapshot
+        _cycle_marker_snapshots_equal = staticmethod(
+            UnifiedApp._cycle_marker_snapshots_equal
+        )
+        _push_cycle_marker_undo = UnifiedApp._push_cycle_marker_undo
+        _add_manual_cycle_marker_at_target = (
+            UnifiedApp._add_manual_cycle_marker_at_target
+        )
+
+        def __init__(self) -> None:
+            """Initialize a monotonic pressure trace and empty manual edits."""
+            self._auto_peaks: set[int] = set()
+            self._auto_troughs: set[int] = set()
+            self._add_peaks: set[int] = set()
+            self._add_troughs: set[int] = set()
+            self._rm_peaks: set[int] = set()
+            self._rm_troughs: set[int] = set()
+            self._cycle_marker_undo_stack: list[dict[str, set]] = []
+            self._cycle_marker_redo_stack: list[dict[str, set]] = []
+            self._cycle_marker_undo_lock = False
+            self._cycle_marker_tweak_target = {"index": 3, "x_value": 3.0}
+            self._cycle_selected_marker = None
+            self._cycle_manual_revision = 0
+            self.recompute_calls: list[dict[str, bool]] = []
+
+        @staticmethod
+        def _cycle_ready() -> bool:
+            """Report that deterministic cycle data is ready for the harness."""
+            return True
+
+        @staticmethod
+        def _get_xy() -> tuple[np.ndarray, np.ndarray, None]:
+            """Return a monotonic falling pressure trace with valid x samples."""
+            return (
+                np.arange(5, dtype=float),
+                np.array([10, 9, 8, 7, 6], dtype=float),
+                None,
+            )
+
+        @staticmethod
+        def _current_mask() -> np.ndarray:
+            """Return an all-valid analysis mask for the deterministic trace."""
+            return np.ones(5, dtype=bool)
+
+        def _bump_manual_marker_revision(self) -> None:
+            """Record a marker-state revision without persistence for the harness."""
+            self._cycle_manual_revision += 1
+
+        def _recompute_cycle_analysis(self, **kwargs: bool) -> None:
+            """Capture recompute arguments for exact-placement assertions."""
+            self.recompute_calls.append(dict(kwargs))
+
+    harness = _Harness()
+    harness._add_manual_cycle_marker_at_target("trough")
+    if harness._add_troughs != {3}:
+        raise AssertionError(
+            "Exact trough placement should retain the clicked monotonic sample."
+        )
+    if not harness._cycle_marker_undo_stack or harness._cycle_manual_revision != 1:
+        raise AssertionError(
+            "Exact placement should record undo state and increment revision."
+        )
+    if harness.recompute_calls != [
+        {"auto_detect": False, "ignore_min_drop": True, "preserve_view": True}
+    ]:
+        raise AssertionError(
+            "Exact placement should recompute with manual-edit view preservation."
+        )
+
+    harness._add_manual_cycle_marker_at_target("peak")
+    if harness._add_peaks != {3} or harness._add_troughs:
+        raise AssertionError(
+            "Exact peak placement should clear an opposite manual trough at its sample."
+        )
+    if (
+        harness._cycle_manual_revision != 2
+        or len(harness._cycle_marker_undo_stack) != 2
+    ):
+        raise AssertionError("Each exact marker change should remain undoable.")
+
+
 def _regression_test_cycle_primary_y_legacy_marker_migration() -> None:
     """Validate legacy manual marker settings migrate into the active trace.
 
@@ -74249,6 +74353,10 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
     (
         "Cycle Analysis selected marker drives nudge target",
         _regression_test_cycle_marker_selection_drives_nudge_target,
+    ),
+    (
+        "Cycle Analysis exact marker add uses monotonic target",
+        _regression_test_cycle_exact_marker_add_uses_monotonic_target,
     ),
     (
         "Cycle Analysis Primary Y legacy marker migration",
@@ -149483,6 +149591,51 @@ class UnifiedApp(tk.Tk):
             ),
         )
 
+        exact_frame = ttk.Labelframe(manual_frame, text="Add Exact Marker")
+        exact_frame.grid(
+            row=7,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            padx=scale_pad((0, 0)),
+            pady=scale_pad((6, 0)),
+        )
+        for col in range(2):
+            exact_frame.grid_columnconfigure(col, weight=1)
+
+        make_button(
+            exact_frame,
+            text="Add Peak Here",
+            command=lambda: self._add_manual_cycle_marker_at_target("peak"),
+            grid_kwargs={
+                "row": 0,
+                "column": 0,
+                "sticky": "nsew",
+                "padx": scale_pad((0, 3)),
+                "pady": scale_pad((0, 0)),
+            },
+            tooltip=(
+                "Hover or click the pressure trace, then add a peak at the nearest "
+                "valid sample exactly there. This does not require a local maximum."
+            ),
+        )
+        make_button(
+            exact_frame,
+            text="Add Trough Here",
+            command=lambda: self._add_manual_cycle_marker_at_target("trough"),
+            grid_kwargs={
+                "row": 0,
+                "column": 1,
+                "sticky": "nsew",
+                "padx": scale_pad((3, 0)),
+                "pady": scale_pad((0, 0)),
+            },
+            tooltip=(
+                "Hover or click the pressure trace, then add a trough at the nearest "
+                "valid sample exactly there. This supports a trace that is still falling."
+            ),
+        )
+
         advanced_container = ttk.Frame(left)
         advanced_container.grid(row=2, column=0, sticky="ew", pady=(0, scale_len(8)))
         advanced_container.grid_columnconfigure(0, weight=1)
@@ -149691,6 +149844,7 @@ class UnifiedApp(tk.Tk):
             "Marker editing:\n"
             "* SHIFT + Left-click  = Peak\n"
             "* SHIFT + Right-click = Trough\n"
+            "* Hover/click, then Add Peak/Trough Here = exact sample\n"
             "* Right-click (no SHIFT) = remove nearest Peak/Trough\n"
             "Tip: Peaks/troughs snap to local extrema near your click. Use the "
             "tweak buttons after hovering or clicking near a marker."
@@ -151616,6 +151770,115 @@ class UnifiedApp(tk.Tk):
             "index": int(idx),
             "x_value": float(event.xdata),
         }
+
+    def _add_manual_cycle_marker_at_target(self, marker_kind: str) -> None:
+        """Add an exact manual peak or trough at the latest plot target.
+
+        Purpose:
+            Commit a manual marker at the nearest valid sample last hovered or
+            clicked in the Cycle Analysis plot.
+        Why:
+            Operators sometimes need to declare a cycle boundary before the
+            pressure trace forms a local extremum, which Shift-click snapping
+            intentionally cannot guarantee.
+        Inputs:
+            marker_kind: ``"peak"`` or ``"trough"`` identifying the marker to
+                add at the stored plot target.
+        Outputs:
+            None.
+        Side Effects:
+            Updates manual marker sets, clears the opposite marker type at the
+            same sample, records undo state, persists the active trace state,
+            selects the new marker, and recomputes Cycle Analysis.
+        Exceptions:
+            Invalid targets or unavailable data show an informational message
+            and leave marker state unchanged.
+        """
+        if not self._cycle_ready():
+            return
+        marker_kind_normalized = str(marker_kind).strip().lower()
+        if marker_kind_normalized not in {"peak", "trough"}:
+            return
+        target = getattr(self, "_cycle_marker_tweak_target", {}) or {}
+        try:
+            target_idx = int(target.get("index"))
+        except Exception:
+            target_idx = -1
+        x_series, y_series, _temp = self._get_xy()
+        try:
+            xv = np.asarray(x_series, dtype=float)
+            yv = np.asarray(y_series, dtype=float)
+            mask = np.asarray(self._current_mask(), dtype=bool)
+        except Exception:
+            xv = np.zeros(0, dtype=float)
+            yv = np.zeros(0, dtype=float)
+            mask = np.zeros(0, dtype=bool)
+        data_len = min(int(xv.size), int(yv.size), int(mask.size))
+        if (
+            target_idx < 0
+            or target_idx >= data_len
+            or not bool(mask[target_idx])
+            or not math.isfinite(float(xv[target_idx]))
+            or not math.isfinite(float(yv[target_idx]))
+        ):
+            try:
+                messagebox.showinfo(
+                    "Cycle Analysis",
+                    "Hover or click a valid point on the pressure trace before "
+                    "adding an exact marker.",
+                )
+            except Exception:
+                pass
+            return
+
+        self._push_cycle_marker_undo()
+        changed = False
+        if marker_kind_normalized == "peak":
+            # A sample must never remain an effective peak and trough together.
+            if target_idx in self._add_troughs:
+                self._add_troughs.remove(target_idx)
+                changed = True
+            if target_idx in self._auto_troughs and target_idx not in self._rm_troughs:
+                self._rm_troughs.add(target_idx)
+                changed = True
+            if target_idx in self._rm_peaks:
+                self._rm_peaks.remove(target_idx)
+                changed = True
+            if target_idx not in self._auto_peaks and target_idx not in self._add_peaks:
+                self._add_peaks.add(target_idx)
+                changed = True
+        else:
+            # Mirror peak handling so an exact trough replaces any peak at its sample.
+            if target_idx in self._add_peaks:
+                self._add_peaks.remove(target_idx)
+                changed = True
+            if target_idx in self._auto_peaks and target_idx not in self._rm_peaks:
+                self._rm_peaks.add(target_idx)
+                changed = True
+            if target_idx in self._rm_troughs:
+                self._rm_troughs.remove(target_idx)
+                changed = True
+            if (
+                target_idx not in self._auto_troughs
+                and target_idx not in self._add_troughs
+            ):
+                self._add_troughs.add(target_idx)
+                changed = True
+        if not changed:
+            return
+        self._cycle_selected_marker = {
+            "kind": marker_kind_normalized,
+            "index": int(target_idx),
+            "x_value": float(xv[target_idx]),
+        }
+        self._cycle_marker_tweak_target = {
+            "index": int(target_idx),
+            "x_value": float(xv[target_idx]),
+        }
+        self._bump_manual_marker_revision()
+        self._recompute_cycle_analysis(
+            auto_detect=False, ignore_min_drop=True, preserve_view=True
+        )
 
     def _select_nearest_cycle_marker(self, event) -> bool:
         """Select the nearest effective peak/trough marker for tweak buttons.

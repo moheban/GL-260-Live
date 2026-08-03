@@ -437,6 +437,8 @@ Detect cycles, compute cycle metrics/moles uptake, and support manual correction
    - remove marker
    - undo/redo marker changes
    - click an existing peak/trough marker to select it before using marker nudge controls
+   - hover or click the pressure trace, then use **Add Peak Here** or **Add Trough Here** to declare the nearest valid sample exactly as a marker; this is useful when a trace is still rising or falling and has not formed a local extremum
+   - use `Shift + Left-click` for a snapped peak or `Shift + Right-click` for a snapped trough when local-extremum snapping is desired
 5. Tune smoothing and snap/refine settings.
 6. Re-run analysis and compare summary changes.
 7. Validate cycle summary metrics and conversion/moles outputs.
@@ -453,6 +455,8 @@ Detect cycles, compute cycle metrics/moles uptake, and support manual correction
   - Recovery: adjust smoothing window and detection thresholds; verify selected trace.
 - Error: manual edit snaps to incorrect point.
   - Recovery: increase/decrease manual snap radius and retry.
+- Error: a cycle boundary must be marked before the trace reverses direction.
+  - Recovery: hover or click the intended sample, then use **Add Peak Here** or **Add Trough Here**; exact placement does not require an extremum.
 - Error: cycle summary missing conversion fields.
   - Recovery: confirm required conversion inputs/columns are mapped.
 
