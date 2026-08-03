@@ -70673,6 +70673,25 @@ def _regression_test_combined_cycle_legend_vdw_unavailable() -> None:
         )
         if missing_completion_lines != ["VDW completion: N/A"]:
             raise AssertionError("Missing VDW completion must not include a percent suffix.")
+        settings[COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY] = [
+            {
+                "id": "theoretical_gas_uptake_moles",
+                "enabled": True,
+                "label": "Theoretical gas uptake",
+            }
+        ]
+        theoretical_uptake_lines = _combined_cycle_legend_calculated_summary_lines(
+            {
+                "reagent_summary": {
+                    "theoretical_moles": 2.5,
+                    "completion_percent_ideal": 40.0,
+                }
+            }
+        )
+        if theoretical_uptake_lines != ["Theoretical gas uptake: 2.500000 mol"]:
+            raise AssertionError(
+                "Theoretical gas uptake must use the completion basis without stoich."
+            )
     finally:
         if had_original:
             settings[COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY] = original
@@ -92605,11 +92624,9 @@ def _combined_cycle_legend_calculated_summary_lines(
         "completion_percent_ideal": reagent_summary.get("completion_percent_ideal"),
         "completion_percent_vdw": reagent_summary.get("completion_percent_vdw"),
         "starting_material_initial_moles": starting_material_initial,
-        "theoretical_gas_uptake_moles": (
-            starting_material_initial * gas_stoich
-            if math.isfinite(starting_material_initial) and math.isfinite(gas_stoich)
-            else float("nan")
-        ),
+        # Completion already uses theoretical_moles as its expected gas-uptake
+        # basis, including Cycle Analysis imports that lack a local stoich setting.
+        "theoretical_gas_uptake_moles": starting_material_initial,
         "starting_material_reacted_ideal": starting_material_reacted_ideal,
         "starting_material_reacted_vdw": starting_material_reacted_vdw,
         "starting_material_remaining_ideal": (
