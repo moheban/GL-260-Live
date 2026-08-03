@@ -128576,6 +128576,10 @@ class UnifiedApp(tk.Tk):
             Exceptions:
                 Errors are handled by the downstream refresh pipeline.
             """
+            if plot_key == "fig_combined":
+                # The preview owns a separate figure; close it before replacing the
+                # display figure so no stale preview remains visible after refresh.
+                self._close_combined_plot_preview_window()
             refresh_message = (
                 "Refreshing combined plot..."
                 if plot_key == "fig_combined"
@@ -212788,6 +212792,10 @@ class UnifiedApp(tk.Tk):
             self._start_operation_splash_heartbeat()
         try:
             window.update_idletasks()
+            # A synchronous render/save immediately follows this call.  Process one
+            # event cycle now so Tk maps and paints the splash before that work
+            # blocks its normal event loop.
+            window.update()
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
