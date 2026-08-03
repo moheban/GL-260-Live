@@ -70577,7 +70577,7 @@ def _regression_test_combined_cycle_legend_calculated_rows() -> None:
     had_original = COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY in settings
     try:
         defaults = _normalize_combined_cycle_legend_calculated_rows(None)
-        if len(defaults) != 4 or any(row["enabled"] for row in defaults):
+        if len(defaults) != 10 or any(row["enabled"] for row in defaults):
             raise AssertionError("Calculated cycle legend rows must default disabled.")
         configured = _normalize_combined_cycle_legend_calculated_rows(
             [
@@ -70658,6 +70658,21 @@ def _regression_test_combined_cycle_legend_vdw_unavailable() -> None:
         expected = "N/A (SciPy not installed)"
         if len(lines) != 2 or any(expected not in line for line in lines):
             raise AssertionError("Unavailable VDW cycle legend rows must show N/A.")
+        settings[COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY] = [
+            {
+                "id": "completion_percent_vdw",
+                "enabled": True,
+                "label": "VDW completion",
+            }
+        ]
+        missing_completion_lines = _combined_cycle_legend_calculated_summary_lines(
+            {
+                "vdw_used": True,
+                "reagent_summary": {"vdw_available": True},
+            }
+        )
+        if missing_completion_lines != ["VDW completion: N/A"]:
+            raise AssertionError("Missing VDW completion must not include a percent suffix.")
     finally:
         if had_original:
             settings[COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY] = original
@@ -82742,6 +82757,12 @@ COMBINED_CYCLE_LEGEND_CALCULATED_ROW_DEFINITIONS: Tuple[Tuple[str, str], ...] = 
     ("total_moles_vdw", "Estimated uptake (VDW)"),
     ("completion_percent_ideal", "Completion (Ideal)"),
     ("completion_percent_vdw", "Completion (VDW)"),
+    ("starting_material_initial_moles", "Starting material (initial)"),
+    ("theoretical_gas_uptake_moles", "Theoretical gas uptake"),
+    ("starting_material_reacted_ideal", "Starting material reacted (Ideal)"),
+    ("starting_material_reacted_vdw", "Starting material reacted (VDW)"),
+    ("starting_material_remaining_ideal", "Starting material remaining (Ideal)"),
+    ("starting_material_remaining_vdw", "Starting material remaining (VDW)"),
 )
 
 
@@ -92511,8 +92532,8 @@ def _combined_cycle_legend_calculated_summary_lines(
     """Build configured calculated-summary rows for one combined cycle legend.
 
     Purpose:
-        Format optional uptake and completion values from the already prepared
-        cycle-transfer payload for the combined triple-axis legend.
+        Format optional uptake, completion, and starting-material values from the
+        already prepared cycle-transfer payload for the combined triple-axis legend.
     Why:
         Legend refreshes must reflect profile choices without recalculating cycle
         analysis or changing the legacy moles-summary behavior.
@@ -92535,11 +92556,90 @@ def _combined_cycle_legend_calculated_summary_lines(
     vdw_available = bool(
         reagent_summary.get("vdw_available", metrics_payload.get("vdw_used", False))
     )
+    gas_stoich = _safe_float(
+        settings.get(
+            "gas_stoich_mol_per_mol_starting",
+            settings.get("stoich_mol_gas_per_mol_starting"),
+        ),
+        float("nan"),
+    )
+    if not math.isfinite(gas_stoich) or gas_stoich <= 0.0:
+        gas_stoich = float("nan")
+    starting_material_initial = _safe_float(
+        reagent_summary.get("theoretical_moles"), float("nan")
+    )
+    total_moles_ideal = _safe_float(
+        metrics_payload.get("total_moles_ideal"), float("nan")
+    )
+    total_moles_vdw = _safe_float(
+        metrics_payload.get("total_moles_vdw"), float("nan")
+    )
+
+    def _starting_material_amount(gas_moles: float) -> float:
+        """Convert measured gas uptake to its starting-material equivalent.
+
+        Purpose:
+            Derive reacted starting-material moles from the configured gas-to-
+            starting-material stoichiometric ratio.
+        Why:
+            Users need reaction-basis values in the cycle legend without a second
+            analysis pass or a parallel source of truth.
+        Args:
+            gas_moles: Measured gas uptake in mol from the cached cycle payload.
+        Returns:
+            Starting-material amount in mol, or NaN when inputs are unavailable.
+        Side Effects:
+            None.
+        Exceptions:
+            Invalid stoichiometry or gas uptake returns NaN for safe `N/A` output.
+        """
+        if not math.isfinite(gas_moles) or not math.isfinite(gas_stoich):
+            return float("nan")
+        return gas_moles / gas_stoich
+
+    starting_material_reacted_ideal = _starting_material_amount(total_moles_ideal)
+    starting_material_reacted_vdw = _starting_material_amount(total_moles_vdw)
     values = {
-        "total_moles_ideal": metrics_payload.get("total_moles_ideal"),
-        "total_moles_vdw": metrics_payload.get("total_moles_vdw"),
+        "total_moles_ideal": total_moles_ideal,
+        "total_moles_vdw": total_moles_vdw,
         "completion_percent_ideal": reagent_summary.get("completion_percent_ideal"),
         "completion_percent_vdw": reagent_summary.get("completion_percent_vdw"),
+        "starting_material_initial_moles": starting_material_initial,
+        "theoretical_gas_uptake_moles": (
+            starting_material_initial * gas_stoich
+            if math.isfinite(starting_material_initial) and math.isfinite(gas_stoich)
+            else float("nan")
+        ),
+        "starting_material_reacted_ideal": starting_material_reacted_ideal,
+        "starting_material_reacted_vdw": starting_material_reacted_vdw,
+        "starting_material_remaining_ideal": (
+            starting_material_initial - starting_material_reacted_ideal
+            if math.isfinite(starting_material_initial)
+            and math.isfinite(starting_material_reacted_ideal)
+            else float("nan")
+        ),
+        "starting_material_remaining_vdw": (
+            starting_material_initial - starting_material_reacted_vdw
+            if math.isfinite(starting_material_initial)
+            and math.isfinite(starting_material_reacted_vdw)
+            else float("nan")
+        ),
+    }
+    mole_row_ids = {
+        "total_moles_ideal",
+        "total_moles_vdw",
+        "starting_material_initial_moles",
+        "theoretical_gas_uptake_moles",
+        "starting_material_reacted_ideal",
+        "starting_material_reacted_vdw",
+        "starting_material_remaining_ideal",
+        "starting_material_remaining_vdw",
+    }
+    vdw_row_ids = {
+        "total_moles_vdw",
+        "completion_percent_vdw",
+        "starting_material_reacted_vdw",
+        "starting_material_remaining_vdw",
     }
     lines: List[str] = []
     for row in rows:
@@ -92547,13 +92647,22 @@ def _combined_cycle_legend_calculated_summary_lines(
             continue
         row_id = str(row.get("id") or "")
         label = str(row.get("label") or "").strip()
-        if row_id in {"total_moles_ideal", "total_moles_vdw"}:
-            value_text = f"{_format_cycle_legend_number(values.get(row_id), 6)} mol"
+        numeric_value = _safe_float(values.get(row_id), float("nan"))
+        has_numeric_value = math.isfinite(numeric_value)
+        if row_id in mole_row_ids:
+            value_text = (
+                f"{_format_cycle_legend_number(numeric_value, 6)} mol"
+                if has_numeric_value
+                else "N/A"
+            )
         else:
-            value_text = f"{_format_cycle_legend_number(values.get(row_id), 2)}%"
+            value_text = (
+                f"{_format_cycle_legend_number(numeric_value, 2)}%"
+                if has_numeric_value
+                else "N/A"
+            )
         if (
-            row_id in {"total_moles_vdw", "completion_percent_vdw"}
-            and not vdw_available
+            row_id in vdw_row_ids and not vdw_available
         ):
             value_text = "N/A (SciPy not installed)"
         lines.append(f"{label}: {value_text}")
