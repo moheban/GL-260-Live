@@ -70551,6 +70551,120 @@ def _regression_test_cycle_legend_number_formatting() -> None:
             raise AssertionError(f"Missing comma-grouped cycle legend text: {expected}")
 
 
+def _regression_test_combined_cycle_legend_calculated_rows() -> None:
+    """Validate calculated combined-cycle legend row normalization and formatting.
+
+    Purpose:
+        Cover profile-safe defaults, user ordering/labels, and the calculated
+        uptake/completion display values used by the combined plot.
+    Why:
+        This feature must preserve legacy legends while reliably restoring
+        customized calculated rows from profile settings.
+    Inputs:
+        None.
+    Outputs:
+        None.
+    Side Effects:
+        Temporarily replaces the calculated-row setting and restores it before
+        returning.
+    Exceptions:
+        Raises AssertionError when defaults, normalization, or row formatting
+        deviates from the configured contract.
+    """
+    original = copy.deepcopy(
+        settings.get(COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY)
+    )
+    had_original = COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY in settings
+    try:
+        defaults = _normalize_combined_cycle_legend_calculated_rows(None)
+        if len(defaults) != 4 or any(row["enabled"] for row in defaults):
+            raise AssertionError("Calculated cycle legend rows must default disabled.")
+        configured = _normalize_combined_cycle_legend_calculated_rows(
+            [
+                {
+                    "id": "completion_percent_vdw",
+                    "enabled": True,
+                    "label": "VDW completion",
+                },
+                {
+                    "id": "total_moles_ideal",
+                    "enabled": True,
+                    "label": "Ideal uptake",
+                },
+                {"id": "unknown", "enabled": True, "label": "Ignored"},
+                {"id": "total_moles_ideal", "enabled": False, "label": "Duplicate"},
+            ]
+        )
+        settings[COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY] = configured
+        lines = _combined_cycle_legend_calculated_summary_lines(
+            {
+                "total_moles_ideal": 12.345678,
+                "total_moles_vdw": 11.25,
+                "vdw_used": True,
+                "reagent_summary": {
+                    "completion_percent_ideal": 50.0,
+                    "completion_percent_vdw": 45.5,
+                    "vdw_available": True,
+                },
+            }
+        )
+        if lines != ["VDW completion: 45.50%", "Ideal uptake: 12.345678 mol"]:
+            raise AssertionError(f"Unexpected calculated cycle legend rows: {lines}")
+    finally:
+        if had_original:
+            settings[COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY] = original
+        else:
+            settings.pop(COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY, None)
+
+
+def _regression_test_combined_cycle_legend_vdw_unavailable() -> None:
+    """Validate safe unavailable text for configured VDW calculated rows.
+
+    Purpose:
+        Confirm VDW uptake and completion rows retain the existing unavailable
+        behavior when the Van der Waals calculation cannot run.
+    Why:
+        Users should see a clear safe state instead of a misleading numeric value.
+    Inputs:
+        None.
+    Outputs:
+        None.
+    Side Effects:
+        Temporarily replaces the calculated-row setting and restores it before
+        returning.
+    Exceptions:
+        Raises AssertionError when unavailable VDW rows do not render safely.
+    """
+    original = copy.deepcopy(
+        settings.get(COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY)
+    )
+    had_original = COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY in settings
+    try:
+        settings[COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY] = [
+            {"id": "total_moles_vdw", "enabled": True, "label": "VDW uptake"},
+            {
+                "id": "completion_percent_vdw",
+                "enabled": True,
+                "label": "VDW completion",
+            },
+        ]
+        lines = _combined_cycle_legend_calculated_summary_lines(
+            {
+                "total_moles_vdw": 9.0,
+                "vdw_used": False,
+                "reagent_summary": {"vdw_available": False},
+            }
+        )
+        expected = "N/A (SciPy not installed)"
+        if len(lines) != 2 or any(expected not in line for line in lines):
+            raise AssertionError("Unavailable VDW cycle legend rows must show N/A.")
+    finally:
+        if had_original:
+            settings[COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY] = original
+        else:
+            settings.pop(COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY, None)
+
+
 def _regression_test_data_trace_keys_include_grouped_columns_before_render() -> None:
     """Validate grouped Columns keys appear in Data Trace Settings pre-render.
 
@@ -74326,6 +74440,14 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
     (
         "Cycle legend number formatting",
         _regression_test_cycle_legend_number_formatting,
+    ),
+    (
+        "Combined cycle legend calculated rows",
+        _regression_test_combined_cycle_legend_calculated_rows,
+    ),
+    (
+        "Combined cycle legend VDW unavailable",
+        _regression_test_combined_cycle_legend_vdw_unavailable,
     ),
     (
         "Data Trace grouped column keys before render",
@@ -82599,6 +82721,7 @@ PLOT_SETTINGS_CARD_ORDER_DEFAULT = [
     "titles",
     "ticks",
     "cycle_integration_legend",
+    "cycle_legend_settings",
     "combined_axis",
     "peak_trough",
     "gas_model",
@@ -82610,6 +82733,65 @@ PLOT_SETTINGS_CARD_ORDER_MIGRATION = {
     # Axis controls were merged into the fixed first "Axis & Range" card.
     "axes": "",
 }
+
+COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY = (
+    "combined_cycle_legend_calculated_rows"
+)
+COMBINED_CYCLE_LEGEND_CALCULATED_ROW_DEFINITIONS: Tuple[Tuple[str, str], ...] = (
+    ("total_moles_ideal", "Estimated uptake (Ideal)"),
+    ("total_moles_vdw", "Estimated uptake (VDW)"),
+    ("completion_percent_ideal", "Completion (Ideal)"),
+    ("completion_percent_vdw", "Completion (VDW)"),
+)
+
+
+def _normalize_combined_cycle_legend_calculated_rows(
+    value: Any,
+) -> List[Dict[str, Any]]:
+    """Normalize persisted calculated-row settings for combined cycle legends.
+
+    Purpose:
+        Produce one complete, ordered configuration for the optional calculated
+        rows shown in the combined triple-axis cycle legend.
+    Why:
+        Profiles may predate this feature or contain manually edited settings,
+        so rendering needs a safe migration path that preserves legacy output.
+    Args:
+        value: Candidate list of row mappings saved in global or profile settings.
+    Returns:
+        List of row mappings with stable `id`, `enabled`, and `label` values.
+    Side Effects:
+        None.
+    Exceptions:
+        Unknown, duplicate, and malformed rows are ignored; missing rows use
+        disabled defaults.
+    """
+    defaults = dict(COMBINED_CYCLE_LEGEND_CALCULATED_ROW_DEFINITIONS)
+    raw_rows = value if isinstance(value, list) else []
+    normalized: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+    # Preserve the user-selected order while rejecting invalid persisted entries.
+    for raw_row in raw_rows:
+        if not isinstance(raw_row, Mapping):
+            continue
+        row_id = str(raw_row.get("id") or "").strip()
+        if row_id not in defaults or row_id in seen:
+            continue
+        label = str(raw_row.get("label") or "").strip()
+        normalized.append(
+            {
+                "id": row_id,
+                "enabled": bool(raw_row.get("enabled", False)),
+                "label": label[:96] or defaults[row_id],
+            }
+        )
+        seen.add(row_id)
+    # Append absent supported rows so they remain available to enable in the UI.
+    for row_id, default_label in COMBINED_CYCLE_LEGEND_CALCULATED_ROW_DEFINITIONS:
+        if row_id in seen:
+            continue
+        normalized.append({"id": row_id, "enabled": False, "label": default_label})
+    return normalized
 
 
 def _normalize_startup_autorestore_mode(value: Any) -> str:
@@ -92323,6 +92505,61 @@ def _format_cycle_legend_count(value: Any) -> str:
     return f"{count_value:,}"
 
 
+def _combined_cycle_legend_calculated_summary_lines(
+    payload: Any,
+) -> List[str]:
+    """Build configured calculated-summary rows for one combined cycle legend.
+
+    Purpose:
+        Format optional uptake and completion values from the already prepared
+        cycle-transfer payload for the combined triple-axis legend.
+    Why:
+        Legend refreshes must reflect profile choices without recalculating cycle
+        analysis or changing the legacy moles-summary behavior.
+    Args:
+        payload: Cycle-transfer mapping attached to the active trace overlay.
+    Returns:
+        Ordered display strings for enabled calculated rows.
+    Side Effects:
+        None.
+    Exceptions:
+        Missing or non-finite values render as `N/A`; unavailable VDW values
+        retain the existing SciPy availability message.
+    """
+    rows = _normalize_combined_cycle_legend_calculated_rows(
+        settings.get(COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY)
+    )
+    metrics_payload = payload if isinstance(payload, Mapping) else {}
+    reagent_summary = metrics_payload.get("reagent_summary")
+    reagent_summary = reagent_summary if isinstance(reagent_summary, Mapping) else {}
+    vdw_available = bool(
+        reagent_summary.get("vdw_available", metrics_payload.get("vdw_used", False))
+    )
+    values = {
+        "total_moles_ideal": metrics_payload.get("total_moles_ideal"),
+        "total_moles_vdw": metrics_payload.get("total_moles_vdw"),
+        "completion_percent_ideal": reagent_summary.get("completion_percent_ideal"),
+        "completion_percent_vdw": reagent_summary.get("completion_percent_vdw"),
+    }
+    lines: List[str] = []
+    for row in rows:
+        if not row.get("enabled"):
+            continue
+        row_id = str(row.get("id") or "")
+        label = str(row.get("label") or "").strip()
+        if row_id in {"total_moles_ideal", "total_moles_vdw"}:
+            value_text = f"{_format_cycle_legend_number(values.get(row_id), 6)} mol"
+        else:
+            value_text = f"{_format_cycle_legend_number(values.get(row_id), 2)}%"
+        if (
+            row_id in {"total_moles_vdw", "completion_percent_vdw"}
+            and not vdw_available
+        ):
+            value_text = "N/A (SciPy not installed)"
+        lines.append(f"{label}: {value_text}")
+    return lines
+
+
 def _combined_axis_semantic_from_key(value: Any) -> Optional[str]:
     """Return the semantic axis family for one combined plot dataset key.
 
@@ -97406,6 +97643,13 @@ def build_combined_triple_axis_figure(
                     f"Total ΔP: {_format_cycle_legend_number(total_drop_val, 2)} PSI"
                 )
             )
+            calculated_payload = legend_payload.get("payload")
+            # These rows read the cached payload already used by the cycle overlay.
+            for line in _combined_cycle_legend_calculated_summary_lines(
+                calculated_payload
+            ):
+                handles_cycle.append(mpatches.Patch(color="none"))
+                labels_cycle.append(_text_safe(line))
             if include_moles_in_core_plot_legend:
                 legend_moles = legend_payload.get("moles_lines")
                 if legend_moles is None:
@@ -103191,6 +103435,11 @@ class UnifiedApp(tk.Tk):
         )
         self._register_var_default(
             self.include_moles_core_legend, include_moles_default
+        )
+        settings[COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY] = (
+            _normalize_combined_cycle_legend_calculated_rows(
+                settings.get(COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY)
+            )
         )
         core_side_effects_mode_default = _normalize_core_render_cycle_side_effects_mode(
             settings.get(
@@ -139516,6 +139765,11 @@ class UnifiedApp(tk.Tk):
         # Iterate over items from plot_settings to apply the per-item logic.
         for key, value in plot_settings.items():
             settings[key] = copy.deepcopy(value)
+        settings[COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY] = (
+            _normalize_combined_cycle_legend_calculated_rows(
+                settings.get(COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY)
+            )
+        )
         settings["core_plot_render_profiles"] = _normalize_core_plot_render_profiles(
             plot_settings.get("core_plot_render_profiles"),
             seed_source=settings,
@@ -147280,6 +147534,14 @@ class UnifiedApp(tk.Tk):
                 "builder": self._build_plot_cycle_integration_legend_section,
             },
             {
+                "key": "cycle_legend_settings",
+                "title": "Cycle Legend Settings",
+                "expanded": False,
+                "collapsible": True,
+                "reorderable": True,
+                "builder": self._build_plot_cycle_legend_settings_section,
+            },
+            {
                 "key": "combined_axis",
                 "title": "Combined Triple-Axis Settings",
                 "expanded": False,
@@ -148300,6 +148562,211 @@ class UnifiedApp(tk.Tk):
         # Reuse existing builders to preserve callback wiring and variable ownership.
         self._build_plot_cycle_integration_section(integration_host, pad)
         self._build_plot_cycle_legend_section(legend_host, pad)
+
+    def _build_plot_cycle_legend_settings_section(
+        self, parent, pad: dict[str, int]
+    ) -> None:
+        """Build editable calculated-summary settings for the combined cycle legend.
+
+        Purpose:
+            Let users select, rename, and reorder optional calculated rows in the
+            combined triple-axis cycle legend.
+        Why:
+            Important uptake and completion values vary by workflow, while the
+            fixed marker and pressure-drop rows should retain their current form.
+        Args:
+            parent: Card body frame produced by `_add_plot_settings_card`.
+            pad: Shared padding dictionary for section internals.
+        Returns:
+            None.
+        Side Effects:
+            Updates the profile-scoped calculated-row setting and rebuilds this
+            card's editable row widgets after ordering changes.
+        Exceptions:
+            Tk widget construction errors propagate through the existing card
+            builder flow; malformed saved values are normalized before display.
+        """
+        parent.grid_columnconfigure(0, weight=1)
+        host = ttk.Frame(parent)
+        host.grid(row=0, column=0, sticky="ew", **pad)
+        host.grid_columnconfigure(1, weight=1)
+
+        def _persist_rows(rows: List[Dict[str, Any]]) -> None:
+            """Normalize and store calculated cycle-legend rows for refreshes.
+
+            Purpose:
+                Commit one UI edit to shared settings in profile-compatible form.
+            Why:
+                Profile capture reads shared plot settings, so the card must write
+                immediately without triggering a cycle-analysis recalculation.
+            Args:
+                rows: Candidate calculated-row configuration from the card.
+            Returns:
+                None.
+            Side Effects:
+                Writes normalized data to the shared settings mapping and marks
+                the combined plot layout dirty for the next refresh.
+            Exceptions:
+                Layout invalidation failures are ignored because the refreshed
+                renderer will still read the saved configuration.
+            """
+            settings[COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY] = (
+                _normalize_combined_cycle_legend_calculated_rows(rows)
+            )
+            try:
+                self._mark_plot_layout_dirty("fig_combined_triple_axis")
+            except Exception:
+                pass
+
+        def _render_rows() -> None:
+            """Render the calculated-row editor from its normalized configuration.
+
+            Purpose:
+                Keep checkbox, label, and ordering controls synchronized after
+                each user change.
+            Why:
+                Rebuilding this small four-row editor avoids stale callback indices
+                while preserving the explicit order users see in the legend.
+            Args:
+                None.
+            Returns:
+                None.
+            Side Effects:
+                Destroys and recreates child widgets within this card only.
+            Exceptions:
+                Missing Tk widget state is handled by returning early.
+            """
+            for child in host.winfo_children():
+                child.destroy()
+            rows = _normalize_combined_cycle_legend_calculated_rows(
+                settings.get(COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY)
+            )
+            ttk.Label(
+                host,
+                text=(
+                    "Choose calculated rows for the Combined Triple-Axis cycle "
+                    "legend. Unchecked rows are not shown."
+                ),
+                wraplength=620,
+            ).grid(row=0, column=0, columnspan=4, sticky="w", padx=6, pady=(2, 6))
+            self._combined_cycle_legend_calculated_row_vars = []
+            for index, row in enumerate(rows, start=1):
+                enabled_var = tk.BooleanVar(value=bool(row.get("enabled")))
+                label_var = tk.StringVar(value=str(row.get("label") or ""))
+                self._combined_cycle_legend_calculated_row_vars.append(
+                    (enabled_var, label_var)
+                )
+
+                def _commit_row(
+                    *, row_index: int = index - 1,
+                    enabled: tk.BooleanVar = enabled_var,
+                    label: tk.StringVar = label_var,
+                ) -> None:
+                    """Persist one calculated legend-row visibility or label edit.
+
+                    Purpose:
+                        Write the current controls for one configured row.
+                    Why:
+                        The card must keep profile settings current before a plot
+                        refresh without rebuilding or recalculating cycle data.
+                    Args:
+                        row_index: Index of the edited normalized row.
+                        enabled: Tk variable controlling row visibility.
+                        label: Tk variable containing the display label.
+                    Returns:
+                        None.
+                    Side Effects:
+                        Updates shared calculated-row settings and invalidates the
+                        combined layout for a subsequent refresh.
+                    Exceptions:
+                        Out-of-range row indices are ignored safely.
+                    """
+                    updated_rows = _normalize_combined_cycle_legend_calculated_rows(
+                        settings.get(COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY)
+                    )
+                    if row_index >= len(updated_rows):
+                        return
+                    updated_rows[row_index]["enabled"] = bool(enabled.get())
+                    updated_rows[row_index]["label"] = label.get()
+                    _persist_rows(updated_rows)
+
+                ttk.Checkbutton(
+                    host,
+                    text="Show",
+                    variable=enabled_var,
+                    command=_commit_row,
+                ).grid(row=index, column=0, sticky="w", padx=6, pady=3)
+                label_entry = ttk.Entry(host, textvariable=label_var, width=34)
+                label_entry.grid(
+                    row=index, column=1, sticky="ew", padx=6, pady=3
+                )
+                label_entry.bind(
+                    "<FocusOut>",
+                    lambda _event, commit=_commit_row: commit(),
+                    add="+",
+                )
+                label_entry.bind(
+                    "<Return>",
+                    lambda _event, commit=_commit_row: commit(),
+                    add="+",
+                )
+
+                def _move_row(
+                    direction: int, *, row_index: int = index - 1
+                ) -> None:
+                    """Move one calculated legend row while preserving its settings.
+
+                    Purpose:
+                        Swap a row with its immediate neighbor in display order.
+                    Why:
+                        The combined legend must honor the same order the user
+                        sees in this editor.
+                    Args:
+                        direction: Negative for up or positive for down.
+                        row_index: Index of the selected normalized row.
+                    Returns:
+                        None.
+                    Side Effects:
+                        Persists reordered rows and rebuilds this four-row editor.
+                    Exceptions:
+                        Boundary moves are ignored without changing settings.
+                    """
+                    updated_rows = _normalize_combined_cycle_legend_calculated_rows(
+                        settings.get(COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY)
+                    )
+                    target_index = row_index + direction
+                    if target_index < 0 or target_index >= len(updated_rows):
+                        return
+                    updated_rows[row_index], updated_rows[target_index] = (
+                        updated_rows[target_index],
+                        updated_rows[row_index],
+                    )
+                    _persist_rows(updated_rows)
+                    _render_rows()
+
+                ttk.Button(
+                    host,
+                    text="↑",
+                    width=3,
+                    command=lambda move=_move_row: move(-1),
+                ).grid(
+                    row=index, column=2, sticky="w", padx=(2, 0), pady=3
+                )
+                ttk.Button(
+                    host,
+                    text="↓",
+                    width=3,
+                    command=lambda move=_move_row: move(1),
+                ).grid(
+                    row=index, column=3, sticky="w", padx=(2, 6), pady=3
+                )
+
+        _persist_rows(
+            _normalize_combined_cycle_legend_calculated_rows(
+                settings.get(COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY)
+            )
+        )
+        _render_rows()
 
     def _build_plot_combined_axis_section(self, parent, pad: dict[str, int]) -> None:
         """Build the Combined Triple-Axis dataset selection card.
@@ -242402,6 +242869,16 @@ class UnifiedApp(tk.Tk):
             config.get("cycle_legend_anchor"),
             config.get("cycle_legend_loc"),
             config.get("cycle_legend_anchor_space"),
+            tuple(
+                (
+                    row["id"],
+                    bool(row["enabled"]),
+                    row["label"],
+                )
+                for row in _normalize_combined_cycle_legend_calculated_rows(
+                    settings.get(COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY)
+                )
+            ),
         )
 
     def _combined_cycle_overlay_signature(
