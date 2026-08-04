@@ -70699,6 +70699,48 @@ def _regression_test_combined_cycle_legend_vdw_unavailable() -> None:
             settings.pop(COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY, None)
 
 
+def _regression_test_combined_cycle_legend_dashboard_and_custom_rows() -> None:
+    """Validate dashboard-backed VDW completion and safe custom formulas.
+
+    Purpose:
+        Prove the combined legend honors resolved dashboard values and user custom
+        arithmetic without relying on a missing legacy reagent-summary payload.
+    Why:
+        This regression covers the exact render contract used after a dashboard
+        run and prevents unsafe formula syntax from being accepted later.
+    Inputs:
+        None; uses a deterministic in-memory settings override.
+    Outputs:
+        None.
+    Side Effects:
+        Temporarily replaces the calculated-row settings and restores them.
+    Exceptions:
+        Raises AssertionError when display or safety behavior regresses.
+    """
+    original = copy.deepcopy(settings.get(COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY))
+    had_original = COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY in settings
+    try:
+        settings[COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY] = [
+            {"id": "completion_percent_vdw", "enabled": True, "label": "Completion (VDW)"},
+            {"id": "custom_test", "enabled": True, "label": "Millimoles", "expression": "total_moles_vdw * 1000", "unit_suffix": "mmol"},
+        ]
+        lines = _combined_cycle_legend_calculated_summary_lines(
+            {"vdw_used": True, "legend_metric_values": {"completion_percent_vdw": 87.5, "total_moles_vdw": 0.0125}, "legend_metric_catalog": {"total_moles_vdw": 0.0125}}
+        )
+        if lines != ["Completion (VDW): 87.50%", "Millimoles: 12.500000 mmol"]:
+            raise AssertionError(f"Unexpected dashboard/custom legend values: {lines}")
+        unsafe = _evaluate_safe_combined_cycle_legend_expression(
+            "__import__('os').system('calc')", {"total_moles_vdw": 1.0}
+        )
+        if unsafe is not None:
+            raise AssertionError("Custom legend expressions must reject unsafe calls.")
+    finally:
+        if had_original:
+            settings[COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY] = original
+        else:
+            settings.pop(COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY, None)
+
+
 def _regression_test_data_trace_keys_include_grouped_columns_before_render() -> None:
     """Validate grouped Columns keys appear in Data Trace Settings pre-render.
 
@@ -74482,6 +74524,10 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
     (
         "Combined cycle legend VDW unavailable",
         _regression_test_combined_cycle_legend_vdw_unavailable,
+    ),
+    (
+        "Combined cycle legend dashboard and custom rows",
+        _regression_test_combined_cycle_legend_dashboard_and_custom_rows,
     ),
     (
         "Data Trace grouped column keys before render",
@@ -82771,6 +82817,7 @@ PLOT_SETTINGS_CARD_ORDER_MIGRATION = {
 COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY = (
     "combined_cycle_legend_calculated_rows"
 )
+COMBINED_CYCLE_LEGEND_CUSTOM_ROW_PREFIX = "custom_"
 COMBINED_CYCLE_LEGEND_CALCULATED_ROW_DEFINITIONS: Tuple[Tuple[str, str], ...] = (
     ("total_moles_ideal", "Estimated uptake (Ideal)"),
     ("total_moles_vdw", "Estimated uptake (VDW)"),
@@ -82815,16 +82862,24 @@ def _normalize_combined_cycle_legend_calculated_rows(
         if not isinstance(raw_row, Mapping):
             continue
         row_id = str(raw_row.get("id") or "").strip()
-        if row_id not in defaults or row_id in seen:
+        is_custom = row_id.startswith(COMBINED_CYCLE_LEGEND_CUSTOM_ROW_PREFIX)
+        if (row_id not in defaults and not is_custom) or row_id in seen:
             continue
         label = str(raw_row.get("label") or "").strip()
-        normalized.append(
-            {
-                "id": row_id,
-                "enabled": bool(raw_row.get("enabled", False)),
-                "label": label[:96] or defaults[row_id],
-            }
-        )
+        entry = {
+            "id": row_id,
+            "enabled": bool(raw_row.get("enabled", False)),
+            "label": label[:96] or ("Custom value" if is_custom else defaults[row_id]),
+        }
+        if is_custom:
+            # Persist only the small safe expression contract, never arbitrary UI state.
+            entry.update(
+                {
+                    "expression": str(raw_row.get("expression") or "")[:512],
+                    "unit_suffix": str(raw_row.get("unit_suffix") or "")[:32],
+                }
+            )
+        normalized.append(entry)
         seen.add(row_id)
     # Append absent supported rows so they remain available to enable in the UI.
     for row_id, default_label in COMBINED_CYCLE_LEGEND_CALCULATED_ROW_DEFINITIONS:
@@ -82832,6 +82887,100 @@ def _normalize_combined_cycle_legend_calculated_rows(
             continue
         normalized.append({"id": row_id, "enabled": False, "label": default_label})
     return normalized
+
+
+def _evaluate_safe_combined_cycle_legend_expression(
+    expression: str, values: Mapping[str, Any]
+) -> Optional[float]:
+    """Evaluate one restricted scientific expression for a custom legend row.
+
+    Purpose:
+        Calculate a user-authored legend value from the approved scalar metric
+        catalog without exposing Python execution.
+    Why:
+        Custom legend rows need useful conversion and prediction math while
+        persisted plot settings must remain safe to load from disk.
+    Args:
+        expression: Arithmetic expression using catalog identifiers and documented
+            numeric functions.
+        values: Current scalar catalog keyed by stable identifiers.
+    Returns:
+        Finite computed float, or ``None`` when syntax, names, or math are invalid.
+    Side Effects:
+        None.
+    Exceptions:
+        All parse, validation, and math failures become ``None`` for ``N/A`` output.
+    """
+    text = str(expression or "").strip()
+    if not text:
+        return None
+    functions = {
+        "abs": abs, "min": min, "max": max, "round": round, "sqrt": math.sqrt,
+        "log": math.log, "log10": math.log10, "exp": math.exp,
+        "floor": math.floor, "ceil": math.ceil, "sin": math.sin, "cos": math.cos,
+        "tan": math.tan, "asin": math.asin, "acos": math.acos, "atan": math.atan,
+        "pow": pow,
+    }
+    constants = {"pi": math.pi, "e": math.e}
+    try:
+        parsed = ast.parse(text, mode="eval")
+    except Exception:
+        return None
+
+    class _Validator(ast.NodeVisitor):
+        """Reject every AST form except numeric math and whitelisted calls."""
+
+        def generic_visit(self, node: ast.AST) -> Any:
+            """Reject unsupported expression syntax before evaluation."""
+            raise ValueError(type(node).__name__)
+
+        def visit_Expression(self, node: ast.Expression) -> Any:
+            """Validate the expression root."""
+            self.visit(node.body)
+
+        def visit_BinOp(self, node: ast.BinOp) -> Any:
+            """Validate arithmetic and exponentiation operands."""
+            if not isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow)):
+                raise ValueError("operator")
+            self.visit(node.left); self.visit(node.right)
+
+        def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
+            """Validate unary signs."""
+            if not isinstance(node.op, (ast.UAdd, ast.USub)):
+                raise ValueError("unary")
+            self.visit(node.operand)
+
+        def visit_Name(self, node: ast.Name) -> Any:
+            """Validate catalog names and mathematical constants."""
+            if node.id not in values and node.id not in constants:
+                raise ValueError("name")
+
+        def visit_Constant(self, node: ast.Constant) -> Any:
+            """Allow numeric literals only."""
+            if not isinstance(node.value, (int, float)):
+                raise ValueError("constant")
+
+        def visit_Call(self, node: ast.Call) -> Any:
+            """Allow direct calls to the documented numeric helper set."""
+            if not isinstance(node.func, ast.Name) or node.func.id not in functions:
+                raise ValueError("call")
+            for arg in node.args:
+                self.visit(arg)
+            if node.keywords:
+                raise ValueError("keywords")
+
+    try:
+        _Validator().visit(parsed)
+        numeric_values = {
+            key: float(value) for key, value in values.items()
+            if _safe_float(value) is not None and math.isfinite(float(value))
+        }
+        result = eval(compile(parsed, "<cycle_legend_formula>", "eval"),
+                      {"__builtins__": {}}, {**functions, **constants, **numeric_values})
+        result_value = float(result)
+        return result_value if math.isfinite(result_value) else None
+    except Exception:
+        return None
 
 
 def _normalize_startup_autorestore_mode(value: Any) -> str:
@@ -92642,6 +92791,14 @@ def _combined_cycle_legend_calculated_summary_lines(
             else float("nan")
         ),
     }
+    # Dashboard-backed values are inserted only after its source signature matched.
+    resolved_values = metrics_payload.get("legend_metric_values")
+    if isinstance(resolved_values, Mapping):
+        for key, raw_value in resolved_values.items():
+            if key in values and _safe_float(raw_value) is not None:
+                values[key] = raw_value
+    custom_values = metrics_payload.get("legend_metric_catalog")
+    custom_values = custom_values if isinstance(custom_values, Mapping) else values
     mole_row_ids = {
         "total_moles_ideal",
         "total_moles_vdw",
@@ -92664,6 +92821,16 @@ def _combined_cycle_legend_calculated_summary_lines(
             continue
         row_id = str(row.get("id") or "")
         label = str(row.get("label") or "").strip()
+        if row_id.startswith(COMBINED_CYCLE_LEGEND_CUSTOM_ROW_PREFIX):
+            custom_value = _evaluate_safe_combined_cycle_legend_expression(
+                str(row.get("expression") or ""), custom_values
+            )
+            suffix = str(row.get("unit_suffix") or "").strip()
+            value_text = _format_cycle_legend_number(custom_value, 6)
+            if value_text != "N/A" and suffix:
+                value_text = f"{value_text} {suffix}"
+            lines.append(f"{label}: {value_text}")
+            continue
         numeric_value = _safe_float(values.get(row_id), float("nan"))
         has_numeric_value = math.isfinite(numeric_value)
         if row_id in mole_row_ids:
@@ -148689,6 +148856,77 @@ class UnifiedApp(tk.Tk):
         self._build_plot_cycle_integration_section(integration_host, pad)
         self._build_plot_cycle_legend_section(legend_host, pad)
 
+    def _combined_cycle_legend_runtime_metrics(
+        self, payload: Mapping[str, Any]
+    ) -> Dict[str, float]:
+        """Return current scalar metrics for preset and custom combined legend rows.
+
+        Purpose:
+            Join cached Cycle Analysis data with a matching Reaction Dashboard run.
+        Why:
+            The legend must display the dashboard's applied reaction basis without
+            recomputing either workflow or accepting stale dashboard results.
+        Args:
+            payload: Current combined-render cycle payload.
+        Returns:
+            Mapping of stable metric identifiers to finite scalar values.
+        Side Effects:
+            None.
+        Exceptions:
+            Missing dashboard or payload fields simply omit their metrics.
+        """
+        metrics: Dict[str, float] = {}
+        for key in ("total_moles_ideal", "total_moles_vdw"):
+            value = _safe_float(payload.get(key))
+            if value is not None:
+                metrics[key] = value
+        dashboard = getattr(self, "_reaction_dashboard_last_result", None)
+        current_signature = self._analysis_cycle_signature_from_payload(
+            getattr(self, "_cycle_last_transfer_payload", None)
+        )
+        if not isinstance(dashboard, Mapping) or str(dashboard.get("source_mode")) != "cycle_payload":
+            return metrics
+        if not current_signature or dashboard.get("cycle_payload_signature") != current_signature:
+            return metrics
+        core = dashboard.get("core") if isinstance(dashboard.get("core"), Mapping) else {}
+        target_id = str(dashboard.get("target_reactant_species_id") or "")
+        initial = core.get("initial_inventory_mol") if isinstance(core.get("initial_inventory_mol"), Mapping) else {}
+        final = core.get("final_inventory_mol") if isinstance(core.get("final_inventory_mol"), Mapping) else {}
+        completion = _safe_float(core.get("completion_pct"))
+        required = _safe_float(core.get("gas_required_mol"))
+        starting = _safe_float(initial.get(target_id)) if target_id else None
+        remaining = _safe_float(final.get(target_id)) if target_id else None
+        if completion is not None:
+            metrics["completion_percent_vdw"] = completion
+            metrics["reaction_completion_percent"] = completion
+        if required is not None:
+            metrics["theoretical_gas_uptake_moles"] = required
+            metrics["reaction_gas_required_mol"] = required
+        uptake = _safe_float(core.get("gas_uptake_mol"))
+        if uptake is not None:
+            metrics["reaction_gas_uptake_mol"] = uptake
+        if starting is not None:
+            metrics["starting_material_initial_moles"] = starting
+        if starting is not None and remaining is not None:
+            metrics["starting_material_remaining_vdw"] = remaining
+            metrics["starting_material_reacted_vdw"] = max(starting - remaining, 0.0)
+        # Ideal completion remains a transparent fallback calculated from ideal uptake.
+        ideal = _safe_float(payload.get("total_moles_ideal"))
+        if ideal is not None and required is not None and required > 0.0:
+            metrics["completion_percent_ideal"] = ideal * 100.0 / required
+        visual = dashboard.get("visual_summary") if isinstance(dashboard.get("visual_summary"), Mapping) else {}
+        forecast = visual.get("forecast") if isinstance(visual.get("forecast"), Mapping) else {}
+        for metric_key, source_key in (
+            ("reaction_forecast_remaining_cycles", "remaining_cycles"),
+            ("reaction_forecast_remaining_time", "remaining_time"),
+            ("reaction_product_mass_g", "headline_product_mass_g"),
+        ):
+            source = forecast if source_key.startswith("remaining_") else visual
+            value = _safe_float(source.get(source_key))
+            if value is not None:
+                metrics[metric_key] = value
+        return metrics
+
     def _build_plot_cycle_legend_settings_section(
         self, parent, pad: dict[str, int]
     ) -> None:
@@ -148744,6 +148982,120 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 pass
 
+        def _show_custom_dialog(existing_index: Optional[int] = None) -> None:
+            """Open the safe custom calculated-row editor for the combined legend.
+
+            Purpose:
+                Let users compose one scalar legend value from the approved runtime
+                metric catalog and scientific expression helpers.
+            Why:
+                Formula configuration belongs in a focused dialog so the main card
+                remains scannable and cannot expose arbitrary application state.
+            Args:
+                existing_index: Optional normalized row index to edit in place.
+            Returns:
+                None.
+            Side Effects:
+                Opens a modal Tk window and persists a validated custom row.
+            Exceptions:
+                Invalid expressions remain visible as an `N/A` preview and cannot
+                be saved until they produce a finite value for current data.
+            """
+            rows = _normalize_combined_cycle_legend_calculated_rows(
+                settings.get(COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY)
+            )
+            existing = rows[existing_index] if existing_index is not None and 0 <= existing_index < len(rows) else {}
+            dialog = tk.Toplevel(self)
+            dialog.title("Custom Cycle Legend Entry")
+            dialog.transient(self)
+            dialog.grab_set()
+            body = ttk.Frame(dialog, padding=10)
+            body.grid(sticky="nsew")
+            dialog.columnconfigure(0, weight=1)
+            dialog.rowconfigure(0, weight=1)
+            body.columnconfigure(1, weight=1)
+            label_var = tk.StringVar(value=str(existing.get("label") or "Custom value"))
+            expression_var = tk.StringVar(value=str(existing.get("expression") or ""))
+            unit_var = tk.StringVar(value=str(existing.get("unit_suffix") or ""))
+            preview_var = tk.StringVar(value="Preview: N/A")
+            ttk.Label(body, text="Label").grid(row=0, column=0, sticky="w", pady=3)
+            ttk.Entry(body, textvariable=label_var, width=38).grid(row=0, column=1, sticky="ew", pady=3)
+            ttk.Label(body, text="Formula").grid(row=1, column=0, sticky="nw", pady=3)
+            ttk.Entry(body, textvariable=expression_var, width=52).grid(row=1, column=1, sticky="ew", pady=3)
+            ttk.Label(body, text="Unit suffix").grid(row=2, column=0, sticky="w", pady=3)
+            ttk.Entry(body, textvariable=unit_var, width=18).grid(row=2, column=1, sticky="w", pady=3)
+            conversion_var = tk.StringVar(value="Built-in conversion…")
+            conversions = {
+                "mol → mmol (×1000)": ("* 1000", "mmol"),
+                "mol → µmol (×1e6)": ("* 1000000", "µmol"),
+                "g → mg (×1000)": ("* 1000", "mg"),
+                "g → kg (÷1000)": ("/ 1000", "kg"),
+                "PSI → bar (×0.0689476)": ("* 0.0689476", "bar"),
+            }
+
+            def _apply_conversion(_event: Any = None) -> None:
+                """Append a selected built-in output conversion to the formula."""
+                selected = conversion_var.get()
+                conversion = conversions.get(selected)
+                if conversion is None:
+                    return
+                expression_var.set(f"({expression_var.get()}) {conversion[0]}")
+                unit_var.set(conversion[1])
+                _preview()
+
+            combo = ttk.Combobox(body, textvariable=conversion_var,
+                                  values=["Built-in conversion…", *conversions], state="readonly", width=28)
+            combo.grid(row=3, column=1, sticky="w", pady=3)
+            combo.bind("<<ComboboxSelected>>", _apply_conversion, add="+")
+            ttk.Label(body, text="Metrics (double-click to insert)").grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 2))
+            catalog = self._combined_cycle_legend_runtime_metrics(
+                getattr(self, "_cycle_last_transfer_payload", {}) or {}
+            )
+            metric_list = tk.Listbox(body, height=8, exportselection=False)
+            for key in sorted(catalog):
+                metric_list.insert("end", key)
+            metric_list.grid(row=5, column=0, columnspan=2, sticky="nsew", pady=3)
+            body.rowconfigure(5, weight=1)
+
+            def _preview(_event: Any = None) -> None:
+                """Refresh the finite-value preview for the current expression."""
+                value = _evaluate_safe_combined_cycle_legend_expression(expression_var.get(), catalog)
+                suffix = unit_var.get().strip()
+                preview_var.set("Preview: " + (_format_cycle_legend_number(value, 6) + (f" {suffix}" if value is not None and suffix else "")))
+
+            def _insert_metric(_event: Any = None) -> None:
+                """Append the selected stable metric identifier to the expression."""
+                selection = metric_list.curselection()
+                if selection:
+                    expression_var.set((expression_var.get() + " " + metric_list.get(selection[0])).strip())
+                    _preview()
+
+            def _save() -> None:
+                """Validate and persist the configured custom row, then close dialog."""
+                if _evaluate_safe_combined_cycle_legend_expression(expression_var.get(), catalog) is None:
+                    preview_var.set("Preview: N/A (fix formula or source values)")
+                    return
+                entry = {
+                    "id": str(existing.get("id") or f"{COMBINED_CYCLE_LEGEND_CUSTOM_ROW_PREFIX}{uuid.uuid4().hex}"),
+                    "enabled": bool(existing.get("enabled", True)),
+                    "label": label_var.get(), "expression": expression_var.get(), "unit_suffix": unit_var.get(),
+                }
+                if existing_index is None:
+                    rows.append(entry)
+                else:
+                    rows[existing_index] = entry
+                _persist_rows(rows)
+                dialog.destroy()
+                _render_rows()
+
+            expression_var.trace_add("write", _preview)
+            metric_list.bind("<Double-Button-1>", _insert_metric, add="+")
+            ttk.Label(body, textvariable=preview_var).grid(row=6, column=0, columnspan=2, sticky="w", pady=4)
+            ttk.Label(body, text="Functions: abs, min, max, round, sqrt, log, log10, exp, floor, ceil, trig, pow; constants: pi, e.", wraplength=520).grid(row=7, column=0, columnspan=2, sticky="w", pady=3)
+            ttk.Button(body, text="Save", command=_save).grid(row=8, column=0, sticky="w", pady=(8, 0))
+            ttk.Button(body, text="Cancel", command=dialog.destroy).grid(row=8, column=1, sticky="e", pady=(8, 0))
+            _preview()
+
         def _render_rows() -> None:
             """Render the calculated-row editor from its normalized configuration.
 
@@ -148775,6 +149127,9 @@ class UnifiedApp(tk.Tk):
                 ),
                 wraplength=620,
             ).grid(row=0, column=0, columnspan=4, sticky="w", padx=6, pady=(2, 6))
+            ttk.Button(host, text="Custom entry…", command=_show_custom_dialog).grid(
+                row=0, column=4, sticky="e", padx=6, pady=(2, 6)
+            )
             self._combined_cycle_legend_calculated_row_vars = []
             for index, row in enumerate(rows, start=1):
                 enabled_var = tk.BooleanVar(value=bool(row.get("enabled")))
@@ -148886,6 +149241,26 @@ class UnifiedApp(tk.Tk):
                 ).grid(
                     row=index, column=3, sticky="w", padx=(2, 6), pady=3
                 )
+                if str(row.get("id") or "").startswith(COMBINED_CYCLE_LEGEND_CUSTOM_ROW_PREFIX):
+                    ttk.Button(
+                        host,
+                        text="Formula…",
+                        command=lambda row_index=index - 1: _show_custom_dialog(row_index),
+                    ).grid(row=index, column=4, sticky="w", padx=2, pady=3)
+
+                    def _delete_custom(row_index: int = index - 1) -> None:
+                        """Remove one custom row without affecting preset row definitions."""
+                        updated_rows = _normalize_combined_cycle_legend_calculated_rows(
+                            settings.get(COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY)
+                        )
+                        if 0 <= row_index < len(updated_rows):
+                            updated_rows.pop(row_index)
+                            _persist_rows(updated_rows)
+                            _render_rows()
+
+                    ttk.Button(host, text="Delete", command=_delete_custom).grid(
+                        row=index, column=5, sticky="w", padx=(0, 6), pady=3
+                    )
 
         _persist_rows(
             _normalize_combined_cycle_legend_calculated_rows(
@@ -178011,6 +178386,10 @@ class UnifiedApp(tk.Tk):
                 "template_id": template.template_id,
                 "template_name": template.name,
                 "source_mode": self._reaction_source_mode_var.get(),
+                "cycle_payload_signature": self._analysis_cycle_signature_from_payload(
+                    getattr(self, "_cycle_last_transfer_payload", None)
+                ) if self._reaction_source_mode_var.get() == "cycle_payload" else None,
+                "target_reactant_species_id": template.yield_basis.target_reactant_species_id,
                 "core": core,
                 "equilibrium": equilibrium,
                 "cycle_series": cycle_series
@@ -239057,6 +239436,16 @@ class UnifiedApp(tk.Tk):
             "metrics_backend": metrics_backend,
             "cycle_compute_backend": cycle_compute_backend,
         }
+        resolved_legend_metrics = self._combined_cycle_legend_runtime_metrics(payload)
+        payload["legend_metric_values"] = resolved_legend_metrics
+        payload["legend_metric_catalog"] = dict(resolved_legend_metrics)
+        payload["legend_metric_catalog"].update(
+            {
+                "cycle_total_drop_psi": float(seg_cached.get("total_drop", 0.0) or 0.0),
+                "cycle_count": float(len(seg_cached.get("cycles") or [])),
+                "gas_molar_mass_g_mol": _safe_float(metrics_cached.get("gas_molar_mass")) or 0.0,
+            }
+        )
         moles_lines = self._cycle_moles_legend_lines(payload, data_ctx=data_ctx)
         cycle_overlay = {
             "peaks_idx": list(peak_indices),
