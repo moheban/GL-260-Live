@@ -70834,6 +70834,93 @@ def _regression_test_combined_snapped_cycle_legend_layout() -> None:
             settings["combined_snap_cycle_legend_below_plot"] = prior_value
 
 
+def _regression_test_combined_snapped_lower_band_clearance() -> None:
+    """Validate one-pass snapped layout clears ticks, break labels, and xlabel.
+
+    Purpose:
+        Reproduce the combined preview's dense lower band with exclusion labels,
+        a figure-level x label, and two snapped legend columns.
+    Why:
+        Display previews use a one-pass solve, which must commit the newly
+        calculated bottom margin rather than leave annotations inside the plot.
+    Inputs:
+        None.
+    Returns:
+        None.
+    Side Effects:
+        Temporarily changes in-memory layout settings and creates a test figure.
+    Exceptions:
+        Raises AssertionError when any adjacent lower-band elements overlap or
+        the required authoritative bottom margin is not expanded.
+    """
+    prior_snap = settings.get("combined_snap_cycle_legend_below_plot")
+    prior_autofix = settings.get("layout_health_autofix_enabled")
+    fig = Figure(figsize=(8.0, 5.0))
+    canvas = FigureCanvasAgg(fig)
+    ax = fig.add_subplot(1, 1, 1)
+    line = ax.plot([0.0, 1.0], [0.0, 1.0], label="Pressure")[0]
+    ax._gl260_axis_role = "primary"  # type: ignore[attr-defined]
+    ax.set_xlim(0.0, 1.0)
+    xlabel = fig.supxlabel("Elapsed Time (days)")
+    main = fig.legend([line], ["Pressure"], loc="lower center")
+    cycle = fig.legend(
+        [line, line],
+        ["Cycles: 40", "Total ΔP: 1,838.40 PSI"],
+        loc="lower center",
+    )
+    main._combined_main_legend = True  # type: ignore[attr-defined]
+    cycle._combined_cycle_legend = True  # type: ignore[attr-defined]
+    fig._gl260_plot_id = "fig_combined_triple_axis"  # type: ignore[attr-defined]
+    fig._gl260_xlabel_text = xlabel  # type: ignore[attr-defined]
+    _draw_combined_exclusion_break_labels(ax, [(0.4, 0.6)], (0.0, 1.0))
+    explicit_bottom = 0.18
+    manager = PlotLayoutManager(
+        fig,
+        mode="display",
+        baseline_margins={"left": 0.12, "right": 0.90, "bottom": explicit_bottom},
+        margins_authoritative=True,
+        legend_gap_pts=8.0,
+        xlabel_tick_gap_pts=8.0,
+        legend_margin_pts=4.0,
+    )
+    manager.register_axes(ax)
+    manager.register_artist("xlabel", xlabel)
+    manager.register_artist("plot_legend", main)
+    manager.register_artist("cycle_legend", cycle)
+    fig._gl260_layout_manager = manager  # type: ignore[attr-defined]
+    try:
+        settings["combined_snap_cycle_legend_below_plot"] = True
+        settings["layout_health_autofix_enabled"] = False
+        manager.solve(max_passes=1, allow_draw=True)
+        canvas.draw()
+        renderer = canvas.get_renderer()
+        legend_bbox = _combined_snapped_legend_bbox(fig, renderer)
+        xlabel_bbox = _layout_health_bbox_in_fig(fig, xlabel, renderer)
+        lower_bbox = _combined_lower_xaxis_annotations_bbox(fig, ax, renderer)
+        if legend_bbox is None or xlabel_bbox is None or lower_bbox is None:
+            raise AssertionError("Expected measurable snapped lower-band artists.")
+        min_gap = 8.0 / (float(fig.get_size_inches()[1]) * 72.0)
+        tolerance = 0.5 / (float(fig.get_size_inches()[1]) * 72.0)
+        if xlabel_bbox.y0 - legend_bbox.y1 < min_gap - tolerance:
+            raise AssertionError("X label should clear the snapped legend band.")
+        if lower_bbox.y0 - xlabel_bbox.y1 < min_gap - tolerance:
+            raise AssertionError("Ticks and break labels should clear the x label.")
+        if float(fig.subplotpars.bottom) <= explicit_bottom + tolerance:
+            raise AssertionError(
+                "One-pass snapped solve should commit its expanded bottom margin."
+            )
+    finally:
+        plt.close(fig)
+        if prior_snap is None:
+            settings.pop("combined_snap_cycle_legend_below_plot", None)
+        else:
+            settings["combined_snap_cycle_legend_below_plot"] = prior_snap
+        if prior_autofix is None:
+            settings.pop("layout_health_autofix_enabled", None)
+        else:
+            settings["layout_health_autofix_enabled"] = prior_autofix
+
+
 def _regression_test_data_trace_keys_include_grouped_columns_before_render() -> None:
     """Validate grouped Columns keys appear in Data Trace Settings pre-render.
 
@@ -74625,6 +74712,10 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
     (
         "Combined snapped cycle legend layout",
         _regression_test_combined_snapped_cycle_legend_layout,
+    ),
+    (
+        "Combined snapped lower-band clearance",
+        _regression_test_combined_snapped_lower_band_clearance,
     ),
     (
         "Data Trace grouped column keys before render",
@@ -95799,6 +95890,51 @@ def _combined_snapped_legend_bbox(fig: Figure, renderer: Any) -> Optional[Bbox]:
         return None
 
 
+def _combined_lower_xaxis_annotations_bbox(
+    fig: Figure, axis: Optional[Axes], renderer: Any
+) -> Optional[Bbox]:
+    """Return the visible tick and break-label bounds below a combined x-axis.
+
+    Purpose:
+        Measure every x-axis annotation that occupies the band between the data
+        axes and the figure-level x label.
+    Why:
+        Exclusion-break labels sit below ordinary tick labels and are not a
+        reliable part of an axis tight bbox, so snapped legends otherwise can
+        overlap them when the display solver uses one pass.
+    Inputs:
+        fig: Combined figure containing optional break-label metadata.
+        axis: Primary combined axis whose visible x tick labels are measured.
+        renderer: Active Matplotlib renderer used for artist extents.
+    Returns:
+        Figure-coordinate union bbox, or None when no annotations are measurable.
+    Side Effects:
+        None.
+    Exceptions:
+        Missing, hidden, or unmeasurable artists are skipped.
+    """
+    bboxes: List[Bbox] = []
+    if axis is not None:
+        tick_bbox = _layout_health_axis_ticklabels_bbox(fig, axis.xaxis, renderer)
+        if tick_bbox is not None:
+            bboxes.append(tick_bbox)
+    for artist in list(
+        getattr(fig, "_gl260_combined_exclusion_break_label_artists", []) or []
+    ):
+        try:
+            if not artist.get_visible():
+                continue
+        except Exception:
+            continue
+        bbox = _layout_health_bbox_in_fig(fig, artist, renderer)
+        if bbox is not None:
+            bboxes.append(bbox)
+    try:
+        return Bbox.union(bboxes) if bboxes else None
+    except Exception:
+        return None
+
+
 class PlotLayoutManager:
     """Deterministic layout solver for combined triple-axis figures."""
 
@@ -96270,13 +96406,26 @@ class PlotLayoutManager:
                         )
                     except Exception:
                         xlabel_axes_tight = None
+            lower_xaxis_annotations = (
+                _combined_lower_xaxis_annotations_bbox(
+                    self.fig,
+                    xlabel_axis,
+                    renderer,
+                )
+                if snapped_legend_layout
+                else None
+            )
             xlabel_anchor_x = None
             if xlabel is not None:
                 xlabel_height = xlabel_bbox.height if xlabel_bbox is not None else 0.02
                 axes_ref = (
-                    xlabel_axes_tight
+                    lower_xaxis_annotations
+                    if lower_xaxis_annotations is not None
+                    else xlabel_axes_tight
                     if xlabel_axes_tight is not None
-                    else data_axes_tight if data_axes_tight is not None else axes_bbox
+                    else data_axes_tight
+                    if data_axes_tight is not None
+                    else axes_bbox
                 )
                 if axes_ref is None:
                     baseline = (
@@ -96456,15 +96605,20 @@ class PlotLayoutManager:
                         ),
                     )
             if (
-                data_axes_tight is not None
+                (lower_xaxis_annotations is not None or data_axes_tight is not None)
                 and xlabel_bbox is not None
                 and (not self.margins_authoritative or snapped_legend_layout)
             ):
+                # Break annotations can extend below normal tick labels, so use
+                # their explicit union as the lower moving edge in snapped mode.
+                lower_axis_edge = (
+                    lower_xaxis_annotations.y0
+                    if lower_xaxis_annotations is not None
+                    else data_axes_tight.y0
+                )
                 min_axes_bottom = xlabel_bbox.y1 + xlabel_tick_gap_frac
-                if data_axes_tight.y0 < min_axes_bottom:
-                    bottom = max(
-                        bottom, bottom + (min_axes_bottom - data_axes_tight.y0)
-                    )
+                if lower_axis_edge < min_axes_bottom:
+                    bottom = max(bottom, bottom + (min_axes_bottom - lower_axis_edge))
 
             if (
                 suptitle_bbox is not None
@@ -96484,6 +96638,17 @@ class PlotLayoutManager:
             if new_state == last_state:
                 break
             last_state = new_state
+        # A one-pass display solve discovers its required margins after the
+        # initial subplot adjustment. Commit that terminal state so the preview
+        # does not retain the stale pre-solve axes position.
+        try:
+            self.fig.subplots_adjust(left=left, right=right, bottom=bottom, top=top)
+        except Exception:
+            pass
+        if snapped_legend_layout:
+            # Column centers depend on the final subplot width, not the geometry
+            # that was active at the beginning of the last measurement pass.
+            _apply_combined_snapped_legend_layout(self.fig, allow_draw=False)
         plot_id_norm = str(
             getattr(self.fig, "_gl260_plot_id", "") or ""
         ).strip().lower()
