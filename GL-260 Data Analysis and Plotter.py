@@ -70842,7 +70842,8 @@ def _regression_test_combined_snapped_lower_band_clearance() -> None:
         a figure-level x label, and two snapped legend columns.
     Why:
         Display previews use a one-pass solve, which must commit the newly
-        calculated bottom margin rather than leave annotations inside the plot.
+        calculated bottom margin without retaining excessive authoritative
+        whitespace, and the Layout Health Wizard must repair the same geometry.
     Inputs:
         None.
     Returns:
@@ -70851,7 +70852,7 @@ def _regression_test_combined_snapped_lower_band_clearance() -> None:
         Temporarily changes in-memory layout settings and creates a test figure.
     Exceptions:
         Raises AssertionError when any adjacent lower-band elements overlap or
-        the required authoritative bottom margin is not expanded.
+        the required authoritative bottom margin cannot expand or contract.
     """
     prior_snap = settings.get("combined_snap_cycle_legend_below_plot")
     prior_autofix = settings.get("layout_health_autofix_enabled")
@@ -70908,6 +70909,71 @@ def _regression_test_combined_snapped_lower_band_clearance() -> None:
         if float(fig.subplotpars.bottom) <= explicit_bottom + tolerance:
             raise AssertionError(
                 "One-pass snapped solve should commit its expanded bottom margin."
+            )
+        oversized_bottom = 0.52
+        manager._baseline_bottom = oversized_bottom
+        fig.subplots_adjust(bottom=oversized_bottom)
+        manager.solve(max_passes=1, allow_draw=True)
+        if float(fig.subplotpars.bottom) >= oversized_bottom - tolerance:
+            raise AssertionError(
+                "Snapped solve should reclaim excessive authoritative whitespace."
+            )
+
+        # Recreate the inflated screenshot geometry without solving first so
+        # the wizard must detect, suggest, and apply the compact bottom margin.
+        manager._baseline_bottom = oversized_bottom
+        fig.subplots_adjust(bottom=oversized_bottom)
+        _apply_combined_snapped_legend_layout(fig, allow_draw=False)
+        settings["layout_health_autofix_enabled"] = True
+        health_result = layout_health_autofix(
+            fig,
+            "fig_combined_triple_axis",
+            "display",
+            {
+                "layout_health_autofix_enabled": True,
+                "layout_health_max_passes": 2,
+                "layout_health_min_gap_pts": 8.0,
+                "layout_health_max_gap_pts": 28.0,
+                "layout_health_check_legend_conflicts": True,
+                "layout_health_check_x_axis_conflicts": True,
+            },
+        )
+        canvas.draw()
+        renderer = canvas.get_renderer()
+        xlabel_bbox = _layout_health_bbox_in_fig(fig, xlabel, renderer)
+        lower_bbox = _combined_lower_xaxis_annotations_bbox(fig, ax, renderer)
+        detected = set(
+            health_result.get("detected_issues") or health_result.get("issues") or []
+        )
+        if "combined_snapped_lower_band_gap_high" not in detected:
+            raise AssertionError("Wizard should detect snapped lower-band whitespace.")
+        if not bool(health_result.get("applied")):
+            raise AssertionError("Wizard should apply snapped whitespace correction.")
+        if float(fig.subplotpars.bottom) >= oversized_bottom - tolerance:
+            raise AssertionError("Wizard should reduce the oversized bottom margin.")
+        suggestions = health_result.get("suggestions") or {}
+        display_suggestion = (
+            suggestions.get("display") if isinstance(suggestions, Mapping) else None
+        )
+        suggested_margins = (
+            display_suggestion.get("margins")
+            if isinstance(display_suggestion, Mapping)
+            else None
+        )
+        if not isinstance(suggested_margins, Mapping) or not (
+            float(suggested_margins.get("bottom", oversized_bottom))
+            < oversized_bottom - tolerance
+        ):
+            raise AssertionError("Wizard should expose a compact margin suggestion.")
+        if xlabel_bbox is None or lower_bbox is None:
+            raise AssertionError("Wizard result should retain measurable x-axis bands.")
+        final_gap_pts = float(
+            (lower_bbox.y0 - xlabel_bbox.y1) * float(fig.get_size_inches()[1]) * 72.0
+        )
+        if final_gap_pts < 7.5 or final_gap_pts > 28.5:
+            raise AssertionError(
+                "Wizard should leave a safe compact lower-band gap, "
+                f"got {final_gap_pts:.2f} pt."
             )
     finally:
         plt.close(fig)
@@ -94009,6 +94075,9 @@ def layout_health_autofix(
         )
     compare_context = layout_health_context == "compare"
     combined_mode = plot_id_norm == "fig_combined_triple_axis"
+    snapped_combined_layout = bool(
+        combined_mode and settings.get("combined_snap_cycle_legend_below_plot", False)
+    )
     min_gap_pts = float(normalized_policy.get("layout_health_min_gap_pts", 8.0))
     max_gap_pts = float(normalized_policy.get("layout_health_max_gap_pts", 28.0))
     legend_conflict_checks_enabled = bool(
@@ -94136,6 +94205,10 @@ def layout_health_autofix(
     )
     for pass_idx in range(max_passes):
         result["passes"] = int(pass_idx + 1)
+        if snapped_combined_layout:
+            # Wizard passes must restore authoritative paired anchors before
+            # measuring either whitespace or lower-band collisions.
+            _apply_combined_snapped_legend_layout(fig, allow_draw=False)
         try:
             canvas.draw()
         except Exception:
@@ -94162,6 +94235,10 @@ def layout_health_autofix(
 
         legend_bbox = _layout_health_bbox_in_fig(fig, legend, renderer)
         xlabel_bbox = _layout_health_bbox_in_fig(fig, xlabel, renderer)
+        if snapped_combined_layout:
+            snapped_legend_bbox = _combined_snapped_legend_bbox(fig, renderer)
+            if snapped_legend_bbox is not None:
+                legend_bbox = snapped_legend_bbox
         title_bbox = _layout_health_bbox_in_fig(fig, title_artist, renderer)
         suptitle_bbox = _layout_health_bbox_in_fig(fig, suptitle_artist, renderer)
         timeline_mode = plot_id_norm == "fig_cycle_timeline"
@@ -94214,6 +94291,15 @@ def layout_health_autofix(
                 if (legend_conflict_checks_enabled and x_axis_conflict_checks_enabled)
                 else None
             )
+        )
+        snapped_lower_annotations_bbox = (
+            _combined_lower_xaxis_annotations_bbox(
+                fig,
+                _layout_health_axis_for_role(fig, "primary"),
+                renderer,
+            )
+            if snapped_combined_layout
+            else None
         )
         timeline_right_axis = (
             _layout_health_axis_for_role(fig, "third")
@@ -94272,6 +94358,7 @@ def layout_health_autofix(
         combined_right_margin_whitespace_pts = None
         bottom_whitespace_pts = None
         bottom_label_band_overlap_pts = None
+        snapped_lower_band_gap_pts = None
         legend_xlabel_overlap_area = 0.0
         legend_xticks_overlap_area = 0.0
         general_audit = _layout_health_general_figure_audit(
@@ -94327,6 +94414,16 @@ def layout_health_autofix(
                 and "legend_xticklabels_gap_low" not in issues
             ):
                 issues.append("legend_xticklabels_gap_low")
+        if (
+            snapped_combined_layout
+            and xlabel_bbox is not None
+            and snapped_lower_annotations_bbox is not None
+        ):
+            snapped_lower_band_gap_pts = float(
+                (snapped_lower_annotations_bbox.y0 - xlabel_bbox.y1) * fig_h_pts
+            )
+            if snapped_lower_band_gap_pts > max_gap_pts + 0.25:
+                issues.append("combined_snapped_lower_band_gap_high")
         if (
             legend_conflict_checks_enabled
             and legend_bbox is not None
@@ -94591,6 +94688,35 @@ def layout_health_autofix(
         )
 
         adjusted = False
+        if (
+            "combined_snapped_lower_band_gap_high" in issues
+            and snapped_lower_band_gap_pts is not None
+            and math.isfinite(float(snapped_lower_band_gap_pts))
+        ):
+            # Move the axes band down by the measured excess while legends and
+            # the figure-level xlabel remain fixed in their compact lower band.
+            excess_gap_frac = max(
+                0.0,
+                (float(snapped_lower_band_gap_pts) - float(min_gap_pts)) / fig_h_pts,
+            )
+            try:
+                current_bottom = float(fig.subplotpars.bottom)
+            except Exception:
+                current_bottom = 0.0
+            target_bottom = max(0.02, current_bottom - excess_gap_frac)
+            if target_bottom < current_bottom - 1e-6:
+                try:
+                    if layout_mgr is not None:
+                        layout_mgr._baseline_bottom = float(target_bottom)
+                    fig.subplots_adjust(bottom=float(target_bottom))
+                    _layout_health_record_combined_suggestion(
+                        fig,
+                        mode_norm,
+                        margins={"bottom": float(target_bottom)},
+                    )
+                    adjusted = True
+                except Exception:
+                    pass
         if "temperature_colorbar_label_tick_overlap" in issues:
             colorbar_axis = general_audit.get("colorbar_axis")
             colorbar_gap_pts = _safe_float(
@@ -95424,10 +95550,13 @@ def layout_health_autofix(
         ) and bottom_whitespace_pts is not None:
             skip_authoritative_combined_reclaim = bool(
                 combined_mode
+                and not snapped_combined_layout
                 and layout_mgr is not None
                 and getattr(layout_mgr, "margins_authoritative", False)
-                and _safe_float(getattr(layout_mgr, "_baseline_bottom", None))
-                is not None
+                and (
+                    _safe_float(getattr(layout_mgr, "_baseline_bottom", None))
+                    is not None
+                )
             )
             skip_authoritative_timeline_reclaim = (
                 authoritative_timeline_bottom is not None
@@ -96441,10 +96570,14 @@ class PlotLayoutManager:
                     )
                     desired_y += xlabel_pad_frac
                 if legend_bbox is not None:
-                    min_center = (
-                        legend_bbox.y1 + legend_xlabel_gap_frac + (xlabel_height / 2.0)
+                    min_center = legend_bbox.y1 + legend_xlabel_gap_frac + (
+                        xlabel_height / 2.0
                     )
-                    if desired_y < min_center:
+                    if snapped_legend_layout:
+                        # Keep the xlabel attached to the snapped legend band;
+                        # the axes margin then moves to clear ticks and breaks.
+                        desired_y = min_center
+                    elif desired_y < min_center:
                         desired_y = min_center
                 # Clamp xlabel center into the lower label band so malformed anchors
                 # cannot push it into the data region on compact compare panes.
@@ -96619,6 +96752,15 @@ class PlotLayoutManager:
                 min_axes_bottom = xlabel_bbox.y1 + xlabel_tick_gap_frac
                 if lower_axis_edge < min_axes_bottom:
                     bottom = max(bottom, bottom + (min_axes_bottom - lower_axis_edge))
+                elif snapped_legend_layout and lower_axis_edge > (
+                    min_axes_bottom + epsilon_frac
+                ):
+                    # Snapped mode owns this band, so reclaim excess profile
+                    # margin with the same measured geometry used for expansion.
+                    bottom = max(
+                        0.02,
+                        bottom - (lower_axis_edge - min_axes_bottom),
+                    )
 
             if (
                 suptitle_bbox is not None
