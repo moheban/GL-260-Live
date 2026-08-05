@@ -70741,6 +70741,90 @@ def _regression_test_combined_cycle_legend_dashboard_and_custom_rows() -> None:
             settings.pop(COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY, None)
 
 
+def _regression_test_combined_snapped_cycle_legend_layout() -> None:
+    """Validate paired combined-legend placement and single-family centering.
+
+    Purpose:
+        Exercise the authoritative bottom-band helper without depending on Tk or
+        production data preparation.
+    Why:
+        The snap option must keep the main and per-trace cycle legend families
+        in separate columns, then center the surviving family when one is hidden.
+    Inputs:
+        None.
+    Returns:
+        None.
+    Side Effects:
+        Temporarily changes the in-memory snap setting and creates a test figure.
+    Exceptions:
+        Raises AssertionError when column placement or saved-anchor preservation
+        is violated; restores the prior setting before returning or failing.
+    """
+    prior_value = settings.get("combined_snap_cycle_legend_below_plot")
+    fig = Figure(figsize=(8.0, 5.0))
+    ax = fig.add_subplot(1, 1, 1)
+    ax._gl260_axis_role = "primary"  # type: ignore[attr-defined]
+    main = fig.legend([], ["Main trace"], loc="upper left")
+    cycle_one = fig.legend([], ["Cycles: 3", "Total ΔP: 5.0 PSI"], loc="upper right")
+    cycle_two = fig.legend([], ["Cycles: 4", "Total ΔP: 7.0 PSI"], loc="upper right")
+    main._combined_main_legend = True  # type: ignore[attr-defined]
+    cycle_one._combined_cycle_legend = True  # type: ignore[attr-defined]
+    cycle_two._combined_cycle_legend = True  # type: ignore[attr-defined]
+    try:
+        settings["combined_snap_cycle_legend_below_plot"] = True
+        if not _apply_combined_snapped_legend_layout(fig):
+            raise AssertionError("Snap helper should position tagged combined legends.")
+        canvas = FigureCanvasAgg(fig)
+        canvas.draw()
+        renderer = canvas.get_renderer()
+        axis_bbox = ax.get_position()
+        main_bbox = main.get_window_extent(renderer=renderer).transformed(
+            fig.transFigure.inverted()
+        )
+        cycle_one_bbox = cycle_one.get_window_extent(renderer=renderer).transformed(
+            fig.transFigure.inverted()
+        )
+        cycle_two_bbox = cycle_two.get_window_extent(renderer=renderer).transformed(
+            fig.transFigure.inverted()
+        )
+        center_x = float(axis_bbox.x0 + (axis_bbox.width / 2.0))
+        if float((main_bbox.x0 + main_bbox.x1) / 2.0) >= center_x:
+            raise AssertionError("Main snapped legend should occupy the left column.")
+        if float((cycle_one_bbox.x0 + cycle_one_bbox.x1) / 2.0) <= center_x:
+            raise AssertionError("Cycle snapped legend should occupy the right column.")
+        if float(cycle_two_bbox.y0) <= float(cycle_one_bbox.y0):
+            raise AssertionError(
+                "Multiple cycle legends should stack upward in the right column."
+            )
+        saved_anchor = cycle_one.get_bbox_to_anchor().frozen().bounds
+        settings["combined_snap_cycle_legend_below_plot"] = False
+        if _apply_combined_snapped_legend_layout(fig):
+            raise AssertionError(
+                "Disabled snap layout must not overwrite saved anchors."
+            )
+        if cycle_one.get_bbox_to_anchor().frozen().bounds != saved_anchor:
+            raise AssertionError(
+                "Disabling snap must preserve the prior legend anchor."
+            )
+        main.set_visible(False)
+        cycle_two.set_visible(False)
+        settings["combined_snap_cycle_legend_below_plot"] = True
+        _apply_combined_snapped_legend_layout(fig)
+        canvas.draw()
+        cycle_bbox = cycle_one.get_window_extent(renderer=renderer).transformed(
+            fig.transFigure.inverted()
+        )
+        if abs(float((cycle_bbox.x0 + cycle_bbox.x1) / 2.0) - center_x) > 0.01:
+            raise AssertionError(
+                "A single visible cycle legend should center below the plot."
+            )
+    finally:
+        if prior_value is None:
+            settings.pop("combined_snap_cycle_legend_below_plot", None)
+        else:
+            settings["combined_snap_cycle_legend_below_plot"] = prior_value
+
+
 def _regression_test_data_trace_keys_include_grouped_columns_before_render() -> None:
     """Validate grouped Columns keys appear in Data Trace Settings pre-render.
 
@@ -74528,6 +74612,10 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
     (
         "Combined cycle legend dashboard and custom rows",
         _regression_test_combined_cycle_legend_dashboard_and_custom_rows,
+    ),
+    (
+        "Combined snapped cycle legend layout",
+        _regression_test_combined_snapped_cycle_legend_layout,
     ),
     (
         "Data Trace grouped column keys before render",
@@ -81018,6 +81106,7 @@ COMPARE_SIDE_PLOT_SETTINGS_TK_BINDINGS: Tuple[Tuple[str, str], ...] = (
     ("combined_cycle_legend_loc_choice", "combined_cycle_legend_loc_choice"),
     ("combined_cycle_legend_ref_axis", "combined_cycle_legend_ref_axis"),
     ("combined_cycle_legend_ref_corner", "combined_cycle_legend_ref_corner"),
+    ("combined_snap_cycle_legend_below_plot", "combined_snap_cycle_legend_below_plot"),
     ("combined_legend_shadowbox_fill_color", "combined_legend_shadowbox_fill_color"),
 )
 # Render-only bindings intentionally include axis-role and stylistic controls
@@ -81031,6 +81120,7 @@ COMPARE_RENDER_PROFILE_TK_STAGING_BINDINGS: Tuple[Tuple[str, str], ...] = (
     ("combined_include_zero_line", "combined_include_zero_line"),
     ("combined_font_family", "combined_font_family"),
     ("combined_center_plot_legend", "center_combined_plot_legend"),
+    ("combined_snap_cycle_legend_below_plot", "combined_snap_cycle_legend_below_plot"),
 )
 COMPARE_SIDE_PLOT_SETTINGS_ALLOWED_KEYS: Tuple[str, ...] = tuple(
     key for key, _attr in COMPARE_SIDE_PLOT_SETTINGS_TK_BINDINGS
@@ -84758,6 +84848,12 @@ if os.path.exists(SETTINGS_FILE):
     settings["combined_cycle_legend_clamp_to_axes"] = (
         initial_combined_cycle_legend_clamp_to_axes
     )
+    initial_combined_snap_cycle_legend_below_plot = bool(
+        settings.get("combined_snap_cycle_legend_below_plot", False)
+    )
+    settings["combined_snap_cycle_legend_below_plot"] = (
+        initial_combined_snap_cycle_legend_below_plot
+    )
     initial_combined_main_legend_enable_drag = bool(
         settings.get("combined_main_legend_enable_drag", False)
     )
@@ -85041,6 +85137,10 @@ else:
     initial_combined_cycle_legend_clamp_to_axes = True
     settings["combined_cycle_legend_clamp_to_axes"] = (
         initial_combined_cycle_legend_clamp_to_axes
+    )
+    initial_combined_snap_cycle_legend_below_plot = False
+    settings["combined_snap_cycle_legend_below_plot"] = (
+        initial_combined_snap_cycle_legend_below_plot
     )
     initial_combined_main_legend_enable_drag = False
     settings["combined_main_legend_enable_drag"] = (
@@ -95494,6 +95594,190 @@ def layout_health_autofix(
     return result
 
 
+def _apply_combined_snapped_legend_layout(
+    fig: Figure, *, allow_draw: bool = True
+) -> bool:
+    """Place combined-plot legends into a measured two-column bottom band.
+
+    Purpose:
+        Apply the optional authoritative layout that puts the main plot legend
+        in the left column and all cycle legends in a stacked right column.
+    Why:
+        Independent draggable legend anchors cannot reserve a stable shared
+        bottom band or keep both legend families aligned across display, export,
+        and Layout Health Wizard passes.
+    Inputs:
+        fig: Combined triple-axis Matplotlib figure containing tagged legends.
+        allow_draw: Whether a canvas draw may be used to measure legend heights.
+    Returns:
+        True when one or more visible legend artists were positioned; otherwise
+        False when the setting is disabled or the figure has no tagged legends.
+    Side Effects:
+        Updates legend locations and figure-local snapped-band metadata. It does
+        not alter persisted manual legend anchors or drag offsets.
+    Exceptions:
+        Artist and renderer failures are handled defensively; unavailable
+        measurements fall back to a conservative vertical stack spacing.
+    """
+    if fig is None or not bool(
+        settings.get("combined_snap_cycle_legend_below_plot", False)
+    ):
+        return False
+    legends = list(getattr(fig, "legends", []) or [])
+    main_legends = [
+        legend
+        for legend in legends
+        if bool(getattr(legend, "_combined_main_legend", False))
+        and bool(getattr(legend, "get_visible", lambda: True)())
+    ]
+    cycle_legends = [
+        legend
+        for legend in legends
+        if bool(getattr(legend, "_combined_cycle_legend", False))
+        and bool(getattr(legend, "get_visible", lambda: True)())
+    ]
+    if not main_legends and not cycle_legends:
+        return False
+
+    primary_axis = next(
+        (
+            axis
+            for axis in list(getattr(fig, "axes", []) or [])
+            if getattr(axis, "_gl260_axis_role", None) == "primary"
+        ),
+        None,
+    )
+    try:
+        axis_position = (
+            primary_axis.get_position() if primary_axis is not None else None
+        )
+        left = (
+            float(axis_position.x0)
+            if axis_position is not None
+            else float(fig.subplotpars.left)
+        )
+        right = (
+            float(axis_position.x1)
+            if axis_position is not None
+            else float(fig.subplotpars.right)
+        )
+    except Exception:
+        left, right = float(fig.subplotpars.left), float(fig.subplotpars.right)
+    center = left + ((right - left) / 2.0)
+    left_center = left + ((right - left) / 4.0)
+    right_center = left + (3.0 * (right - left) / 4.0)
+    try:
+        figure_height_pts = max(float(fig.get_size_inches()[1]) * 72.0, 1.0)
+    except Exception:
+        figure_height_pts = 612.0
+    baseline_y = max(4.0 / figure_height_pts, 0.006)
+    stack_gap = max(2.0 / figure_height_pts, 0.003)
+    renderer = None
+    try:
+        canvas = fig.canvas
+        if canvas is None:
+            canvas = FigureCanvasAgg(fig)
+            fig.set_canvas(canvas)
+        if allow_draw:
+            canvas.draw()
+        renderer = canvas.get_renderer()
+    except Exception:
+        renderer = None
+
+    def _legend_height(legend: Any) -> float:
+        """Return one legend's figure-relative height for right-column stacking.
+
+        Purpose:
+            Measure vertical space consumed by an individual cycle legend.
+        Why:
+            Per-primary cycle legends must stack without guessing a fixed row
+            height that would clip custom summary content.
+        Inputs:
+            legend: Matplotlib legend artist to measure.
+        Returns:
+            Positive figure-relative height, with a conservative fallback.
+        Side Effects:
+            None.
+        Exceptions:
+            Measurement failures return a fallback height.
+        """
+        try:
+            bbox = legend.get_window_extent(renderer=renderer)
+            transformed = bbox.transformed(fig.transFigure.inverted())
+            height = float(transformed.height)
+            if math.isfinite(height) and height > 0.0:
+                return height
+        except Exception:
+            pass
+        return max(22.0 / figure_height_pts, 0.035)
+
+    if main_legends:
+        main = main_legends[0]
+        try:
+            main.set_loc("lower center")
+            main.set_bbox_to_anchor(
+                (left_center if cycle_legends else center, baseline_y),
+                transform=fig.transFigure,
+            )
+        except Exception:
+            pass
+    cycle_y = baseline_y
+    for cycle_legend in cycle_legends:
+        try:
+            cycle_legend.set_loc("lower center")
+            cycle_legend.set_bbox_to_anchor(
+                (right_center if main_legends else center, cycle_y),
+                transform=fig.transFigure,
+            )
+        except Exception:
+            pass
+        # Stack upward from the shared baseline so every cycle summary remains visible.
+        cycle_y += _legend_height(cycle_legend) + stack_gap
+    try:
+        fig._gl260_snapped_cycle_legend_layout = True  # type: ignore[attr-defined]
+        fig._gl260_snapped_legend_artists = [  # type: ignore[attr-defined]
+            *main_legends,
+            *cycle_legends,
+        ]
+    except Exception:
+        pass
+    return True
+
+
+def _combined_snapped_legend_bbox(fig: Figure, renderer: Any) -> Optional[Bbox]:
+    """Return the union of active snapped combined-legend bounds.
+
+    Purpose:
+        Expose the full two-column legend band to layout and health checks.
+    Why:
+        Measuring only the main legend can understate bottom space when the
+        right column contains a taller cycle summary stack.
+    Inputs:
+        fig: Combined figure with optional snapped legend metadata.
+        renderer: Active Matplotlib renderer for artist extent measurement.
+    Returns:
+        Figure-coordinate union bbox, or None when no measurable legends exist.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid or stale artists are skipped.
+    """
+    artists = list(getattr(fig, "_gl260_snapped_legend_artists", []) or [])
+    bboxes: List[Bbox] = []
+    for artist in artists:
+        try:
+            if not artist.get_visible():
+                continue
+            bbox = artist.get_window_extent(renderer=renderer)
+            bboxes.append(bbox.transformed(fig.transFigure.inverted()))
+        except Exception:
+            continue
+    try:
+        return Bbox.union(bboxes) if bboxes else None
+    except Exception:
+        return None
+
+
 class PlotLayoutManager:
     """Deterministic layout solver for combined triple-axis figures."""
 
@@ -95838,6 +96122,10 @@ class PlotLayoutManager:
             legend = None
             legend_is_timeline_bottom = False
         cycle_legend = self._artists.get("cycle_legend")
+        snapped_legend_layout = bool(
+            settings.get("combined_snap_cycle_legend_below_plot", False)
+            and getattr(self.fig, "_gl260_plot_id", None) == "fig_combined_triple_axis"
+        )
         primary_axis = self._axes[0] if self._axes else None
         xlabel_axis = primary_axis
         if legend_is_timeline_bottom and len(self._axes) > 1:
@@ -95893,7 +96181,7 @@ class PlotLayoutManager:
                 legend_anchor_y = max(legend_anchor_y, anchor_y)
             if self.legend_anchor_y is not None:
                 legend_anchor_y = max(legend_anchor_y, self.legend_anchor_y)
-            if legend is not None and not legend_is_timeline_bottom:
+            if legend is not None and not legend_is_timeline_bottom and not snapped_legend_layout:
                 loc = None
                 if anchor_x is None:
                     loc, anchor_x = self._legend_anchor(
@@ -95910,12 +96198,20 @@ class PlotLayoutManager:
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
 
+            if snapped_legend_layout:
+                # Reapply after each subplot adjustment because column centers follow plot width.
+                _apply_combined_snapped_legend_layout(self.fig, allow_draw=allow_draw)
             renderer = self._get_renderer(allow_draw)
-            legend_bbox = self._bbox_in_fig(legend, renderer) if legend else None
+            legend_bbox = (
+                _combined_snapped_legend_bbox(self.fig, renderer)
+                if snapped_legend_layout
+                else self._bbox_in_fig(legend, renderer) if legend else None
+            )
             if (
                 legend is not None
                 and legend_bbox is not None
                 and not legend_is_timeline_bottom
+                and not snapped_legend_layout
             ):
                 if legend_bbox.y0 < legend_anchor_y:
                     shift = legend_anchor_y - legend_bbox.y0
@@ -95934,7 +96230,11 @@ class PlotLayoutManager:
 
             renderer = self._get_renderer(allow_draw)
             data_axes_tight = self._axes_tight_union(renderer)
-            legend_bbox = self._bbox_in_fig(legend, renderer) if legend else None
+            legend_bbox = (
+                _combined_snapped_legend_bbox(self.fig, renderer)
+                if snapped_legend_layout
+                else self._bbox_in_fig(legend, renderer) if legend else None
+            )
             xlabel_bbox = self._bbox_in_fig(xlabel, renderer) if xlabel else None
             xlabel_axes_tight = None
             if xlabel_axis is not None:
@@ -96022,7 +96322,11 @@ class PlotLayoutManager:
                     pass
 
             renderer = self._get_renderer(allow_draw)
-            legend_bbox = self._bbox_in_fig(legend, renderer) if legend else None
+            legend_bbox = (
+                _combined_snapped_legend_bbox(self.fig, renderer)
+                if snapped_legend_layout
+                else self._bbox_in_fig(legend, renderer) if legend else None
+            )
             xlabel_bbox = self._bbox_in_fig(xlabel, renderer) if xlabel else None
             if xlabel_bbox is not None and not self.margins_authoritative:
                 bottom = max(bottom, xlabel_bbox.y1 + xlabel_tick_gap_frac)
@@ -96048,6 +96352,11 @@ class PlotLayoutManager:
                         # Best-effort guard; ignore failures to avoid interrupting the workflow.
                         pass
                     renderer = self._get_renderer(allow_draw)
+                    legend_bbox = (
+                        _combined_snapped_legend_bbox(self.fig, renderer)
+                        if snapped_legend_layout
+                        else self._bbox_in_fig(legend, renderer) if legend else None
+                    )
                     xlabel_bbox = (
                         self._bbox_in_fig(xlabel, renderer) if xlabel else None
                     )
@@ -96073,6 +96382,7 @@ class PlotLayoutManager:
 
             if (
                 cycle_legend is not None
+                and not snapped_legend_layout
                 and primary_axis is not None
                 and axes_bbox is not None
             ):
@@ -96095,10 +96405,10 @@ class PlotLayoutManager:
 
             renderer = self._get_renderer(allow_draw)
             data_axes_tight = self._axes_tight_union(renderer)
-            if cycle_legend is not None:
+            if cycle_legend is not None and not snapped_legend_layout:
                 cycle_bbox = self._bbox_in_fig(cycle_legend, renderer)
             else:
-                cycle_bbox = None
+                cycle_bbox = _combined_snapped_legend_bbox(self.fig, renderer)
             if data_axes_tight is not None and cycle_bbox is not None:
                 union_lr = Bbox.union([data_axes_tight, cycle_bbox])
             else:
@@ -98510,6 +98820,10 @@ def build_combined_triple_axis_figure(
     # Iterate over _collect_gl260_legends(fig) to apply the per-item logic.
     for legend_artist in _collect_gl260_legends(fig):
         _apply_combined_legend_layer(legend_artist)
+
+    # The snapped mode is authoritative during construction so saved drag anchors
+    # cannot move either legend family before the first layout measurement.
+    _apply_combined_snapped_legend_layout(fig, allow_draw=False)
 
     # Layout solve: measure bboxes + adjust margins in a deterministic pass.
     layout_manager = PlotLayoutManager(
@@ -104042,6 +104356,9 @@ class UnifiedApp(tk.Tk):
         self.combined_cycle_legend_clamp_to_axes = tk.BooleanVar(
             value=initial_combined_cycle_legend_clamp_to_axes
         )
+        self.combined_snap_cycle_legend_below_plot = tk.BooleanVar(
+            value=initial_combined_snap_cycle_legend_below_plot
+        )
         self.combined_main_legend_enable_drag = tk.BooleanVar(
             value=initial_combined_main_legend_enable_drag
         )
@@ -104149,6 +104466,10 @@ class UnifiedApp(tk.Tk):
         self._register_var_default(
             self.combined_cycle_legend_clamp_to_axes,
             initial_combined_cycle_legend_clamp_to_axes,
+        )
+        self._register_var_default(
+            self.combined_snap_cycle_legend_below_plot,
+            initial_combined_snap_cycle_legend_below_plot,
         )
         self._register_var_default(
             self.combined_main_legend_enable_drag,
@@ -115413,6 +115734,11 @@ class UnifiedApp(tk.Tk):
                 combined=combined_target,
                 timeline=timeline_target,
             )
+            if combined_target and bool(
+                settings.get("combined_snap_cycle_legend_below_plot", False)
+            ):
+                # Wizard checks must measure the same authoritative geometry as renders.
+                _apply_combined_snapped_legend_layout(fig_obj, allow_draw=True)
             try:
                 layout_mgr = getattr(fig_obj, "_gl260_layout_manager", None)
                 if timeline_target and layout_mgr is not None:
@@ -139390,6 +139716,10 @@ class UnifiedApp(tk.Tk):
             ("combined_y_third_key", "combined_y_third_key"),
             ("combined_include_zero_line", "combined_include_zero_line"),
             ("combined_center_plot_legend", "center_combined_plot_legend"),
+            (
+                "combined_snap_cycle_legend_below_plot",
+                "combined_snap_cycle_legend_below_plot",
+            ),
         )
         # Iterate over the key map to ensure every profile-scoped setting is included.
         for key, attr in key_map:
@@ -140247,6 +140577,10 @@ class UnifiedApp(tk.Tk):
             ("combined_cycle_legend_loc_choice", "combined_cycle_legend_loc_choice"),
             ("combined_cycle_legend_ref_axis", "combined_cycle_legend_ref_axis"),
             ("combined_cycle_legend_ref_corner", "combined_cycle_legend_ref_corner"),
+            (
+                "combined_snap_cycle_legend_below_plot",
+                "combined_snap_cycle_legend_below_plot",
+            ),
         ):
             if key in plot_settings:
                 _set_var(getattr(self, attr, None), plot_settings.get(key))
@@ -147302,6 +147636,12 @@ class UnifiedApp(tk.Tk):
             variable=self.combined_main_legend_enable_drag,
             command=_apply_cycle_legend_controls,
         ).grid(row=2, column=1, sticky="w", padx=6, pady=4)
+        ttk.Checkbutton(
+            lf_cycle_legend,
+            text="Snap Cycle Legend Below Plot (paired with Main Legend)",
+            variable=self.combined_snap_cycle_legend_below_plot,
+            command=_apply_cycle_legend_controls,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=4)
 
         # Combined triple-axis dataset selection
         lf_combined_axis = ttk.Labelframe(f, text="Combined Triple-Axis Settings")
@@ -148824,6 +149164,13 @@ class UnifiedApp(tk.Tk):
             variable=self.combined_main_legend_enable_drag,
             command=_apply_cycle_legend_controls,
         ).grid(row=2, column=1, sticky="w", padx=6, pady=4)
+
+        ttk.Checkbutton(
+            lf_cycle_legend,
+            text="Snap Cycle Legend Below Plot (paired with Main Legend)",
+            variable=self.combined_snap_cycle_legend_below_plot,
+            command=_apply_cycle_legend_controls,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=4)
 
     def _build_plot_cycle_integration_legend_section(
         self, parent, pad: dict[str, int]
@@ -157775,6 +158122,9 @@ class UnifiedApp(tk.Tk):
             settings["combined_cycle_legend_clamp_to_axes"] = bool(
                 self.combined_cycle_legend_clamp_to_axes.get()
             )
+            settings["combined_snap_cycle_legend_below_plot"] = bool(
+                self.combined_snap_cycle_legend_below_plot.get()
+            )
             settings["combined_main_legend_enable_drag"] = bool(
                 self.combined_main_legend_enable_drag.get()
             )
@@ -158643,6 +158993,12 @@ class UnifiedApp(tk.Tk):
         cycle_lock_enabled = bool(
             settings.get("combined_cycle_legend_lock_position", False)
         )
+        snapped_legend_layout = bool(
+            settings.get("combined_snap_cycle_legend_below_plot", False)
+        )
+        if snapped_legend_layout:
+            # Reassert the fixed column geometry before installing live canvas hooks.
+            _apply_combined_snapped_legend_layout(fig, allow_draw=force_draw)
         effective_cycle_drag_enabled = bool(
             cycle_drag_enabled
             and not cycle_lock_enabled
@@ -158690,7 +159046,7 @@ class UnifiedApp(tk.Tk):
                     # Best-effort guard; ignore failures to avoid interrupting
                     # the workflow.
                     pass
-                if main_drag_enabled:
+                if main_drag_enabled and not snapped_legend_layout:
                     _make_legend_draggable(lg)
                 else:
                     _make_legend_draggable(lg, enabled=False)
@@ -158703,7 +159059,11 @@ class UnifiedApp(tk.Tk):
                     # the workflow.
                     pass
                 # Lock overrides drag to prevent accidental cycle legend movement.
-                if cycle_drag_enabled and not cycle_lock_enabled:
+                if (
+                    cycle_drag_enabled
+                    and not cycle_lock_enabled
+                    and not snapped_legend_layout
+                ):
                     if defer_cycle_drag_enable:
                         _make_legend_draggable(lg, enabled=False)
                     else:
@@ -158712,7 +159072,7 @@ class UnifiedApp(tk.Tk):
                     _make_legend_draggable(lg, enabled=False)
                 continue
             _make_legend_draggable(lg)
-        if main_legend is not None:
+        if main_legend is not None and not snapped_legend_layout:
             center_toggle = getattr(self, "center_combined_plot_legend", None)
             if center_toggle is not None:
                 try:
@@ -193685,6 +194045,17 @@ class UnifiedApp(tk.Tk):
         metrics["has_legend"] = True
         fig_h_pts = max(float(fig.get_size_inches()[1]) * 72.0, 1.0)
         legend_bbox = _layout_health_bbox_in_fig(fig, legend, renderer)
+        if (
+            str(getattr(fig, "_gl260_plot_id", "") or "").strip().lower()
+            == "fig_combined_triple_axis"
+            and bool(
+            settings.get("combined_snap_cycle_legend_below_plot", False)
+            )
+        ):
+            _apply_combined_snapped_legend_layout(fig, allow_draw=False)
+            snapped_bbox = _combined_snapped_legend_bbox(fig, renderer)
+            if snapped_bbox is not None:
+                legend_bbox = snapped_bbox
         xlabel_artist = _layout_health_primary_xlabel(fig, plot_id="fig_cycle_timeline")
         xlabel_bbox = _layout_health_bbox_in_fig(fig, xlabel_artist, renderer)
         bottom_band_candidates: List[float] = []
@@ -246685,6 +247056,9 @@ class UnifiedApp(tk.Tk):
         )
         settings["combined_center_plot_legend"] = bool(
             self.center_combined_plot_legend.get()
+        )
+        settings["combined_snap_cycle_legend_below_plot"] = bool(
+            self.combined_snap_cycle_legend_below_plot.get()
         )
         anchor = getattr(self, "_combined_legend_anchor", None)
         if anchor and len(anchor) >= 2:
