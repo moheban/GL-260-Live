@@ -70775,6 +70775,7 @@ def _regression_test_combined_snapped_cycle_legend_layout() -> None:
         if not _apply_combined_snapped_legend_layout(fig):
             raise AssertionError("Snap helper should position tagged combined legends.")
         canvas = FigureCanvasAgg(fig)
+        _apply_combined_snapped_legend_layout(fig, allow_draw=True)
         canvas.draw()
         renderer = canvas.get_renderer()
         axis_bbox = ax.get_position()
@@ -70796,6 +70797,14 @@ def _regression_test_combined_snapped_cycle_legend_layout() -> None:
             raise AssertionError(
                 "Multiple cycle legends should stack upward in the right column."
             )
+        cycle_band_center = float(
+            (min(cycle_one_bbox.y0, cycle_two_bbox.y0)
+            + max(cycle_one_bbox.y1, cycle_two_bbox.y1))
+            / 2.0
+        )
+        main_center_y = float((main_bbox.y0 + main_bbox.y1) / 2.0)
+        if abs(main_center_y - cycle_band_center) > 0.01:
+            raise AssertionError("Snapped legend columns should share one vertical center.")
         saved_anchor = cycle_one.get_bbox_to_anchor().frozen().bounds
         settings["combined_snap_cycle_legend_below_plot"] = False
         if _apply_combined_snapped_legend_layout(fig):
@@ -95711,18 +95720,29 @@ def _apply_combined_snapped_legend_layout(
             pass
         return max(22.0 / figure_height_pts, 0.035)
 
+    main_height = _legend_height(main_legends[0]) if main_legends else 0.0
+    cycle_heights = [_legend_height(legend) for legend in cycle_legends]
+    cycle_column_height = sum(cycle_heights) + (
+        stack_gap * max(0, len(cycle_heights) - 1)
+    )
+    legend_band_height = max(main_height, cycle_column_height)
+
     if main_legends:
         main = main_legends[0]
+        main_y = baseline_y + max((legend_band_height - main_height) / 2.0, 0.0)
         try:
             main.set_loc("lower center")
             main.set_bbox_to_anchor(
-                (left_center if cycle_legends else center, baseline_y),
+                (left_center if cycle_legends else center, main_y),
                 transform=fig.transFigure,
             )
         except Exception:
             pass
-    cycle_y = baseline_y
-    for cycle_legend in cycle_legends:
+    cycle_y = baseline_y + max(
+        (legend_band_height - cycle_column_height) / 2.0,
+        0.0,
+    )
+    for cycle_legend, cycle_height in zip(cycle_legends, cycle_heights):
         try:
             cycle_legend.set_loc("lower center")
             cycle_legend.set_bbox_to_anchor(
@@ -95731,14 +95751,15 @@ def _apply_combined_snapped_legend_layout(
             )
         except Exception:
             pass
-        # Stack upward from the shared baseline so every cycle summary remains visible.
-        cycle_y += _legend_height(cycle_legend) + stack_gap
+        # Stack upward within a column centered against the main legend's height.
+        cycle_y += cycle_height + stack_gap
     try:
         fig._gl260_snapped_cycle_legend_layout = True  # type: ignore[attr-defined]
         fig._gl260_snapped_legend_artists = [  # type: ignore[attr-defined]
             *main_legends,
             *cycle_legends,
         ]
+        fig._gl260_snapped_legend_band_height = legend_band_height  # type: ignore[attr-defined]
     except Exception:
         pass
     return True
@@ -96328,7 +96349,9 @@ class PlotLayoutManager:
                 else self._bbox_in_fig(legend, renderer) if legend else None
             )
             xlabel_bbox = self._bbox_in_fig(xlabel, renderer) if xlabel else None
-            if xlabel_bbox is not None and not self.margins_authoritative:
+            if xlabel_bbox is not None and (
+                not self.margins_authoritative or snapped_legend_layout
+            ):
                 bottom = max(bottom, xlabel_bbox.y1 + xlabel_tick_gap_frac)
             if legend_bbox is not None and xlabel_bbox is not None:
                 gap = xlabel_bbox.y0 - legend_bbox.y1
@@ -96360,7 +96383,9 @@ class PlotLayoutManager:
                     xlabel_bbox = (
                         self._bbox_in_fig(xlabel, renderer) if xlabel else None
                     )
-                    if xlabel_bbox is not None and not self.margins_authoritative:
+                    if xlabel_bbox is not None and (
+                        not self.margins_authoritative or snapped_legend_layout
+                    ):
                         bottom = max(bottom, xlabel_bbox.y1 + xlabel_tick_gap_frac)
             renderer = self._get_renderer(allow_draw)
             title_bbox = self._bbox_in_fig(title, renderer) if title else None
@@ -96433,7 +96458,7 @@ class PlotLayoutManager:
             if (
                 data_axes_tight is not None
                 and xlabel_bbox is not None
-                and not self.margins_authoritative
+                and (not self.margins_authoritative or snapped_legend_layout)
             ):
                 min_axes_bottom = xlabel_bbox.y1 + xlabel_tick_gap_frac
                 if data_axes_tight.y0 < min_axes_bottom:
