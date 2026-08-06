@@ -22023,6 +22023,10 @@ REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_FAMILY = "Times New Roman"
 REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_SIZE = 12.0
 REACTION_DASHBOARD_EXPORT_MIN_FONT_SIZE = 8.0
 REACTION_DASHBOARD_EXPORT_MAX_FONT_SIZE = 18.0
+REACTION_DASHBOARD_EXPORT_DEFAULT_AUTO_HEIGHT_ROWS = True
+REACTION_DASHBOARD_EXPORT_DEFAULT_ROW_PADDING_PT = 6.0
+REACTION_DASHBOARD_EXPORT_MIN_ROW_PADDING_PT = 0.0
+REACTION_DASHBOARD_EXPORT_MAX_ROW_PADDING_PT = 24.0
 
 
 def _normalize_reaction_dashboard_export_preferences(
@@ -22040,7 +22044,7 @@ def _normalize_reaction_dashboard_export_preferences(
         payload: Optional mapping loaded from application settings.
     Returns:
         Dict containing ordered ``cycle_fields`` and ``kpi_fields`` lists plus
-        normalized gauge, orientation, font-family, and font-size values.
+        normalized gauge, snapshot, orientation, typography, and row-layout values.
     Side Effects:
         None.
     Exceptions:
@@ -22099,13 +22103,33 @@ def _normalize_reaction_dashboard_export_preferences(
         or font_size > REACTION_DASHBOARD_EXPORT_MAX_FONT_SIZE
     ):
         font_size = REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_SIZE
+    try:
+        row_padding_pt = float(source.get("row_padding_pt"))
+    except (TypeError, ValueError):
+        row_padding_pt = REACTION_DASHBOARD_EXPORT_DEFAULT_ROW_PADDING_PT
+    if (
+        not math.isfinite(row_padding_pt)
+        or row_padding_pt < REACTION_DASHBOARD_EXPORT_MIN_ROW_PADDING_PT
+        or row_padding_pt > REACTION_DASHBOARD_EXPORT_MAX_ROW_PADDING_PT
+    ):
+        row_padding_pt = REACTION_DASHBOARD_EXPORT_DEFAULT_ROW_PADDING_PT
     return {
         "cycle_fields": cycle_fields,
         "kpi_fields": kpi_fields,
         "include_gauge": bool(source.get("include_gauge", True)),
+        "include_combined_snapshot": bool(
+            source.get("include_combined_snapshot", False)
+        ),
         "orientation": orientation,
         "font_family": font_family,
         "font_size": font_size,
+        "auto_height_rows": bool(
+            source.get(
+                "auto_height_rows",
+                REACTION_DASHBOARD_EXPORT_DEFAULT_AUTO_HEIGHT_ROWS,
+            )
+        ),
+        "row_padding_pt": row_padding_pt,
     }
 
 
@@ -36153,45 +36177,45 @@ def _reaction_dashboard_pdf_formula_text(value: Any) -> str:
     )
 
 
-def _render_reaction_dashboard_cycle_pdf_pages(
+def _reaction_dashboard_cycle_pdf_layout_plan(
     model: Mapping[str, Any],
     *,
     orientation: str,
     include_gauge: bool,
-    dpi: int,
-    font_family: Optional[str] = None,
-    font_size: float = REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_SIZE,
-) -> List[Figure]:
-    """Render publication-quality Reaction Cycle report pages.
+    include_combined_snapshot: bool,
+    font_size: float,
+    auto_height_rows: bool,
+    row_padding_pt: float,
+) -> Dict[str, Any]:
+    """Plan wrapped rows, physical row heights, and PDF pagination.
 
     Purpose:
-        Create vector-friendly Matplotlib pages containing report metadata, selected
-        KPI cards, an optional completion gauge, and a centered Cycle table.
+        Produce the single layout plan shared by page-count recommendations and
+        final Reaction Cycle PDF rendering.
     Why:
-        Dedicated layout control is required for repeatable publication-quality
-        pagination while preserving selectable dashboard content.
+        Orientation prompts must predict the same page breaks the renderer will
+        use, while automatic row heights need deterministic point-based padding.
     Args:
-        model: Normalized export model from
-            ``_build_reaction_dashboard_cycle_export_model``.
-        orientation: ``portrait`` or ``landscape`` page orientation.
-        include_gauge: Whether to draw the completion gauge on the first page.
-        dpi: Figure DPI used for display geometry and any rasterized artists.
-        font_family: Optional preferred report font family.
-        font_size: Cycle table font size in points, constrained to the supported
-            export range.
+        model: Normalized Reaction Cycle export model containing headers and rows.
+        orientation: Requested ``portrait`` or ``landscape`` page orientation.
+        include_gauge: Whether first-page summary space includes the gauge.
+        include_combined_snapshot: Whether first-page summary space includes the
+            Combined Triple Axis snapshot.
+        font_size: Requested Cycle table font size in points.
+        auto_height_rows: True sizes each row from its wrapped line count; False
+            assigns every body row the one-line height.
+        row_padding_pt: Padding in points applied independently above and below text.
     Returns:
-        List of Matplotlib figures in final PDF page order.
+        Mapping containing normalized geometry, wrapped table content, and ordered
+        page row groups used directly by the renderer.
     Side Effects:
-        Creates in-memory figure objects; callers own closing them.
+        None.
     Exceptions:
-        Empty tables return an empty list; malformed values are rendered safely.
+        Malformed numeric/layout values fall back to curated defaults; empty table
+        inputs return a plan with no pages.
     """
-    import matplotlib.patches as mpatches
-
     headers = [str(value) for value in list(model.get("table_headers") or [])]
     raw_rows = [list(row) for row in list(model.get("table_rows") or [])]
-    if not headers or not raw_rows:
-        return []
     normalized_orientation = str(orientation or "landscape").strip().lower()
     if normalized_orientation not in {"portrait", "landscape"}:
         normalized_orientation = "landscape"
@@ -36207,6 +36231,200 @@ def _render_reaction_dashboard_cycle_pdf_pages(
         or table_font_size > REACTION_DASHBOARD_EXPORT_MAX_FONT_SIZE
     ):
         table_font_size = REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_SIZE
+    try:
+        normalized_padding_pt = float(row_padding_pt)
+    except (TypeError, ValueError):
+        normalized_padding_pt = REACTION_DASHBOARD_EXPORT_DEFAULT_ROW_PADDING_PT
+    if (
+        not math.isfinite(normalized_padding_pt)
+        or normalized_padding_pt < REACTION_DASHBOARD_EXPORT_MIN_ROW_PADDING_PT
+        or normalized_padding_pt > REACTION_DASHBOARD_EXPORT_MAX_ROW_PADDING_PT
+    ):
+        normalized_padding_pt = REACTION_DASHBOARD_EXPORT_DEFAULT_ROW_PADDING_PT
+    if not headers or not raw_rows:
+        return {
+            "orientation": normalized_orientation,
+            "page_size": page_size,
+            "page_width": page_width,
+            "page_height": page_height,
+            "table_font_size": table_font_size,
+            "row_padding_pt": normalized_padding_pt,
+            "pages": [],
+        }
+
+    n_cols = len(headers)
+    max_chars: List[int] = []
+    for col_idx, header in enumerate(headers):
+        values = [header] + [
+            str(row[col_idx]) if col_idx < len(row) else "" for row in raw_rows
+        ]
+        cap = 30 if "warning" in header.lower() else 22
+        max_chars.append(max(8, min(max(len(value) for value in values), cap)))
+    width_total = float(sum(max_chars)) or 1.0
+    relative_widths = [value / width_total for value in max_chars]
+    wrap_scale = REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_SIZE / table_font_size
+    page_character_budget = 92 if normalized_orientation == "landscape" else 68
+    char_widths = [
+        max(10, int(page_character_budget * value * wrap_scale))
+        for value in relative_widths
+    ]
+    wrapped_headers = [
+        _reaction_dashboard_pdf_formula_text(
+            _wrap_table_text_preserve_newlines(header, char_widths[idx])
+        )
+        for idx, header in enumerate(headers)
+    ]
+    header_lines = max(
+        (header.count("\n") + 1 for header in wrapped_headers), default=1
+    )
+    header_height = max(
+        0.32,
+        (header_lines * table_font_size * 1.12 + (2.0 * normalized_padding_pt)) / 72.0,
+    )
+
+    wrapped_rows: List[List[str]] = []
+    row_heights: List[float] = []
+    for row in raw_rows:
+        wrapped_row: List[str] = []
+        line_count = 1
+        for col_idx in range(n_cols):
+            text_value = str(row[col_idx]) if col_idx < len(row) else ""
+            wrapped = _wrap_table_text(text_value, char_widths[col_idx])
+            wrapped_row.append(_reaction_dashboard_pdf_formula_text(wrapped))
+            line_count = max(line_count, wrapped.count("\n") + 1)
+        wrapped_rows.append(wrapped_row)
+        effective_lines = line_count if auto_height_rows else 1
+        row_heights.append(
+            max(
+                0.28,
+                (
+                    effective_lines * table_font_size * 1.18
+                    + (2.0 * normalized_padding_pt)
+                )
+                / 72.0,
+            )
+        )
+
+    kpis = [item for item in list(model.get("kpis") or []) if isinstance(item, Mapping)]
+    has_side_summary = bool(include_gauge or include_combined_snapshot)
+    kpi_columns = 3 if has_side_summary else 4
+    summary_rows = math.ceil(len(kpis) / kpi_columns) if kpis else 0
+    if include_gauge and include_combined_snapshot:
+        side_summary_height = 2.35
+    elif has_side_summary:
+        side_summary_height = 1.55
+    else:
+        side_summary_height = 0.0
+    summary_height = max(side_summary_height, summary_rows * 0.80)
+    first_table_height = max(1.4, page_height - 1.45 - summary_height - 0.72)
+    continued_table_height = max(1.4, page_height - 1.42)
+    pages: List[Tuple[List[List[str]], List[float]]] = []
+    row_index = 0
+    page_index = 0
+    while row_index < len(wrapped_rows):
+        available_height = (
+            first_table_height if page_index == 0 else continued_table_height
+        )
+        used_height = header_height
+        page_rows: List[List[str]] = []
+        page_row_heights: List[float] = []
+        while row_index < len(wrapped_rows):
+            candidate_height = row_heights[row_index]
+            if page_rows and used_height + candidate_height > available_height:
+                break
+            page_rows.append(wrapped_rows[row_index])
+            page_row_heights.append(candidate_height)
+            used_height += candidate_height
+            row_index += 1
+        pages.append((page_rows, page_row_heights))
+        page_index += 1
+
+    return {
+        "orientation": normalized_orientation,
+        "page_size": page_size,
+        "page_width": page_width,
+        "page_height": page_height,
+        "table_font_size": table_font_size,
+        "row_padding_pt": normalized_padding_pt,
+        "headers": headers,
+        "wrapped_headers": wrapped_headers,
+        "relative_widths": relative_widths,
+        "header_height": header_height,
+        "summary_height": summary_height,
+        "kpi_columns": kpi_columns,
+        "pages": pages,
+    }
+
+
+def _render_reaction_dashboard_cycle_pdf_pages(
+    model: Mapping[str, Any],
+    *,
+    orientation: str,
+    include_gauge: bool,
+    dpi: int,
+    font_family: Optional[str] = None,
+    font_size: float = REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_SIZE,
+    auto_height_rows: bool = REACTION_DASHBOARD_EXPORT_DEFAULT_AUTO_HEIGHT_ROWS,
+    row_padding_pt: float = REACTION_DASHBOARD_EXPORT_DEFAULT_ROW_PADDING_PT,
+    combined_snapshot: Optional[np.ndarray] = None,
+) -> List[Figure]:
+    """Render publication-quality Reaction Cycle report pages.
+
+    Purpose:
+        Create vector-friendly Matplotlib pages containing report metadata, selected
+        KPI cards, optional gauge/snapshot artwork, and a centered Cycle table.
+    Why:
+        Dedicated layout control is required for repeatable publication-quality
+        pagination while preserving selectable dashboard content.
+    Args:
+        model: Normalized export model from
+            ``_build_reaction_dashboard_cycle_export_model``.
+        orientation: ``portrait`` or ``landscape`` page orientation.
+        include_gauge: Whether to draw the completion gauge on the first page.
+        dpi: Figure DPI used for display geometry and any rasterized artists.
+        font_family: Optional preferred report font family.
+        font_size: Cycle table font size in points, constrained to the supported
+            export range.
+        auto_height_rows: True sizes rows to wrapped content; False uses one-line
+            body heights.
+        row_padding_pt: Padding in points above and below table-cell text.
+        combined_snapshot: Optional RGBA/RGB image captured from the active Combined
+            Triple Axis plot without recalculating it.
+    Returns:
+        List of Matplotlib figures in final PDF page order.
+    Side Effects:
+        Creates in-memory figure objects; callers own closing them.
+    Exceptions:
+        Empty tables return an empty list; malformed values are rendered safely.
+    """
+    import matplotlib.patches as mpatches
+
+    valid_snapshot = (
+        isinstance(combined_snapshot, np.ndarray)
+        and combined_snapshot.ndim in {2, 3}
+        and combined_snapshot.size > 0
+    )
+    layout_plan = _reaction_dashboard_cycle_pdf_layout_plan(
+        model,
+        orientation=orientation,
+        include_gauge=include_gauge,
+        include_combined_snapshot=valid_snapshot,
+        font_size=font_size,
+        auto_height_rows=auto_height_rows,
+        row_padding_pt=row_padding_pt,
+    )
+    pages = list(layout_plan.get("pages") or [])
+    if not pages:
+        return []
+    page_size = tuple(layout_plan["page_size"])
+    page_height = float(layout_plan["page_height"])
+    table_font_size = float(layout_plan["table_font_size"])
+    headers = list(layout_plan["headers"])
+    wrapped_headers = list(layout_plan["wrapped_headers"])
+    relative_widths = list(layout_plan["relative_widths"])
+    header_height = float(layout_plan["header_height"])
+    summary_height = float(layout_plan["summary_height"])
+    kpi_columns = int(layout_plan["kpi_columns"])
     preferred_fonts = [
         font_family,
         "Times New Roman",
@@ -36232,70 +36450,6 @@ def _render_reaction_dashboard_cycle_pdf_pages(
     ]
 
     n_cols = len(headers)
-    max_chars: List[int] = []
-    for col_idx, header in enumerate(headers):
-        values = [header] + [
-            str(row[col_idx]) if col_idx < len(row) else "" for row in raw_rows
-        ]
-        cap = 30 if "warning" in header.lower() else 22
-        max_chars.append(max(8, min(max(len(value) for value in values), cap)))
-    width_total = float(sum(max_chars)) or 1.0
-    relative_widths = [value / width_total for value in max_chars]
-    # Larger selected fonts receive proportionally shorter wrap widths so text
-    # remains inside its column rather than visually crossing the table rules.
-    wrap_scale = REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_SIZE / table_font_size
-    char_widths = [max(6, int(92 * value * wrap_scale)) for value in relative_widths]
-    wrapped_headers = [
-        _reaction_dashboard_pdf_formula_text(
-            _wrap_table_text_preserve_newlines(header, char_widths[idx])
-        )
-        for idx, header in enumerate(headers)
-    ]
-    wrapped_rows: List[List[str]] = []
-    row_heights: List[float] = []
-    for row in raw_rows:
-        wrapped_row: List[str] = []
-        line_count = 1
-        for col_idx in range(n_cols):
-            text_value = str(row[col_idx]) if col_idx < len(row) else ""
-            wrapped = _wrap_table_text(text_value, char_widths[col_idx])
-            wrapped_row.append(_reaction_dashboard_pdf_formula_text(wrapped))
-            line_count = max(line_count, wrapped.count("\n") + 1)
-        wrapped_rows.append(wrapped_row)
-        font_height_scale = (
-            table_font_size / REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_SIZE
-        )
-        row_heights.append(
-            0.38 * font_height_scale + 0.19 * font_height_scale * max(0, line_count - 1)
-        )
-
-    summary_rows = math.ceil(len(kpis) / (3 if include_gauge else 4)) if kpis else 0
-    summary_height = max(1.55 if include_gauge else 0.0, summary_rows * 0.80)
-    first_table_height = max(1.4, page_height - 1.45 - summary_height - 0.72)
-    continued_table_height = max(1.4, page_height - 1.42)
-    header_height = 0.50 * (
-        table_font_size / REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_SIZE
-    )
-    pages: List[Tuple[List[List[str]], List[float]]] = []
-    row_index = 0
-    page_index = 0
-    while row_index < len(wrapped_rows):
-        available_height = (
-            first_table_height if page_index == 0 else continued_table_height
-        )
-        used_height = header_height
-        page_rows: List[List[str]] = []
-        page_row_heights: List[float] = []
-        while row_index < len(wrapped_rows):
-            candidate_height = row_heights[row_index]
-            if page_rows and used_height + candidate_height > available_height:
-                break
-            page_rows.append(wrapped_rows[row_index])
-            page_row_heights.append(candidate_height)
-            used_height += candidate_height
-            row_index += 1
-        pages.append((page_rows, page_row_heights))
-        page_index += 1
 
     figures: List[Figure] = []
     total_pages = len(pages)
@@ -36343,10 +36497,9 @@ def _render_reaction_dashboard_cycle_pdf_pages(
             )
             summary_top = 0.83
             summary_bottom = summary_top - (summary_height / page_height)
-            gauge_fraction = 0.24 if include_gauge else 0.0
+            side_summary_fraction = 0.24 if include_gauge or valid_snapshot else 0.0
             kpi_left = 0.055
-            kpi_right = 0.945 - gauge_fraction
-            kpi_columns = 3 if include_gauge else 4
+            kpi_right = 0.945 - side_summary_fraction
             card_gap = 0.016
             card_width = (
                 kpi_right - kpi_left - card_gap * max(0, kpi_columns - 1)
@@ -36393,11 +36546,15 @@ def _render_reaction_dashboard_cycle_pdf_pages(
                     linespacing=1.15,
                     fontfamily=report_font,
                 )
+            side_height = max(0.12, summary_top - summary_bottom - 0.01)
             if include_gauge:
-                gauge_height = max(0.12, summary_top - summary_bottom - 0.01)
-                gauge_ax = fig.add_axes(
-                    [0.77, summary_bottom + 0.012, 0.175, gauge_height]
+                gauge_height = side_height * 0.54 if valid_snapshot else side_height
+                gauge_bottom = (
+                    summary_bottom + side_height * 0.46
+                    if valid_snapshot
+                    else summary_bottom + 0.012
                 )
+                gauge_ax = fig.add_axes([0.77, gauge_bottom, 0.175, gauge_height])
                 gauge_ax.set_aspect("equal")
                 gauge_ax.axis("off")
                 completion = _safe_float(model.get("completion_pct"))
@@ -36479,6 +36636,23 @@ def _render_reaction_dashboard_cycle_pdf_pages(
                 )
                 gauge_ax.set_xlim(0, 1)
                 gauge_ax.set_ylim(-0.08, 0.62)
+            if valid_snapshot:
+                snapshot_height = (
+                    side_height * 0.37 if include_gauge else side_height * 0.84
+                )
+                snapshot_ax = fig.add_axes(
+                    [0.77, summary_bottom + 0.012, 0.175, snapshot_height]
+                )
+                snapshot_ax.imshow(combined_snapshot)
+                snapshot_ax.set_title(
+                    "Combined Triple Axis — Uptake Overview",
+                    color=slate,
+                    fontsize=5.8,
+                    fontweight="bold",
+                    fontfamily=report_font,
+                    pad=1.5,
+                )
+                snapshot_ax.axis("off")
 
         first_page_table_top = 0.83 - (summary_height / page_height) - 0.035
         table_top = first_page_table_top if page_number == 1 else 0.89
@@ -73644,6 +73818,7 @@ def _regression_test_reaction_dashboard_cycle_export_model() -> None:
             "include_gauge": False,
             "font_family": "",
             "font_size": "nan",
+            "row_padding_pt": -4,
         }
     )
     if malformed["cycle_fields"] != list(
@@ -73659,13 +73834,31 @@ def _regression_test_reaction_dashboard_cycle_export_model() -> None:
     if (
         malformed["font_family"] != REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_FAMILY
         or malformed["font_size"] != REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_SIZE
+        or malformed["row_padding_pt"]
+        != REACTION_DASHBOARD_EXPORT_DEFAULT_ROW_PADDING_PT
     ):
-        raise AssertionError("Malformed typography should restore curated defaults.")
+        raise AssertionError(
+            "Malformed typography and padding should restore curated defaults."
+        )
+    if not malformed["auto_height_rows"] or malformed["include_combined_snapshot"]:
+        raise AssertionError("New report-layout options should use curated defaults.")
     customized = _normalize_reaction_dashboard_export_preferences(
-        {"font_family": "DejaVu Serif", "font_size": 14}
+        {
+            "font_family": "DejaVu Serif",
+            "font_size": 14,
+            "auto_height_rows": False,
+            "row_padding_pt": 9,
+            "include_combined_snapshot": True,
+        }
     )
-    if customized["font_family"] != "DejaVu Serif" or customized["font_size"] != 14:
-        raise AssertionError("Valid user-selected typography should persist unchanged.")
+    if (
+        customized["font_family"] != "DejaVu Serif"
+        or customized["font_size"] != 14
+        or customized["auto_height_rows"]
+        or customized["row_padding_pt"] != 9
+        or not customized["include_combined_snapshot"]
+    ):
+        raise AssertionError("Valid user-selected layout options should persist.")
 
     template = _builtin_reaction_templates()["sodium_methoxide_co_to_sodium_formate"]
     result = {
@@ -73745,11 +73938,11 @@ def _regression_test_reaction_dashboard_cycle_export_model() -> None:
 
 
 def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
-    """Validate centered, paginated, gauge-aware Reaction Cycle PDF output.
+    """Validate adaptive, paginated Reaction Cycle PDF output.
 
     Purpose:
-        Exercise landscape and portrait page geometry, repeated table construction,
-        conditional gauge artists, centered cells, PDF metadata, and page writing.
+        Exercise orientation planning, automatic row heights/padding, repeated
+        headers, snapshot/gauge artists, centered cells, metadata, and page writing.
     Why:
         Publication quality depends on renderer behavior that cannot be proven by
         export-model tests alone.
@@ -73798,6 +73991,82 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
         "completion_pct": 82.5,
         "status": "healthy",
     }
+    snapshot_figure = Figure(figsize=(6.0, 3.2), dpi=100)
+    FigureCanvasAgg(snapshot_figure)
+    snapshot_axis = snapshot_figure.add_subplot(111)
+    snapshot_axis.plot([0.0, 1.0, 2.0], [0.0, 0.7, 1.0], color="#17324d")
+    snapshot_harness = SimpleNamespace(_combined_plot_state={"fig": snapshot_figure})
+    combined_snapshot = UnifiedApp._capture_reaction_cycle_combined_snapshot(
+        snapshot_harness
+    )
+    plt.close(snapshot_figure)
+    if combined_snapshot is None or combined_snapshot.size == 0:
+        raise AssertionError("Cached Combined Triple Axis figures should snapshot.")
+
+    auto_plan = _reaction_dashboard_cycle_pdf_layout_plan(
+        model,
+        orientation="landscape",
+        include_gauge=True,
+        include_combined_snapshot=True,
+        font_size=12,
+        auto_height_rows=True,
+        row_padding_pt=6,
+    )
+    fixed_plan = _reaction_dashboard_cycle_pdf_layout_plan(
+        model,
+        orientation="landscape",
+        include_gauge=True,
+        include_combined_snapshot=True,
+        font_size=12,
+        auto_height_rows=False,
+        row_padding_pt=6,
+    )
+    padded_plan = _reaction_dashboard_cycle_pdf_layout_plan(
+        model,
+        orientation="landscape",
+        include_gauge=True,
+        include_combined_snapshot=True,
+        font_size=12,
+        auto_height_rows=True,
+        row_padding_pt=12,
+    )
+    portrait_plan = _reaction_dashboard_cycle_pdf_layout_plan(
+        model,
+        orientation="portrait",
+        include_gauge=True,
+        include_combined_snapshot=True,
+        font_size=12,
+        auto_height_rows=True,
+        row_padding_pt=6,
+    )
+    auto_heights = [
+        height
+        for _page_rows, page_heights in auto_plan["pages"]
+        for height in page_heights
+    ]
+    fixed_heights = [
+        height
+        for _page_rows, page_heights in fixed_plan["pages"]
+        for height in page_heights
+    ]
+    padded_heights = [
+        height
+        for _page_rows, page_heights in padded_plan["pages"]
+        for height in page_heights
+    ]
+    if len({round(height, 6) for height in auto_heights}) < 2:
+        raise AssertionError("Auto-height rows should expand wrapped table content.")
+    if len({round(height, 6) for height in fixed_heights}) != 1:
+        raise AssertionError("Disabled auto-height should keep body rows uniform.")
+    if abs(float(auto_plan["row_padding_pt"]) - 6.0) > 1e-9:
+        raise AssertionError("Default row padding should remain six points per side.")
+    if min(padded_heights) <= min(auto_heights):
+        raise AssertionError("Increasing per-side padding should increase row height.")
+    if len(auto_plan["pages"]) <= 1 or not portrait_plan["pages"]:
+        raise AssertionError(
+            "Multipage landscape reports should support a portrait page estimate."
+        )
+
     figures = _render_reaction_dashboard_cycle_pdf_pages(
         model,
         orientation="landscape",
@@ -73805,6 +74074,9 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
         dpi=100,
         font_family="XITS Math",
         font_size=12,
+        auto_height_rows=True,
+        row_padding_pt=6,
+        combined_snapshot=combined_snapshot,
     )
     if len(figures) < 2:
         for figure in figures:
@@ -73815,6 +74087,14 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
         for figure in figures:
             plt.close(figure)
         raise AssertionError("The first report page should contain a table artist.")
+    for page_number, figure in enumerate(figures, start=1):
+        page_tables = [table for axis in figure.axes for table in axis.tables]
+        if not page_tables or page_tables[0][(0, 0)].get_text().get_text() != "Cycle":
+            for open_figure in figures:
+                plt.close(open_figure)
+            raise AssertionError(
+                f"Continuation page {page_number} should repeat Cycle table headers."
+            )
     if any(
         cell.get_text().get_ha() != "center"
         for cell in table_artists[0].get_celld().values()
@@ -73834,6 +74114,12 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
             plt.close(figure)
         raise AssertionError(
             "Chemical Unicode subscripts should use vector-safe math text."
+        )
+    if not any(axis.images for axis in figures[0].axes):
+        for figure in figures:
+            plt.close(figure)
+        raise AssertionError(
+            "Snapshot-enabled reports should embed the Combined Triple Axis image."
         )
     first_page_patch_names = {
         patch.__class__.__name__ for axis in figures[0].axes for patch in axis.patches
@@ -73917,6 +74203,8 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
         }
         if "Wedge" in patch_names:
             raise AssertionError("Gauge-disabled reports should omit gauge artists.")
+        if any(axis.images for axis in portrait_figures[0].axes):
+            raise AssertionError("Snapshot-disabled reports should omit plot images.")
     finally:
         for figure in portrait_figures:
             plt.close(figure)
@@ -178428,13 +178716,58 @@ class UnifiedApp(tk.Tk):
         except Exception:
             pass
 
+    def _capture_reaction_cycle_combined_snapshot(self) -> Optional[np.ndarray]:
+        """Capture the active Combined Triple Axis plot as an in-memory image.
+
+        Purpose:
+            Produce one compact RGB/RGBA snapshot for optional placement in the
+            Reaction Cycle PDF.
+        Why:
+            The report should provide uptake-over-time context without rebuilding
+            the Combined Triple Axis plot or rerunning reaction calculations.
+        Args:
+            None.
+        Returns:
+            Copied NumPy image array, or None when no combined figure is available.
+        Side Effects:
+            Renders the already-cached Matplotlib figure once into an in-memory PNG.
+        Exceptions:
+            Figure resolution or rendering errors are handled by returning None.
+        """
+        state = getattr(self, "_combined_plot_state", None)
+        figure = state.get("fig") if isinstance(state, Mapping) else None
+        if figure is None:
+            try:
+                figure = self._resolve_combined_overlay_figure(None)
+            except Exception:
+                figure = None
+        if figure is None:
+            return None
+        buffer = io.BytesIO()
+        try:
+            figure.savefig(
+                buffer,
+                format="png",
+                dpi=120,
+                bbox_inches="tight",
+                pad_inches=0.04,
+                facecolor="white",
+            )
+            buffer.seek(0)
+            snapshot = np.asarray(plt.imread(buffer, format="png"))
+            return snapshot.copy() if snapshot.size else None
+        except Exception:
+            return None
+        finally:
+            buffer.close()
+
     def _open_reaction_cycle_pdf_export_options(self) -> None:
         """Open the Reaction Dashboard Cycle PDF configuration dialog.
 
         Purpose:
             Let users select Cycle table columns, calculated KPI fields, completion
-            gauge visibility, typography, and page orientation before exporting a
-            PDF.
+            gauge/snapshot visibility, typography, row sizing, padding, and page
+            orientation before exporting a PDF.
         Why:
             Reaction reports need user-controlled content while preserving a stable,
             publication-quality layout and remembered choices.
@@ -178443,8 +178776,9 @@ class UnifiedApp(tk.Tk):
         Returns:
             None.
         Side Effects:
-            Creates a modal Tk window, persists export preferences, opens a save
-            dialog, and may write a PDF file.
+            Creates a modal Tk window, persists export preferences, may capture the
+            cached combined figure, opens dialogs/splash feedback, and may write a
+            PDF file.
         Exceptions:
             Missing cycle data and export failures are reported with message boxes.
         """
@@ -178538,19 +178872,27 @@ class UnifiedApp(tk.Tk):
             text="Include completion gauge",
             variable=include_gauge_var,
         ).grid(row=0, column=0, sticky="w", padx=8, pady=6)
+        include_combined_snapshot_var = tk.BooleanVar(
+            value=preferences["include_combined_snapshot"]
+        )
+        ttk.Checkbutton(
+            option_box,
+            text="Include Combined Triple Axis plot snapshot",
+            variable=include_combined_snapshot_var,
+        ).grid(row=0, column=1, columnspan=2, sticky="w", padx=8, pady=6)
         orientation_var = tk.StringVar(value=preferences["orientation"])
         ttk.Radiobutton(
             option_box,
             text="Landscape (11 x 8.5 in)",
             value="landscape",
             variable=orientation_var,
-        ).grid(row=0, column=1, sticky="w", padx=8, pady=6)
+        ).grid(row=1, column=0, sticky="w", padx=8, pady=6)
         ttk.Radiobutton(
             option_box,
             text="Portrait (8.5 x 11 in)",
             value="portrait",
             variable=orientation_var,
-        ).grid(row=0, column=2, sticky="w", padx=8, pady=6)
+        ).grid(row=1, column=1, sticky="w", padx=8, pady=6)
 
         installed_font_names = sorted(
             {entry.name for entry in font_manager.fontManager.ttflist if entry.name}
@@ -178559,7 +178901,7 @@ class UnifiedApp(tk.Tk):
             installed_font_names.insert(0, preferences["font_family"])
         font_family_var = tk.StringVar(value=preferences["font_family"])
         ttk.Label(option_box, text="Table font:").grid(
-            row=1, column=0, sticky="e", padx=(8, 4), pady=(2, 8)
+            row=2, column=0, sticky="e", padx=(8, 4), pady=(2, 8)
         )
         ttk.Combobox(
             option_box,
@@ -178567,10 +178909,10 @@ class UnifiedApp(tk.Tk):
             values=installed_font_names,
             state="readonly",
             width=28,
-        ).grid(row=1, column=1, sticky="w", padx=(0, 8), pady=(2, 8))
+        ).grid(row=2, column=1, sticky="w", padx=(0, 8), pady=(2, 8))
         font_size_var = tk.StringVar(value=f"{preferences['font_size']:g}")
         font_size_frame = ttk.Frame(option_box)
-        font_size_frame.grid(row=1, column=2, sticky="w", padx=8, pady=(2, 8))
+        font_size_frame.grid(row=2, column=2, sticky="w", padx=8, pady=(2, 8))
         ttk.Label(font_size_frame, text="Size:").grid(row=0, column=0, padx=(0, 4))
         ttk.Spinbox(
             font_size_frame,
@@ -178581,6 +178923,32 @@ class UnifiedApp(tk.Tk):
             width=5,
         ).grid(row=0, column=1)
         ttk.Label(font_size_frame, text="pt").grid(row=0, column=2, padx=(4, 0))
+
+        auto_height_rows_var = tk.BooleanVar(value=preferences["auto_height_rows"])
+        ttk.Checkbutton(
+            option_box,
+            text="Automatically height rows to wrapped text",
+            variable=auto_height_rows_var,
+        ).grid(row=3, column=0, sticky="w", padx=8, pady=(2, 8))
+        row_padding_var = tk.StringVar(value=f"{preferences['row_padding_pt']:g}")
+        row_padding_frame = ttk.Frame(option_box)
+        row_padding_frame.grid(
+            row=3, column=1, columnspan=2, sticky="w", padx=8, pady=(2, 8)
+        )
+        ttk.Label(row_padding_frame, text="Padding above/below:").grid(
+            row=0, column=0, padx=(0, 4)
+        )
+        ttk.Spinbox(
+            row_padding_frame,
+            textvariable=row_padding_var,
+            from_=REACTION_DASHBOARD_EXPORT_MIN_ROW_PADDING_PT,
+            to=REACTION_DASHBOARD_EXPORT_MAX_ROW_PADDING_PT,
+            increment=1,
+            width=5,
+        ).grid(row=0, column=1)
+        ttk.Label(row_padding_frame, text="pt each side").grid(
+            row=0, column=2, padx=(4, 0)
+        )
 
         button_row = ttk.Frame(container)
         button_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
@@ -178622,8 +178990,9 @@ class UnifiedApp(tk.Tk):
             Returns:
                 None.
             Side Effects:
-                Updates settings, opens a save dialog, creates figures, writes a PDF,
-                and displays success or error messages.
+                Updates settings, may capture a cached plot, opens orientation/save
+                dialogs, drives the shared progress splash, creates figures, writes
+                a PDF, and displays validation/error messages.
             Exceptions:
                 Validation and file errors are converted to user-facing messages.
             """
@@ -178666,13 +179035,36 @@ class UnifiedApp(tk.Tk):
                 except Exception:
                     pass
                 return
+            try:
+                selected_row_padding_pt = float(row_padding_var.get())
+            except (TypeError, ValueError):
+                selected_row_padding_pt = math.nan
+            if (
+                not math.isfinite(selected_row_padding_pt)
+                or selected_row_padding_pt
+                < REACTION_DASHBOARD_EXPORT_MIN_ROW_PADDING_PT
+                or selected_row_padding_pt
+                > REACTION_DASHBOARD_EXPORT_MAX_ROW_PADDING_PT
+            ):
+                try:
+                    messagebox.showwarning(
+                        "Reaction Cycle Report",
+                        "Choose table padding from 0 to 24 points per side.",
+                        parent=window,
+                    )
+                except Exception:
+                    pass
+                return
             preference_payload = {
                 "cycle_fields": selected_cycle_fields,
                 "kpi_fields": selected_kpi_fields,
                 "include_gauge": bool(include_gauge_var.get()),
+                "include_combined_snapshot": bool(include_combined_snapshot_var.get()),
                 "orientation": orientation_var.get(),
                 "font_family": font_family_var.get(),
                 "font_size": selected_font_size,
+                "auto_height_rows": bool(auto_height_rows_var.get()),
+                "row_padding_pt": selected_row_padding_pt,
                 "export_dir": saved_export_dir,
             }
             settings_ref[REACTION_DASHBOARD_EXPORT_SETTINGS_KEY] = preference_payload
@@ -178723,6 +179115,59 @@ class UnifiedApp(tk.Tk):
                 except Exception:
                     pass
                 return
+            combined_snapshot: Optional[np.ndarray] = None
+            if preference_payload["include_combined_snapshot"]:
+                combined_snapshot = self._capture_reaction_cycle_combined_snapshot()
+                if combined_snapshot is None:
+                    try:
+                        messagebox.showwarning(
+                            "Reaction Cycle Report",
+                            "The Combined Triple Axis plot is not available. "
+                            "Generate that plot first or clear the snapshot option.",
+                            parent=window,
+                        )
+                    except Exception:
+                        pass
+                    return
+
+            if preference_payload["orientation"] == "landscape":
+                landscape_plan = _reaction_dashboard_cycle_pdf_layout_plan(
+                    export_model,
+                    orientation="landscape",
+                    include_gauge=preference_payload["include_gauge"],
+                    include_combined_snapshot=combined_snapshot is not None,
+                    font_size=preference_payload["font_size"],
+                    auto_height_rows=preference_payload["auto_height_rows"],
+                    row_padding_pt=preference_payload["row_padding_pt"],
+                )
+                landscape_pages = len(landscape_plan.get("pages") or [])
+                if landscape_pages > 1:
+                    portrait_plan = _reaction_dashboard_cycle_pdf_layout_plan(
+                        export_model,
+                        orientation="portrait",
+                        include_gauge=preference_payload["include_gauge"],
+                        include_combined_snapshot=combined_snapshot is not None,
+                        font_size=preference_payload["font_size"],
+                        auto_height_rows=preference_payload["auto_height_rows"],
+                        row_padding_pt=preference_payload["row_padding_pt"],
+                    )
+                    portrait_pages = len(portrait_plan.get("pages") or [])
+                    prompt_detail = (
+                        f"Landscape requires approximately {landscape_pages} pages; "
+                        f"portrait requires approximately {portrait_pages}.\n\n"
+                        "Switch this export to portrait orientation?"
+                    )
+                    try:
+                        switch_to_portrait = messagebox.askyesno(
+                            "Try Portrait Orientation?",
+                            prompt_detail,
+                            parent=window,
+                        )
+                    except Exception:
+                        switch_to_portrait = False
+                    if switch_to_portrait:
+                        preference_payload["orientation"] = "portrait"
+                        orientation_var.set("portrait")
             slug_source = run_name or str(
                 export_model.get("reaction_name") or "reaction"
             )
@@ -178747,8 +179192,31 @@ class UnifiedApp(tk.Tk):
                 self._schedule_save_settings()
             except Exception:
                 pass
+            splash_context = "reaction_cycle_pdf_export"
+            try:
+                window.grab_release()
+                window.withdraw()
+            except Exception:
+                pass
+            self._show_operation_splash(
+                "Export Reaction Cycle Report",
+                context=splash_context,
+            )
+            self._update_operation_splash(
+                message="Preparing Reaction Cycle report...",
+                progress=12.0,
+                stage_key="queued",
+                detail="Applying table layout and selected report content.",
+                reset=True,
+            )
             figures: List[Figure] = []
             try:
+                self._update_operation_splash(
+                    message="Rendering Reaction Cycle report pages...",
+                    progress=38.0,
+                    stage_key="render",
+                    detail="Paginating rows and repeating table headers.",
+                )
                 figures = _render_reaction_dashboard_cycle_pdf_pages(
                     export_model,
                     orientation=preference_payload["orientation"],
@@ -178756,9 +179224,18 @@ class UnifiedApp(tk.Tk):
                     dpi=self._get_export_dpi(),
                     font_family=preference_payload["font_family"],
                     font_size=preference_payload["font_size"],
+                    auto_height_rows=preference_payload["auto_height_rows"],
+                    row_padding_pt=preference_payload["row_padding_pt"],
+                    combined_snapshot=combined_snapshot,
                 )
                 if not figures:
                     raise RuntimeError("No report pages were generated.")
+                self._update_operation_splash(
+                    message="Writing Reaction Cycle PDF...",
+                    progress=78.0,
+                    stage_key="generate",
+                    detail=f"Saving {len(figures)} publication-quality page(s).",
+                )
                 page_count = _write_reaction_dashboard_cycle_pdf(
                     target_path, figures, export_model
                 )
@@ -178768,6 +179245,19 @@ class UnifiedApp(tk.Tk):
                         plt.close(figure)
                     except Exception:
                         pass
+                self._update_operation_splash(
+                    message="Reaction Cycle PDF export failed.",
+                    progress=100.0,
+                    stage_key="failed",
+                    detail=str(exc),
+                )
+                self._hide_operation_splash(context=splash_context)
+                try:
+                    window.deiconify()
+                    window.grab_set()
+                    window.focus_set()
+                except Exception:
+                    pass
                 try:
                     messagebox.showerror(
                         "Reaction Cycle Report",
@@ -178777,17 +179267,23 @@ class UnifiedApp(tk.Tk):
                 except Exception:
                     pass
                 return
+            self._update_operation_splash(
+                message="Reaction Cycle PDF saved.",
+                progress=100.0,
+                stage_key="ready",
+                detail=f"Saved {page_count} page(s) to {target_path}.",
+            )
             try:
                 window.destroy()
             except Exception:
                 pass
             try:
-                messagebox.showinfo(
-                    "Reaction Cycle Report",
-                    f"Saved {page_count} PDF page(s) to:\n{target_path}",
+                self.after(
+                    1800,
+                    lambda: self._hide_operation_splash(context=splash_context),
                 )
             except Exception:
-                pass
+                self._hide_operation_splash(context=splash_context)
 
         ttk.Button(
             button_row,
