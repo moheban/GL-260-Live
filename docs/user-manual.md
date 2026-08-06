@@ -563,7 +563,7 @@ Compute template-driven reaction gas uptake, linked-step completion, intermediat
 9. Review **4. Results** for KPI tiles, charge-basis diagnostics, backend status, warnings, step extents, limiting species, final inventory, theoretical yield, actual yield, and completion.
 10. Click **Export Cycle Report PDF** beside the Cycle focus controls to create a publication-quality Cycle report.
 11. Select the calculated Cycle columns and dashboard KPI fields to include. **Cycle** remains mandatory; at least one additional Cycle field is required.
-12. Choose whether to include the completion gauge and a compact **Combined Triple Axis** plot snapshot. The snapshot requires an already-generated Combined Triple Axis plot and does not rerun plot or reaction calculations.
+12. Choose whether to include the completion gauge, a compact **Combined Triple Axis** plot snapshot, and/or the full Combined Triple Axis export as the final PDF page. The snapshot requires an already-generated Combined Triple Axis plot and does not rerun plot or reaction calculations; the full page uses the established 11 x 8.5-inch Combined Triple Axis export renderer.
 13. Select portrait or landscape orientation, choose the table font family/size, and configure automatic row heights plus the padding above and below cell text, then click **Export PDF**.
 14. When a landscape layout needs multiple pages, review the landscape/portrait page estimates and optionally switch the current export to portrait.
 15. Follow the export progress splash. It closes automatically after showing the saved path and page count; no confirmation click is required.
@@ -572,14 +572,16 @@ Compute template-driven reaction gas uptake, linked-step completion, intermediat
 
 ### Reaction Cycle PDF export
 - The report contains every available Cycle row. KPI values and the completion gauge use the current **Latest** or **Cycle N** dashboard focus and label that focus in the report header.
+- Each Cycle table Trend is evaluated from the uptake history available through that cycle. A Latest-cycle slowdown is not copied backward onto earlier rows.
 - Cycle headers and every table value are centered. Long warning text wraps automatically, and every continuation page repeats the full Cycle table header and shows page numbers.
 - The PDF uses vector text, table rules, KPI panels, and gauge artwork for clean printing and publication use. The table defaults to a 12-point Times-style serif font with a pale blue header and black grid rules; the font family and size (8–18 pt) can be changed for each report.
 - KPI tiles use generous horizontal and vertical spacing. The optional completion gauge progresses from 0% at left to 100% at right and includes a needle at the focused completion value.
 - Automatic row height is enabled by default. Each row follows its wrapped line count and uses 6 points of padding above and 6 points below the text; padding is adjustable from 0–24 points per side.
 - The optional Combined Triple Axis snapshot is a compact first-page overview of the active cached plot, intended to show uptake-over-time context at a glance. When the gauge or snapshot is included, the visual stack uses the upper-right header whitespace and the snapshot does not reserve additional depth above the Cycle table.
+- The optional full Combined Triple Axis page reuses the normal vector PDF export plot at 11 x 8.5 inches and appends it after all Cycle report pages. It can be selected independently of the compact snapshot.
 - The selected serif face uses a glyph-safe fallback for chemical Unicode subscripts, preventing missing-character warnings and preserving formula notation in the PDF.
 - First-use defaults include the key gas, completion, product, trend, forecast, yield, limiting-reagent, and pH fields; Warnings and diagnostic/backend fields remain available but start cleared.
-- Field selections, gauge/snapshot visibility, page orientation, font family, font size, automatic row height, row padding, and the last export folder are remembered for the next export. Obsolete saved field identifiers are ignored safely.
+- Field selections, gauge/snapshot/full-plot visibility, page orientation, font family, font size, automatic row height, row padding, and the last export folder are remembered for the next export. Obsolete saved field identifiers are ignored safely.
 
 ### Template manager usage
 - Built-in templates are immutable. They provide stable defaults and can be restored by selecting the built-in row again.

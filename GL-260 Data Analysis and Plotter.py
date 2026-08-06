@@ -22044,7 +22044,8 @@ def _normalize_reaction_dashboard_export_preferences(
         payload: Optional mapping loaded from application settings.
     Returns:
         Dict containing ordered ``cycle_fields`` and ``kpi_fields`` lists plus
-        normalized gauge, snapshot, orientation, typography, and row-layout values.
+        normalized gauge, snapshot/full-plot, orientation, typography, and
+        row-layout values.
     Side Effects:
         None.
     Exceptions:
@@ -22119,6 +22120,9 @@ def _normalize_reaction_dashboard_export_preferences(
         "include_gauge": bool(source.get("include_gauge", True)),
         "include_combined_snapshot": bool(
             source.get("include_combined_snapshot", False)
+        ),
+        "include_combined_plot_page": bool(
+            source.get("include_combined_plot_page", False)
         ),
         "orientation": orientation,
         "font_family": font_family,
@@ -35476,8 +35480,47 @@ def _reaction_dashboard_cycle_trend(
             "status": "unavailable",
             "detail": "Need at least two uptake deltas for trend classification.",
         }
-    previous = max(float(deltas[-2]), 1e-12)
-    latest = float(deltas[-1])
+    return _reaction_dashboard_classify_cycle_delta_pair(deltas[-2], deltas[-1])
+
+
+def _reaction_dashboard_classify_cycle_delta_pair(
+    previous_delta_mol: float,
+    latest_delta_mol: float,
+) -> Dict[str, str]:
+    """Classify one cycle's uptake change against the preceding cycle.
+
+    Purpose:
+        Convert two consecutive non-negative gas-uptake deltas into the shared
+        slowing, steady, or increasing trend vocabulary.
+    Why:
+        Headline and per-cycle trend displays must use identical thresholds without
+        copying the ratio logic into separate code paths.
+    Args:
+        previous_delta_mol: Prior cycle-to-cycle gas uptake in moles.
+        latest_delta_mol: Current cycle-to-cycle gas uptake in moles.
+    Returns:
+        Dict containing the trend label, status bucket, and comparison detail.
+    Side Effects:
+        None.
+    Exceptions:
+        Values are coerced to finite non-negative floats; invalid inputs produce an
+        insufficient-data status instead of raising.
+    """
+    previous_value = _safe_float(previous_delta_mol)
+    latest_value = _safe_float(latest_delta_mol)
+    if (
+        previous_value is None
+        or latest_value is None
+        or not math.isfinite(previous_value)
+        or not math.isfinite(latest_value)
+    ):
+        return {
+            "label": "Insufficient cycle trend",
+            "status": "unavailable",
+            "detail": "Two finite uptake deltas are required for trend classification.",
+        }
+    previous = max(float(previous_value), 1e-12)
+    latest = max(float(latest_value), 0.0)
     ratio = latest / previous
     if ratio <= 0.75:
         return {
@@ -35496,6 +35539,58 @@ def _reaction_dashboard_cycle_trend(
         "status": "healthy",
         "detail": f"Latest gas delta is {latest:.4f} mol vs {previous:.4f} mol.",
     }
+
+
+def _reaction_dashboard_cycle_row_trends(
+    cycle_series: Sequence[Mapping[str, Any]],
+) -> List[Dict[str, str]]:
+    """Return a trend classification aligned to every Cycle table row.
+
+    Purpose:
+        Classify each cycle from only the cumulative gas history available through
+        that row.
+    Why:
+        Applying the Latest trend to all rows misrepresents when slowing uptake was
+        actually detected; a linear prefix pass preserves row-level chronology.
+    Args:
+        cycle_series: Ordered Reaction Dashboard cycle metric rows.
+    Returns:
+        List of trend dictionaries aligned one-for-one with ``cycle_series``.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid rows receive an insufficient-data classification and do not disrupt
+        subsequent valid history.
+    """
+    unavailable = {
+        "label": "Insufficient cycle trend",
+        "status": "unavailable",
+        "detail": "Need at least three cycle points for trend classification.",
+    }
+    trends: List[Dict[str, str]] = []
+    deltas: List[float] = []
+    previous_cumulative: Optional[float] = None
+    # Retain valid cumulative history across malformed rows while aligning one
+    # classification to every original table row.
+    for row in cycle_series:
+        cumulative = (
+            _safe_float(row.get("cumulative_gas_mol"))
+            if isinstance(row, Mapping)
+            else None
+        )
+        if cumulative is None or not math.isfinite(cumulative):
+            trends.append(dict(unavailable))
+            continue
+        if previous_cumulative is not None:
+            deltas.append(max(float(cumulative) - previous_cumulative, 0.0))
+        previous_cumulative = float(cumulative)
+        if len(deltas) < 2:
+            trends.append(dict(unavailable))
+            continue
+        trends.append(
+            _reaction_dashboard_classify_cycle_delta_pair(deltas[-2], deltas[-1])
+        )
+    return trends
 
 
 def _reaction_dashboard_forecast(
@@ -35820,8 +35915,9 @@ def _reaction_dashboard_visual_summary(
     else:
         next_action = "Continue monitoring gas uptake and cycle trend."
     cycle_rows: List[Dict[str, Any]] = []
+    row_trends = _reaction_dashboard_cycle_row_trends(cycle_series)
     previous_cumulative = 0.0
-    for row in cycle_series:
+    for row_index, row in enumerate(cycle_series):
         cumulative = _safe_float(row.get("cumulative_gas_mol"), previous_cumulative)
         delta = _safe_float(row.get("cycle_gas_delta_mol"))
         if delta is None and cumulative is not None:
@@ -35840,7 +35936,7 @@ def _reaction_dashboard_visual_summary(
                 "cumulative_gas_g": row.get("cumulative_gas_g"),
                 "completion_pct": row.get("completion_pct"),
                 "product_mass_g": row.get("product_mass_g"),
-                "trend": trend.get("label", "--"),
+                "trend": row_trends[row_index].get("label", "--"),
                 "warnings": "; ".join(
                     str(item) for item in list(row.get("warnings") or []) if str(item)
                 ),
@@ -36777,6 +36873,82 @@ def _write_reaction_dashboard_cycle_pdf(
                 plt.close(figure)
             except Exception:
                 pass
+    return page_count
+
+
+def _merge_reaction_dashboard_cycle_pdf(
+    target_path: Path,
+    source_paths: Sequence[Path],
+) -> int:
+    """Merge Cycle report and plot PDF artifacts into the requested output.
+
+    Purpose:
+        Concatenate ordered PDF artifacts while retaining the Cycle report's
+        document metadata.
+    Why:
+        The full Combined Triple Axis export already exists as a PDF artifact; a
+        streamed merge preserves that exact plot page without rasterizing or
+        rebuilding it inside the Cycle report renderer.
+    Args:
+        target_path: Final user-selected PDF destination.
+        source_paths: Ordered, existing PDF paths with the Cycle report first.
+    Returns:
+        Total number of pages written to ``target_path``.
+    Side Effects:
+        Writes a temporary sibling file and atomically replaces ``target_path``
+        after a successful merge.
+    Exceptions:
+        Import, read, write, and replacement errors propagate; the temporary file
+        is removed and an existing target remains untouched until replacement.
+    """
+    try:
+        from pypdf import PdfReader, PdfWriter
+    except ImportError:
+        from PyPDF2 import PdfReader, PdfWriter
+    from contextlib import ExitStack
+
+    sources = [Path(path) for path in source_paths]
+    if not sources:
+        raise ValueError("At least one PDF source is required for merging.")
+    target_path = Path(target_path)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{target_path.stem}_merge_",
+        suffix=".pdf",
+        dir=str(target_path.parent),
+    )
+    os.close(descriptor)
+    temporary_path = Path(temporary_name)
+    page_count = 0
+    try:
+        writer = PdfWriter()
+        with ExitStack() as stack:
+            readers = []
+            # Keep source streams open until writer serialization completes because
+            # PDF page resources can be resolved lazily by the merge library.
+            for source_path in sources:
+                source_handle = stack.enter_context(source_path.open("rb"))
+                readers.append(PdfReader(source_handle))
+            metadata = dict(readers[0].metadata or {})
+            for reader in readers:
+                for page in reader.pages:
+                    writer.add_page(page)
+                    page_count += 1
+            if metadata:
+                writer.add_metadata(
+                    {
+                        str(key): str(value)
+                        for key, value in metadata.items()
+                        if key and value is not None
+                    }
+                )
+            with temporary_path.open("wb") as output_handle:
+                writer.write(output_handle)
+        os.replace(temporary_path, target_path)
+    finally:
+        try:
+            temporary_path.unlink(missing_ok=True)
+        except Exception:
+            pass
     return page_count
 
 
@@ -73795,6 +73967,17 @@ def _regression_test_reaction_dashboard_visual_summary_selected_cycle() -> None:
     ]
     if len(current_rows) != 1 or _safe_float(current_rows[0].get("cycle_id")) != 2.0:
         raise AssertionError("Exactly the selected cycle row should be current.")
+    row_trend_labels = [
+        str(row.get("trend") or "") for row in summary.get("cycle_rows", [])
+    ]
+    if row_trend_labels != [
+        "Insufficient cycle trend",
+        "Insufficient cycle trend",
+        "Steady uptake",
+    ]:
+        raise AssertionError(
+            "Cycle rows should use chronological trends instead of the Latest label."
+        )
 
 
 def _regression_test_reaction_dashboard_cycle_export_model() -> None:
@@ -73845,7 +74028,11 @@ def _regression_test_reaction_dashboard_cycle_export_model() -> None:
         raise AssertionError(
             "Malformed typography and padding should restore curated defaults."
         )
-    if not malformed["auto_height_rows"] or malformed["include_combined_snapshot"]:
+    if (
+        not malformed["auto_height_rows"]
+        or malformed["include_combined_snapshot"]
+        or malformed["include_combined_plot_page"]
+    ):
         raise AssertionError("New report-layout options should use curated defaults.")
     customized = _normalize_reaction_dashboard_export_preferences(
         {
@@ -73854,6 +74041,7 @@ def _regression_test_reaction_dashboard_cycle_export_model() -> None:
             "auto_height_rows": False,
             "row_padding_pt": 9,
             "include_combined_snapshot": True,
+            "include_combined_plot_page": True,
         }
     )
     if (
@@ -73862,6 +74050,7 @@ def _regression_test_reaction_dashboard_cycle_export_model() -> None:
         or customized["auto_height_rows"]
         or customized["row_padding_pt"] != 9
         or not customized["include_combined_snapshot"]
+        or not customized["include_combined_plot_page"]
     ):
         raise AssertionError("Valid user-selected layout options should persist.")
 
@@ -73956,7 +74145,8 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
     Outputs:
         None.
     Side Effects:
-        Creates and deletes one temporary PDF and closes rendered figures.
+        Creates and deletes temporary report, plot, and merged PDFs and closes
+        rendered figures.
     Exceptions:
         Raises AssertionError when layout or PDF contracts regress; cleanup runs in
         all cases.
@@ -74193,6 +74383,16 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
     )
     os.close(descriptor)
     temp_path = Path(temp_name)
+    descriptor, plot_temp_name = tempfile.mkstemp(
+        prefix="gl260_reaction_cycle_plot_page_", suffix=".pdf"
+    )
+    os.close(descriptor)
+    plot_temp_path = Path(plot_temp_name)
+    descriptor, merged_temp_name = tempfile.mkstemp(
+        prefix="gl260_reaction_cycle_merged_", suffix=".pdf"
+    )
+    os.close(descriptor)
+    merged_temp_path = Path(merged_temp_name)
     try:
         with warnings_module.catch_warnings(record=True) as caught_warnings:
             warnings_module.simplefilter("always")
@@ -74223,11 +74423,45 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
             raise AssertionError(
                 "Chemical formula metadata should use searchable plain digits."
             )
-    finally:
+        plot_page_figure = Figure(figsize=(11.0, 8.5), dpi=100)
+        FigureCanvasAgg(plot_page_figure)
+        plot_page_axis = plot_page_figure.add_subplot(111)
+        plot_page_axis.text(
+            0.5,
+            0.5,
+            "Combined Triple Axis Export Page",
+            ha="center",
+            va="center",
+        )
+        plot_page_axis.axis("off")
         try:
-            temp_path.unlink()
-        except FileNotFoundError:
-            pass
+            plot_page_figure.savefig(plot_temp_path, format="pdf")
+        finally:
+            plt.close(plot_page_figure)
+        merged_pages = _merge_reaction_dashboard_cycle_pdf(
+            merged_temp_path,
+            [temp_path, plot_temp_path],
+        )
+        merged_reader = PdfReader(str(merged_temp_path))
+        if (
+            merged_pages != written_pages + 1
+            or len(merged_reader.pages) != merged_pages
+        ):
+            raise AssertionError(
+                "The Combined Triple Axis artifact should append as one PDF page."
+            )
+        merged_title = str((merged_reader.metadata or {}).get("/Title") or "")
+        if merged_title != "Reaction Cycle Report":
+            raise AssertionError("PDF merging should preserve Cycle report metadata.")
+        final_page_text = merged_reader.pages[-1].extract_text() or ""
+        if "Combined Triple Axis Export Page" not in final_page_text:
+            raise AssertionError("The merged PDF should end with the plot export page.")
+    finally:
+        for temporary_path in (temp_path, plot_temp_path, merged_temp_path):
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
 
     portrait_figures = _render_reaction_dashboard_cycle_pdf_pages(
         {**model, "table_rows": model["table_rows"][:2]},
@@ -74291,6 +74525,26 @@ def _regression_test_reaction_dashboard_visual_trend_status() -> None:
     )
     if steady.get("label") != "Steady uptake":
         raise AssertionError("Visual trend should identify steady gas uptake.")
+    row_trends = _reaction_dashboard_cycle_row_trends(
+        [
+            {"cumulative_gas_mol": 0.10},
+            {"cumulative_gas_mol": 0.30},
+            {"cumulative_gas_mol": 0.50},
+            {"cumulative_gas_mol": 0.62},
+            {"cumulative_gas_mol": 0.74},
+        ]
+    )
+    row_labels = [item.get("label") for item in row_trends]
+    if row_labels != [
+        "Insufficient cycle trend",
+        "Insufficient cycle trend",
+        "Steady uptake",
+        "Slowing uptake",
+        "Steady uptake",
+    ]:
+        raise AssertionError(
+            "Slowing uptake should appear only on the cycle where it is detected."
+        )
 
 
 def _regression_test_reaction_dashboard_import_cycle_auto_runs() -> None:
@@ -178811,8 +179065,8 @@ class UnifiedApp(tk.Tk):
 
         Purpose:
             Let users select Cycle table columns, calculated KPI fields, completion
-            gauge/snapshot visibility, typography, row sizing, padding, and page
-            orientation before exporting a PDF.
+            gauge/snapshot/full-plot visibility, typography, row sizing, padding,
+            and page orientation before exporting a PDF.
         Why:
             Reaction reports need user-controlled content while preserving a stable,
             publication-quality layout and remembered choices.
@@ -178821,9 +179075,9 @@ class UnifiedApp(tk.Tk):
         Returns:
             None.
         Side Effects:
-            Creates a modal Tk window, persists export preferences, may capture the
-            cached combined figure, opens dialogs/splash feedback, and may write a
-            PDF file.
+            Creates a modal Tk window, persists export preferences, may capture or
+            export the combined figure, opens dialogs/splash feedback, and may write
+            a PDF file.
         Exceptions:
             Missing cycle data and export failures are reported with message boxes.
         """
@@ -178925,19 +179179,27 @@ class UnifiedApp(tk.Tk):
             text="Include Combined Triple Axis plot snapshot",
             variable=include_combined_snapshot_var,
         ).grid(row=0, column=1, columnspan=2, sticky="w", padx=8, pady=6)
+        include_combined_plot_page_var = tk.BooleanVar(
+            value=preferences["include_combined_plot_page"]
+        )
+        ttk.Checkbutton(
+            option_box,
+            text="Append full Combined Triple Axis export as final page",
+            variable=include_combined_plot_page_var,
+        ).grid(row=1, column=1, columnspan=2, sticky="w", padx=8, pady=6)
         orientation_var = tk.StringVar(value=preferences["orientation"])
         ttk.Radiobutton(
             option_box,
             text="Landscape (11 x 8.5 in)",
             value="landscape",
             variable=orientation_var,
-        ).grid(row=1, column=0, sticky="w", padx=8, pady=6)
+        ).grid(row=2, column=0, sticky="w", padx=8, pady=6)
         ttk.Radiobutton(
             option_box,
             text="Portrait (8.5 x 11 in)",
             value="portrait",
             variable=orientation_var,
-        ).grid(row=1, column=1, sticky="w", padx=8, pady=6)
+        ).grid(row=2, column=1, sticky="w", padx=8, pady=6)
 
         installed_font_names = sorted(
             {entry.name for entry in font_manager.fontManager.ttflist if entry.name}
@@ -178946,7 +179208,7 @@ class UnifiedApp(tk.Tk):
             installed_font_names.insert(0, preferences["font_family"])
         font_family_var = tk.StringVar(value=preferences["font_family"])
         ttk.Label(option_box, text="Table font:").grid(
-            row=2, column=0, sticky="e", padx=(8, 4), pady=(2, 8)
+            row=3, column=0, sticky="e", padx=(8, 4), pady=(2, 8)
         )
         ttk.Combobox(
             option_box,
@@ -178954,10 +179216,10 @@ class UnifiedApp(tk.Tk):
             values=installed_font_names,
             state="readonly",
             width=28,
-        ).grid(row=2, column=1, sticky="w", padx=(0, 8), pady=(2, 8))
+        ).grid(row=3, column=1, sticky="w", padx=(0, 8), pady=(2, 8))
         font_size_var = tk.StringVar(value=f"{preferences['font_size']:g}")
         font_size_frame = ttk.Frame(option_box)
-        font_size_frame.grid(row=2, column=2, sticky="w", padx=8, pady=(2, 8))
+        font_size_frame.grid(row=3, column=2, sticky="w", padx=8, pady=(2, 8))
         ttk.Label(font_size_frame, text="Size:").grid(row=0, column=0, padx=(0, 4))
         ttk.Spinbox(
             font_size_frame,
@@ -178974,11 +179236,11 @@ class UnifiedApp(tk.Tk):
             option_box,
             text="Automatically height rows to wrapped text",
             variable=auto_height_rows_var,
-        ).grid(row=3, column=0, sticky="w", padx=8, pady=(2, 8))
+        ).grid(row=4, column=0, sticky="w", padx=8, pady=(2, 8))
         row_padding_var = tk.StringVar(value=f"{preferences['row_padding_pt']:g}")
         row_padding_frame = ttk.Frame(option_box)
         row_padding_frame.grid(
-            row=3, column=1, columnspan=2, sticky="w", padx=8, pady=(2, 8)
+            row=4, column=1, columnspan=2, sticky="w", padx=8, pady=(2, 8)
         )
         ttk.Label(row_padding_frame, text="Padding above/below:").grid(
             row=0, column=0, padx=(0, 4)
@@ -179035,9 +179297,10 @@ class UnifiedApp(tk.Tk):
             Returns:
                 None.
             Side Effects:
-                Updates settings, may capture a cached plot, opens orientation/save
-                dialogs, drives the shared progress splash, creates figures, writes
-                a PDF, and displays validation/error messages.
+                Updates settings, may capture a cached plot or render its established
+                export artifact, opens orientation/save dialogs, drives the shared
+                progress splash, creates figures, writes/merges a PDF, and displays
+                validation/error messages.
             Exceptions:
                 Validation and file errors are converted to user-facing messages.
             """
@@ -179105,6 +179368,9 @@ class UnifiedApp(tk.Tk):
                 "kpi_fields": selected_kpi_fields,
                 "include_gauge": bool(include_gauge_var.get()),
                 "include_combined_snapshot": bool(include_combined_snapshot_var.get()),
+                "include_combined_plot_page": bool(
+                    include_combined_plot_page_var.get()
+                ),
                 "orientation": orientation_var.get(),
                 "font_family": font_family_var.get(),
                 "font_size": selected_font_size,
@@ -179255,7 +179521,36 @@ class UnifiedApp(tk.Tk):
                 reset=True,
             )
             figures: List[Figure] = []
+            combined_plot_page_path: Optional[Path] = None
+            cycle_report_temp_path: Optional[Path] = None
             try:
+                if preference_payload["include_combined_plot_page"]:
+                    self._update_operation_splash(
+                        message="Rendering Combined Triple Axis export page...",
+                        progress=24.0,
+                        stage_key="render",
+                        detail="Using the established 11 x 8.5 inch plot export.",
+                    )
+                    combined_plot_page_path = self._export_combined_plot_artifact(
+                        "reaction_cycle_pdf",
+                        {
+                            "state": {
+                                "profile_key": "reaction_cycle_pdf",
+                                "combined_plot_title_override": "",
+                            },
+                            "fig_size": (11.0, 8.5),
+                        },
+                    )
+                    if combined_plot_page_path is None:
+                        reason = str(
+                            getattr(
+                                self,
+                                "_final_report_combined_failure_reason",
+                                "",
+                            )
+                            or "The Combined Triple Axis export is unavailable."
+                        )
+                        raise RuntimeError(reason)
                 self._update_operation_splash(
                     message="Rendering Reaction Cycle report pages...",
                     progress=38.0,
@@ -179279,12 +179574,47 @@ class UnifiedApp(tk.Tk):
                     message="Writing Reaction Cycle PDF...",
                     progress=78.0,
                     stage_key="generate",
-                    detail=f"Saving {len(figures)} publication-quality page(s).",
+                    detail=(
+                        f"Saving {len(figures)} report page(s)"
+                        + (
+                            " and appending the Combined Triple Axis page."
+                            if combined_plot_page_path is not None
+                            else "."
+                        )
+                    ),
                 )
-                page_count = _write_reaction_dashboard_cycle_pdf(
-                    target_path, figures, export_model
-                )
+                if combined_plot_page_path is None:
+                    page_count = _write_reaction_dashboard_cycle_pdf(
+                        target_path, figures, export_model
+                    )
+                else:
+                    # Preserve the established plot PDF unchanged by writing the
+                    # Cycle pages separately and stitching the two vector artifacts.
+                    descriptor, temporary_name = tempfile.mkstemp(
+                        prefix="gl260_reaction_cycle_report_",
+                        suffix=".pdf",
+                    )
+                    os.close(descriptor)
+                    cycle_report_temp_path = Path(temporary_name)
+                    _write_reaction_dashboard_cycle_pdf(
+                        cycle_report_temp_path, figures, export_model
+                    )
+                    self._update_operation_splash(
+                        message="Combining report and plot pages...",
+                        progress=90.0,
+                        stage_key="generate",
+                        detail="Appending the full Combined Triple Axis export.",
+                    )
+                    page_count = _merge_reaction_dashboard_cycle_pdf(
+                        target_path,
+                        [cycle_report_temp_path, combined_plot_page_path],
+                    )
             except Exception as exc:
+                if cycle_report_temp_path is not None:
+                    try:
+                        cycle_report_temp_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
                 for figure in figures:
                     try:
                         plt.close(figure)
@@ -179312,6 +179642,11 @@ class UnifiedApp(tk.Tk):
                 except Exception:
                     pass
                 return
+            if cycle_report_temp_path is not None:
+                try:
+                    cycle_report_temp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
             self._update_operation_splash(
                 message="Reaction Cycle PDF saved.",
                 progress=100.0,
