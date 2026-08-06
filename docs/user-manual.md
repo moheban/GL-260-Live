@@ -563,16 +563,18 @@ Compute template-driven reaction gas uptake, linked-step completion, intermediat
 9. Review **4. Results** for KPI tiles, charge-basis diagnostics, backend status, warnings, step extents, limiting species, final inventory, theoretical yield, actual yield, and completion.
 10. Click **Export Cycle Report PDF** beside the Cycle focus controls to create a publication-quality Cycle report.
 11. Select the calculated Cycle columns and dashboard KPI fields to include. **Cycle** remains mandatory; at least one additional Cycle field is required.
-12. Choose whether to include the completion gauge and select portrait or landscape orientation, then click **Export PDF**.
+12. Choose whether to include the completion gauge, select portrait or landscape orientation, and choose the table font family and size, then click **Export PDF**.
 13. Click **Open Plot in New Tab** to send the dashboard plot to the generated plot-tab pipeline.
 14. Use the generated plot tab controls for refresh, export, Plot Settings, Data Trace Settings, Plot Elements, and Plot Preview.
 
 ### Reaction Cycle PDF export
 - The report contains every available Cycle row. KPI values and the completion gauge use the current **Latest** or **Cycle N** dashboard focus and label that focus in the report header.
 - Cycle headers and every table value are centered. Long warning text wraps automatically, and continuation pages repeat the table headings and show page numbers.
-- The PDF uses vector text, table rules, KPI panels, and gauge artwork for clean printing and publication use.
+- The PDF uses vector text, table rules, KPI panels, and gauge artwork for clean printing and publication use. The table defaults to a 12-point Times-style serif font with a pale blue header and black grid rules; the font family and size (8–18 pt) can be changed for each report.
+- KPI tiles use generous horizontal and vertical spacing. The optional completion gauge progresses from 0% at left to 100% at right and includes a needle at the focused completion value.
+- The selected serif face uses a glyph-safe fallback for chemical Unicode subscripts, preventing missing-character warnings and preserving formula notation in the PDF.
 - First-use defaults include the key gas, completion, product, trend, forecast, yield, limiting-reagent, and pH fields; Warnings and diagnostic/backend fields remain available but start cleared.
-- Field selections, gauge visibility, page orientation, and the last export folder are remembered for the next export. Obsolete saved field identifiers are ignored safely.
+- Field selections, gauge visibility, page orientation, font family, font size, and the last export folder are remembered for the next export. Obsolete saved field identifiers are ignored safely.
 
 ### Template manager usage
 - Built-in templates are immutable. They provide stable defaults and can be restored by selecting the built-in row again.

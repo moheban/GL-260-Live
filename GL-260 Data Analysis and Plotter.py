@@ -22019,6 +22019,10 @@ REACTION_DASHBOARD_EXPORT_DEFAULT_KPI_FIELDS: Tuple[str, ...] = (
     "yield",
     "ph",
 )
+REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_FAMILY = "Times New Roman"
+REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_SIZE = 12.0
+REACTION_DASHBOARD_EXPORT_MIN_FONT_SIZE = 8.0
+REACTION_DASHBOARD_EXPORT_MAX_FONT_SIZE = 18.0
 
 
 def _normalize_reaction_dashboard_export_preferences(
@@ -22036,7 +22040,7 @@ def _normalize_reaction_dashboard_export_preferences(
         payload: Optional mapping loaded from application settings.
     Returns:
         Dict containing ordered ``cycle_fields`` and ``kpi_fields`` lists plus
-        normalized ``include_gauge`` and ``orientation`` values.
+        normalized gauge, orientation, font-family, and font-size values.
     Side Effects:
         None.
     Exceptions:
@@ -22079,11 +22083,29 @@ def _normalize_reaction_dashboard_export_preferences(
     orientation = str(source.get("orientation") or "landscape").strip().lower()
     if orientation not in {"portrait", "landscape"}:
         orientation = "landscape"
+    raw_font_family = source.get("font_family")
+    font_family = (
+        raw_font_family.strip()
+        if isinstance(raw_font_family, str) and raw_font_family.strip()
+        else REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_FAMILY
+    )
+    try:
+        font_size = float(source.get("font_size"))
+    except (TypeError, ValueError):
+        font_size = REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_SIZE
+    if (
+        not math.isfinite(font_size)
+        or font_size < REACTION_DASHBOARD_EXPORT_MIN_FONT_SIZE
+        or font_size > REACTION_DASHBOARD_EXPORT_MAX_FONT_SIZE
+    ):
+        font_size = REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_SIZE
     return {
         "cycle_fields": cycle_fields,
         "kpi_fields": kpi_fields,
         "include_gauge": bool(source.get("include_gauge", True)),
         "orientation": orientation,
+        "font_family": font_family,
+        "font_size": font_size,
     }
 
 
@@ -36095,6 +36117,42 @@ def _build_reaction_dashboard_cycle_export_model(
     }
 
 
+_REACTION_DASHBOARD_PDF_SUBSCRIPT_DIGITS = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
+
+
+def _reaction_dashboard_pdf_formula_text(value: Any) -> str:
+    """Return PDF-safe text with chemical Unicode subscripts preserved.
+
+    Purpose:
+        Convert contiguous Unicode subscript digits into Matplotlib math-text
+        fragments while leaving surrounding report text unchanged.
+    Why:
+        Several otherwise suitable publication fonts lack U+2080–U+2089 glyphs,
+        which can emit warnings or replace chemical formula subscripts with question
+        marks during PDF export.
+    Args:
+        value: Any report value that can be converted to display text.
+    Returns:
+        String containing vector-safe ``$_{digits}$`` fragments where required.
+    Side Effects:
+        None.
+    Exceptions:
+        None; values are converted with ``str`` and unmatched dollar signs are
+        escaped before math-text fragments are inserted.
+    """
+    text_value = str(value)
+    if not any(character in "₀₁₂₃₄₅₆₇₈₉" for character in text_value):
+        return text_value
+    escaped_text = text_value.replace("$", r"\$")
+    return re.sub(
+        r"[₀₁₂₃₄₅₆₇₈₉]+",
+        lambda match: (
+            f"$_{{{match.group(0).translate(_REACTION_DASHBOARD_PDF_SUBSCRIPT_DIGITS)}}}$"
+        ),
+        escaped_text,
+    )
+
+
 def _render_reaction_dashboard_cycle_pdf_pages(
     model: Mapping[str, Any],
     *,
@@ -36102,6 +36160,7 @@ def _render_reaction_dashboard_cycle_pdf_pages(
     include_gauge: bool,
     dpi: int,
     font_family: Optional[str] = None,
+    font_size: float = REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_SIZE,
 ) -> List[Figure]:
     """Render publication-quality Reaction Cycle report pages.
 
@@ -36118,6 +36177,8 @@ def _render_reaction_dashboard_cycle_pdf_pages(
         include_gauge: Whether to draw the completion gauge on the first page.
         dpi: Figure DPI used for display geometry and any rasterized artists.
         font_family: Optional preferred report font family.
+        font_size: Cycle table font size in points, constrained to the supported
+            export range.
     Returns:
         List of Matplotlib figures in final PDF page order.
     Side Effects:
@@ -36136,6 +36197,16 @@ def _render_reaction_dashboard_cycle_pdf_pages(
         normalized_orientation = "landscape"
     page_size = (11.0, 8.5) if normalized_orientation == "landscape" else (8.5, 11.0)
     page_width, page_height = page_size
+    try:
+        table_font_size = float(font_size)
+    except (TypeError, ValueError):
+        table_font_size = REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_SIZE
+    if (
+        not math.isfinite(table_font_size)
+        or table_font_size < REACTION_DASHBOARD_EXPORT_MIN_FONT_SIZE
+        or table_font_size > REACTION_DASHBOARD_EXPORT_MAX_FONT_SIZE
+    ):
+        table_font_size = REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_SIZE
     preferred_fonts = [
         font_family,
         "Times New Roman",
@@ -36145,11 +36216,14 @@ def _render_reaction_dashboard_cycle_pdf_pages(
         "serif",
     ]
     font_stack = _filter_installed_fonts([name for name in preferred_fonts if name])
-    report_font = font_stack[0]
+    # Keep a glyph-complete serif fallback in every text artist. This preserves
+    # chemical Unicode subscripts when a user-selected face has partial coverage.
+    report_font = font_stack
     navy = "#17324d"
     slate = "#44576a"
     pale_blue = "#edf3f8"
-    pale_row = "#f7f9fb"
+    table_header_blue = "#dbe5ef"
+    table_rule = "#1f1f1f"
     border = "#aebbc7"
     kpis = [
         dict(item)
@@ -36167,9 +36241,14 @@ def _render_reaction_dashboard_cycle_pdf_pages(
         max_chars.append(max(8, min(max(len(value) for value in values), cap)))
     width_total = float(sum(max_chars)) or 1.0
     relative_widths = [value / width_total for value in max_chars]
-    char_widths = [max(8, int(92 * value)) for value in relative_widths]
+    # Larger selected fonts receive proportionally shorter wrap widths so text
+    # remains inside its column rather than visually crossing the table rules.
+    wrap_scale = REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_SIZE / table_font_size
+    char_widths = [max(6, int(92 * value * wrap_scale)) for value in relative_widths]
     wrapped_headers = [
-        _wrap_table_text_preserve_newlines(header, char_widths[idx])
+        _reaction_dashboard_pdf_formula_text(
+            _wrap_table_text_preserve_newlines(header, char_widths[idx])
+        )
         for idx, header in enumerate(headers)
     ]
     wrapped_rows: List[List[str]] = []
@@ -36180,16 +36259,23 @@ def _render_reaction_dashboard_cycle_pdf_pages(
         for col_idx in range(n_cols):
             text_value = str(row[col_idx]) if col_idx < len(row) else ""
             wrapped = _wrap_table_text(text_value, char_widths[col_idx])
-            wrapped_row.append(wrapped)
+            wrapped_row.append(_reaction_dashboard_pdf_formula_text(wrapped))
             line_count = max(line_count, wrapped.count("\n") + 1)
         wrapped_rows.append(wrapped_row)
-        row_heights.append(0.30 + 0.16 * max(0, line_count - 1))
+        font_height_scale = (
+            table_font_size / REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_SIZE
+        )
+        row_heights.append(
+            0.38 * font_height_scale + 0.19 * font_height_scale * max(0, line_count - 1)
+        )
 
     summary_rows = math.ceil(len(kpis) / (3 if include_gauge else 4)) if kpis else 0
-    summary_height = max(1.45 if include_gauge else 0.0, summary_rows * 0.72)
+    summary_height = max(1.55 if include_gauge else 0.0, summary_rows * 0.80)
     first_table_height = max(1.4, page_height - 1.45 - summary_height - 0.72)
     continued_table_height = max(1.4, page_height - 1.42)
-    header_height = 0.45
+    header_height = 0.50 * (
+        table_font_size / REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_SIZE
+    )
     pages: List[Tuple[List[List[str]], List[float]]] = []
     row_index = 0
     page_index = 0
@@ -36227,7 +36313,9 @@ def _render_reaction_dashboard_cycle_pdf_pages(
         fig.text(
             0.055,
             0.955,
-            f"{model.get('title', 'Reaction Cycle Report')}{title_suffix}",
+            _reaction_dashboard_pdf_formula_text(
+                f"{model.get('title', 'Reaction Cycle Report')}{title_suffix}"
+            ),
             ha="left",
             va="top",
             color=navy,
@@ -36245,7 +36333,7 @@ def _render_reaction_dashboard_cycle_pdf_pages(
             fig.text(
                 0.055,
                 0.905,
-                metadata_text,
+                _reaction_dashboard_pdf_formula_text(metadata_text),
                 ha="left",
                 va="top",
                 color=slate,
@@ -36259,16 +36347,17 @@ def _render_reaction_dashboard_cycle_pdf_pages(
             kpi_left = 0.055
             kpi_right = 0.945 - gauge_fraction
             kpi_columns = 3 if include_gauge else 4
-            card_gap = 0.009
+            card_gap = 0.016
             card_width = (
                 kpi_right - kpi_left - card_gap * max(0, kpi_columns - 1)
             ) / max(1, kpi_columns)
             card_height = 0.59 / page_height
+            card_row_gap = 0.016
             for kpi_index, kpi in enumerate(kpis):
                 row_number = kpi_index // kpi_columns
                 col_number = kpi_index % kpi_columns
                 x_pos = kpi_left + col_number * (card_width + card_gap)
-                y_pos = summary_top - (row_number + 1) * (card_height + 0.008)
+                y_pos = summary_top - (row_number + 1) * (card_height + card_row_gap)
                 card = mpatches.FancyBboxPatch(
                     (x_pos, y_pos),
                     card_width,
@@ -36283,7 +36372,7 @@ def _render_reaction_dashboard_cycle_pdf_pages(
                 fig.text(
                     x_pos + card_width / 2.0,
                     y_pos + card_height * 0.74,
-                    str(kpi.get("label") or ""),
+                    _reaction_dashboard_pdf_formula_text(kpi.get("label") or ""),
                     ha="center",
                     va="center",
                     color=slate,
@@ -36294,7 +36383,9 @@ def _render_reaction_dashboard_cycle_pdf_pages(
                 fig.text(
                     x_pos + card_width / 2.0,
                     y_pos + card_height * 0.34,
-                    _wrap_table_text(str(kpi.get("value") or "--"), 34),
+                    _reaction_dashboard_pdf_formula_text(
+                        _wrap_table_text(str(kpi.get("value") or "--"), 34)
+                    ),
                     ha="center",
                     va="center",
                     color=navy,
@@ -36325,14 +36416,43 @@ def _render_reaction_dashboard_cycle_pdf_pages(
                     REACTION_DASHBOARD_STATUS_COLORS["unavailable"],
                 )
                 if clamped is not None:
+                    completion_angle = 180.0 * (clamped / 100.0)
                     gauge_ax.add_patch(
                         mpatches.Wedge(
                             (0.5, 0.08),
                             0.42,
-                            0,
-                            180.0 * (clamped / 100.0),
+                            180.0 - completion_angle,
+                            180.0,
                             width=0.09,
                             color=gauge_color,
+                        )
+                    )
+                    # The sweep and needle both progress from left (0%) to right
+                    # (100%), matching conventional semicircular gauges.
+                    needle_angle = math.radians(180.0 - completion_angle)
+                    needle_end = (
+                        0.5 + 0.31 * math.cos(needle_angle),
+                        0.08 + 0.31 * math.sin(needle_angle),
+                    )
+                    gauge_ax.add_patch(
+                        mpatches.FancyArrowPatch(
+                            (0.5, 0.08),
+                            needle_end,
+                            arrowstyle="-|>",
+                            mutation_scale=8,
+                            linewidth=1.25,
+                            color=navy,
+                            zorder=5,
+                        )
+                    )
+                    gauge_ax.add_patch(
+                        mpatches.Circle(
+                            (0.5, 0.08),
+                            radius=0.025,
+                            facecolor=navy,
+                            edgecolor="white",
+                            linewidth=0.7,
+                            zorder=6,
                         )
                     )
                 gauge_ax.text(
@@ -36374,19 +36494,18 @@ def _render_reaction_dashboard_cycle_pdf_pages(
             bbox=[0, 0, 1, 1],
         )
         table.auto_set_font_size(False)
-        base_font_size = max(6.8, 9.2 - max(0, n_cols - 5) * 0.35)
-        table.set_fontsize(base_font_size)
+        table.set_fontsize(table_font_size)
         total_height = header_height + sum(page_row_heights)
         header_ratio = header_height / total_height
         for col_idx in range(n_cols):
             cell = table[(0, col_idx)]
-            cell.set_facecolor(navy)
-            cell.set_edgecolor("white")
-            cell.set_linewidth(0.7)
+            cell.set_facecolor(table_header_blue)
+            cell.set_edgecolor(table_rule)
+            cell.set_linewidth(0.75)
             cell.set_height(header_ratio)
             cell.PAD = 0.07
             text_artist = cell.get_text()
-            text_artist.set_color("white")
+            text_artist.set_color("black")
             text_artist.set_fontweight("bold")
             text_artist.set_fontfamily(report_font)
             text_artist.set_ha("center")
@@ -36395,9 +36514,9 @@ def _render_reaction_dashboard_cycle_pdf_pages(
             height_ratio = row_height / total_height
             for col_idx in range(n_cols):
                 cell = table[(row_idx, col_idx)]
-                cell.set_facecolor(pale_row if row_idx % 2 == 0 else "white")
-                cell.set_edgecolor(border)
-                cell.set_linewidth(0.45)
+                cell.set_facecolor("white")
+                cell.set_edgecolor(table_rule)
+                cell.set_linewidth(0.55)
                 cell.set_height(height_ratio)
                 cell.PAD = 0.06
                 text_artist = cell.get_text()
@@ -36456,11 +36575,15 @@ def _write_reaction_dashboard_cycle_pdf(
     try:
         with PdfPages(target_path) as pdf:
             metadata = pdf.infodict()
-            metadata["Title"] = str(model.get("title") or "Reaction Cycle Report")
+            # PDF Info dictionaries have limited Unicode support, so chemical
+            # subscripts use searchable plain digits in metadata only.
+            metadata["Title"] = str(
+                model.get("title") or "Reaction Cycle Report"
+            ).translate(_REACTION_DASHBOARD_PDF_SUBSCRIPT_DIGITS)
             metadata["Author"] = "GL-260 Data Analysis and Plotter"
             metadata["Subject"] = (
                 f"Reaction Cycle report for {model.get('reaction_name', '--')}"
-            )
+            ).translate(_REACTION_DASHBOARD_PDF_SUBSCRIPT_DIGITS)
             metadata["Keywords"] = "GL-260, reaction dashboard, cycle table"
             generated_at = model.get("generated_at")
             if isinstance(generated_at, datetime):
@@ -73519,6 +73642,8 @@ def _regression_test_reaction_dashboard_cycle_export_model() -> None:
             "kpi_fields": [],
             "orientation": "diagonal",
             "include_gauge": False,
+            "font_family": "",
+            "font_size": "nan",
         }
     )
     if malformed["cycle_fields"] != list(
@@ -73531,6 +73656,16 @@ def _regression_test_reaction_dashboard_cycle_export_model() -> None:
         raise AssertionError("An intentional empty KPI selection should remain empty.")
     if malformed["orientation"] != "landscape" or malformed["include_gauge"]:
         raise AssertionError("Export page options should normalize deterministically.")
+    if (
+        malformed["font_family"] != REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_FAMILY
+        or malformed["font_size"] != REACTION_DASHBOARD_EXPORT_DEFAULT_FONT_SIZE
+    ):
+        raise AssertionError("Malformed typography should restore curated defaults.")
+    customized = _normalize_reaction_dashboard_export_preferences(
+        {"font_family": "DejaVu Serif", "font_size": 14}
+    )
+    if customized["font_family"] != "DejaVu Serif" or customized["font_size"] != 14:
+        raise AssertionError("Valid user-selected typography should persist unchanged.")
 
     template = _builtin_reaction_templates()["sodium_methoxide_co_to_sodium_formate"]
     result = {
@@ -73628,9 +73763,11 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
         Raises AssertionError when layout or PDF contracts regress; cleanup runs in
         all cases.
     """
+    import warnings as warnings_module
+
     model = {
         "title": "Reaction Cycle Report",
-        "reaction_name": "Sodium Formate",
+        "reaction_name": "Hydrogen (H₂) to C₆H₁₂O₆",
         "run_name": "Publication Test",
         "focus_label": "Latest",
         "generated_at": datetime(2026, 8, 6, 12, 0, 0),
@@ -73666,6 +73803,8 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
         orientation="landscape",
         include_gauge=True,
         dpi=100,
+        font_family="XITS Math",
+        font_size=12,
     )
     if len(figures) < 2:
         for figure in figures:
@@ -73683,6 +73822,19 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
         for figure in figures:
             plt.close(figure)
         raise AssertionError("Every exported Cycle table cell should be centered.")
+    if any(
+        abs(cell.get_text().get_fontsize() - 12.0) > 1e-9
+        for cell in table_artists[0].get_celld().values()
+    ):
+        for figure in figures:
+            plt.close(figure)
+        raise AssertionError("The selected 12-point table font size should be exact.")
+    if not any("$_{2}$" in artist.get_text() for artist in figures[0].texts):
+        for figure in figures:
+            plt.close(figure)
+        raise AssertionError(
+            "Chemical Unicode subscripts should use vector-safe math text."
+        )
     first_page_patch_names = {
         patch.__class__.__name__ for axis in figures[0].axes for patch in axis.patches
     }
@@ -73692,6 +73844,18 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
         raise AssertionError(
             "Gauge-enabled reports should contain vector Wedge artists."
         )
+    gauge_arrows = [
+        patch
+        for axis in figures[0].axes
+        for patch in axis.patches
+        if patch.__class__.__name__ == "FancyArrowPatch"
+    ]
+    if not gauge_arrows or gauge_arrows[0]._posA_posB[1][0] <= 0.5:
+        for figure in figures:
+            plt.close(figure)
+        raise AssertionError(
+            "A completion above 50% should point right on the non-mirrored gauge."
+        )
 
     descriptor, temp_name = tempfile.mkstemp(
         prefix="gl260_reaction_cycle_regression_", suffix=".pdf"
@@ -73699,7 +73863,20 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
     os.close(descriptor)
     temp_path = Path(temp_name)
     try:
-        written_pages = _write_reaction_dashboard_cycle_pdf(temp_path, figures, model)
+        with warnings_module.catch_warnings(record=True) as caught_warnings:
+            warnings_module.simplefilter("always")
+            written_pages = _write_reaction_dashboard_cycle_pdf(
+                temp_path, figures, model
+            )
+        glyph_warnings = [
+            str(item.message)
+            for item in caught_warnings
+            if "Glyph" in str(item.message) and "missing from font" in str(item.message)
+        ]
+        if glyph_warnings:
+            raise AssertionError(
+                "Chemical subscripts should render through the report font fallback."
+            )
         try:
             from pypdf import PdfReader
         except ImportError:
@@ -73710,6 +73887,11 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
         metadata_title = str((reader.metadata or {}).get("/Title") or "")
         if metadata_title != "Reaction Cycle Report":
             raise AssertionError("Reaction Cycle PDF should include document metadata.")
+        metadata_subject = str((reader.metadata or {}).get("/Subject") or "")
+        if "H2" not in metadata_subject or "C6H12O6" not in metadata_subject:
+            raise AssertionError(
+                "Chemical formula metadata should use searchable plain digits."
+            )
     finally:
         try:
             temp_path.unlink()
@@ -178251,7 +178433,8 @@ class UnifiedApp(tk.Tk):
 
         Purpose:
             Let users select Cycle table columns, calculated KPI fields, completion
-            gauge visibility, and page orientation before exporting a PDF.
+            gauge visibility, typography, and page orientation before exporting a
+            PDF.
         Why:
             Reaction reports need user-controlled content while preserving a stable,
             publication-quality layout and remembered choices.
@@ -178369,6 +178552,36 @@ class UnifiedApp(tk.Tk):
             variable=orientation_var,
         ).grid(row=0, column=2, sticky="w", padx=8, pady=6)
 
+        installed_font_names = sorted(
+            {entry.name for entry in font_manager.fontManager.ttflist if entry.name}
+        )
+        if preferences["font_family"] not in installed_font_names:
+            installed_font_names.insert(0, preferences["font_family"])
+        font_family_var = tk.StringVar(value=preferences["font_family"])
+        ttk.Label(option_box, text="Table font:").grid(
+            row=1, column=0, sticky="e", padx=(8, 4), pady=(2, 8)
+        )
+        ttk.Combobox(
+            option_box,
+            textvariable=font_family_var,
+            values=installed_font_names,
+            state="readonly",
+            width=28,
+        ).grid(row=1, column=1, sticky="w", padx=(0, 8), pady=(2, 8))
+        font_size_var = tk.StringVar(value=f"{preferences['font_size']:g}")
+        font_size_frame = ttk.Frame(option_box)
+        font_size_frame.grid(row=1, column=2, sticky="w", padx=8, pady=(2, 8))
+        ttk.Label(font_size_frame, text="Size:").grid(row=0, column=0, padx=(0, 4))
+        ttk.Spinbox(
+            font_size_frame,
+            textvariable=font_size_var,
+            from_=REACTION_DASHBOARD_EXPORT_MIN_FONT_SIZE,
+            to=REACTION_DASHBOARD_EXPORT_MAX_FONT_SIZE,
+            increment=1,
+            width=5,
+        ).grid(row=0, column=1)
+        ttk.Label(font_size_frame, text="pt").grid(row=0, column=2, padx=(4, 0))
+
         button_row = ttk.Frame(container)
         button_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         button_row.grid_columnconfigure(2, weight=1)
@@ -178435,11 +178648,31 @@ class UnifiedApp(tk.Tk):
                 for field_id, _label in REACTION_DASHBOARD_EXPORT_KPI_FIELDS
                 if kpi_vars[field_id].get()
             ]
+            try:
+                selected_font_size = float(font_size_var.get())
+            except (TypeError, ValueError):
+                selected_font_size = math.nan
+            if (
+                not math.isfinite(selected_font_size)
+                or selected_font_size < REACTION_DASHBOARD_EXPORT_MIN_FONT_SIZE
+                or selected_font_size > REACTION_DASHBOARD_EXPORT_MAX_FONT_SIZE
+            ):
+                try:
+                    messagebox.showwarning(
+                        "Reaction Cycle Report",
+                        "Choose a table font size from 8 to 18 points.",
+                        parent=window,
+                    )
+                except Exception:
+                    pass
+                return
             preference_payload = {
                 "cycle_fields": selected_cycle_fields,
                 "kpi_fields": selected_kpi_fields,
                 "include_gauge": bool(include_gauge_var.get()),
                 "orientation": orientation_var.get(),
+                "font_family": font_family_var.get(),
+                "font_size": selected_font_size,
                 "export_dir": saved_export_dir,
             }
             settings_ref[REACTION_DASHBOARD_EXPORT_SETTINGS_KEY] = preference_payload
@@ -178521,7 +178754,8 @@ class UnifiedApp(tk.Tk):
                     orientation=preference_payload["orientation"],
                     include_gauge=preference_payload["include_gauge"],
                     dpi=self._get_export_dpi(),
-                    font_family=settings_ref.get("font_family"),
+                    font_family=preference_payload["font_family"],
+                    font_size=preference_payload["font_size"],
                 )
                 if not figures:
                     raise RuntimeError("No report pages were generated.")
