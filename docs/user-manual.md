@@ -561,8 +561,18 @@ Compute template-driven reaction gas uptake, linked-step completion, intermediat
 7. Enable pH/equilibrium mode only when the active template has equilibrium rows and the run needs pH output.
 8. Click **Run Reaction Dashboard**.
 9. Review **4. Results** for KPI tiles, charge-basis diagnostics, backend status, warnings, step extents, limiting species, final inventory, theoretical yield, actual yield, and completion.
-10. Click **Open Plot in New Tab** to send the dashboard plot to the generated plot-tab pipeline.
-11. Use the generated plot tab controls for refresh, export, Plot Settings, Data Trace Settings, Plot Elements, and Plot Preview.
+10. Click **Export Cycle Report PDF** beside the Cycle focus controls to create a publication-quality Cycle report.
+11. Select the calculated Cycle columns and dashboard KPI fields to include. **Cycle** remains mandatory; at least one additional Cycle field is required.
+12. Choose whether to include the completion gauge and select portrait or landscape orientation, then click **Export PDF**.
+13. Click **Open Plot in New Tab** to send the dashboard plot to the generated plot-tab pipeline.
+14. Use the generated plot tab controls for refresh, export, Plot Settings, Data Trace Settings, Plot Elements, and Plot Preview.
+
+### Reaction Cycle PDF export
+- The report contains every available Cycle row. KPI values and the completion gauge use the current **Latest** or **Cycle N** dashboard focus and label that focus in the report header.
+- Cycle headers and every table value are centered. Long warning text wraps automatically, and continuation pages repeat the table headings and show page numbers.
+- The PDF uses vector text, table rules, KPI panels, and gauge artwork for clean printing and publication use.
+- First-use defaults include the key gas, completion, product, trend, forecast, yield, limiting-reagent, and pH fields; Warnings and diagnostic/backend fields remain available but start cleared.
+- Field selections, gauge visibility, page orientation, and the last export folder are remembered for the next export. Obsolete saved field identifiers are ignored safely.
 
 ### Template manager usage
 - Built-in templates are immutable. They provide stable defaults and can be restored by selecting the built-in row again.
@@ -601,6 +611,7 @@ Compute template-driven reaction gas uptake, linked-step completion, intermediat
 - Completion percent based on the template yield basis.
 - Optional pH/equilibrium summary.
 - Generated Reaction Dashboard plot tab with existing plot-toolbar/export behavior.
+- Publication-quality Reaction Cycle PDF with selectable columns, calculated KPI fields, and optional completion gauge.
 
 ### Common errors and recovery
 - Error: Cycle Analysis source reports unavailable payload.
@@ -611,10 +622,13 @@ Compute template-driven reaction gas uptake, linked-step completion, intermediat
   - Recovery: confirm `chempy` is installed and verify the template equilibrium equations and initial concentration rows.
 - Error: yield is missing.
   - Recovery: provide molar mass for the yield species and ensure the linked stoichiometry produces that species.
+- Error: Cycle report export says no Cycle rows are available.
+  - Recovery: run Cycle Analysis, import its payload into Reaction Dashboard, and run the dashboard before exporting.
 
 ### Related exports/artifacts
 - Generated Reaction Dashboard plot tab.
 - Plot exports from the generated tab pipeline.
+- Reaction Cycle Report PDF.
 - Persisted custom templates in application settings.
 - Cycle Analysis payloads used as gas-uptake source input.
 

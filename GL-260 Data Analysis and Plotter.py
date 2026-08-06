@@ -21978,6 +21978,113 @@ REACTION_DASHBOARD_STATUS_COLORS: Dict[str, str] = {
     "neutral": "#2f6f8f",
     "unavailable": "#7f8c8d",
 }
+REACTION_DASHBOARD_EXPORT_SETTINGS_KEY = "reaction_dashboard_cycle_pdf_export"
+REACTION_DASHBOARD_EXPORT_CYCLE_FIELDS: Tuple[Tuple[str, str], ...] = (
+    ("cycle", "Cycle"),
+    ("delta_gas", "Delta Gas (mol)"),
+    ("cumulative_gas", "Cumulative Gas (mol)"),
+    ("completion", "Completion (%)"),
+    ("product", "Product (g)"),
+    ("trend", "Trend"),
+    ("warnings", "Warnings"),
+)
+REACTION_DASHBOARD_EXPORT_KPI_FIELDS: Tuple[Tuple[str, str], ...] = (
+    ("gas_uptake", "Gas Uptake"),
+    ("completion", "Completion"),
+    ("forecast_cycles", "Forecast Cycles"),
+    ("forecast_time", "Forecast Time"),
+    ("product", "Product"),
+    ("limiting", "Limiting Reagent"),
+    ("yield", "Yield"),
+    ("intermediate", "Intermediate Balance"),
+    ("ph", "Equilibrium pH"),
+    ("source_backend", "Source / Backend"),
+    ("charge_basis", "Charge Basis"),
+)
+REACTION_DASHBOARD_EXPORT_DEFAULT_CYCLE_FIELDS: Tuple[str, ...] = (
+    "cycle",
+    "delta_gas",
+    "cumulative_gas",
+    "completion",
+    "product",
+    "trend",
+)
+REACTION_DASHBOARD_EXPORT_DEFAULT_KPI_FIELDS: Tuple[str, ...] = (
+    "gas_uptake",
+    "completion",
+    "forecast_cycles",
+    "forecast_time",
+    "product",
+    "limiting",
+    "yield",
+    "ph",
+)
+
+
+def _normalize_reaction_dashboard_export_preferences(
+    payload: Optional[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    """Normalize persisted Reaction Dashboard Cycle PDF preferences.
+
+    Purpose:
+        Convert an optional settings mapping into stable field selections and page
+        options used by the export dialog and renderer.
+    Why:
+        Saved settings can contain obsolete field ids or malformed values after an
+        application update, while the mandatory Cycle identifier must never vanish.
+    Args:
+        payload: Optional mapping loaded from application settings.
+    Returns:
+        Dict containing ordered ``cycle_fields`` and ``kpi_fields`` lists plus
+        normalized ``include_gauge`` and ``orientation`` values.
+    Side Effects:
+        None.
+    Exceptions:
+        Malformed values are replaced with curated defaults instead of raising.
+    """
+    source = payload if isinstance(payload, Mapping) else {}
+    valid_cycle_ids = [
+        field_id for field_id, _label in REACTION_DASHBOARD_EXPORT_CYCLE_FIELDS
+    ]
+    valid_kpi_ids = [
+        field_id for field_id, _label in REACTION_DASHBOARD_EXPORT_KPI_FIELDS
+    ]
+
+    raw_cycle_fields = source.get("cycle_fields")
+    if isinstance(raw_cycle_fields, Sequence) and not isinstance(
+        raw_cycle_fields, (str, bytes)
+    ):
+        requested_cycle = {str(field_id) for field_id in raw_cycle_fields}
+        cycle_fields = [
+            field_id for field_id in valid_cycle_ids if field_id in requested_cycle
+        ]
+        if not any(field_id != "cycle" for field_id in cycle_fields):
+            cycle_fields = list(REACTION_DASHBOARD_EXPORT_DEFAULT_CYCLE_FIELDS)
+    else:
+        cycle_fields = list(REACTION_DASHBOARD_EXPORT_DEFAULT_CYCLE_FIELDS)
+    if "cycle" not in cycle_fields:
+        cycle_fields.insert(0, "cycle")
+
+    raw_kpi_fields = source.get("kpi_fields")
+    if isinstance(raw_kpi_fields, Sequence) and not isinstance(
+        raw_kpi_fields, (str, bytes)
+    ):
+        requested_kpis = {str(field_id) for field_id in raw_kpi_fields}
+        kpi_fields = [
+            field_id for field_id in valid_kpi_ids if field_id in requested_kpis
+        ]
+    else:
+        kpi_fields = list(REACTION_DASHBOARD_EXPORT_DEFAULT_KPI_FIELDS)
+
+    orientation = str(source.get("orientation") or "landscape").strip().lower()
+    if orientation not in {"portrait", "landscape"}:
+        orientation = "landscape"
+    return {
+        "cycle_fields": cycle_fields,
+        "kpi_fields": kpi_fields,
+        "include_gauge": bool(source.get("include_gauge", True)),
+        "orientation": orientation,
+    }
 
 
 def _normalize_reaction_dashboard_state_payload(
@@ -35722,6 +35829,653 @@ def _reaction_dashboard_visual_summary(
             status, REACTION_DASHBOARD_STATUS_COLORS["unavailable"]
         ),
     }
+
+
+def _reaction_dashboard_kpi_display_values(
+    template: ReactionTemplate,
+    result: Mapping[str, Any],
+    visual_summary: Mapping[str, Any],
+) -> Dict[str, str]:
+    """Build the canonical display strings for Reaction Dashboard KPI fields.
+
+    Purpose:
+        Format every dashboard KPI from one cached result and visual-summary pair.
+    Why:
+        The live tiles and Cycle PDF must present identical values without rerunning
+        reaction calculations or scraping text back out of Tk widgets.
+    Args:
+        template: Active reaction definition used to identify intermediate species.
+        result: Cached Reaction Dashboard calculation payload.
+        visual_summary: Display summary for the currently selected cycle focus.
+    Returns:
+        Dict mapping stable KPI field ids to publication-ready display strings.
+    Side Effects:
+        None.
+    Exceptions:
+        Missing or non-finite values are rendered as ``--``.
+    """
+    core = result.get("core") if isinstance(result.get("core"), Mapping) else {}
+    equilibrium = (
+        result.get("equilibrium")
+        if isinstance(result.get("equilibrium"), Mapping)
+        else {}
+    )
+    charge_basis = (
+        result.get("charge_basis")
+        if isinstance(result.get("charge_basis"), Mapping)
+        else {}
+    )
+
+    def _fmt(value: Any, digits: int = 3, suffix: str = "") -> str:
+        """Format one optional finite number for dashboard and PDF display.
+
+        Args:
+            value: Candidate numeric value.
+            digits: Decimal-place count.
+            suffix: Unit text appended to valid values.
+        Returns:
+            Formatted value or ``--`` when unavailable.
+        Side Effects:
+            None.
+        Exceptions:
+            Invalid values are treated as unavailable.
+        """
+        parsed = _safe_float(value)
+        if parsed is None or not math.isfinite(parsed):
+            return "--"
+        return f"{parsed:.{digits}f}{suffix}"
+
+    gas_meta = visual_summary.get("gas") or {}
+    product_meta = visual_summary.get("product") or {}
+    forecast = (
+        visual_summary.get("forecast")
+        if isinstance(visual_summary.get("forecast"), Mapping)
+        else {}
+    )
+    remaining_cycles = _safe_float(forecast.get("remaining_cycles"))
+    average_remaining_cycles = _safe_float(forecast.get("average_remaining_cycles"))
+    remaining_time = _safe_float(forecast.get("remaining_time"))
+    average_remaining_time = _safe_float(forecast.get("average_remaining_time"))
+    time_unit = str(forecast.get("time_unit") or "").strip()
+
+    final_inventory = (
+        core.get("final_inventory_mol")
+        if isinstance(core.get("final_inventory_mol"), Mapping)
+        else {}
+    )
+    intermediate_species = next(
+        (
+            species
+            for species in template.species
+            if str(species.role or "").strip().lower() == "intermediate"
+        ),
+        None,
+    )
+    intermediate_moles = (
+        _safe_float(final_inventory.get(intermediate_species.species_id))
+        if intermediate_species is not None
+        else None
+    )
+    deferred = bool(list(result.get("deferred_steps") or []))
+    actual_yield = (
+        "deferred" if deferred else _fmt(core.get("actual_yield_pct"), 1, "%")
+    )
+    source_labels = {key: label for key, label in REACTION_DASHBOARD_SOURCE_MODES}
+    source_mode = str(result.get("source_mode") or "")
+    source_label = source_labels.get(source_mode, source_mode or "--")
+    charge_text = (
+        "Calculation basis: derived from starting-material entries"
+        if charge_basis
+        else "Calculation basis: --"
+    )
+    forecast_cycles_text = (
+        f"~{remaining_cycles:.1f} / {average_remaining_cycles:.1f}"
+        if remaining_cycles is not None and average_remaining_cycles is not None
+        else "--"
+    )
+    if remaining_time is not None and average_remaining_time is not None and time_unit:
+        forecast_time_text = (
+            f"~{remaining_time:.2f} / {average_remaining_time:.2f} {time_unit}"
+        )
+    elif remaining_time is not None and time_unit:
+        forecast_time_text = f"~{remaining_time:.2f} {time_unit}"
+    else:
+        forecast_time_text = "Time basis unavailable; see cycle estimates"
+
+    return {
+        "gas_uptake": (
+            f"{gas_meta.get('display', 'Gas')}\n"
+            "Consumed "
+            f"{_fmt(visual_summary.get('headline_gas_consumed_mol'), 4)} mol | "
+            f"required {_fmt(core.get('gas_required_mol'), 4)} mol"
+        ),
+        "completion": (
+            f"Completion: {_fmt(visual_summary.get('completion_pct'), 1, '%')}\n"
+            f"Trend: {(visual_summary.get('cycle_trend') or {}).get('label', '--')}"
+        ),
+        "forecast_cycles": (
+            "Remaining cycles — recent / all history\n" + forecast_cycles_text
+        ),
+        "forecast_time": "ETA — recent / all history\n" + forecast_time_text,
+        "product": (
+            f"Theoretical {product_meta.get('display', 'product')}\n"
+            f"{_fmt(visual_summary.get('headline_product_mass_g'), 2, ' g')} / "
+            f"{_fmt(visual_summary.get('headline_product_mol'), 4)} mol"
+        ),
+        "limiting": (
+            f"Limiting: {visual_summary.get('limiting') or '--'}\n"
+            f"Calculated: {visual_summary.get('calculated_limiting') or '--'}"
+        ),
+        "yield": f"Measured yield: {actual_yield}",
+        "intermediate": f"Intermediate balance: {_fmt(intermediate_moles, 4)} mol",
+        "ph": f"Equilibrium estimate: {_fmt(equilibrium.get('ph'), 2)}",
+        "source_backend": (
+            f"{source_label}\ncore={core.get('backend', '--')} | "
+            f"inputs={charge_basis.get('backend', '--')} | "
+            f"pH={equilibrium.get('backend', '--')}"
+        ),
+        "charge_basis": charge_text,
+    }
+
+
+def _build_reaction_dashboard_cycle_export_model(
+    template: ReactionTemplate,
+    result: Mapping[str, Any],
+    visual_summary: Mapping[str, Any],
+    *,
+    cycle_fields: Sequence[str],
+    kpi_fields: Sequence[str],
+    run_name: str,
+    focus_label: str,
+    generated_at: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Build one immutable-style model for the Reaction Cycle PDF renderer.
+
+    Purpose:
+        Snapshot selected table columns, KPI strings, metadata, and gauge state from
+        the current dashboard focus before pagination begins.
+    Why:
+        A single normalized model keeps every exported page internally consistent
+        and avoids repeated UI reads or reaction-dashboard recomputation.
+    Args:
+        template: Active reaction definition.
+        result: Cached Reaction Dashboard calculation payload.
+        visual_summary: Cached display summary for the current cycle focus.
+        cycle_fields: Ordered Cycle table field ids selected for export.
+        kpi_fields: Ordered KPI field ids selected for export.
+        run_name: Active reaction-run display name.
+        focus_label: Human-readable dashboard selector value, such as ``Latest``.
+        generated_at: Optional deterministic timestamp for tests.
+    Returns:
+        Dict containing report metadata, selected KPI rows, table rows, and gauge
+        values ready for rendering.
+    Side Effects:
+        None.
+    Exceptions:
+        Unknown field ids are ignored and missing values become ``--``.
+    """
+    cycle_label_map = dict(REACTION_DASHBOARD_EXPORT_CYCLE_FIELDS)
+    kpi_label_map = dict(REACTION_DASHBOARD_EXPORT_KPI_FIELDS)
+    cycle_order = [
+        field_id for field_id, _label in REACTION_DASHBOARD_EXPORT_CYCLE_FIELDS
+    ]
+    kpi_order = [field_id for field_id, _label in REACTION_DASHBOARD_EXPORT_KPI_FIELDS]
+    requested_cycle_fields = {str(field_id) for field_id in cycle_fields}
+    requested_cycle_fields.add("cycle")
+    selected_cycle_fields = [
+        field_id for field_id in cycle_order if field_id in requested_cycle_fields
+    ]
+    requested_kpi_fields = {str(field_id) for field_id in kpi_fields}
+    selected_kpi_fields = [
+        field_id for field_id in kpi_order if field_id in requested_kpi_fields
+    ]
+    kpi_values = _reaction_dashboard_kpi_display_values(
+        template, result, visual_summary
+    )
+
+    def _fmt(value: Any, digits: int) -> str:
+        """Format one optional numeric Cycle-table value.
+
+        Args:
+            value: Candidate numeric value.
+            digits: Decimal-place count for finite values.
+        Returns:
+            Formatted number or ``--``.
+        Side Effects:
+            None.
+        Exceptions:
+            Invalid values are rendered as unavailable.
+        """
+        parsed = _safe_float(value)
+        if parsed is None or not math.isfinite(parsed):
+            return "--"
+        return f"{parsed:.{digits}f}"
+
+    field_getters: Dict[str, Callable[[Mapping[str, Any]], str]] = {
+        "cycle": lambda row: str(row.get("cycle_id") or "--"),
+        "delta_gas": lambda row: _fmt(row.get("gas_delta_mol"), 5),
+        "cumulative_gas": lambda row: _fmt(row.get("cumulative_gas_mol"), 5),
+        "completion": lambda row: _fmt(row.get("completion_pct"), 1),
+        "product": lambda row: _fmt(row.get("product_mass_g"), 3),
+        "trend": lambda row: str(row.get("trend") or "--"),
+        "warnings": lambda row: str(row.get("warnings") or ""),
+    }
+    source_rows = [
+        row
+        for row in list(visual_summary.get("cycle_rows") or [])
+        if isinstance(row, Mapping)
+    ]
+    table_rows = [
+        [field_getters[field_id](row) for field_id in selected_cycle_fields]
+        for row in source_rows
+    ]
+    timestamp = generated_at or datetime.now()
+    normalized_focus = str(focus_label or "Latest").strip() or "Latest"
+    return {
+        "title": "Reaction Cycle Report",
+        "reaction_name": str(result.get("template_name") or template.name or "--"),
+        "run_name": str(run_name or "Current reaction").strip() or "Current reaction",
+        "focus_label": normalized_focus,
+        "generated_at": timestamp,
+        "cycle_field_ids": selected_cycle_fields,
+        "table_headers": [
+            cycle_label_map[field_id] for field_id in selected_cycle_fields
+        ],
+        "table_rows": table_rows,
+        "kpis": [
+            {
+                "field_id": field_id,
+                "label": kpi_label_map[field_id],
+                "value": kpi_values.get(field_id, "--"),
+            }
+            for field_id in selected_kpi_fields
+        ],
+        "completion_pct": _safe_float(visual_summary.get("completion_pct")),
+        "status": str(visual_summary.get("cycle_status") or "unavailable"),
+    }
+
+
+def _render_reaction_dashboard_cycle_pdf_pages(
+    model: Mapping[str, Any],
+    *,
+    orientation: str,
+    include_gauge: bool,
+    dpi: int,
+    font_family: Optional[str] = None,
+) -> List[Figure]:
+    """Render publication-quality Reaction Cycle report pages.
+
+    Purpose:
+        Create vector-friendly Matplotlib pages containing report metadata, selected
+        KPI cards, an optional completion gauge, and a centered Cycle table.
+    Why:
+        Dedicated layout control is required for repeatable publication-quality
+        pagination while preserving selectable dashboard content.
+    Args:
+        model: Normalized export model from
+            ``_build_reaction_dashboard_cycle_export_model``.
+        orientation: ``portrait`` or ``landscape`` page orientation.
+        include_gauge: Whether to draw the completion gauge on the first page.
+        dpi: Figure DPI used for display geometry and any rasterized artists.
+        font_family: Optional preferred report font family.
+    Returns:
+        List of Matplotlib figures in final PDF page order.
+    Side Effects:
+        Creates in-memory figure objects; callers own closing them.
+    Exceptions:
+        Empty tables return an empty list; malformed values are rendered safely.
+    """
+    import matplotlib.patches as mpatches
+
+    headers = [str(value) for value in list(model.get("table_headers") or [])]
+    raw_rows = [list(row) for row in list(model.get("table_rows") or [])]
+    if not headers or not raw_rows:
+        return []
+    normalized_orientation = str(orientation or "landscape").strip().lower()
+    if normalized_orientation not in {"portrait", "landscape"}:
+        normalized_orientation = "landscape"
+    page_size = (11.0, 8.5) if normalized_orientation == "landscape" else (8.5, 11.0)
+    page_width, page_height = page_size
+    preferred_fonts = [
+        font_family,
+        "Times New Roman",
+        "Nimbus Roman",
+        "TeX Gyre Termes",
+        "DejaVu Serif",
+        "serif",
+    ]
+    font_stack = _filter_installed_fonts([name for name in preferred_fonts if name])
+    report_font = font_stack[0]
+    navy = "#17324d"
+    slate = "#44576a"
+    pale_blue = "#edf3f8"
+    pale_row = "#f7f9fb"
+    border = "#aebbc7"
+    kpis = [
+        dict(item)
+        for item in list(model.get("kpis") or [])
+        if isinstance(item, Mapping)
+    ]
+
+    n_cols = len(headers)
+    max_chars: List[int] = []
+    for col_idx, header in enumerate(headers):
+        values = [header] + [
+            str(row[col_idx]) if col_idx < len(row) else "" for row in raw_rows
+        ]
+        cap = 30 if "warning" in header.lower() else 22
+        max_chars.append(max(8, min(max(len(value) for value in values), cap)))
+    width_total = float(sum(max_chars)) or 1.0
+    relative_widths = [value / width_total for value in max_chars]
+    char_widths = [max(8, int(92 * value)) for value in relative_widths]
+    wrapped_headers = [
+        _wrap_table_text_preserve_newlines(header, char_widths[idx])
+        for idx, header in enumerate(headers)
+    ]
+    wrapped_rows: List[List[str]] = []
+    row_heights: List[float] = []
+    for row in raw_rows:
+        wrapped_row: List[str] = []
+        line_count = 1
+        for col_idx in range(n_cols):
+            text_value = str(row[col_idx]) if col_idx < len(row) else ""
+            wrapped = _wrap_table_text(text_value, char_widths[col_idx])
+            wrapped_row.append(wrapped)
+            line_count = max(line_count, wrapped.count("\n") + 1)
+        wrapped_rows.append(wrapped_row)
+        row_heights.append(0.30 + 0.16 * max(0, line_count - 1))
+
+    summary_rows = math.ceil(len(kpis) / (3 if include_gauge else 4)) if kpis else 0
+    summary_height = max(1.45 if include_gauge else 0.0, summary_rows * 0.72)
+    first_table_height = max(1.4, page_height - 1.45 - summary_height - 0.72)
+    continued_table_height = max(1.4, page_height - 1.42)
+    header_height = 0.45
+    pages: List[Tuple[List[List[str]], List[float]]] = []
+    row_index = 0
+    page_index = 0
+    while row_index < len(wrapped_rows):
+        available_height = (
+            first_table_height if page_index == 0 else continued_table_height
+        )
+        used_height = header_height
+        page_rows: List[List[str]] = []
+        page_row_heights: List[float] = []
+        while row_index < len(wrapped_rows):
+            candidate_height = row_heights[row_index]
+            if page_rows and used_height + candidate_height > available_height:
+                break
+            page_rows.append(wrapped_rows[row_index])
+            page_row_heights.append(candidate_height)
+            used_height += candidate_height
+            row_index += 1
+        pages.append((page_rows, page_row_heights))
+        page_index += 1
+
+    figures: List[Figure] = []
+    total_pages = len(pages)
+    generated_at = model.get("generated_at")
+    generated_text = (
+        generated_at.strftime("%Y-%m-%d %H:%M:%S")
+        if isinstance(generated_at, datetime)
+        else str(generated_at or "")
+    )
+    for page_number, (page_rows, page_row_heights) in enumerate(pages, start=1):
+        fig = Figure(figsize=page_size, dpi=max(1, int(dpi)))
+        FigureCanvasAgg(fig)
+        fig.patch.set_facecolor("white")
+        title_suffix = "" if page_number == 1 else " — Continued"
+        fig.text(
+            0.055,
+            0.955,
+            f"{model.get('title', 'Reaction Cycle Report')}{title_suffix}",
+            ha="left",
+            va="top",
+            color=navy,
+            fontsize=16,
+            fontweight="bold",
+            fontfamily=report_font,
+        )
+        if page_number == 1:
+            metadata_text = (
+                f"Reaction: {model.get('reaction_name', '--')}   |   "
+                f"Run: {model.get('run_name', '--')}   |   "
+                f"Focus: {model.get('focus_label', 'Latest')}\n"
+                f"Generated: {generated_text}"
+            )
+            fig.text(
+                0.055,
+                0.905,
+                metadata_text,
+                ha="left",
+                va="top",
+                color=slate,
+                fontsize=8.8,
+                linespacing=1.35,
+                fontfamily=report_font,
+            )
+            summary_top = 0.83
+            summary_bottom = summary_top - (summary_height / page_height)
+            gauge_fraction = 0.24 if include_gauge else 0.0
+            kpi_left = 0.055
+            kpi_right = 0.945 - gauge_fraction
+            kpi_columns = 3 if include_gauge else 4
+            card_gap = 0.009
+            card_width = (
+                kpi_right - kpi_left - card_gap * max(0, kpi_columns - 1)
+            ) / max(1, kpi_columns)
+            card_height = 0.59 / page_height
+            for kpi_index, kpi in enumerate(kpis):
+                row_number = kpi_index // kpi_columns
+                col_number = kpi_index % kpi_columns
+                x_pos = kpi_left + col_number * (card_width + card_gap)
+                y_pos = summary_top - (row_number + 1) * (card_height + 0.008)
+                card = mpatches.FancyBboxPatch(
+                    (x_pos, y_pos),
+                    card_width,
+                    card_height,
+                    boxstyle="round,pad=0.004,rounding_size=0.005",
+                    transform=fig.transFigure,
+                    facecolor=pale_blue,
+                    edgecolor=border,
+                    linewidth=0.6,
+                )
+                fig.patches.append(card)
+                fig.text(
+                    x_pos + card_width / 2.0,
+                    y_pos + card_height * 0.74,
+                    str(kpi.get("label") or ""),
+                    ha="center",
+                    va="center",
+                    color=slate,
+                    fontsize=7.2,
+                    fontweight="bold",
+                    fontfamily=report_font,
+                )
+                fig.text(
+                    x_pos + card_width / 2.0,
+                    y_pos + card_height * 0.34,
+                    _wrap_table_text(str(kpi.get("value") or "--"), 34),
+                    ha="center",
+                    va="center",
+                    color=navy,
+                    fontsize=7.0,
+                    linespacing=1.15,
+                    fontfamily=report_font,
+                )
+            if include_gauge:
+                gauge_height = max(0.12, summary_top - summary_bottom - 0.01)
+                gauge_ax = fig.add_axes(
+                    [0.77, summary_bottom + 0.012, 0.175, gauge_height]
+                )
+                gauge_ax.set_aspect("equal")
+                gauge_ax.axis("off")
+                completion = _safe_float(model.get("completion_pct"))
+                clamped = (
+                    max(0.0, min(float(completion), 100.0))
+                    if completion is not None and math.isfinite(completion)
+                    else None
+                )
+                gauge_ax.add_patch(
+                    mpatches.Wedge(
+                        (0.5, 0.08), 0.42, 0, 180, width=0.09, color="#d9e0e6"
+                    )
+                )
+                gauge_color = REACTION_DASHBOARD_STATUS_COLORS.get(
+                    str(model.get("status") or "unavailable"),
+                    REACTION_DASHBOARD_STATUS_COLORS["unavailable"],
+                )
+                if clamped is not None:
+                    gauge_ax.add_patch(
+                        mpatches.Wedge(
+                            (0.5, 0.08),
+                            0.42,
+                            0,
+                            180.0 * (clamped / 100.0),
+                            width=0.09,
+                            color=gauge_color,
+                        )
+                    )
+                gauge_ax.text(
+                    0.5,
+                    0.0,
+                    "--" if clamped is None else f"{clamped:.1f}%",
+                    ha="center",
+                    va="center",
+                    color=gauge_color,
+                    fontsize=12,
+                    fontweight="bold",
+                    fontfamily=report_font,
+                )
+                gauge_ax.text(
+                    0.5,
+                    0.55,
+                    "Completion",
+                    ha="center",
+                    va="center",
+                    color=slate,
+                    fontsize=8,
+                    fontweight="bold",
+                    fontfamily=report_font,
+                )
+                gauge_ax.set_xlim(0, 1)
+                gauge_ax.set_ylim(-0.08, 0.62)
+
+        first_page_table_top = 0.83 - (summary_height / page_height) - 0.035
+        table_top = first_page_table_top if page_number == 1 else 0.89
+        table_bottom = 0.075
+        table_ax = fig.add_axes([0.055, table_bottom, 0.89, table_top - table_bottom])
+        table_ax.axis("off")
+        table = table_ax.table(
+            cellText=page_rows,
+            colLabels=wrapped_headers,
+            colWidths=relative_widths,
+            cellLoc="center",
+            loc="upper left",
+            bbox=[0, 0, 1, 1],
+        )
+        table.auto_set_font_size(False)
+        base_font_size = max(6.8, 9.2 - max(0, n_cols - 5) * 0.35)
+        table.set_fontsize(base_font_size)
+        total_height = header_height + sum(page_row_heights)
+        header_ratio = header_height / total_height
+        for col_idx in range(n_cols):
+            cell = table[(0, col_idx)]
+            cell.set_facecolor(navy)
+            cell.set_edgecolor("white")
+            cell.set_linewidth(0.7)
+            cell.set_height(header_ratio)
+            cell.PAD = 0.07
+            text_artist = cell.get_text()
+            text_artist.set_color("white")
+            text_artist.set_fontweight("bold")
+            text_artist.set_fontfamily(report_font)
+            text_artist.set_ha("center")
+            text_artist.set_va("center")
+        for row_idx, row_height in enumerate(page_row_heights, start=1):
+            height_ratio = row_height / total_height
+            for col_idx in range(n_cols):
+                cell = table[(row_idx, col_idx)]
+                cell.set_facecolor(pale_row if row_idx % 2 == 0 else "white")
+                cell.set_edgecolor(border)
+                cell.set_linewidth(0.45)
+                cell.set_height(height_ratio)
+                cell.PAD = 0.06
+                text_artist = cell.get_text()
+                text_artist.set_color("#22313f")
+                text_artist.set_fontfamily(report_font)
+                text_artist.set_ha("center")
+                text_artist.set_va("center")
+        fig.text(
+            0.055,
+            0.035,
+            "GL-260 Data Analysis and Plotter",
+            ha="left",
+            va="center",
+            color=slate,
+            fontsize=7.5,
+            fontfamily=report_font,
+        )
+        fig.text(
+            0.945,
+            0.035,
+            f"Page {page_number} of {total_pages}",
+            ha="right",
+            va="center",
+            color=slate,
+            fontsize=7.5,
+            fontfamily=report_font,
+        )
+        figures.append(fig)
+    return figures
+
+
+def _write_reaction_dashboard_cycle_pdf(
+    target_path: Path,
+    figures: Sequence[Figure],
+    model: Mapping[str, Any],
+) -> int:
+    """Write rendered Reaction Cycle pages and document metadata to one PDF.
+
+    Purpose:
+        Persist the in-memory report figures as a single publication-ready PDF.
+    Why:
+        Centralized writing guarantees consistent metadata and figure cleanup for UI
+        exports and regression smoke checks.
+    Args:
+        target_path: Destination PDF path.
+        figures: Ordered report figures to save.
+        model: Export model supplying document metadata.
+    Returns:
+        Number of pages written.
+    Side Effects:
+        Writes ``target_path`` and closes every supplied figure.
+    Exceptions:
+        File and Matplotlib errors propagate after figures are closed.
+    """
+    page_count = 0
+    try:
+        with PdfPages(target_path) as pdf:
+            metadata = pdf.infodict()
+            metadata["Title"] = str(model.get("title") or "Reaction Cycle Report")
+            metadata["Author"] = "GL-260 Data Analysis and Plotter"
+            metadata["Subject"] = (
+                f"Reaction Cycle report for {model.get('reaction_name', '--')}"
+            )
+            metadata["Keywords"] = "GL-260, reaction dashboard, cycle table"
+            generated_at = model.get("generated_at")
+            if isinstance(generated_at, datetime):
+                metadata["CreationDate"] = generated_at
+            for figure in figures:
+                _sanitize_figure_text_artists(figure)
+                pdf.savefig(figure)
+                page_count += 1
+    finally:
+        for figure in figures:
+            try:
+                plt.close(figure)
+            except Exception:
+                pass
+    return page_count
 
 
 def _resolve_pka2_value(
@@ -72741,6 +73495,251 @@ def _regression_test_reaction_dashboard_visual_summary_selected_cycle() -> None:
         raise AssertionError("Exactly the selected cycle row should be current.")
 
 
+def _regression_test_reaction_dashboard_cycle_export_model() -> None:
+    """Validate Reaction Cycle export preferences and focused report model.
+
+    Purpose:
+        Verify curated defaults, stale-id filtering, stable field ordering, current
+        focus labeling, unavailable-value formatting, and cached-result immutability.
+    Why:
+        The PDF must reflect user selections without changing or recomputing the
+        underlying Reaction Dashboard calculation payload.
+    Inputs:
+        None; uses a deterministic synthetic dashboard result and visual summary.
+    Outputs:
+        None.
+    Side Effects:
+        None.
+    Exceptions:
+        Raises AssertionError when preference or export-model contracts regress.
+    """
+    malformed = _normalize_reaction_dashboard_export_preferences(
+        {
+            "cycle_fields": ["cycle", "obsolete"],
+            "kpi_fields": [],
+            "orientation": "diagonal",
+            "include_gauge": False,
+        }
+    )
+    if malformed["cycle_fields"] != list(
+        REACTION_DASHBOARD_EXPORT_DEFAULT_CYCLE_FIELDS
+    ):
+        raise AssertionError(
+            "Malformed Cycle selections should restore curated defaults."
+        )
+    if malformed["kpi_fields"] != []:
+        raise AssertionError("An intentional empty KPI selection should remain empty.")
+    if malformed["orientation"] != "landscape" or malformed["include_gauge"]:
+        raise AssertionError("Export page options should normalize deterministically.")
+
+    template = _builtin_reaction_templates()["sodium_methoxide_co_to_sodium_formate"]
+    result = {
+        "template_id": template.template_id,
+        "template_name": template.name,
+        "source_mode": "cycle_payload",
+        "core": {
+            "gas_required_mol": 1.0,
+            "actual_yield_pct": None,
+            "backend": "python",
+            "final_inventory_mol": {},
+        },
+        "equilibrium": {"ph": None, "backend": "disabled"},
+        "charge_basis": {"backend": "python"},
+        "deferred_steps": [],
+    }
+    summary = {
+        "gas": {"display": "CO"},
+        "product": {"display": "Sodium formate"},
+        "headline_gas_consumed_mol": 0.5,
+        "headline_product_mass_g": 34.0035,
+        "headline_product_mol": 0.5,
+        "completion_pct": 50.0,
+        "limiting": "Sodium methoxide",
+        "calculated_limiting": "Sodium methoxide",
+        "cycle_status": "watch",
+        "cycle_trend": {"label": "Steady uptake"},
+        "forecast": {},
+        "cycle_rows": [
+            {
+                "cycle_id": 1,
+                "gas_delta_mol": 0.25,
+                "cumulative_gas_mol": 0.25,
+                "completion_pct": 25.0,
+                "product_mass_g": 17.00175,
+                "trend": "Steady uptake",
+                "warnings": "",
+            },
+            {
+                "cycle_id": 2,
+                "gas_delta_mol": 0.25,
+                "cumulative_gas_mol": 0.5,
+                "completion_pct": 50.0,
+                "product_mass_g": 34.0035,
+                "trend": "Steady uptake",
+                "warnings": "Review measurement",
+            },
+        ],
+    }
+    result_before = copy.deepcopy(result)
+    model = _build_reaction_dashboard_cycle_export_model(
+        template,
+        result,
+        summary,
+        cycle_fields=["warnings", "cycle", "completion", "obsolete"],
+        kpi_fields=["ph", "completion", "obsolete"],
+        run_name="Batch 42",
+        focus_label="Cycle 2",
+        generated_at=datetime(2026, 8, 6, 12, 0, 0),
+    )
+    if result != result_before:
+        raise AssertionError(
+            "Export model construction must not mutate cached results."
+        )
+    if model["cycle_field_ids"] != ["cycle", "completion", "warnings"]:
+        raise AssertionError(
+            "Cycle export fields should follow canonical display order."
+        )
+    if [row["field_id"] for row in model["kpis"]] != ["completion", "ph"]:
+        raise AssertionError("KPI export fields should follow canonical display order.")
+    if model["focus_label"] != "Cycle 2" or model["table_rows"][1][1] != "50.0":
+        raise AssertionError(
+            "Selected focus and formatted Cycle values should be stable."
+        )
+    if "--" not in model["kpis"][1]["value"]:
+        raise AssertionError("Unavailable KPI values should render as placeholders.")
+
+
+def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
+    """Validate centered, paginated, gauge-aware Reaction Cycle PDF output.
+
+    Purpose:
+        Exercise landscape and portrait page geometry, repeated table construction,
+        conditional gauge artists, centered cells, PDF metadata, and page writing.
+    Why:
+        Publication quality depends on renderer behavior that cannot be proven by
+        export-model tests alone.
+    Inputs:
+        None; uses a synthetic long report model and a temporary PDF.
+    Outputs:
+        None.
+    Side Effects:
+        Creates and deletes one temporary PDF and closes rendered figures.
+    Exceptions:
+        Raises AssertionError when layout or PDF contracts regress; cleanup runs in
+        all cases.
+    """
+    model = {
+        "title": "Reaction Cycle Report",
+        "reaction_name": "Sodium Formate",
+        "run_name": "Publication Test",
+        "focus_label": "Latest",
+        "generated_at": datetime(2026, 8, 6, 12, 0, 0),
+        "table_headers": [
+            "Cycle",
+            "Delta Gas (mol)",
+            "Cumulative Gas (mol)",
+            "Completion (%)",
+            "Warnings",
+        ],
+        "table_rows": [
+            [
+                str(index),
+                f"{index / 100.0:.5f}",
+                f"{index / 10.0:.5f}",
+                f"{min(index * 2.0, 100.0):.1f}",
+                "Review this wrapped measurement note for publication output."
+                if index % 7 == 0
+                else "",
+            ]
+            for index in range(1, 56)
+        ],
+        "kpis": [
+            {"field_id": "completion", "label": "Completion", "value": "82.5%"},
+            {"field_id": "product", "label": "Product", "value": "56.10 g"},
+            {"field_id": "ph", "label": "Equilibrium pH", "value": "8.25"},
+        ],
+        "completion_pct": 82.5,
+        "status": "healthy",
+    }
+    figures = _render_reaction_dashboard_cycle_pdf_pages(
+        model,
+        orientation="landscape",
+        include_gauge=True,
+        dpi=100,
+    )
+    if len(figures) < 2:
+        for figure in figures:
+            plt.close(figure)
+        raise AssertionError("A long Cycle table should paginate across PDF pages.")
+    table_artists = [table for axis in figures[0].axes for table in axis.tables]
+    if not table_artists:
+        for figure in figures:
+            plt.close(figure)
+        raise AssertionError("The first report page should contain a table artist.")
+    if any(
+        cell.get_text().get_ha() != "center"
+        for cell in table_artists[0].get_celld().values()
+    ):
+        for figure in figures:
+            plt.close(figure)
+        raise AssertionError("Every exported Cycle table cell should be centered.")
+    first_page_patch_names = {
+        patch.__class__.__name__ for axis in figures[0].axes for patch in axis.patches
+    }
+    if "Wedge" not in first_page_patch_names:
+        for figure in figures:
+            plt.close(figure)
+        raise AssertionError(
+            "Gauge-enabled reports should contain vector Wedge artists."
+        )
+
+    descriptor, temp_name = tempfile.mkstemp(
+        prefix="gl260_reaction_cycle_regression_", suffix=".pdf"
+    )
+    os.close(descriptor)
+    temp_path = Path(temp_name)
+    try:
+        written_pages = _write_reaction_dashboard_cycle_pdf(temp_path, figures, model)
+        try:
+            from pypdf import PdfReader
+        except ImportError:
+            from PyPDF2 import PdfReader
+        reader = PdfReader(str(temp_path))
+        if written_pages != len(reader.pages) or written_pages < 2:
+            raise AssertionError("Written PDF page count should match rendered pages.")
+        metadata_title = str((reader.metadata or {}).get("/Title") or "")
+        if metadata_title != "Reaction Cycle Report":
+            raise AssertionError("Reaction Cycle PDF should include document metadata.")
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+
+    portrait_figures = _render_reaction_dashboard_cycle_pdf_pages(
+        {**model, "table_rows": model["table_rows"][:2]},
+        orientation="portrait",
+        include_gauge=False,
+        dpi=100,
+    )
+    try:
+        if not portrait_figures or tuple(portrait_figures[0].get_size_inches()) != (
+            8.5,
+            11.0,
+        ):
+            raise AssertionError("Portrait reports should use US Letter portrait size.")
+        patch_names = {
+            patch.__class__.__name__
+            for axis in portrait_figures[0].axes
+            for patch in axis.patches
+        }
+        if "Wedge" in patch_names:
+            raise AssertionError("Gauge-disabled reports should omit gauge artists.")
+    finally:
+        for figure in portrait_figures:
+            plt.close(figure)
+
+
 def _regression_test_reaction_dashboard_visual_trend_status() -> None:
     """Validate cycle gas deltas classify visual reaction trend.
 
@@ -74626,6 +75625,14 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
     (
         "Reaction Dashboard visual summary selected cycle",
         _regression_test_reaction_dashboard_visual_summary_selected_cycle,
+    ),
+    (
+        "Reaction Dashboard Cycle export model",
+        _regression_test_reaction_dashboard_cycle_export_model,
+    ),
+    (
+        "Reaction Dashboard Cycle PDF rendering",
+        _regression_test_reaction_dashboard_cycle_pdf_rendering,
     ),
     (
         "Reaction Dashboard visual trend status",
@@ -93057,6 +94064,8 @@ def _combined_cycle_legend_calculated_summary_lines(
             else float("nan")
         ),
     }
+
+
     # Dashboard-backed values are inserted only after its source signature matched.
     resolved_values = metrics_payload.get("legend_metric_values")
     if isinstance(resolved_values, Mapping):
@@ -176866,7 +177875,7 @@ class UnifiedApp(tk.Tk):
 
         cycle_controls = ttk.Frame(result_box)
         cycle_controls.grid(row=2, column=0, sticky="ew", padx=8, pady=(2, 4))
-        cycle_controls.grid_columnconfigure(3, weight=1)
+        cycle_controls.grid_columnconfigure(2, weight=1)
         ttk.Label(cycle_controls, text="Cycle focus").grid(
             row=0, column=0, sticky="w", padx=(0, 4)
         )
@@ -176884,6 +177893,11 @@ class UnifiedApp(tk.Tk):
         ttk.Label(cycle_controls, textvariable=self._reaction_backend_var).grid(
             row=0, column=2, sticky="w", padx=(10, 0)
         )
+        _ui_button(
+            cycle_controls,
+            text="Export Cycle Report PDF",
+            command=self._open_reaction_cycle_pdf_export_options,
+        ).grid(row=0, column=3, sticky="e", padx=(10, 0))
 
         cycle_columns = (
             "cycle",
@@ -177229,6 +178243,337 @@ class UnifiedApp(tk.Tk):
             self._reaction_cycle_focus_var.set(current)
         try:
             combo.configure(values=values)
+        except Exception:
+            pass
+
+    def _open_reaction_cycle_pdf_export_options(self) -> None:
+        """Open the Reaction Dashboard Cycle PDF configuration dialog.
+
+        Purpose:
+            Let users select Cycle table columns, calculated KPI fields, completion
+            gauge visibility, and page orientation before exporting a PDF.
+        Why:
+            Reaction reports need user-controlled content while preserving a stable,
+            publication-quality layout and remembered choices.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Creates a modal Tk window, persists export preferences, opens a save
+            dialog, and may write a PDF file.
+        Exceptions:
+            Missing cycle data and export failures are reported with message boxes.
+        """
+        result = getattr(self, "_reaction_dashboard_last_result", None)
+        summary = getattr(self, "_reaction_dashboard_visual_summary", None)
+        cycle_rows = (
+            list(summary.get("cycle_rows") or [])
+            if isinstance(summary, Mapping)
+            else []
+        )
+        if not isinstance(result, Mapping) or not cycle_rows:
+            try:
+                messagebox.showinfo(
+                    "Reaction Cycle Report",
+                    "Import Cycle Analysis data and run the Reaction Dashboard "
+                    "before exporting the Cycle report.",
+                )
+            except Exception:
+                pass
+            return
+
+        existing = getattr(self, "_reaction_cycle_export_options_window", None)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.deiconify()
+                    existing.lift()
+                    return
+            except Exception:
+                pass
+
+        settings_ref = self._settings_dict()
+        raw_preferences = settings_ref.get(REACTION_DASHBOARD_EXPORT_SETTINGS_KEY)
+        preferences = _normalize_reaction_dashboard_export_preferences(raw_preferences)
+        saved_export_dir = (
+            str(raw_preferences.get("export_dir") or "")
+            if isinstance(raw_preferences, Mapping)
+            else ""
+        )
+        window = tk.Toplevel(self)
+        window.title("Reaction Cycle PDF Export")
+        window.transient(self)
+        window.resizable(False, False)
+        window.protocol("WM_DELETE_WINDOW", window.destroy)
+        self._reaction_cycle_export_options_window = window
+
+        container = ttk.Frame(window, padding=12)
+        container.grid(row=0, column=0, sticky="nsew")
+        container.grid_columnconfigure((0, 1), weight=1)
+        ttk.Label(
+            container,
+            text="Choose the Cycle columns and calculated fields to include.",
+            style="Sol.Help.TLabel",
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+
+        cycle_box = ttk.LabelFrame(container, text="Cycle Table Fields")
+        cycle_box.grid(row=1, column=0, sticky="nsew", padx=(0, 6))
+        kpi_box = ttk.LabelFrame(container, text="Calculated Dashboard Fields")
+        kpi_box.grid(row=1, column=1, sticky="nsew", padx=(6, 0))
+        cycle_vars: Dict[str, tk.BooleanVar] = {}
+        for row_index, (field_id, label) in enumerate(
+            REACTION_DASHBOARD_EXPORT_CYCLE_FIELDS
+        ):
+            var = tk.BooleanVar(value=field_id in preferences["cycle_fields"])
+            cycle_vars[field_id] = var
+            check = ttk.Checkbutton(cycle_box, text=label, variable=var)
+            check.grid(row=row_index, column=0, sticky="w", padx=8, pady=2)
+            if field_id == "cycle":
+                var.set(True)
+                check.configure(state="disabled")
+
+        kpi_vars: Dict[str, tk.BooleanVar] = {}
+        for row_index, (field_id, label) in enumerate(
+            REACTION_DASHBOARD_EXPORT_KPI_FIELDS
+        ):
+            var = tk.BooleanVar(value=field_id in preferences["kpi_fields"])
+            kpi_vars[field_id] = var
+            ttk.Checkbutton(kpi_box, text=label, variable=var).grid(
+                row=row_index,
+                column=0,
+                sticky="w",
+                padx=8,
+                pady=2,
+            )
+
+        option_box = ttk.LabelFrame(container, text="Report Layout")
+        option_box.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        include_gauge_var = tk.BooleanVar(value=preferences["include_gauge"])
+        ttk.Checkbutton(
+            option_box,
+            text="Include completion gauge",
+            variable=include_gauge_var,
+        ).grid(row=0, column=0, sticky="w", padx=8, pady=6)
+        orientation_var = tk.StringVar(value=preferences["orientation"])
+        ttk.Radiobutton(
+            option_box,
+            text="Landscape (11 x 8.5 in)",
+            value="landscape",
+            variable=orientation_var,
+        ).grid(row=0, column=1, sticky="w", padx=8, pady=6)
+        ttk.Radiobutton(
+            option_box,
+            text="Portrait (8.5 x 11 in)",
+            value="portrait",
+            variable=orientation_var,
+        ).grid(row=0, column=2, sticky="w", padx=8, pady=6)
+
+        button_row = ttk.Frame(container)
+        button_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        button_row.grid_columnconfigure(2, weight=1)
+
+        def _set_all_fields(enabled: bool) -> None:
+            """Set every optional Cycle and KPI checkbox to one state.
+
+            Purpose:
+                Implement the dialog's Select All and Clear shortcuts.
+            Why:
+                Eleven KPI choices and six optional table fields should be easy to
+                configure without repetitive clicks.
+            Args:
+                enabled: True to select all optional fields; False to clear them.
+            Returns:
+                None.
+            Side Effects:
+                Mutates dialog BooleanVars while keeping Cycle selected.
+            Exceptions:
+                None.
+            """
+            for field_id, var in cycle_vars.items():
+                var.set(True if field_id == "cycle" else enabled)
+            for var in kpi_vars.values():
+                var.set(enabled)
+
+        def _export_pdf() -> None:
+            """Validate dialog choices and write the configured Cycle PDF.
+
+            Purpose:
+                Snapshot selected dashboard content, request a destination, render
+                report pages, and persist them as one PDF.
+            Why:
+                Keeping the export transaction inside the dialog callback ensures
+                the saved document matches the visible choices and current focus.
+            Args:
+                None.
+            Returns:
+                None.
+            Side Effects:
+                Updates settings, opens a save dialog, creates figures, writes a PDF,
+                and displays success or error messages.
+            Exceptions:
+                Validation and file errors are converted to user-facing messages.
+            """
+            selected_cycle_fields = [
+                field_id
+                for field_id, _label in REACTION_DASHBOARD_EXPORT_CYCLE_FIELDS
+                if cycle_vars[field_id].get()
+            ]
+            if not any(field_id != "cycle" for field_id in selected_cycle_fields):
+                try:
+                    messagebox.showwarning(
+                        "Reaction Cycle Report",
+                        "Select at least one calculated Cycle table field in "
+                        "addition to Cycle.",
+                        parent=window,
+                    )
+                except Exception:
+                    pass
+                return
+            selected_kpi_fields = [
+                field_id
+                for field_id, _label in REACTION_DASHBOARD_EXPORT_KPI_FIELDS
+                if kpi_vars[field_id].get()
+            ]
+            preference_payload = {
+                "cycle_fields": selected_cycle_fields,
+                "kpi_fields": selected_kpi_fields,
+                "include_gauge": bool(include_gauge_var.get()),
+                "orientation": orientation_var.get(),
+                "export_dir": saved_export_dir,
+            }
+            settings_ref[REACTION_DASHBOARD_EXPORT_SETTINGS_KEY] = preference_payload
+            try:
+                self._schedule_save_settings()
+            except Exception:
+                pass
+
+            current_result = getattr(self, "_reaction_dashboard_last_result", None)
+            if not isinstance(current_result, Mapping):
+                try:
+                    messagebox.showerror(
+                        "Reaction Cycle Report",
+                        "The cached Reaction Dashboard result is no longer available.",
+                        parent=window,
+                    )
+                except Exception:
+                    pass
+                return
+            template_id = str(current_result.get("template_id") or "")
+            template = getattr(self, "_reaction_templates", {}).get(template_id)
+            if template is None:
+                template = self._reaction_active_template()
+            selected_cycle_id = self._selected_reaction_cycle_focus_id()
+            export_summary = _reaction_dashboard_visual_summary(
+                template,
+                current_result,
+                selected_cycle_id=selected_cycle_id,
+            )
+            focus_label = str(self._reaction_cycle_focus_var.get() or "Latest").strip()
+            run_name = str(self._reaction_run_display_var.get() or "Current reaction")
+            export_model = _build_reaction_dashboard_cycle_export_model(
+                template,
+                current_result,
+                export_summary,
+                cycle_fields=selected_cycle_fields,
+                kpi_fields=selected_kpi_fields,
+                run_name=run_name,
+                focus_label=focus_label,
+            )
+            if not export_model.get("table_rows"):
+                try:
+                    messagebox.showerror(
+                        "Reaction Cycle Report",
+                        "No Cycle rows are available for export.",
+                        parent=window,
+                    )
+                except Exception:
+                    pass
+                return
+            slug_source = run_name or str(
+                export_model.get("reaction_name") or "reaction"
+            )
+            safe_slug = re.sub(r"[^A-Za-z0-9]+", "_", slug_source).strip("_").lower()
+            if not safe_slug:
+                safe_slug = "reaction"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = filedialog.asksaveasfilename(
+                title="Save Reaction Cycle Report PDF",
+                defaultextension=".pdf",
+                filetypes=[("PDF Document", "*.pdf")],
+                initialfile=f"reaction_cycle_report_{safe_slug}_{timestamp}.pdf",
+                initialdir=saved_export_dir or os.getcwd(),
+                parent=window,
+            )
+            if not path:
+                return
+            target_path = Path(path).with_suffix(".pdf")
+            preference_payload["export_dir"] = str(target_path.parent)
+            settings_ref[REACTION_DASHBOARD_EXPORT_SETTINGS_KEY] = preference_payload
+            try:
+                self._schedule_save_settings()
+            except Exception:
+                pass
+            figures: List[Figure] = []
+            try:
+                figures = _render_reaction_dashboard_cycle_pdf_pages(
+                    export_model,
+                    orientation=preference_payload["orientation"],
+                    include_gauge=preference_payload["include_gauge"],
+                    dpi=self._get_export_dpi(),
+                    font_family=settings_ref.get("font_family"),
+                )
+                if not figures:
+                    raise RuntimeError("No report pages were generated.")
+                page_count = _write_reaction_dashboard_cycle_pdf(
+                    target_path, figures, export_model
+                )
+            except Exception as exc:
+                for figure in figures:
+                    try:
+                        plt.close(figure)
+                    except Exception:
+                        pass
+                try:
+                    messagebox.showerror(
+                        "Reaction Cycle Report",
+                        f"Failed to export the PDF:\n{exc}",
+                        parent=window,
+                    )
+                except Exception:
+                    pass
+                return
+            try:
+                window.destroy()
+            except Exception:
+                pass
+            try:
+                messagebox.showinfo(
+                    "Reaction Cycle Report",
+                    f"Saved {page_count} PDF page(s) to:\n{target_path}",
+                )
+            except Exception:
+                pass
+
+        ttk.Button(
+            button_row,
+            text="Select All",
+            command=lambda: _set_all_fields(True),
+        ).grid(row=0, column=0, padx=(0, 4))
+        ttk.Button(
+            button_row,
+            text="Clear",
+            command=lambda: _set_all_fields(False),
+        ).grid(row=0, column=1, padx=4)
+        ttk.Button(button_row, text="Cancel", command=window.destroy).grid(
+            row=0, column=3, padx=4
+        )
+        ttk.Button(button_row, text="Export PDF", command=_export_pdf).grid(
+            row=0, column=4, padx=(4, 0)
+        )
+        try:
+            window.grab_set()
+            window.focus_set()
         except Exception:
             pass
 
@@ -179174,65 +180519,6 @@ class UnifiedApp(tk.Tk):
                 return "--"
             return f"{parsed:.{digits}f}{suffix}"
 
-        self._reaction_kpi_vars["gas_uptake"].set(
-            "Reactant gas measured: "
-            f"{_fmt(core.get('gas_uptake_mol'), 4)} mol / "
-            f"{_fmt(core.get('gas_uptake_g'), 2, ' g')}"
-        )
-        final_inventory = (
-            core.get("final_inventory_mol")
-            if isinstance(core.get("final_inventory_mol"), Mapping)
-            else {}
-        )
-        intermediate_species = next(
-            (
-                species
-                for species in template.species
-                if str(species.role or "").strip().lower() == "intermediate"
-            ),
-            None,
-        )
-        intermediate_moles = (
-            _safe_float(final_inventory.get(intermediate_species.species_id))
-            if intermediate_species is not None
-            else None
-        )
-        self._reaction_kpi_vars["intermediate"].set(
-            "Intermediate balance: "
-            f"{_fmt(intermediate_moles, 4)} mol"
-        )
-        product_value = (
-            "deferred"
-            if final_deferred
-            else _fmt(core.get("theoretical_yield_g"), 2, " g")
-        )
-        yield_value = (
-            "deferred" if final_deferred else _fmt(core.get("actual_yield_pct"), 1, "%")
-        )
-        completion_value = (
-            "deferred" if final_deferred else _fmt(core.get("completion_pct"), 1, "%")
-        )
-        self._reaction_kpi_vars["product"].set(
-            f"Expected product: {product_value}"
-        )
-        self._reaction_kpi_vars["yield"].set(
-            f"Measured yield: {yield_value}"
-        )
-        self._reaction_kpi_vars["completion"].set(
-            f"Reaction completion: {completion_value}"
-        )
-        self._reaction_kpi_vars["ph"].set(
-            f"Equilibrium estimate: {_fmt(equilibrium.get('ph'), 2)}"
-        )
-        source_label = getattr(self, "_reaction_source_key_to_label", {}).get(
-            str(result.get("source_mode") or ""),
-            str(result.get("source_mode") or "--"),
-        )
-        self._reaction_kpi_vars["source_backend"].set(
-            f"{source_label}\ncore={core.get('backend', '--')} | "
-            f"inputs={charge_basis.get('backend', '--')} | "
-            f"pH={equilibrium.get('backend', '--')}"
-        )
         limiting_values: List[str] = []
         for step in list(core.get("step_results") or []):
             if not isinstance(step, Mapping):
@@ -179242,22 +180528,6 @@ class UnifiedApp(tk.Tk):
             ).strip()
             if limiting_text and limiting_text not in limiting_values:
                 limiting_values.append(limiting_text)
-        self._reaction_kpi_vars["limiting"].set(
-            "Limiting material: "
-            + ("identified" if limiting_values else "not identified")
-        )
-        charge_text = (
-            "Calculation basis: derived from starting-material entries"
-            if charge_basis
-            else "Calculation basis: --"
-        )
-        self._reaction_kpi_vars["charge_basis"].set(charge_text)
-        self._reaction_charge_basis_var.set(charge_text)
-        self._reaction_backend_var.set(
-            f"Backend: core={core.get('backend', '--')} | "
-            f"charge={charge_basis.get('backend', '--')} | "
-            f"pH={equilibrium.get('backend', '--')}"
-        )
         rows = [
             {
                 "metric": "Reaction definition",
@@ -179320,12 +180590,15 @@ class UnifiedApp(tk.Tk):
                 ),
             }
         )
-        for deferred_step in deferred_steps:
+        for _deferred_step in deferred_steps:
             rows.append(
                 {
                     "metric": "Deferred reaction step",
                     "value": "Awaiting required input",
-                    "notes": "Enter the highlighted required reaction input to calculate final completion.",
+                    "notes": (
+                        "Enter the highlighted required reaction input to "
+                        "calculate final completion."
+                    ),
                 }
             )
         for step in list(core.get("step_results") or []):
@@ -179379,30 +180652,26 @@ class UnifiedApp(tk.Tk):
         )
         self._reaction_status_var.set(
             f"{status.title()}: {result.get('template_name', '')} | "
-            f"Gas: {gas_meta.get('display', '--')} | Product: {product_meta.get('display', '--')} | "
+            f"Gas: {gas_meta.get('display', '--')} | "
+            f"Product: {product_meta.get('display', '--')} | "
             f"Focus: {selected_text}"
         )
         self._reaction_next_action_var.set(str(visual_summary.get("next_action") or ""))
-        gas_mol = visual_summary.get("headline_gas_consumed_mol")
-        gas_g = visual_summary.get("headline_gas_consumed_g")
-        product_g = visual_summary.get("headline_product_mass_g")
-        product_mol = visual_summary.get("headline_product_mol")
         completion_pct = visual_summary.get("completion_pct")
-        self._reaction_kpi_vars["gas_uptake"].set(
-            f"{gas_meta.get('display', 'Gas')}\n"
-            f"Consumed {_fmt(gas_mol, 4)} mol | required {_fmt(core.get('gas_required_mol'), 4)} mol"
+        kpi_display_values = _reaction_dashboard_kpi_display_values(
+            template, result, visual_summary
         )
-        self._reaction_kpi_vars["product"].set(
-            f"Theoretical {product_meta.get('display', 'product')}\n"
-            f"{_fmt(product_g, 2, ' g')} / {_fmt(product_mol, 4)} mol"
+        for field_id, display_value in kpi_display_values.items():
+            target_var = self._reaction_kpi_vars.get(field_id)
+            if target_var is not None:
+                target_var.set(display_value)
+        self._reaction_charge_basis_var.set(
+            kpi_display_values.get("charge_basis", "Calculation basis: --")
         )
-        self._reaction_kpi_vars["completion"].set(
-            f"Completion: {_fmt(completion_pct, 1, '%')}\n"
-            f"Trend: {(visual_summary.get('cycle_trend') or {}).get('label', '--')}"
-        )
-        self._reaction_kpi_vars["limiting"].set(
-            f"Limiting: {visual_summary.get('limiting') or '--'}\n"
-            f"Calculated: {visual_summary.get('calculated_limiting') or '--'}"
+        self._reaction_backend_var.set(
+            f"Backend: core={core.get('backend', '--')} | "
+            f"charge={charge_basis.get('backend', '--')} | "
+            f"pH={equilibrium.get('backend', '--')}"
         )
         forecast = (
             visual_summary.get("forecast")
@@ -179410,35 +180679,7 @@ class UnifiedApp(tk.Tk):
             else {}
         )
         remaining_cycles = _safe_float(forecast.get("remaining_cycles"))
-        remaining_time = _safe_float(forecast.get("remaining_time"))
-        average_remaining_cycles = _safe_float(forecast.get("average_remaining_cycles"))
-        average_remaining_time = _safe_float(forecast.get("average_remaining_time"))
-        time_unit = str(forecast.get("time_unit") or "").strip()
         forecast_note = str(forecast.get("confidence") or "")
-        self._reaction_kpi_vars["forecast_cycles"].set(
-            "Estimated remaining\n"
-            + (f"~{remaining_cycles:.1f} cycles" if remaining_cycles is not None else "--")
-        )
-        self._reaction_kpi_vars["forecast_time"].set(
-            "ETA — recent / all history\n"
-            + (
-                f"~{remaining_time:.2f} / {average_remaining_time:.2f} {time_unit}"
-                if remaining_time is not None
-                and average_remaining_time is not None
-                and time_unit
-                else f"~{remaining_time:.2f} {time_unit}"
-                if remaining_time is not None and time_unit
-                else "Time basis unavailable; see cycle estimates"
-            )
-        )
-        self._reaction_kpi_vars["forecast_cycles"].set(
-            "Remaining cycles — recent / all history\n"
-            + (
-                f"~{remaining_cycles:.1f} / {average_remaining_cycles:.1f}"
-                if remaining_cycles is not None and average_remaining_cycles is not None
-                else "--"
-            )
-        )
         inventory_tree = getattr(self, "_reaction_inventory_tree", None)
         if inventory_tree is not None:
             inventory_tree.delete(*inventory_tree.get_children())
@@ -179451,9 +180692,11 @@ class UnifiedApp(tk.Tk):
                     values=(
                         row.get("material", "--"),
                         row.get("role", "--"),
-                        f"{_fmt(row.get('starting_mol'), 4)} mol / {_fmt(row.get('starting_g'), 2, ' g')}",
+                        f"{_fmt(row.get('starting_mol'), 4)} mol / "
+                        f"{_fmt(row.get('starting_g'), 2, ' g')}",
                         f"{_fmt(row.get('consumed_mol'), 4)} mol",
-                        f"{_fmt(row.get('remaining_mol'), 4)} mol / {_fmt(row.get('remaining_g'), 2, ' g')}",
+                        f"{_fmt(row.get('remaining_mol'), 4)} mol / "
+                        f"{_fmt(row.get('remaining_g'), 2, ' g')}",
                     ),
                 )
         cycle_rows = [
