@@ -36309,12 +36309,9 @@ def _reaction_dashboard_cycle_pdf_layout_plan(
     has_side_summary = bool(include_gauge or include_combined_snapshot)
     kpi_columns = 3 if has_side_summary else 4
     summary_rows = math.ceil(len(kpis) / kpi_columns) if kpis else 0
-    if include_gauge and include_combined_snapshot:
-        side_summary_height = 2.35
-    elif has_side_summary:
-        side_summary_height = 1.55
-    else:
-        side_summary_height = 0.0
+    # The side visuals extend into unused header whitespace, so adding the compact
+    # snapshot must not reserve more table depth than the gauge alone.
+    side_summary_height = 1.55 if has_side_summary else 0.0
     summary_height = max(side_summary_height, summary_rows * 0.80)
     first_table_height = max(1.4, page_height - 1.45 - summary_height - 0.72)
     continued_table_height = max(1.4, page_height - 1.42)
@@ -36546,13 +36543,23 @@ def _render_reaction_dashboard_cycle_pdf_pages(
                     linespacing=1.15,
                     fontfamily=report_font,
                 )
-            side_height = max(0.12, summary_top - summary_bottom - 0.01)
+            # Anchor the side stack in the unused upper-right header region rather
+            # than aligning it with the lower KPI boundary and displacing the table.
+            side_top = 0.915
+            preferred_side_height = (
+                2.35 / page_height
+                if include_gauge and valid_snapshot
+                else 1.55 / page_height
+            )
+            side_height = min(
+                preferred_side_height,
+                max(0.12, side_top - summary_bottom - 0.01),
+            )
+            side_bottom = side_top - side_height
             if include_gauge:
                 gauge_height = side_height * 0.54 if valid_snapshot else side_height
                 gauge_bottom = (
-                    summary_bottom + side_height * 0.46
-                    if valid_snapshot
-                    else summary_bottom + 0.012
+                    side_bottom + side_height * 0.46 if valid_snapshot else side_bottom
                 )
                 gauge_ax = fig.add_axes([0.77, gauge_bottom, 0.175, gauge_height])
                 gauge_ax.set_aspect("equal")
@@ -36640,9 +36647,7 @@ def _render_reaction_dashboard_cycle_pdf_pages(
                 snapshot_height = (
                     side_height * 0.37 if include_gauge else side_height * 0.84
                 )
-                snapshot_ax = fig.add_axes(
-                    [0.77, summary_bottom + 0.012, 0.175, snapshot_height]
-                )
+                snapshot_ax = fig.add_axes([0.77, side_bottom, 0.175, snapshot_height])
                 snapshot_ax.imshow(combined_snapshot)
                 snapshot_ax.set_title(
                     "Combined Triple Axis — Uptake Overview",
@@ -74039,6 +74044,26 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
         auto_height_rows=True,
         row_padding_pt=6,
     )
+    sparse_summary_model = dict(model)
+    sparse_summary_model["kpis"] = model["kpis"][:1]
+    gauge_only_plan = _reaction_dashboard_cycle_pdf_layout_plan(
+        sparse_summary_model,
+        orientation="landscape",
+        include_gauge=True,
+        include_combined_snapshot=False,
+        font_size=12,
+        auto_height_rows=True,
+        row_padding_pt=6,
+    )
+    snapshot_side_plan = _reaction_dashboard_cycle_pdf_layout_plan(
+        sparse_summary_model,
+        orientation="landscape",
+        include_gauge=True,
+        include_combined_snapshot=True,
+        font_size=12,
+        auto_height_rows=True,
+        row_padding_pt=6,
+    )
     auto_heights = [
         height
         for _page_rows, page_heights in auto_plan["pages"]
@@ -74065,6 +74090,10 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
     if len(auto_plan["pages"]) <= 1 or not portrait_plan["pages"]:
         raise AssertionError(
             "Multipage landscape reports should support a portrait page estimate."
+        )
+    if snapshot_side_plan["summary_height"] != gauge_only_plan["summary_height"]:
+        raise AssertionError(
+            "The compact snapshot should not reserve table depth beyond the gauge."
         )
 
     figures = _render_reaction_dashboard_cycle_pdf_pages(
@@ -74115,7 +74144,8 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
         raise AssertionError(
             "Chemical Unicode subscripts should use vector-safe math text."
         )
-    if not any(axis.images for axis in figures[0].axes):
+    snapshot_axes = [axis for axis in figures[0].axes if axis.images]
+    if not snapshot_axes:
         for figure in figures:
             plt.close(figure)
         raise AssertionError(
@@ -74130,6 +74160,21 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
         raise AssertionError(
             "Gauge-enabled reports should contain vector Wedge artists."
         )
+    gauge_axes = [
+        axis
+        for axis in figures[0].axes
+        if any(patch.__class__.__name__ == "Wedge" for patch in axis.patches)
+    ]
+    if not gauge_axes or gauge_axes[0].get_position().y1 < 0.90:
+        for figure in figures:
+            plt.close(figure)
+        raise AssertionError(
+            "The gauge/snapshot stack should use the upper-right header whitespace."
+        )
+    if snapshot_axes[0].get_position().y0 <= 0.55:
+        for figure in figures:
+            plt.close(figure)
+        raise AssertionError("The compact snapshot should be lifted above the table.")
     gauge_arrows = [
         patch
         for axis in figures[0].axes
