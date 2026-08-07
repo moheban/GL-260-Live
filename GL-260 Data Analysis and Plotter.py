@@ -6644,7 +6644,8 @@ def _center_titles_to_axes_union(
                     try:
                         existing.set_text("")
                     except Exception:
-                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        # Best-effort guard; ignore failures without interrupting
+                        # the workflow.
                         pass
                 else:
                     existing.remove()
@@ -22027,6 +22028,7 @@ REACTION_DASHBOARD_EXPORT_DEFAULT_AUTO_HEIGHT_ROWS = True
 REACTION_DASHBOARD_EXPORT_DEFAULT_ROW_PADDING_PT = 6.0
 REACTION_DASHBOARD_EXPORT_MIN_ROW_PADDING_PT = 0.0
 REACTION_DASHBOARD_EXPORT_MAX_ROW_PADDING_PT = 24.0
+REACTION_DASHBOARD_COMBINED_PAGE_MIN_DPI = 1200
 
 
 def _normalize_reaction_dashboard_export_preferences(
@@ -36874,6 +36876,101 @@ def _write_reaction_dashboard_cycle_pdf(
             except Exception:
                 pass
     return page_count
+
+
+def _reaction_dashboard_combined_page_quality(
+    configured_dpi: Any,
+) -> Dict[str, Any]:
+    """Return high-fidelity settings for an appended Combined plot page.
+
+    Purpose:
+        Normalize the raster DPI floor and Matplotlib vector-path settings used by
+        the optional full Combined Triple Axis Cycle Report page.
+    Why:
+        PDF text and lines are vector-based, so disabling path simplification and
+        preview decimation improves fidelity more reliably than DPI alone, while a
+        DPI floor protects any rasterized artists.
+    Args:
+        configured_dpi: Application export DPI value selected by the user.
+    Returns:
+        Dict containing the effective DPI and Matplotlib rc parameters.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid DPI values fall back to the configured application default.
+    """
+    effective_dpi = max(
+        _sanitize_export_dpi_value(configured_dpi),
+        REACTION_DASHBOARD_COMBINED_PAGE_MIN_DPI,
+    )
+    return {
+        "dpi": effective_dpi,
+        "rc_params": {
+            "path.simplify": False,
+            "path.simplify_threshold": 0.0,
+            "agg.path.chunksize": 0,
+        },
+    }
+
+
+def _reaction_dashboard_combined_export_data_context(
+    payload: Optional[Mapping[str, Any]],
+    *,
+    full_resolution: bool,
+) -> Dict[str, Any]:
+    """Copy prepared plot data and optionally remove preview decimation payloads.
+
+    Purpose:
+        Normalize the Combined export data context before figure construction.
+    Why:
+        Worker-prepared preview arrays are intentionally pixel-budgeted and must not
+        replace complete source arrays in a high-fidelity appended report page.
+    Args:
+        payload: Prepared data context containing full and optional preview arrays.
+        full_resolution: True removes the two preview-only sampling entries.
+    Returns:
+        Independent mutable context retaining all full prepared series.
+    Side Effects:
+        None; the input mapping is never mutated.
+    Exceptions:
+        Invalid payloads produce an empty context.
+    """
+    normalized = dict(payload or {}) if isinstance(payload, Mapping) else {}
+    if full_resolution:
+        normalized.pop("combined_display_x", None)
+        normalized.pop("combined_display_series", None)
+    return normalized
+
+
+def _prepare_reaction_dashboard_combined_page_figure(fig: Figure) -> int:
+    """Disable vector simplification for every line path in a Combined figure.
+
+    Purpose:
+        Preserve all vertices supplied to the high-fidelity appended PDF page.
+    Why:
+        Matplotlib paths can retain simplification flags created before an export
+        rc-context is applied; clearing them on the figure makes the guarantee
+        explicit and testable.
+    Args:
+        fig: Rendered Combined Triple Axis Matplotlib figure.
+    Returns:
+        Total number of line vertices retained across the figure.
+    Side Effects:
+        Mutates line Path simplification flags on ``fig`` only.
+    Exceptions:
+        Individual artist/path failures are skipped so export can continue.
+    """
+    vertex_count = 0
+    for axis in fig.get_axes():
+        for line in axis.lines:
+            try:
+                path = line.get_path()
+                path.should_simplify = False
+                path.simplify_threshold = 0.0
+                vertex_count += int(len(path.vertices))
+            except Exception:
+                continue
+    return vertex_count
 
 
 def _merge_reaction_dashboard_cycle_pdf(
@@ -74136,7 +74233,8 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
 
     Purpose:
         Exercise orientation planning, automatic row heights/padding, repeated
-        headers, snapshot/gauge artists, centered cells, metadata, and page writing.
+        headers, snapshot/gauge artists, centered cells, high-fidelity plot settings,
+        metadata, and page writing.
     Why:
         Publication quality depends on renderer behavior that cannot be proven by
         export-model tests alone.
@@ -74423,21 +74521,66 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
             raise AssertionError(
                 "Chemical formula metadata should use searchable plain digits."
             )
-        plot_page_figure = Figure(figsize=(11.0, 8.5), dpi=100)
-        FigureCanvasAgg(plot_page_figure)
-        plot_page_axis = plot_page_figure.add_subplot(111)
-        plot_page_axis.text(
-            0.5,
-            0.5,
-            "Combined Triple Axis Export Page",
-            ha="center",
-            va="center",
+        quality = _reaction_dashboard_combined_page_quality(300)
+        if quality["dpi"] != REACTION_DASHBOARD_COMBINED_PAGE_MIN_DPI:
+            raise AssertionError(
+                "Appended plot raster content should use the publication DPI floor."
+            )
+        if quality["rc_params"].get("path.simplify") is not False:
+            raise AssertionError("Appended plot vector paths should not be simplified.")
+        prepared_context = {
+            "series_np": {"x": np.arange(5.0)},
+            "combined_display_x": np.arange(2.0),
+            "combined_display_series": {"y1": np.arange(2.0)},
+        }
+        full_context = _reaction_dashboard_combined_export_data_context(
+            prepared_context,
+            full_resolution=True,
         )
-        plot_page_axis.axis("off")
-        try:
-            plot_page_figure.savefig(plot_temp_path, format="pdf")
-        finally:
-            plt.close(plot_page_figure)
+        if (
+            "combined_display_x" in full_context
+            or "combined_display_series" in full_context
+        ):
+            raise AssertionError(
+                "High-fidelity plot pages should discard preview-decimated arrays."
+            )
+        if "combined_display_x" not in prepared_context:
+            raise AssertionError("Fidelity normalization must not mutate cached data.")
+
+        from matplotlib import rc_context
+
+        with rc_context(quality["rc_params"]):
+            plot_page_figure = Figure(figsize=(11.0, 8.5), dpi=100)
+            FigureCanvasAgg(plot_page_figure)
+            plot_page_axis = plot_page_figure.add_subplot(111)
+            dense_x = np.linspace(0.0, 10.0, 10001)
+            dense_line = plot_page_axis.plot(dense_x, np.sin(dense_x))[0]
+            retained_vertices = _prepare_reaction_dashboard_combined_page_figure(
+                plot_page_figure
+            )
+            if (
+                retained_vertices < dense_x.size
+                or dense_line.get_path().should_simplify
+            ):
+                raise AssertionError(
+                    "High-fidelity plot pages should retain every supplied vertex."
+                )
+            plot_page_axis.text(
+                0.5,
+                0.5,
+                "Combined Triple Axis Export Page",
+                ha="center",
+                va="center",
+            )
+            plot_page_axis.axis("off")
+            try:
+                plot_page_figure.savefig(
+                    plot_temp_path,
+                    format="pdf",
+                    dpi=int(quality["dpi"]),
+                )
+            finally:
+                plt.close(plot_page_figure)
         merged_pages = _merge_reaction_dashboard_cycle_pdf(
             merged_temp_path,
             [temp_path, plot_temp_path],
@@ -74456,6 +74599,11 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
         final_page_text = merged_reader.pages[-1].extract_text() or ""
         if "Combined Triple Axis Export Page" not in final_page_text:
             raise AssertionError("The merged PDF should end with the plot export page.")
+        final_page_content = merged_reader.pages[-1].get_contents().get_data()
+        if final_page_content.count(b" l\n") < 9000:
+            raise AssertionError(
+                "The merged high-fidelity plot page should retain dense vector paths."
+            )
     finally:
         for temporary_path in (temp_path, plot_temp_path, merged_temp_path):
             try:
@@ -179529,7 +179677,10 @@ class UnifiedApp(tk.Tk):
                         message="Rendering Combined Triple Axis export page...",
                         progress=24.0,
                         stage_key="render",
-                        detail="Using the established 11 x 8.5 inch plot export.",
+                        detail=(
+                            "Using full prepared traces, unsimplified vector paths, "
+                            "and publication-quality raster DPI."
+                        ),
                     )
                     combined_plot_page_path = self._export_combined_plot_artifact(
                         "reaction_cycle_pdf",
@@ -179539,6 +179690,7 @@ class UnifiedApp(tk.Tk):
                                 "combined_plot_title_override": "",
                             },
                             "fig_size": (11.0, 8.5),
+                            "high_fidelity": True,
                         },
                     )
                     if combined_plot_page_path is None:
@@ -211244,6 +211396,8 @@ class UnifiedApp(tk.Tk):
         fig_size: Tuple[float, float],
         export_profile: str,
         title_override: str,
+        high_fidelity: bool = False,
+        effective_dpi: Optional[int] = None,
     ) -> Optional[Tuple[Any, ...]]:
         """Build an export cache key that includes combined display exclusions.
 
@@ -211256,6 +211410,8 @@ class UnifiedApp(tk.Tk):
             fig_size: Requested export dimensions in inches.
             export_profile: Active final-report export profile.
             title_override: Optional report-specific combined title.
+            high_fidelity: Whether preview decimation/path simplification is disabled.
+            effective_dpi: DPI used for rasterized artists in the PDF artifact.
         Returns:
             Immutable cache-key tuple, or ``None`` when data is unavailable.
         Side Effects:
@@ -211316,7 +211472,8 @@ class UnifiedApp(tk.Tk):
         return (
             export_profile,
             title_override or "",
-            self._get_export_dpi(),
+            int(effective_dpi or self._get_export_dpi()),
+            bool(high_fidelity),
             data_fingerprint,
             tuple(self._combined_exclusion_ranges()),
             structure_sig,
@@ -211367,8 +211524,27 @@ class UnifiedApp(tk.Tk):
     def _export_combined_plot_artifact(
         self, export_profile: str, ctx: Dict[str, Any]
     ) -> Optional[Path]:
-        """Export combined plot artifact.
-        Used to serialize combined plot artifact for external workflows."""
+        """Render and cache one Combined Triple Axis PDF artifact.
+
+        Purpose:
+            Build the established 11 x 8.5-inch Combined export for Final Report or
+            Reaction Cycle PDF stitching.
+        Why:
+            Callers need one reusable vector PDF artifact, with an opt-in
+            high-fidelity mode that excludes preview sampling and simplification.
+        Args:
+            export_profile: Cache/profile token for the requesting report workflow.
+            ctx: Export context containing state, figure size, and optional
+                ``high_fidelity`` flag.
+        Returns:
+            Path to the cached temporary PDF artifact, or None on failure.
+        Side Effects:
+            Resolves prepared plot data, may render and close a Matplotlib figure,
+            replaces the prior cached artifact, and writes a temporary PDF.
+        Exceptions:
+            Failures are converted to ``_final_report_combined_failure_reason`` and
+            return None.
+        """
         self._final_report_combined_failure_reason = None
 
         ok, message = self._final_report_columns_ready()
@@ -211385,10 +211561,17 @@ class UnifiedApp(tk.Tk):
         )
         override = self._final_report_combined_title_override(state)
         fig_size = ctx.get("fig_size") or (11.0, 8.5)
+        high_fidelity = bool(ctx.get("high_fidelity", False))
+        if high_fidelity:
+            quality = _reaction_dashboard_combined_page_quality(self._get_export_dpi())
+        else:
+            quality = {"dpi": self._get_export_dpi(), "rc_params": {}}
         cache_key = self._combined_export_cache_key(
             fig_size=fig_size,
             export_profile=export_profile,
             title_override=override,
+            high_fidelity=high_fidelity,
+            effective_dpi=int(quality["dpi"]),
         )
         if cache_key is None:
             self._final_report_combined_failure_reason = (
@@ -211407,19 +211590,29 @@ class UnifiedApp(tk.Tk):
                 if path is not None and path.exists():
                     return path
 
-        fig = self.render_plot(
-            plot_kind="fig_combined",
-            mode="export",
-            target="export",
-            plot_id="fig_combined_triple_axis",
-            fig_size=fig_size,
-        )
+        from matplotlib import rc_context
+
+        with rc_context(quality["rc_params"]):
+            fig = self.render_plot(
+                plot_kind="fig_combined",
+                mode="export",
+                target="export",
+                plot_id="fig_combined_triple_axis",
+                fig_size=fig_size,
+                combined_full_resolution=high_fidelity,
+            )
         if fig is None:
             self._final_report_combined_failure_reason = (
                 "Combined plot could not be generated for this run."
             )
             return None
         self._apply_combined_title_override(fig, override)
+        if high_fidelity:
+            retained_vertices = _prepare_reaction_dashboard_combined_page_figure(fig)
+            try:
+                fig._gl260_retained_export_vertices = retained_vertices  # type: ignore[attr-defined]
+            except Exception:
+                pass
         if not self._assert_combined_export_size(fig, expected=fig_size):
             try:
                 plt.close(fig)
@@ -211455,7 +211648,8 @@ class UnifiedApp(tk.Tk):
 
         try:
             _sanitize_figure_text_artists(fig)
-            fig.savefig(tmp_path, format="pdf", dpi=self._get_export_dpi())
+            with rc_context(quality["rc_params"]):
+                fig.savefig(tmp_path, format="pdf", dpi=int(quality["dpi"]))
         except Exception as exc:
             self._final_report_combined_failure_reason = (
                 f"Combined plot export failed: {exc}"
@@ -211484,7 +211678,8 @@ class UnifiedApp(tk.Tk):
                     try:
                         Path(prev_path).unlink()
                     except Exception:
-                        # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                        # Best-effort guard; ignore failures without interrupting
+                        # the workflow.
                         pass
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
@@ -243704,6 +243899,7 @@ class UnifiedApp(tk.Tk):
         mode: Optional[str] = None,
         plot_id: Optional[str] = None,
         fig_size: Optional[Tuple[float, float]] = None,
+        combined_full_resolution: bool = False,
     ) -> Optional[Any]:
         """Render one plot or plot bundle for preview/export workflows.
 
@@ -243719,6 +243915,8 @@ class UnifiedApp(tk.Tk):
             mode: Optional explicit layout/render mode.
             plot_id: Optional layout profile identifier.
             fig_size: Optional target figure size in inches.
+            combined_full_resolution: True removes preview-decimated Combined
+                series so export uses the complete prepared arrays.
         Outputs:
             Matplotlib Figure, figure mapping, or None on unavailable inputs.
         Side Effects:
@@ -243728,7 +243926,7 @@ class UnifiedApp(tk.Tk):
             Internal failures return None through downstream best-effort guards.
         """
         target_value = (target or "display").strip().lower()
-        mode_value = (mode or ("export" if target_value == "export" else "display"))
+        mode_value = mode or ("export" if target_value == "export" else "display")
         plot_id = plot_id or self._plot_key_to_plot_id(plot_kind)
 
         plot_kind_value = (plot_kind or "").strip().lower()
@@ -243746,7 +243944,13 @@ class UnifiedApp(tk.Tk):
         data_fingerprint, data_ctx = self._resolve_prepared_data_context(
             apply_globals=True, perf=perf_run
         )
-        data_ctx = dict(data_ctx or {})
+        data_ctx = _reaction_dashboard_combined_export_data_context(
+            data_ctx,
+            full_resolution=(
+                combined_full_resolution
+                and plot_kind_value in {"fig_combined", "combined"}
+            ),
+        )
         if plot_kind_value in {"fig_combined", "combined"}:
             # Preview and export must share the same display-only transform.
             data_ctx["combined_exclusion_ranges"] = self._combined_exclusion_ranges()
@@ -243835,9 +244039,7 @@ class UnifiedApp(tk.Tk):
             else None
         )
         overlay_ctx["moles_summary"] = (
-            overlay_ctx.get("moles_summary")
-            if gates_ctx.get("include_moles")
-            else None
+            overlay_ctx.get("moles_summary") if gates_ctx.get("include_moles") else None
         )
 
         style_ctx = {
@@ -243846,7 +244048,9 @@ class UnifiedApp(tk.Tk):
             "font_family": settings.get("font_family"),
             "core_legend_fontsize": settings.get("core_legend_fontsize"),
             "core_cycle_legend_fontsize": settings.get("core_cycle_legend_fontsize"),
-            "core_plot_render_profiles": copy.deepcopy(_get_core_plot_render_profiles()),
+            "core_plot_render_profiles": copy.deepcopy(
+                _get_core_plot_render_profiles()
+            ),
         }
         layout_ctx = {
             "plot_id": plot_id,
@@ -243884,7 +244088,9 @@ class UnifiedApp(tk.Tk):
                 render_ctx=render_ctx,
                 requested_plot_keys=requested_keys,
                 cycle_side_effects_mode=self._resolved_core_cycle_side_effects_mode(),
-                include_zero_line=bool(settings.get("combined_include_zero_line", True)),
+                include_zero_line=bool(
+                    settings.get("combined_include_zero_line", True)
+                ),
             )
             if not isinstance(figs, dict):
                 return None
