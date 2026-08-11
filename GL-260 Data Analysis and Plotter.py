@@ -21108,6 +21108,32 @@ class DataFingerprint:
 
 
 @dataclass(frozen=True)
+class CombinedDisplayFingerprint:
+    """Identify one reusable worker-prepared combined display packet.
+
+    Purpose:
+        Key decimated interactive arrays by every input that can affect them.
+    Why:
+        Warm refreshes should reuse immutable NumPy views without weakening
+        invalidation when data, point budget, or exclusions change.
+    Inputs:
+        Constructed from a data fingerprint, point budget, normalized
+        exclusion ranges, and cycle revision.
+    Outputs:
+        Hashable cache key.
+    Side Effects:
+        None.
+    Exceptions:
+        None.
+    """
+
+    data_fingerprint: DataFingerprint
+    target_points: int
+    exclusion_ranges: Tuple[Tuple[float, float], ...]
+    cycle_revision: int
+
+
+@dataclass(frozen=True)
 class CycleFingerprint:
     """Immutable key for cached cycle segmentation + metrics."""
 
@@ -21168,6 +21194,9 @@ class RenderCacheManager:
     """Simple cache manager for prepared series and cycle segmentation."""
 
     prepared: Dict[DataFingerprint, Dict[str, Any]] = field(default_factory=dict)
+    combined_display: "OrderedDict[CombinedDisplayFingerprint, Dict[str, Any]]" = field(
+        default_factory=OrderedDict
+    )
     cycles: Dict[CycleFingerprint, Dict[str, Any]] = field(default_factory=dict)
     cycle_segments: Dict[CycleSegFingerprint, Dict[str, Any]] = field(
         default_factory=dict
@@ -21477,6 +21506,66 @@ class RenderCacheManager:
         with self._lock:
             self.prepared[fingerprint] = payload
 
+    def get_combined_display(
+        self, fingerprint: CombinedDisplayFingerprint
+    ) -> Optional[Dict[str, Any]]:
+        """Return and promote one cached interactive combined display packet.
+
+        Purpose:
+            Fetch decimated arrays prepared for a matching combined refresh.
+        Why:
+            Reusing the exact packet avoids repeated NaN scanning, index
+            construction, and array slicing on warm refreshes.
+        Inputs:
+            fingerprint: Complete display-packet cache key.
+        Outputs:
+            Cached packet, or None when no valid entry exists.
+        Side Effects:
+            Promotes cache hits to most-recently-used order under the cache lock.
+        Exceptions:
+            Missing entries return None.
+        """
+        with self._lock:
+            payload = self.combined_display.get(fingerprint)
+            if payload is not None:
+                self.combined_display.move_to_end(fingerprint)
+            return payload
+
+    def set_combined_display(
+        self,
+        fingerprint: CombinedDisplayFingerprint,
+        payload: Dict[str, Any],
+        *,
+        max_entries: int = 4,
+    ) -> None:
+        """Store one bounded interactive combined display packet.
+
+        Purpose:
+            Retain recently used display arrays for warm refreshes.
+        Why:
+            A small LRU captures reversible settings changes while preventing
+            large source arrays from accumulating without bound.
+        Inputs:
+            fingerprint: Complete display-packet cache key.
+            payload: Decimated x/series arrays and diagnostic metadata.
+            max_entries: Positive maximum number of retained packets.
+        Outputs:
+            None.
+        Side Effects:
+            Mutates and may evict entries from the display cache.
+        Exceptions:
+            Invalid maximum values are coerced to one.
+        """
+        try:
+            limit = max(1, int(max_entries))
+        except Exception:
+            limit = 1
+        with self._lock:
+            self.combined_display[fingerprint] = payload
+            self.combined_display.move_to_end(fingerprint)
+            while len(self.combined_display) > limit:
+                self.combined_display.popitem(last=False)
+
     def get_cycles(self, fingerprint: CycleFingerprint) -> Optional[Dict[str, Any]]:
         """Return cached cycle-analysis payload for one cycle fingerprint.
 
@@ -21622,6 +21711,8 @@ class RenderCacheManager:
         """
         with self._lock:
             self.prepared.clear()
+            # Display packets depend on prepared arrays and cannot outlive them.
+            self.combined_display.clear()
         self._clear_singleflight_namespace(self._prepared_inflight)
 
     def clear_cycles(self) -> None:
@@ -21710,6 +21801,36 @@ class RenderPacket:
     perf: Optional[Dict[str, Any]] = None
     requested_plot_keys: Tuple[str, ...] = ()
     cycle_side_effects_mode: str = "auto"
+
+
+@dataclass(frozen=True)
+class CombinedRefreshPlan:
+    """Describe the work and safety constraints for one adaptive refresh.
+
+    Purpose:
+        Carry an explicit, inspectable refresh route between change detection
+        and execution.
+    Why:
+        Layered refreshes need consistent worker, layout, draw, topology, and
+        escalation decisions without duplicating boolean routing logic.
+    Inputs:
+        Constructed from detected layers and the current plot state.
+    Outputs:
+        Immutable refresh-plan metadata consumed by routing and diagnostics.
+    Side Effects:
+        None.
+    Exceptions:
+        None.
+    """
+
+    route: str
+    changed_layers: Tuple[str, ...]
+    baseline_available: bool
+    needs_worker: bool
+    needs_layout: bool
+    needs_draw: bool
+    topology_compatible: bool
+    escalation_reason: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -43822,6 +43943,94 @@ def _regression_test_elements_only_in_place_refresh_escalates_on_geometry_drift(
         )
     if not any("geometry drift" in row.lower() for row in harness.debug_logs):
         raise AssertionError("Expected geometry-drift escalation debug log entry.")
+
+
+def _regression_test_no_change_refresh_avoids_canvas_draw() -> None:
+    """Validate an unchanged refresh clears its overlay without drawing.
+
+    Purpose:
+        Prove the no-change adaptive route does not invoke layout finalization.
+    Why:
+        A forced Matplotlib draw was the dominant avoidable cost for refreshes
+        whose normalized signatures were already identical.
+    Inputs:
+        None.
+    Outputs:
+        None.
+    Side Effects:
+        Executes the adaptive path with local frame and canvas stubs.
+    Exceptions:
+        Raises AssertionError if a draw is requested or the route is rejected.
+    """
+
+    class _CanvasStub:
+        """Expose the minimum canvas surface used by the adaptive executor."""
+
+        figure = object()
+
+        @staticmethod
+        def get_tk_widget() -> object:
+            """Return an inert widget placeholder without Tk side effects."""
+            return object()
+
+    class _Harness:
+        """Track finalize calls while providing no-op refresh hooks."""
+
+        def __init__(self) -> None:
+            """Initialize the finalize-call counter used by assertions."""
+            self.finalize_calls = 0
+
+        @staticmethod
+        def _update_plot_loading_overlay_progress(_frame: Any, **_kwargs: Any) -> None:
+            """Accept overlay progress without creating UI widgets."""
+
+        def _finalize_matplotlib_canvas_layout(self, **_kwargs: Any) -> None:
+            """Record an unexpected layout/draw request."""
+            self.finalize_calls += 1
+
+        @staticmethod
+        def _set_plot_dirty_flags(_plot_id: str, **_kwargs: Any) -> None:
+            """Accept dirty-flag clearing for the isolated route test."""
+
+        @staticmethod
+        def _record_plot_refresh_signature_bundle(_frame: Any, **_kwargs: Any) -> None:
+            """Accept signature persistence for the isolated route test."""
+
+        @staticmethod
+        def _record_plot_layer_refresh_state(
+            _plot_id: Optional[str], **_kwargs: Any
+        ) -> None:
+            """Accept refresh-route persistence for the isolated route test."""
+
+        @staticmethod
+        def _update_plot_layer_status_indicator(
+            _plot_id: Optional[str], **_kwargs: Any
+        ) -> None:
+            """Accept status updates for the isolated route test."""
+
+        @staticmethod
+        def _clear_plot_loading_overlay(_frame: Any) -> None:
+            """Accept overlay completion for the isolated route test."""
+
+    harness = _Harness()
+    frame = type("_FrameStub", (), {})()
+    frame._post_first_draw_refresh_hold_overlay = True
+    applied = UnifiedApp._execute_adaptive_refresh_path(
+        harness,
+        frame,
+        _CanvasStub(),
+        plot_id="fig_combined_triple_axis",
+        plot_key="fig_combined",
+        decision={
+            "path": "no_change_fast_reveal",
+            "changed_layers": [],
+            "current_bundle": {},
+        },
+    )
+    if not applied:
+        raise AssertionError("No-change adaptive route should complete in place.")
+    if harness.finalize_calls:
+        raise AssertionError("No-change adaptive route must not finalize or draw canvas.")
 
 
 def _regression_test_force_refresh_adaptive_fastpath_short_circuit() -> None:
@@ -76849,6 +77058,10 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
     (
         "Elements-only geometry drift escalates refresh",
         _regression_test_elements_only_in_place_refresh_escalates_on_geometry_drift,
+    ),
+    (
+        "No-change refresh avoids canvas draw",
+        _regression_test_no_change_refresh_avoids_canvas_draw,
     ),
     (
         "Layer refresh metadata round-trip",
@@ -127844,10 +128057,13 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             Missing baseline/signature data fails closed to full async refresh.
         """
+        decision_started = time.perf_counter()
+        signature_started = time.perf_counter()
         current_bundle = self._capture_plot_refresh_signature_bundle(
             plot_id=plot_id,
             plot_key=plot_key,
         )
+        signature_ms = (time.perf_counter() - signature_started) * 1000.0
         baseline_bundle = (
             getattr(frame, "_plot_refresh_signature_bundle", None)
             if frame is not None
@@ -127896,15 +128112,33 @@ class UnifiedApp(tk.Tk):
 
         if force_full_rebuild:
             path = "full_async_refresh"
+            escalation_reason = "forced_full_rebuild"
         elif not changed_layers:
             path = "no_change_fast_reveal"
+            escalation_reason = None
         elif data_changed or layout_changed or trace_changed:
             # Conservative adaptive routing: data, layout, and trace/style
             # changes always use the full async refresh pipeline.
             path = "full_async_refresh"
+            escalation_reason = "worker_or_topology_sensitive_layer"
         else:
             # Elements-only changes can apply in place behind the loading overlay.
             path = "in_place_layer_refresh"
+            escalation_reason = None
+
+        refresh_plan = CombinedRefreshPlan(
+            route=path,
+            changed_layers=tuple(changed_layers),
+            baseline_available=baseline_available,
+            needs_worker=path == "full_async_refresh",
+            needs_layout=bool(layout_changed or elements_changed),
+            needs_draw=path != "no_change_fast_reveal",
+            topology_compatible=bool(
+                baseline_available and not data_changed and not trace_changed
+            ),
+            escalation_reason=escalation_reason,
+        )
+        decision_ms = (time.perf_counter() - decision_started) * 1000.0
 
         self._log_plot_tab_debug(
             "Adaptive refresh decision for %s: path=%s data=%s layout=%s elements=%s trace=%s baseline=%s."
@@ -127927,6 +128161,9 @@ class UnifiedApp(tk.Tk):
             "changed_layers": changed_layers,
             "current_bundle": current_bundle,
             "baseline_available": baseline_available,
+            "refresh_plan": refresh_plan,
+            "signature_ms": signature_ms,
+            "decision_ms": decision_ms,
         }
 
     def _execute_adaptive_refresh_path(
@@ -128026,6 +128263,8 @@ class UnifiedApp(tk.Tk):
                 )
 
             hold_combined_overlay = bool(
+                path != "no_change_fast_reveal"
+                and
                 plot_key == "fig_combined"
                 and getattr(frame, "_post_first_draw_refresh_hold_overlay", False)
             )
@@ -128040,25 +128279,24 @@ class UnifiedApp(tk.Tk):
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
 
-            self._update_plot_loading_overlay_progress(
-                frame,
-                progress=92.0,
-                message="Final Layout Adjustments...",
-                stage_key="finalizing",
-            )
-            self._finalize_matplotlib_canvas_layout(
-                canvas=canvas,
-                fig=fig,
-                tk_widget=widget,
-                keep_export_size=False,
-                trigger_resize_event=True,
-                force_draw=True,
-                finalize_intent=(
-                    "elements_only"
-                    if elements_only_fast_path
-                    else ("no_change" if not changed_layers else "full")
-                ),
-            )
+            if path != "no_change_fast_reveal":
+                self._update_plot_loading_overlay_progress(
+                    frame,
+                    progress=92.0,
+                    message="Final Layout Adjustments...",
+                    stage_key="finalizing",
+                )
+                self._finalize_matplotlib_canvas_layout(
+                    canvas=canvas,
+                    fig=fig,
+                    tk_widget=widget,
+                    keep_export_size=False,
+                    trigger_resize_event=True,
+                    force_draw=True,
+                    finalize_intent=(
+                        "elements_only" if elements_only_fast_path else "full"
+                    ),
+                )
             if elements_only_fast_path:
                 post_elements_geometry_sig = self._overlay_layout_decision_signature(fig)
                 if (
@@ -241461,11 +241699,14 @@ class UnifiedApp(tk.Tk):
             )
         )
         resolved_series_workers = 1
-        if use_snapshot_parallel:
+        source_row_count = len(self.df) if self.df is not None else 0
+        if use_snapshot_parallel and source_row_count >= 100_000:
+            # The bundled 21,540-row workload is faster sequentially; reserve
+            # thread-pool startup for data sizes where conversion can amortize it.
             resolved_series_workers = _resolve_render_worker_count(
                 requested_workers=requested_workers_value,
                 parallel_enabled=parallel_enabled_value,
-                hard_cap=6,
+                hard_cap=4,
             )
 
         # Iterate over mapped series keys; snapshot workers can fan out independent
@@ -244899,32 +245140,76 @@ class UnifiedApp(tk.Tk):
         decimation_start = time.perf_counter() if perf_run is not None else None
         series_map = data_ctx.get("series") or {}
         series_np = data_ctx.get("series_np") or {}
-        display_x, display_series = self._combined_preview_decimate(
-            None,
-            None,
-            series_np.get("x", series_map.get("x")),
-            {
-                key: series_np.get(key, series_map.get(key))
-                for key in ("y1", "y2", "y3", "z", "z2")
-            },
-            series_arrays=series_np,
-            series_nan_mask=data_ctx.get("series_nan_mask") or {},
-            target_points=snapshot.get("combined_display_target_points"),
+        exclusion_ranges = tuple(
+            _normalize_combined_exclusion_ranges(
+                snapshot.get("combined_exclusion_ranges")
+            )
         )
+        try:
+            display_target_points = max(
+                0, int(snapshot.get("combined_display_target_points") or 0)
+            )
+        except Exception:
+            display_target_points = 0
+        display_fingerprint = CombinedDisplayFingerprint(
+            data_fingerprint=data_fingerprint,
+            target_points=display_target_points,
+            exclusion_ranges=exclusion_ranges,
+            cycle_revision=int(snapshot.get("manual_revision", 0) or 0),
+        )
+        display_packet = self._render_cache.get_combined_display(display_fingerprint)
+        display_cache_status = "hit" if display_packet is not None else "miss"
+        if display_packet is None:
+            display_x, display_series = self._combined_preview_decimate(
+                None,
+                None,
+                series_np.get("x", series_map.get("x")),
+                {
+                    key: series_np.get(key, series_map.get(key))
+                    for key in ("y1", "y2", "y3", "z", "z2")
+                },
+                series_arrays=series_np,
+                series_nan_mask=data_ctx.get("series_nan_mask") or {},
+                target_points=display_target_points or None,
+            )
+            display_packet = {
+                "x": display_x,
+                "series": display_series,
+            }
+            self._render_cache.set_combined_display(
+                display_fingerprint,
+                display_packet,
+            )
+        else:
+            display_x = display_packet.get("x")
+            display_series = display_packet.get("series") or {}
         # Keep a worker-prepared display payload separate from analysis arrays.
         # Matplotlib only needs pixel-scale samples, while cycle analysis retains
         # the complete source series in the existing prepared context.
         data_ctx["combined_display_x"] = display_x
         data_ctx["combined_display_series"] = display_series
         if perf_run is not None and decimation_start is not None:
-            perf_run.setdefault("stages", {}).setdefault("combined", {})[
-                "decimation_ms"
-            ] = (time.perf_counter() - decimation_start) * 1000.0
+            combined_perf = perf_run.setdefault("stages", {}).setdefault(
+                "combined", {}
+            )
+            combined_perf["decimation_ms"] = (
+                time.perf_counter() - decimation_start
+            ) * 1000.0
+            combined_perf["display_cache"] = display_cache_status
+            combined_perf["decimation_backend"] = "python_vectorized"
+            try:
+                combined_perf["source_points"] = int(
+                    np.asarray(series_np.get("x", series_map.get("x"))).size
+                )
+            except Exception:
+                combined_perf["source_points"] = 0
+            try:
+                combined_perf["display_points"] = int(np.asarray(display_x).size)
+            except Exception:
+                combined_perf["display_points"] = 0
         # Keep exclusions out of prepared/cycle caches: they are a combined-only
         # display transform and must never change analysis or source data.
-        data_ctx["combined_exclusion_ranges"] = _normalize_combined_exclusion_ranges(
-            snapshot.get("combined_exclusion_ranges")
-        )
+        data_ctx["combined_exclusion_ranges"] = list(exclusion_ranges)
 
         if snapshot.get("cycle_overlays_enabled"):
             cycle_ctx, overlay_ctx = self._resolve_cycle_context(
@@ -246631,6 +246916,45 @@ class UnifiedApp(tk.Tk):
             )
         return tuple(signature)
 
+    def _combined_scatter_topology_signature(
+        self,
+        series_keys: Sequence[str],
+        *,
+        scatter_config: Optional[Dict[str, Any]] = None,
+        scatter_series_configs: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Any, ...]:
+        """Compute only artist-type-sensitive combined trace settings.
+
+        Purpose:
+            Separate topology changes from mutable appearance changes.
+        Why:
+            Colors, sizes, alpha, line styles, and z-order can update existing
+            artists; only line/scatter switches and scatter marker paths require
+            rebuilding the combined figure.
+        Inputs:
+            series_keys: Ordered trace keys to inspect.
+            scatter_config: Optional global trace style settings.
+            scatter_series_configs: Optional per-series trace settings.
+        Outputs:
+            Tuple suitable for conservative structure comparisons.
+        Side Effects:
+            None.
+        Exceptions:
+            Invalid settings normalize through `_get_scatter_config`.
+        """
+        topology = []
+        for key in series_keys:
+            cfg = _get_scatter_config(
+                key,
+                scatter_config=scatter_config,
+                scatter_series_configs=scatter_series_configs,
+            )
+            scatter_enabled = bool(cfg.get("enabled"))
+            topology.append(
+                (key, scatter_enabled, cfg.get("marker") if scatter_enabled else None)
+            )
+        return tuple(topology)
+
     def _combined_legend_config_signature(
         self, config: Mapping[str, Any]
     ) -> Tuple[Any, ...]:
@@ -246812,7 +247136,7 @@ class UnifiedApp(tk.Tk):
             bool(config.get("include_moles_core")),
             bool(config.get("include_zero_line", True)),
             repr(temperature_visual_signature),
-            self._combined_scatter_signature(
+            self._combined_scatter_topology_signature(
                 ("y1", "y3", "y2", "z", "z2"),
                 scatter_config=scatter_config,
                 scatter_series_configs=scatter_series_configs,
@@ -247131,84 +247455,70 @@ class UnifiedApp(tk.Tk):
             return x_values, series_values
         if idx[-1] != x_array.size - 1:
             idx = np.append(idx, x_array.size - 1)
-        required_idx = _rust_combined_required_indices(
-            x_array=x_array,
-            series_arrays=series_arrays,
-        )
-        if required_idx is None:
-            required_mask = np.zeros(x_array.size, dtype=bool)
-            x_nan = series_nan_mask.get("x")
-            if x_nan is None:
+        # Profiling on the bundled workload and 500k points showed that these
+        # vectorized masks are materially faster than crossing the Python/Rust
+        # boundary and converting required indices to/from Python lists.
+        required_mask = np.zeros(x_array.size, dtype=bool)
+        x_nan = series_nan_mask.get("x")
+        if x_nan is None:
+            try:
+                x_nan = ~np.isfinite(x_array)
+            except Exception:
+                x_nan = None
+        else:
+            try:
+                x_nan = np.asarray(x_nan, dtype=bool).reshape(-1) | (
+                    ~np.isfinite(x_array)
+                )
+            except Exception:
+                x_nan = None
+        if x_nan is not None:
+            try:
+                x_nan = np.asarray(x_nan, dtype=bool).reshape(-1)
+            except Exception:
+                x_nan = None
+        if x_nan is not None and x_nan.size == x_array.size:
+            required_mask |= x_nan
+        # All available series contribute NaN neighborhoods so gaps remain exact.
+        for key, values in series_values.items():
+            if values is None:
+                continue
+            y_array = series_arrays.get(key)
+            if y_array is None:
                 try:
-                    x_nan = ~np.isfinite(x_array)
+                    y_array = np.asarray(values)
                 except Exception:
-                    x_nan = None
-            else:
-                try:
-                    x_nan = np.asarray(x_nan, dtype=bool).reshape(-1) | (
-                        ~np.isfinite(x_array)
-                    )
-                except Exception:
-                    x_nan = None
-            if x_nan is not None:
-                try:
-                    x_nan = np.asarray(x_nan, dtype=bool).reshape(-1)
-                except Exception:
-                    x_nan = None
-            if x_nan is not None and x_nan.size == x_array.size:
-                required_mask |= x_nan
-            # Iterate over items from series_values to apply the per-item logic.
-            for key, values in series_values.items():
-                if values is None:
                     continue
-                y_array = series_arrays.get(key)
-                if y_array is None:
+            if y_array.shape[0] != x_array.shape[0]:
+                continue
+            y_nan = series_nan_mask.get(key)
+            if y_nan is None:
+                try:
+                    y_nan = ~np.isfinite(y_array)
+                except Exception:
                     try:
-                        y_array = np.asarray(values)
-                    except Exception:
-                        continue
-                if y_array.shape[0] != x_array.shape[0]:
-                    continue
-                y_nan = series_nan_mask.get(key)
-                if y_nan is None:
-                    try:
-                        y_nan = ~np.isfinite(y_array)
-                    except Exception:
-                        try:
-                            y_nan = pd.isna(y_array)
-                        except Exception:
-                            y_nan = None
-                else:
-                    try:
-                        y_nan = np.asarray(y_nan, dtype=bool).reshape(-1) | (
-                            ~np.isfinite(y_array)
-                        )
+                        y_nan = pd.isna(y_array)
                     except Exception:
                         y_nan = None
-                if y_nan is None:
-                    continue
+            else:
                 try:
-                    y_nan = np.asarray(y_nan, dtype=bool).reshape(-1)
+                    y_nan = np.asarray(y_nan, dtype=bool).reshape(-1) | (
+                        ~np.isfinite(y_array)
+                    )
                 except Exception:
-                    continue
-                if y_nan.size != x_array.size:
-                    continue
+                    y_nan = None
+            if y_nan is None:
+                continue
+            try:
+                y_nan = np.asarray(y_nan, dtype=bool).reshape(-1)
+            except Exception:
+                continue
+            if y_nan.size == x_array.size:
                 required_mask |= y_nan
-            required_idx = np.flatnonzero(required_mask) if required_mask.any() else None
-        elif required_idx.size == 0:
-            required_idx = None
-        rust_idx = _rust_combined_decimation_indices(
-            data_len=int(x_array.size),
-            step=int(step),
-            required_indices=required_idx.tolist()
-            if required_idx is not None
-            else None,
-        )
-        if rust_idx is not None:
-            idx = rust_idx
-        elif required_idx is not None and required_idx.size:
+        required_idx = np.flatnonzero(required_mask) if required_mask.any() else None
+        if required_idx is not None and required_idx.size:
             # Preserve immediate neighbors around NaN points so plot gaps and edge
-            # transitions remain visually faithful after decimation fallback.
+            # transitions remain visually faithful after decimation.
             neighbor_idx = np.unique(
                 np.concatenate([required_idx - 1, required_idx + 1])
             )
@@ -247313,6 +247623,11 @@ class UnifiedApp(tk.Tk):
             scatter_config=scatter_config,
             scatter_series_configs=scatter_series_configs,
         )
+        style_sig = self._combined_scatter_signature(
+            ("y1", "y3", "y2", "z", "z2"),
+            scatter_config=scatter_config,
+            scatter_series_configs=scatter_series_configs,
+        )
         legend_sig = self._combined_legend_config_signature(config)
         cycle_overlay_sig = self._combined_cycle_overlay_signature(overlay_ctx)
         legend_font_value = config.get("legend_font_value")
@@ -247400,6 +247715,7 @@ class UnifiedApp(tk.Tk):
             self._combined_plot_state = {
                 "fig": fig,
                 "structure_sig": structure_sig,
+                "style_sig": style_sig,
                 "legend_sig": legend_sig,
                 "cycle_overlay_sig": cycle_overlay_sig,
                 "elements_sig": None,
@@ -248065,18 +248381,28 @@ class UnifiedApp(tk.Tk):
             "combined_display_x",
             series_np.get("x", series_map.get("x", globals().get("x"))),
         )
-        if isinstance(worker_display_series, Mapping):
+        worker_display_ready = bool(
+            isinstance(worker_display_series, Mapping)
+            and data_ctx.get("combined_display_x") is not None
+        )
+        if worker_display_ready:
             series_values = {
                 key: worker_display_series.get(key, value)
                 for key, value in series_values.items()
             }
+            preview_series_arrays = dict(worker_display_series)
+            preview_series_arrays["x"] = x_values
+            preview_nan_mask: Dict[str, Any] = {}
+        else:
+            preview_series_arrays = series_np
+            preview_nan_mask = series_nan_mask
         x_plot, decimated = self._combined_preview_decimate(
             fig,
             canvas,
             x_values,
             series_values,
-            series_arrays=series_np,
-            series_nan_mask=series_nan_mask,
+            series_arrays=preview_series_arrays,
+            series_nan_mask=preview_nan_mask,
         )
         scatter_offsets_cache = getattr(
             fig,
@@ -248128,7 +248454,8 @@ class UnifiedApp(tk.Tk):
             _apply_marker_offsets(peak_artist, peaks)
             _apply_marker_offsets(trough_artist, troughs)
 
-        legend_dirty = state.get("legend_sig") != legend_sig
+        style_changed = state.get("style_sig") != style_sig
+        legend_dirty = state.get("legend_sig") != legend_sig or style_changed
         # Iterate over items from line_map to apply the per-item logic.
         for key, artist in line_map.items():
             if artist is None:
@@ -248164,6 +248491,33 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
+            if style_changed:
+                cfg = _get_scatter_config(
+                    key,
+                    scatter_config=scatter_config,
+                    scatter_series_configs=scatter_series_configs,
+                )
+                # Topology-sensitive settings were checked before reuse; the
+                # remaining appearance properties are safe to mutate in place.
+                try:
+                    if isinstance(artist, Line2D):
+                        artist.set_color(cfg.get("color"))
+                        artist.set_alpha(cfg.get("alpha"))
+                        artist.set_linewidth(cfg.get("linewidth"))
+                        artist.set_markersize(
+                            math.sqrt(max(0.0, float(cfg.get("size") or 0.0)))
+                        )
+                        artist.set_marker(cfg.get("marker"))
+                        artist.set_linestyle(cfg.get("linestyle"))
+                    else:
+                        artist.set_facecolor(cfg.get("color"))
+                        artist.set_edgecolor(cfg.get("edgecolor"))
+                        artist.set_sizes([float(cfg.get("size") or 0.0)])
+                        artist.set_linewidths([float(cfg.get("linewidth") or 0.0)])
+                        artist.set_alpha(cfg.get("alpha"))
+                except Exception:
+                    # Malformed optional style values retain the last valid style.
+                    pass
             y_vals = decimated.get(key)
             if y_vals is None or x_plot is None:
                 continue
@@ -248849,6 +249203,7 @@ class UnifiedApp(tk.Tk):
 
         try:
             state["legend_sig"] = legend_sig
+            state["style_sig"] = style_sig
             state["cycle_overlay_sig"] = cycle_overlay_sig
             state["elements_sig"] = plot_elements_sig
             state["trace_filter_sig"] = trace_filter_sig
@@ -249321,6 +249676,11 @@ class UnifiedApp(tk.Tk):
                             scatter_series_configs=scatter_series_configs,
                         ),
                         "legend_sig": legend_sig,
+                        "style_sig": self._combined_scatter_signature(
+                            ("y1", "y3", "y2", "z", "z2"),
+                            scatter_config=scatter_config,
+                            scatter_series_configs=scatter_series_configs,
+                        ),
                         "cycle_overlay_sig": cycle_overlay_sig,
                         "elements_sig": plot_elements_sig,
                         "trace_filter_sig": (
