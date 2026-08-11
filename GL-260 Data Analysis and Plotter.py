@@ -61623,6 +61623,59 @@ def _regression_test_refresh_plot_for_plot_id_defaults_to_adaptive() -> None:
         raise AssertionError("Refresh dispatcher should default to adaptive (force_full_rebuild=False).")
 
 
+def _regression_test_combined_requested_refresh_owns_first_pass() -> None:
+    """Validate an explicit combined refresh is treated as the active first pass.
+
+    Purpose:
+        Ensure the refresh dispatcher arms the requested render as pass 1 before
+        asynchronous combined work begins.
+    Why:
+        A draw from the outgoing canvas must not schedule a duplicate combined
+        render while the user-requested refresh is already running.
+    Inputs:
+        None.
+    Outputs:
+        None.
+    Side Effects:
+        Executes the pass-arming helper with local frame/canvas stubs.
+    Exceptions:
+        Raises AssertionError when pass ownership or baseline capture regresses.
+    """
+
+    class _Harness:
+        """Minimal harness recording the combined pre-refresh baseline capture."""
+
+        def __init__(self) -> None:
+            self.capture_calls = 0
+
+        def _capture_combined_overlay_layout_baseline(
+            self, frame: Any, *, canvas: Any = None, fig: Any = None
+        ) -> dict[str, Any]:
+            """Record baseline capture and return a representative signature."""
+            _ = (frame, canvas, fig)
+            self.capture_calls += 1
+            return {"geometry_sig": ("baseline",)}
+
+    frame = type("_FrameStub", (), {})()
+    frame._post_first_draw_refresh_done = False
+    frame._post_first_draw_refresh_invoked = False
+    frame._combined_overlay_refresh_invoked_count = 0
+    harness = _Harness()
+
+    UnifiedApp._arm_combined_requested_refresh_pass(harness, frame, object())
+
+    if harness.capture_calls != 1:
+        raise AssertionError("Combined requested refresh did not capture its baseline.")
+    if not bool(getattr(frame, "_post_first_draw_refresh_done", False)):
+        raise AssertionError(
+            "Outgoing combined draws can still schedule a duplicate pass."
+        )
+    if not bool(getattr(frame, "_post_first_draw_refresh_invoked", False)):
+        raise AssertionError("Requested combined refresh was not marked as invoked.")
+    if int(getattr(frame, "_combined_overlay_refresh_invoked_count", 0)) != 1:
+        raise AssertionError("Requested combined refresh did not own pass 1.")
+
+
 def _regression_test_final_report_preview_splash_lifecycle_cleanup() -> None:
     """Validate Final Report splash lifecycle cleanup for both preview actions.
 
@@ -77179,6 +77232,10 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
     (
         "Refresh dispatcher defaults to adaptive",
         _regression_test_refresh_plot_for_plot_id_defaults_to_adaptive,
+    ),
+    (
+        "Combined requested refresh owns first pass",
+        _regression_test_combined_requested_refresh_owns_first_pass,
     ),
     (
         "Combined tab removal cache invalidation",
@@ -128540,6 +128597,10 @@ class UnifiedApp(tk.Tk):
             if idx < len(getattr(self, "_canvases", []) or []):
                 canvas = self._canvases[idx]
                 try:
+                    if rearm_overlay and plot_id == "fig_combined_triple_axis":
+                        # This request is already pass 1. Arm it before async work so
+                        # an outgoing-canvas draw cannot queue a duplicate render.
+                        self._arm_combined_requested_refresh_pass(tab, canvas)
                     self._force_plot_refresh(
                         tab,
                         canvas,
@@ -128551,6 +128612,43 @@ class UnifiedApp(tk.Tk):
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
             break
+
+    def _arm_combined_requested_refresh_pass(self, frame: Any, canvas: Any) -> None:
+        """Mark an explicit combined refresh as the active first render pass.
+
+        Purpose:
+            Bind combined overlay pass accounting to the refresh request that is
+            about to run.
+        Why:
+            Re-arming overlay state makes the outgoing figure eligible for a
+            draw event. Without explicit ownership, that stale draw can schedule
+            a second expensive render before the requested render completes.
+        Inputs:
+            frame: Combined plot tab frame storing refresh orchestration state.
+            canvas: Current combined canvas used to capture the pre-refresh
+                geometry baseline.
+        Outputs:
+            None.
+        Side Effects:
+            Captures the current combined decision baseline and marks pass 1 as
+            invoked so draw callbacks only acknowledge the requested render.
+        Exceptions:
+            Baseline and state-write failures are suppressed so refresh can fall
+            back to the existing safe render path.
+        """
+        try:
+            self._capture_combined_overlay_layout_baseline(frame, canvas=canvas)
+        except Exception:
+            # Missing baseline data remains safe: adaptive completion defaults to
+            # one pass unless the final geometry explicitly proves instability.
+            pass
+        try:
+            frame._post_first_draw_refresh_done = True
+            frame._post_first_draw_refresh_invoked = True
+            frame._combined_overlay_refresh_invoked_count = 1
+        except Exception:
+            # Best-effort state ownership must never prevent the requested render.
+            pass
 
     def _prepare_plot_refresh_overlay_for_settings(
         self, plot_id: Optional[str]
@@ -128571,7 +128669,9 @@ class UnifiedApp(tk.Tk):
         Side Effects:
             Cancels stale scheduled callbacks, resets per-frame auto-refresh counters
             and signatures, and re-enables core/combined overlay hold flags so the
-            refresh pipeline completes behind the loading overlay.
+            refresh pipeline completes behind the loading overlay. The dispatcher
+            subsequently marks the requested combined render as pass 1 before
+            asynchronous work starts.
         Exceptions:
             Best-effort guards ignore callback-cancel and attribute-write failures to
             avoid interrupting the UI workflow.
@@ -132069,8 +132169,7 @@ class UnifiedApp(tk.Tk):
             Exceptions:
                 Errors are handled by the downstream refresh pipeline.
             """
-            # Combined internal post-draw refreshes are forced-rebuild to keep
-            # generate-time stabilization deterministic and identical to manual Refresh.
+            # Renderer signatures decide whether combined reuse remains safe.
             self._force_plot_refresh(
                 frame,
                 canvas,
@@ -132119,7 +132218,7 @@ class UnifiedApp(tk.Tk):
                     reason=refresh_message,
                     rearm_overlay=True,
                     capture_combined_legend=False,
-                    force_full_rebuild=True,
+                    force_full_rebuild=False,
                 )
                 return
             self._force_plot_refresh(
