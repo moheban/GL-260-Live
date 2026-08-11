@@ -22150,6 +22150,9 @@ REACTION_DASHBOARD_EXPORT_DEFAULT_ROW_PADDING_PT = 6.0
 REACTION_DASHBOARD_EXPORT_MIN_ROW_PADDING_PT = 0.0
 REACTION_DASHBOARD_EXPORT_MAX_ROW_PADDING_PT = 24.0
 REACTION_DASHBOARD_COMBINED_PAGE_MIN_DPI = 1200
+REACTION_DASHBOARD_CYCLE_TABLE_FIRST_TOP = 0.795
+REACTION_DASHBOARD_CYCLE_TABLE_CONTINUED_TOP = 0.89
+REACTION_DASHBOARD_CYCLE_TABLE_BOTTOM = 0.075
 
 
 def _normalize_reaction_dashboard_export_preferences(
@@ -36532,8 +36535,25 @@ def _reaction_dashboard_cycle_pdf_layout_plan(
     # snapshot must not reserve more table depth than the gauge alone.
     side_summary_height = 1.55 if has_side_summary else 0.0
     summary_height = max(side_summary_height, summary_rows * 0.80)
-    first_table_height = max(1.4, page_height - 1.45 - summary_height - 0.72)
-    continued_table_height = max(1.4, page_height - 1.42)
+    # Use the renderer's exact table rectangle so pagination never relies on
+    # compressing rows after a page break.
+    first_table_height = max(
+        1.4,
+        (
+            REACTION_DASHBOARD_CYCLE_TABLE_FIRST_TOP
+            - REACTION_DASHBOARD_CYCLE_TABLE_BOTTOM
+        )
+        * page_height
+        - summary_height,
+    )
+    continued_table_height = max(
+        1.4,
+        (
+            REACTION_DASHBOARD_CYCLE_TABLE_CONTINUED_TOP
+            - REACTION_DASHBOARD_CYCLE_TABLE_BOTTOM
+        )
+        * page_height,
+    )
     pages: List[Tuple[List[List[str]], List[float]]] = []
     row_index = 0
     page_index = 0
@@ -36878,22 +36898,33 @@ def _render_reaction_dashboard_cycle_pdf_pages(
                 )
                 snapshot_ax.axis("off")
 
-        first_page_table_top = 0.83 - (summary_height / page_height) - 0.035
-        table_top = first_page_table_top if page_number == 1 else 0.89
-        table_bottom = 0.075
+        first_page_table_top = (
+            REACTION_DASHBOARD_CYCLE_TABLE_FIRST_TOP
+            - (summary_height / page_height)
+        )
+        table_top = (
+            first_page_table_top
+            if page_number == 1
+            else REACTION_DASHBOARD_CYCLE_TABLE_CONTINUED_TOP
+        )
+        table_bottom = REACTION_DASHBOARD_CYCLE_TABLE_BOTTOM
         table_ax = fig.add_axes([0.055, table_bottom, 0.89, table_top - table_bottom])
         table_ax.axis("off")
+        total_height = header_height + sum(page_row_heights)
+        table_area_height = max((table_top - table_bottom) * page_height, 1e-9)
+        # A short continuation table occupies only its planned physical height;
+        # unused page space stays below it instead of stretching its rows.
+        table_height_fraction = min(1.0, total_height / table_area_height)
         table = table_ax.table(
             cellText=page_rows,
             colLabels=wrapped_headers,
             colWidths=relative_widths,
             cellLoc="center",
             loc="upper left",
-            bbox=[0, 0, 1, 1],
+            bbox=[0, 1.0 - table_height_fraction, 1, table_height_fraction],
         )
         table.auto_set_font_size(False)
         table.set_fontsize(table_font_size)
-        total_height = header_height + sum(page_row_heights)
         header_ratio = header_height / total_height
         for col_idx in range(n_cols):
             cell = table[(0, col_idx)]
@@ -43598,6 +43629,36 @@ def _regression_test_combined_overlay_completion_guard() -> None:
         raise AssertionError("Combined overlay did not clear after pending draw work resolved.")
     if getattr(frame, "_plot_auto_refresh_state", None) != "done":
         raise AssertionError("Combined auto-refresh completion did not transition to done.")
+
+
+def _regression_test_combined_overlay_single_draw_geometry_release() -> None:
+    """Validate one acknowledged geometry observation releases the overlay gate.
+
+    Purpose:
+        Lock in the completion rule used after a final combined draw acknowledgement.
+    Why:
+        Waiting for a second non-draw geometry observation previously left the
+        visible plot blocked until the 12-second settle watchdog forced release.
+    Inputs:
+        None.
+    Outputs:
+        None.
+    Side Effects:
+        None.
+    Exceptions:
+        Raises AssertionError when missing geometry passes or valid first-draw
+        geometry remains blocked.
+    """
+    ready_check = UnifiedApp._combined_overlay_geometry_ready
+    geometry_sig = ((12.0, 8.0), (0.1, 0.9, 0.1, 0.9), ((0, "primary"),))
+    if ready_check(None, 1):
+        raise AssertionError("Missing combined geometry must remain fail-closed.")
+    if ready_check(geometry_sig, 0):
+        raise AssertionError("Unobserved combined geometry must remain blocked.")
+    if not ready_check(geometry_sig, 1):
+        raise AssertionError(
+            "One valid observation after draw-confirmed completion must release the overlay."
+        )
 
 
 def _regression_test_adaptive_refresh_decision_routing() -> None:
@@ -74621,6 +74682,22 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
             raise AssertionError(
                 f"Continuation page {page_number} should repeat Cycle table headers."
             )
+        figure.canvas.draw()
+        renderer = figure.canvas.get_renderer()
+        expected_heights = auto_plan["pages"][page_number - 1][1]
+        for row_index, expected_height in enumerate(expected_heights, start=1):
+            rendered_height = (
+                page_tables[0][(row_index, 0)].get_window_extent(renderer).height
+                / figure.dpi
+            )
+            if abs(rendered_height - float(expected_height)) > 0.01:
+                for open_figure in figures:
+                    plt.close(open_figure)
+                raise AssertionError(
+                    "Cycle table rows must retain their planned physical height "
+                    f"on page {page_number} ({rendered_height:.4f} != "
+                    f"{float(expected_height):.4f} inches)."
+                )
     if any(
         cell.get_text().get_ha() != "center"
         for cell in table_artists[0].get_celld().values()
@@ -77046,6 +77123,10 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
     (
         "Combined overlay completion guard",
         _regression_test_combined_overlay_completion_guard,
+    ),
+    (
+        "Combined overlay single-draw geometry release",
+        _regression_test_combined_overlay_single_draw_geometry_release,
     ),
     (
         "Adaptive refresh decision routing",
@@ -122856,6 +122937,35 @@ class UnifiedApp(tk.Tk):
 
         return (size_sig, subplot_sig, tuple(axes_sig))
 
+    @staticmethod
+    def _combined_overlay_geometry_ready(
+        current_geometry_sig: Any,
+        stable_draw_count: int,
+    ) -> bool:
+        """Return whether acknowledged combined geometry can release its overlay.
+
+        Purpose:
+            Decide whether the final draw supplied usable combined-plot geometry.
+        Why:
+            Completion is already draw-confirmed and guarded by pending-work
+            checks; requiring a second non-draw observation can block interaction
+            while Tk continues reporting harmless resize jitter.
+        Inputs:
+            current_geometry_sig: Low-noise geometry signature from the active figure.
+            stable_draw_count: Count of valid post-completion geometry observations.
+        Outputs:
+            True after the acknowledged draw has one valid geometry observation.
+        Side Effects:
+            None.
+        Exceptions:
+            Invalid counts return False rather than raising.
+        """
+        try:
+            observed_count = int(stable_draw_count)
+        except Exception:
+            return False
+        return current_geometry_sig is not None and observed_count >= 1
+
     def _capture_core_overlay_layout_baseline(
         self,
         frame: Optional[ttk.Frame],
@@ -161724,15 +161834,13 @@ class UnifiedApp(tk.Tk):
             Purpose:
                 Clear the loading overlay only after the refresh-triggered draw.
             Why:
-                The combined layout stabilizes after multiple refresh passes, so
-                the overlay must remain until the final post-refresh draw
-                acknowledgement is observed for the active refreshed figure.
+                The overlay must remain until the final post-refresh draw is
+                acknowledged and all pending layout/apply work is complete.
             Inputs:
                 target_frame: Plot tab frame hosting the combined plot.
                 force_clear: When True, clear even if readiness signals are missing.
                 from_debounce: When True, this invocation was queued by the
-                    geometry-settle debounce and may clear after the second
-                    matching geometry observation.
+                    geometry-settle debounce used when geometry was unavailable.
             Outputs:
                 None.
             Side Effects:
@@ -161926,15 +162034,19 @@ class UnifiedApp(tk.Tk):
                         )
                     )
                     return
-                if stable_count < 2:
+                geometry_ready = self._combined_overlay_geometry_ready(
+                    current_geometry_sig,
+                    stable_count,
+                )
+                if not geometry_ready:
                     self._log_plot_tab_debug(
                         "Combined overlay hold; geometry not yet stable (stable_draws=%s)."
                         % stable_count
                     )
-                # A first stable observation does not itself cause another draw
-                # event. Queue the second observation explicitly so this hold
-                # cannot wait indefinitely for unrelated UI activity.
-                if stable_count < 2 or not from_debounce:
+                # Retry only when the acknowledged draw could not provide usable
+                # geometry; one valid observation is sufficient once every
+                # pending-work guard above has cleared.
+                if not geometry_ready:
                     scheduled_finalize_after_id = getattr(
                         target_frame, "_combined_overlay_finalize_after_id", None
                     )
