@@ -7334,8 +7334,14 @@ def _migrate_legacy_geometry(
 
 
 def _normalize_plot_elements(value: Any) -> Dict[str, List[Dict[str, Any]]]:
-    """Normalize plot elements.
-    Used to keep plot elements consistent across workflows and persistence."""
+    """Normalize persisted Plot Elements payloads into the runtime schema.
+
+    Purpose/Why: Keep display, editing, duplication, and export on one validated
+    schema, including the Combined data-x/axes-y text coordinate mode.
+    Inputs/Outputs: `value` is an arbitrary settings payload; returns plot IDs
+    mapped to normalized element dictionaries.
+    Side Effects/Exceptions: None; malformed entries are skipped or defaulted.
+    """
     if not isinstance(value, dict):
         return {}
     sanitized: Dict[str, List[Dict[str, Any]]] = {}
@@ -7362,7 +7368,7 @@ def _normalize_plot_elements(value: Any) -> Dict[str, List[Dict[str, Any]]]:
                 .strip()
                 .lower()
             )
-            if coord_space not in {"data", "axes"}:
+            if coord_space not in {"data", "axes", "data_x_axes_y"}:
                 coord_space = "data"
             axes_target = _normalize_axes_target(element.get("axes_target"))
             normalized: Dict[str, Any] = {
@@ -7491,7 +7497,7 @@ def _normalize_annotations_ui(value: Any) -> Dict[str, Dict[str, Any]]:
         )
         axis_target = _normalize_axes_target(add_defaults.get("add_axis_target"))
         coord_space = str(add_defaults.get("add_coord_space") or "data").strip().lower()
-        if coord_space not in {"data", "axes"}:
+        if coord_space not in {"data", "axes", "data_x_axes_y"}:
             coord_space = "data"
         editor_geometry = state.get("editor_geometry")
         if not isinstance(editor_geometry, str) or not editor_geometry.strip():
@@ -9701,8 +9707,15 @@ class AnnotationRenderer:
             pass
 
     def _render_element(self, ax: Axes, element: Mapping[str, Any]) -> Optional[Any]:
-        """Render element.
-        Used to draw element for preview or export workflows."""
+        """Render one normalized annotation on its target axis.
+
+        Purpose/Why: Centralize artist construction so display/export use the
+        same geometry, style, mixed transforms, clipping, and z-order behavior.
+        Inputs/Outputs: `ax` is the target Axes and `element` is normalized
+        metadata; returns one artist, an artist sequence, or None.
+        Side Effects/Exceptions: Adds artists to `ax`; malformed geometry returns
+        None and optional styling failures are handled locally.
+        """
         element_type = str(element.get("type") or "").strip().lower()
         style = (
             element.get("style") if isinstance(element.get("style"), Mapping) else {}
@@ -9717,7 +9730,12 @@ class AnnotationRenderer:
         if coord_space == "axes":
             self._migrate_axes_to_data(ax, element)
             coord_space = "data"
-        transform = ax.transAxes if coord_space == "axes" else ax.transData
+        if coord_space == "data_x_axes_y":
+            from matplotlib.transforms import blended_transform_factory
+
+            transform = blended_transform_factory(ax.transData, ax.transAxes)
+        else:
+            transform = ax.transAxes if coord_space == "axes" else ax.transData
         alpha = self._style_alpha(style, 0.9)
         linewidth = self._style_float(style, "linewidth", 1.5, 0.2)
         zorder = _coerce_float(element.get("zorder")) or ANNOTATION_DEFAULT_ZORDER
@@ -9759,6 +9777,7 @@ class AnnotationRenderer:
                 va=style.get("text_valign", "bottom"),
                 zorder=zorder,
                 bbox=self._text_bbox(style),
+                clip_on=False,
             )
             artist.set_wrap(True)
             self._arm_text_bbox_picker(artist, element_id, "label")
@@ -10123,8 +10142,15 @@ class AnnotationRenderer:
         *,
         skip_wrap: bool = False,
     ) -> bool:
-        """Update artists.
-        Used to keep artists in sync with current state."""
+        """Update existing annotation artists from normalized element state.
+
+        Purpose/Why: Make dragging and property edits responsive without rebuilding
+        the underlying plot while preserving mixed-coordinate transforms.
+        Inputs/Outputs: Target `ax`, element metadata, artist sequence, and optional
+        wrap suppression; returns True when the artist type was updated.
+        Side Effects/Exceptions: Mutates artists in place; invalid metadata returns
+        False and best-effort styling errors remain contained.
+        """
         if ax is None or not artists:
             return False
         element_type = str(element.get("type") or "").strip().lower()
@@ -10137,7 +10163,12 @@ class AnnotationRenderer:
             else {}
         )
         coord_space = str(element.get("coord_space") or "data").strip().lower()
-        transform = ax.transAxes if coord_space == "axes" else ax.transData
+        if coord_space == "data_x_axes_y":
+            from matplotlib.transforms import blended_transform_factory
+
+            transform = blended_transform_factory(ax.transData, ax.transAxes)
+        else:
+            transform = ax.transAxes if coord_space == "axes" else ax.transData
         alpha = self._style_alpha(style, 0.9)
         linewidth = self._style_float(style, "linewidth", 1.5, 0.2)
         zorder = _coerce_float(element.get("zorder")) or ANNOTATION_DEFAULT_ZORDER
@@ -10610,8 +10641,14 @@ class AnnotationHitTest:
     def hit_test(
         self, ax: Axes, element: Mapping[str, Any], event: Any
     ) -> Optional[str]:
-        """Perform hit test.
-        Used to keep the workflow logic localized and testable."""
+        """Hit-test one annotation using its persisted coordinate transform.
+
+        Purpose/Why: Resolve draggable handles consistently for data, axes, and
+        Combined mixed-coordinate text.
+        Inputs/Outputs: `ax`, normalized `element`, and mouse `event`; returns a
+        handle name or None.
+        Side Effects/Exceptions: None; invalid geometry/events fail closed.
+        """
         if ax is None or event is None:
             return None
         element_type = str(element.get("type") or "").strip().lower()
@@ -10621,7 +10658,12 @@ class AnnotationHitTest:
             else {}
         )
         coord_space = str(element.get("coord_space") or "data").strip().lower()
-        transform = ax.transAxes if coord_space == "axes" else ax.transData
+        if coord_space == "data_x_axes_y":
+            from matplotlib.transforms import blended_transform_factory
+
+            transform = blended_transform_factory(ax.transData, ax.transAxes)
+        else:
+            transform = ax.transAxes if coord_space == "axes" else ax.transData
         event_xy = (event.x, event.y)
         if event_xy[0] is None or event_xy[1] is None:
             return None
@@ -12229,8 +12271,14 @@ class PlotAnnotationsController:
         self._drag_blit_state = None
 
     def _render_handles(self) -> None:
-        """Render handles.
-        Used to draw handles for preview or export workflows."""
+        """Render editing handles for the selected Plot Element.
+
+        Purpose/Why: Give live placement feedback in the same coordinate system
+        as the selected artist, including data-x/axes-y text.
+        Inputs/Outputs: Uses controller selection state and returns None.
+        Side Effects/Exceptions: Adds transient editor artists; missing axes or
+        malformed geometry return without raising.
+        """
         element = self.selected_element()
         if element is None:
             return
@@ -12238,7 +12286,12 @@ class PlotAnnotationsController:
         if ax is None:
             return
         coord_space = element.get("coord_space", "data")
-        transform = ax.transAxes if coord_space == "axes" else ax.transData
+        if coord_space == "data_x_axes_y":
+            from matplotlib.transforms import blended_transform_factory
+
+            transform = blended_transform_factory(ax.transData, ax.transAxes)
+        else:
+            transform = ax.transAxes if coord_space == "axes" else ax.transData
         handles = self._handle_positions(element, ax)
         element_type = str(element.get("type") or "").strip().lower()
         if element_type in {"xspan", "xspan_label"} and coord_space == "data":
@@ -13004,11 +13057,21 @@ class PlotAnnotationsController:
     def _event_coords(
         self, event: Any, coord_space: str, ax: Axes
     ) -> Optional[Tuple[float, float]]:
-        """Perform event coords.
-        Used to keep the workflow logic localized and testable."""
+        """Convert a mouse event into the requested annotation coordinates.
+
+        Purpose/Why: Drag operations must preserve data x while clamping Combined
+        text y to a safe axes-relative inset.
+        Inputs/Outputs: Mouse `event`, coordinate-space key, and target `ax`; returns
+        an `(x, y)` pair or None.
+        Side Effects/Exceptions: None; transform failures return None.
+        """
         try:
             if coord_space == "axes":
                 return tuple(ax.transAxes.inverted().transform((event.x, event.y)))
+            if coord_space == "data_x_axes_y":
+                data_x = ax.transData.inverted().transform((event.x, event.y))[0]
+                axes_y = ax.transAxes.inverted().transform((event.x, event.y))[1]
+                return float(data_x), float(max(0.04, min(0.96, axes_y)))
             x = getattr(event, "x", None)
             y = getattr(event, "y", None)
             if x is None or y is None:
@@ -13025,11 +13088,21 @@ class PlotAnnotationsController:
     def _event_coords_for_axis(
         self, event: Any, coord_space: str, ax: Axes
     ) -> Optional[Tuple[float, float]]:
-        """Perform event coords for axis.
-        Used to keep the workflow logic localized and testable."""
+        """Convert mouse pixels into coordinates for an explicit target axis.
+
+        Purpose/Why: Axis retargeting and placement need transform results even
+        when Matplotlib's event data belongs to an overlapping twin axis.
+        Inputs/Outputs: Mouse `event`, coordinate-space key, and `ax`; returns an
+        `(x, y)` pair or None.
+        Side Effects/Exceptions: None; invalid pixels/transforms return None.
+        """
         try:
             if coord_space == "axes":
                 return tuple(ax.transAxes.inverted().transform((event.x, event.y)))
+            if coord_space == "data_x_axes_y":
+                data_x = ax.transData.inverted().transform((event.x, event.y))[0]
+                axes_y = ax.transAxes.inverted().transform((event.x, event.y))[1]
+                return float(data_x), float(max(0.04, min(0.96, axes_y)))
             x = getattr(event, "x", None)
             y = getattr(event, "y", None)
             if x is None or y is None:
@@ -14171,8 +14244,14 @@ class AnnotationsPanel:
         return self._frame
 
     def _load_add_defaults(self) -> Dict[str, Any]:
-        """Load add defaults.
-        Used when restoring add defaults from storage."""
+        """Load and normalize persisted Add Element panel defaults.
+
+        Purpose/Why: Prevent malformed UI state from reaching placement logic while
+        preserving supported data, axes, and mixed coordinate modes.
+        Inputs/Outputs: Reads the current plot's annotation UI state and returns a
+        normalized defaults dictionary.
+        Side Effects/Exceptions: None; invalid values use safe defaults.
+        """
         state = self._store.ui_state_for(self._plot_id)
         add_defaults = state.get("add_defaults")
         if not isinstance(add_defaults, dict):
@@ -14198,7 +14277,7 @@ class AnnotationsPanel:
         )
         axis_target = _normalize_axes_target(merged.get("add_axis_target"))
         coord_space = str(merged.get("add_coord_space") or "data").strip().lower()
-        if coord_space not in {"data", "axes"}:
+        if coord_space not in {"data", "axes", "data_x_axes_y"}:
             coord_space = "data"
         return {
             "add_type": add_type,
@@ -15228,8 +15307,14 @@ class AnnotationsPanel:
         return canonical
 
     def _on_place_add_element(self) -> None:
-        """Handle place add element.
-        Used as an event callback for place add element."""
+        """Begin interactive placement using the Add Element panel values.
+
+        Purpose/Why: Normalize staged style/axis choices and default new Combined
+        text to data-x/axes-y placement before the controller creates geometry.
+        Inputs/Outputs: Reads panel variables and returns None.
+        Side Effects/Exceptions: Persists add defaults and arms controller placement;
+        invalid selections return without changing the plot.
+        """
         canonical = self._resolve_selected_add_type()
         if not canonical:
             return
@@ -15241,7 +15326,9 @@ class AnnotationsPanel:
         label_text = self._add_label_var.get().strip()
         axis_target = _normalize_axes_target(self._add_axis_var.get())
         coord_space = str(self._add_coord_var.get() or "data").strip().lower()
-        if coord_space not in {"data", "axes"}:
+        if canonical == "text" and self._plot_id == "fig_combined_triple_axis":
+            coord_space = "data_x_axes_y"
+        elif coord_space not in {"data", "axes", "data_x_axes_y"}:
             coord_space = "data"
         trace_key = _normalize_trace_series_key(self._add_trace_var.get(), default="y2")
         self._persist_add_defaults(
@@ -21790,7 +21877,18 @@ class RenderContext:
 
 @dataclass
 class RenderPacket:
-    """Background render packet for UI-thread plot assembly."""
+    """Background render packet for UI-thread plot assembly.
+
+    Purpose/Why:
+        Carries immutable prepared state from worker threads to Tk while allowing
+        stale Combined requests to be rejected before artist installation.
+    Inputs/Outputs:
+        Dataclass fields contain render context, ranges, geometry, identity, and
+        optional diagnostics; instances are consumed by UI render callbacks.
+    Side Effects/Exceptions:
+        None; constructing the packet does not mutate application state or raise
+        beyond normal dataclass argument validation.
+    """
 
     render_ctx: RenderContext
     data_fingerprint: DataFingerprint
@@ -21801,6 +21899,7 @@ class RenderPacket:
     perf: Optional[Dict[str, Any]] = None
     requested_plot_keys: Tuple[str, ...] = ()
     cycle_side_effects_mode: str = "auto"
+    request_generation: int = 0
 
 
 @dataclass(frozen=True)
@@ -34251,8 +34350,10 @@ def _rust_combined_required_indices(
     if x_payload.size <= 0:
         return np.zeros((0,), dtype=int)
     payload_series: List[np.ndarray] = []
-    for key in ("y1", "y2", "y3", "z", "z2"):
-        raw_values = series_arrays.get(key)
+    # Grouped Columns-tab traces use stable dynamic keys (`y1_2`, `z2_3`, ...),
+    # so forward every aligned array instead of limiting native acceleration to
+    # the five legacy canonical roles.
+    for _key, raw_values in series_arrays.items():
         if raw_values is None:
             continue
         try:
@@ -73000,15 +73101,13 @@ def _regression_test_custom_trace_legend_labels_apply_to_core_entries() -> None:
 
 
 def _regression_test_combined_grouped_custom_labels_force_rebuild() -> None:
-    """Validate grouped custom labels bypass unsafe combined reuse.
+    """Validate grouped custom labels remain eligible for safe Combined reuse.
 
     Purpose:
-        Guard the combined refresh routing decision for grouped/custom trace
-        metadata.
+        Guard the compatibility routing decision for grouped/custom trace metadata.
     Why:
-        In-place combined refresh updates base role artists, but grouped entries
-        and custom Columns-tab legend labels must be rebuilt so legend text maps
-        to the correct per-entry artist.
+        In-place refresh now maps stable series keys to grouped artists and updates
+        custom labels without rebuilding when topology remains unchanged.
     Inputs:
         None.
     Outputs:
@@ -73016,14 +73115,13 @@ def _regression_test_combined_grouped_custom_labels_force_rebuild() -> None:
     Side Effects:
         None.
     Exceptions:
-        Raises AssertionError when rebuild detection misses grouped or custom
-        trace metadata.
+        Raises AssertionError when grouped/custom payloads still force rebuilding.
     """
-    if not _combined_trace_groups_require_rebuild(
+    if _combined_trace_groups_require_rebuild(
         {"y1": [{"series_key": "y1", "legend_label": "Cylinder A"}]}
     ):
-        raise AssertionError("Custom trace labels should force combined rebuild.")
-    if not _combined_trace_groups_require_rebuild(
+        raise AssertionError("Custom trace labels should remain reusable.")
+    if _combined_trace_groups_require_rebuild(
         {
             "y1": [
                 {"series_key": "y1", "label": "Reactor A"},
@@ -73031,7 +73129,7 @@ def _regression_test_combined_grouped_custom_labels_force_rebuild() -> None:
             ]
         }
     ):
-        raise AssertionError("Additional grouped traces should force combined rebuild.")
+        raise AssertionError("Stable grouped traces should remain reusable.")
     if _combined_trace_groups_require_rebuild(
         {"y1": [{"series_key": "y1", "label": "Reactor A"}]}
     ):
@@ -82133,6 +82231,8 @@ class TemperatureVisual:
         temperature_values: Temperature samples in degrees Celsius.
         config: Sanitized mode-specific visualization configuration.
         source_key: Selected logical source (`z` or `z2`).
+        limits: Optional authoritative `(minimum, maximum)` color limits. When
+            omitted, finite source-data limits are used.
     Outputs:
         A reusable visual state object; `valid` reports finite aligned data.
     Side Effects:
@@ -82141,12 +82241,19 @@ class TemperatureVisual:
         Invalid inputs yield an invalid object for caller-controlled axis fallback.
     """
 
-    def __init__(self, x_values: Any, temperature_values: Any, config: Mapping[str, Any], source_key: str) -> None:
+    def __init__(
+        self,
+        x_values: Any,
+        temperature_values: Any,
+        config: Mapping[str, Any],
+        source_key: str,
+        limits: Optional[Tuple[float, float]] = None,
+    ) -> None:
         """Initialize reusable scalar color state without creating plot artists.
 
         Purpose: Prepare finite arrays and one shared Matplotlib Normalize object.
         Why: Rendering helpers must not independently infer color scales.
-        Inputs: See class docstring.
+        Inputs: See class docstring; `limits` overrides data-derived normalization.
         Outputs: None.
         Side Effects: Stores arrays, normalization, and ScalarMappable state.
         Exceptions: Coercion failures leave `valid` False.
@@ -82168,6 +82275,16 @@ class TemperatureVisual:
                 return
             finite_temp = temp_arr[finite]
             low, high = float(np.min(finite_temp)), float(np.max(finite_temp))
+            if limits is not None:
+                manual_low, manual_high = float(limits[0]), float(limits[1])
+                if (
+                    math.isfinite(manual_low)
+                    and math.isfinite(manual_high)
+                    and manual_low < manual_high
+                ):
+                    # A render snapshot owns the effective range. Reusing it for
+                    # Normalize keeps axes, backgrounds, lines, and colorbars equal.
+                    low, high = manual_low, manual_high
             if low == high:
                 low, high = low - 0.5, high + 0.5
             self.x_values = x_arr
@@ -82600,7 +82717,12 @@ def reflow_temperature_colorbar(fig: Figure) -> Any:
 
 
 def _resolve_temperature_visual_for_series(
-    source_settings: Any, x_values: Any, z_values: Any, z2_values: Any
+    source_settings: Any,
+    x_values: Any,
+    z_values: Any,
+    z2_values: Any,
+    *,
+    temperature_limits: Optional[Tuple[float, float]] = None,
 ) -> Tuple[str, Optional[TemperatureVisual]]:
     """Resolve the active temperature rendering mode and shared visual state.
 
@@ -82614,6 +82736,8 @@ def _resolve_temperature_visual_for_series(
         source_settings: Persisted settings/profile mapping.
         x_values: Shared elapsed-time series.
         z_values/z2_values: Internal and external temperature candidates.
+        temperature_limits: Optional request-scoped limits shared by the axis
+            and non-axis color representations.
     Outputs:
         `(mode, visual)` where mode is `axis` on any safe fallback.
     Side Effects:
@@ -82631,7 +82755,13 @@ def _resolve_temperature_visual_for_series(
     if not config.get("enabled"):
         return ("axis", None)
     for source_key, values in candidates:
-        visual = TemperatureVisual(x_values, values, config, source_key)
+        visual = TemperatureVisual(
+            x_values,
+            values,
+            config,
+            source_key,
+            limits=temperature_limits,
+        )
         if visual.valid:
             return (mode, visual)
     return ("axis", None)
@@ -92109,8 +92239,8 @@ def _trace_group_entries_from_context(
         Core and combined plots need one safe way to draw multiple selected
         columns per role without forcing every older data context to change.
     Inputs:
-        data_ctx: Render data context containing optional `trace_groups` and
-            `trace_groups_np` payloads.
+        data_ctx: Render data context containing optional display,
+            `trace_groups_np`, and `trace_groups` payloads.
         role: Logical trace role to resolve.
         fallback_series: Legacy series value used when no group is present.
         fallback_label: Legacy selected-column label used for fallback entries.
@@ -92128,9 +92258,12 @@ def _trace_group_entries_from_context(
         return []
     group_sources = []
     if isinstance(data_ctx, Mapping):
+        display_trace_groups = data_ctx.get("combined_display_trace_groups")
         trace_groups_np = data_ctx.get("trace_groups_np")
         trace_groups = data_ctx.get("trace_groups")
-        if isinstance(trace_groups_np, Mapping):
+        if isinstance(display_trace_groups, Mapping):
+            group_sources = display_trace_groups.get(role_key) or []
+        if not group_sources and isinstance(trace_groups_np, Mapping):
             group_sources = trace_groups_np.get(role_key) or []
         if not group_sources and isinstance(trace_groups, Mapping):
             group_sources = trace_groups.get(role_key) or []
@@ -92198,40 +92331,25 @@ def _trace_group_entries_from_context(
 
 
 def _combined_trace_groups_require_rebuild(trace_groups_payload: Any) -> bool:
-    """Return whether combined grouped traces need a full rebuild.
+    """Return whether grouped payload shape alone requires a full rebuild.
 
     Purpose:
-        Detect grouped trace states that the in-place combined refresh path
-        cannot safely update.
+        Preserve a compatibility hook for callers that previously treated every
+        grouped/custom-label payload as structurally unsafe.
     Why:
-        The reuse path is keyed to base series roles, while extra grouped traces
-        and Columns-tab custom legend labels are represented by per-entry
-        metadata that must be rebuilt into artists and legend text.
+        Reuse now keys artists by stable per-entry series keys and compares a
+        topology signature, so payload contents alone never require rebuilding.
     Inputs:
         trace_groups_payload: Candidate `trace_groups` or `trace_groups_np`
             mapping from the render data context.
     Outputs:
-        True when any grouped role has multiple entries or any entry carries a
-        custom legend label marker; otherwise False.
+        False. Actual topology mismatch is resolved by the display state signature.
     Side Effects:
         None.
     Exceptions:
-        Malformed payloads are treated as not requiring a rebuild.
+        None; the payload is intentionally not traversed.
     """
-    if not isinstance(trace_groups_payload, Mapping):
-        return False
-    for entries in trace_groups_payload.values():
-        if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
-            continue
-        if len(entries) > 1:
-            return True
-        for entry in entries:
-            if not isinstance(entry, Mapping):
-                continue
-            if str(entry.get("legend_label") or "").strip() or bool(
-                entry.get("label_is_custom")
-            ):
-                return True
+    _ = trace_groups_payload
     return False
 
 
@@ -92959,8 +93077,13 @@ def main_plotting_function(
         or bool(z2_entries)
     )
     deriv_axis_selected = bool(y2_entries)
+    temperature_settings = style_ctx.get("temperature_visualization_settings") or settings
     temperature_render_mode, temperature_visual = _resolve_temperature_visual_for_series(
-        settings, x, z, z2
+        temperature_settings,
+        x,
+        z,
+        z2,
+        temperature_limits=(twin_y_min, twin_y_max),
     )
     if temperature_render_mode != "axis" and temperature_visual is not None:
         fig_temperature_status = {
@@ -95836,19 +95959,32 @@ def _layout_health_general_figure_audit(
     break_labels = list(
         getattr(fig, "_gl260_combined_exclusion_break_label_artists", []) or []
     )
-    if break_labels and primary_xticks_bbox is not None:
+    if break_labels:
         break_label_gap_pts = None
+        measured_break_boxes: List[Any] = []
         for break_label in break_labels:
             break_bbox = _layout_health_bbox_in_fig(fig, break_label, renderer)
             if break_bbox is None:
                 continue
-            gap_pts = float((primary_xticks_bbox.y0 - break_bbox.y1) * fig_h_pts)
-            if break_label_gap_pts is None or gap_pts < break_label_gap_pts:
-                break_label_gap_pts = gap_pts
-            if _layout_health_bbox_overlap_area(break_bbox, primary_xticks_bbox) > 1e-8:
-                _add_issue("combined_break_label_xticklabels_overlap")
-            elif gap_pts < float(min_gap_pts) - 0.25:
-                _add_issue("combined_break_label_xticklabels_gap_low")
+            for prior_bbox in measured_break_boxes:
+                if _layout_health_bbox_overlap_area(break_bbox, prior_bbox) > 1e-8:
+                    _add_issue("combined_break_labels_overlap")
+                    break
+            measured_break_boxes.append(break_bbox)
+            if break_bbox.x0 < 0.0 or break_bbox.x1 > 1.0 or break_bbox.y0 < 0.0:
+                _add_issue("combined_break_label_off_canvas")
+            if primary_xlabel_bbox is not None and (
+                _layout_health_bbox_overlap_area(break_bbox, primary_xlabel_bbox) > 1e-8
+            ):
+                _add_issue("combined_break_label_xlabel_overlap")
+            if primary_xticks_bbox is not None:
+                gap_pts = float((primary_xticks_bbox.y0 - break_bbox.y1) * fig_h_pts)
+                if break_label_gap_pts is None or gap_pts < break_label_gap_pts:
+                    break_label_gap_pts = gap_pts
+                if _layout_health_bbox_overlap_area(break_bbox, primary_xticks_bbox) > 1e-8:
+                    _add_issue("combined_break_label_xticklabels_overlap")
+                elif gap_pts < float(min_gap_pts) - 0.25:
+                    _add_issue("combined_break_label_xticklabels_gap_low")
         audit["break_label_tick_gap_pts"] = break_label_gap_pts
 
     for legend in _collect_gl260_legends(fig):
@@ -99673,6 +99809,149 @@ def _suppress_combined_break_tick_label_collisions(axis: Axes) -> None:
                 break
 
 
+def _resolve_combined_export_break_label_collisions(
+    fig: Figure,
+    axis: Axes,
+    *,
+    clearance_pts: float = 2.0,
+    max_passes: int = 12,
+) -> Dict[str, Any]:
+    """Stagger Combined export break labels until rendered boxes do not overlap.
+
+    Purpose:
+        Resolve break-label collisions with later labels, x ticks, the x label,
+        and the export canvas boundary using measured renderer geometry.
+    Why:
+        Closely spaced exclusions can produce overlapping source-time labels even
+        when tick-label suppression succeeds; export needs deterministic layout.
+    Inputs:
+        fig: Export figure; axis: primary Combined axis; clearance_pts: required
+        measured gap; max_passes: bounded redraw/measurement iterations.
+    Outputs:
+        Dictionary containing final point offsets, pass count, and unresolved IDs.
+    Side Effects:
+        Moves only later colliding annotations downward on this figure, may grow
+        the export-only bottom margin/xlabel padding, and redraws for measurement.
+    Exceptions:
+        Missing artists/renderers return an empty result without raising.
+    """
+    labels = list(
+        getattr(fig, "_gl260_combined_exclusion_break_label_artists", []) or []
+    )
+    result: Dict[str, Any] = {"offsets": (), "passes": 0, "unresolved": ()}
+    if not labels or axis is None:
+        return result
+    try:
+        canvas = fig.canvas or FigureCanvasAgg(fig)
+        if fig.canvas is None:
+            fig.set_canvas(canvas)
+        dpi = float(fig.dpi or 72.0)
+    except Exception:
+        return result
+    clearance_px = max(0.0, float(clearance_pts)) * dpi / 72.0
+    original_positions = {
+        id(label): tuple(map(float, label.get_position())) for label in labels
+    }
+    unresolved: List[str] = []
+    for pass_index in range(max(1, int(max_passes))):
+        try:
+            canvas.draw()
+            renderer = canvas.get_renderer()
+            canvas_bbox = fig.bbox
+            ordered = sorted(
+                labels,
+                key=lambda item: (
+                    item.get_window_extent(renderer).x0,
+                    labels.index(item),
+                ),
+            )
+        except Exception:
+            break
+        tick_obstacles = []
+        for tick_label in axis.get_xticklabels():
+            try:
+                if tick_label.get_visible() and tick_label.get_text().strip():
+                    tick_obstacles.append(tick_label.get_window_extent(renderer))
+            except Exception:
+                continue
+        xlabel = axis.xaxis.label
+        try:
+            xlabel_bbox = (
+                xlabel.get_window_extent(renderer)
+                if xlabel.get_visible() and xlabel.get_text().strip()
+                else None
+            )
+        except Exception:
+            xlabel_bbox = None
+        accepted: List[Any] = []
+        moved = False
+        needs_bottom_room = False
+        xlabel_collision = False
+        unresolved = []
+        for label_index, label in enumerate(ordered):
+            try:
+                bbox = label.get_window_extent(renderer)
+            except Exception:
+                unresolved.append(str(label_index))
+                continue
+            obstacles = [*accepted, *tick_obstacles]
+            if xlabel_bbox is not None:
+                obstacles.append(xlabel_bbox)
+            collisions = [
+                obstacle
+                for obstacle in obstacles
+                if bbox.expanded(
+                    (bbox.width + (2.0 * clearance_px)) / max(bbox.width, 1.0),
+                    (bbox.height + (2.0 * clearance_px)) / max(bbox.height, 1.0),
+                ).overlaps(obstacle)
+            ]
+            if collisions:
+                downward_px = max(
+                    bbox.y1 - obstacle.y0 + clearance_px for obstacle in collisions
+                )
+                x_offset, y_offset = map(float, label.get_position())
+                label.set_position((x_offset, y_offset - (downward_px * 72.0 / dpi)))
+                moved = True
+                xlabel_collision = xlabel_bbox is not None and any(
+                    obstacle is xlabel_bbox for obstacle in collisions
+                )
+            accepted.append(bbox)
+            if bbox.y0 < canvas_bbox.y0 + clearance_px:
+                needs_bottom_room = True
+        if needs_bottom_room or xlabel_collision:
+            current_bottom = float(fig.subplotpars.bottom)
+            fig.subplots_adjust(bottom=min(0.48, current_bottom + 0.035))
+            if xlabel_collision:
+                axis.xaxis.labelpad = float(axis.xaxis.labelpad) + clearance_pts + 2.0
+            moved = True
+        result["passes"] = pass_index + 1
+        if not moved:
+            break
+    try:
+        canvas.draw()
+        renderer = canvas.get_renderer()
+        final_boxes = [label.get_window_extent(renderer) for label in labels]
+        unresolved = []
+        for index, bbox in enumerate(final_boxes):
+            if bbox.y0 < fig.bbox.y0 + clearance_px:
+                unresolved.append(str(index))
+            for later in range(index + 1, len(final_boxes)):
+                if bbox.overlaps(final_boxes[later]):
+                    unresolved.append(str(later))
+        result["offsets"] = tuple(
+            (
+                float(label.get_position()[0] - original_positions[id(label)][0]),
+                float(label.get_position()[1] - original_positions[id(label)][1]),
+            )
+            for label in labels
+        )
+        result["unresolved"] = tuple(dict.fromkeys(unresolved))
+    except Exception:
+        pass
+    fig._gl260_combined_export_break_layout = result  # type: ignore[attr-defined]
+    return result
+
+
 def build_combined_triple_axis_figure(
     min_time,
     max_time,
@@ -100254,8 +100533,13 @@ def build_combined_triple_axis_figure(
         },
     }
 
+    temperature_settings = style_ctx.get("temperature_visualization_settings") or settings
     temperature_render_mode, temperature_visual = _resolve_temperature_visual_for_series(
-        settings, x, z, z2
+        temperature_settings,
+        x,
+        z,
+        z2,
+        temperature_limits=(twin_y_min, twin_y_max),
     )
     if temperature_render_mode != "axis" and temperature_visual is not None:
         fig._gl260_temperature_colorbar_status = {  # type: ignore[attr-defined]
@@ -101511,6 +101795,8 @@ def build_combined_triple_axis_figure(
         # Run after the final renderer pass so only a tick label that actually
         # collides with a source-time break label is suppressed in preview/export.
         _suppress_combined_break_tick_label_collisions(ax)
+        if mode_value == "export":
+            _resolve_combined_export_break_label_collisions(fig, ax)
 
     # Cycle legend offsets are normalized against a reference axis so detached
     # spines export consistently across DPI and canvas sizes.
@@ -106833,6 +107119,8 @@ class UnifiedApp(tk.Tk):
         self.temperature_source = tk.StringVar(
             value=temperature_visual_settings["temperature_source"]
         )
+        self.temperature_source_display = tk.StringVar(value="Auto")
+        self._temperature_source_combos: List[Any] = []
         self.temperature_background_enabled = tk.BooleanVar(
             value=temperature_visual_settings["temperature_background"]["enabled"]
         )
@@ -127156,17 +127444,155 @@ class UnifiedApp(tk.Tk):
             pass
         return artist
 
+    def _migrate_combined_text_coordinates(
+        self, fig: Figure, elements: Sequence[Dict[str, Any]]
+    ) -> bool:
+        """Migrate legacy Combined text to data-x/axes-y coordinates.
+
+        Purpose:
+            Preserve each text element's event-time x value while making its
+            vertical position independent of changing pressure/temperature ranges.
+        Why:
+            Legacy data-y values can remain registered but render off-screen after
+            axis changes; a one-time normalized coordinate records deterministic
+            display and export placement.
+        Inputs:
+            fig: Combined figure whose primary y limits define migration.
+            elements: Mutable persisted element dictionaries.
+        Outputs:
+            True when at least one element was migrated, otherwise False.
+        Side Effects:
+            Mutates legacy visible/hidden Combined text geometry and coord_space.
+        Exceptions:
+            Malformed elements and unavailable axes are skipped without raising.
+        """
+        axes_map = self._resolve_plot_element_axes(fig)
+        primary = axes_map.get("primary")
+        if primary is None:
+            return False
+        try:
+            y_min, y_max = map(float, primary.get_ylim())
+        except Exception:
+            return False
+        span = y_max - y_min
+        if not math.isfinite(span) or span == 0.0:
+            return False
+        changed = False
+        for element in elements:
+            if not isinstance(element, dict) or element.get("type") != "text":
+                continue
+            if str(element.get("coord_space") or "data").lower() != "data":
+                continue
+            geometry = element.get("geometry")
+            if not isinstance(geometry, dict):
+                continue
+            y_value = _coerce_float(geometry.get("y"))
+            if y_value is None:
+                continue
+            axes_y = (float(y_value) - y_min) / span
+            geometry["y"] = float(max(0.04, min(0.96, axes_y)))
+            element["coord_space"] = "data_x_axes_y"
+            changed = True
+        return changed
+
+    def _arm_combined_text_visibility_audit(
+        self,
+        fig: Figure,
+        axes_map: Mapping[str, Axes],
+        elements: Sequence[Mapping[str, Any]],
+    ) -> None:
+        """Audit visible Combined text artists after the next completed draw.
+
+        Purpose/Why:
+            Confirm that every visible registered text has a live, unclipped artist
+            whose rendered box intersects its target plot viewport.
+        Inputs:
+            fig: Rendered Combined figure; axes_map: target axes; elements:
+            normalized persisted plot elements.
+        Outputs:
+            None.
+        Side Effects:
+            Installs a one-shot draw callback and records issue IDs on the figure.
+        Exceptions:
+            Renderer/bounding-box failures are recorded as issues, not raised.
+        """
+        canvas = getattr(fig, "canvas", None)
+        if canvas is None or not hasattr(canvas, "mpl_connect"):
+            return
+        prior_cid = getattr(fig, "_gl260_text_visibility_audit_cid", None)
+        if prior_cid is not None:
+            try:
+                canvas.mpl_disconnect(prior_cid)
+            except Exception:
+                pass
+
+        def _audit(_event: Any) -> None:
+            """Measure registered text artists once the active canvas draw finishes."""
+            issues: List[str] = []
+            artist_map = getattr(fig, "_gl260_annotation_artist_map", {})
+            renderer = getattr(_event, "renderer", None)
+            for element in elements:
+                if not isinstance(element, Mapping) or not element.get("visible", True):
+                    continue
+                if element.get("type") != "text":
+                    continue
+                element_id = str(element.get("id") or "")
+                artists = (
+                    artist_map.get(element_id, [])
+                    if isinstance(artist_map, Mapping)
+                    else []
+                )
+                target = axes_map.get(
+                    str(element.get("axes_target") or "primary")
+                ) or axes_map.get("primary")
+                intersects = False
+                for artist in artists:
+                    try:
+                        artist.set_clip_on(False)
+                        intersects = artist.get_window_extent(renderer).overlaps(
+                            target.bbox
+                        )
+                    except Exception:
+                        continue
+                    if intersects:
+                        break
+                if not artists or not intersects:
+                    issues.append(element_id)
+            fig._gl260_combined_text_visibility_issues = tuple(issues)  # type: ignore[attr-defined]
+            try:
+                canvas.mpl_disconnect(fig._gl260_text_visibility_audit_cid)
+            except Exception:
+                pass
+            fig._gl260_text_visibility_audit_cid = None  # type: ignore[attr-defined]
+
+        fig._gl260_text_visibility_audit_cid = canvas.mpl_connect(  # type: ignore[attr-defined]
+            "draw_event", _audit
+        )
+
     def _apply_plot_elements(self, fig: Figure, plot_id: str) -> None:
-        """Apply plot elements.
-        Used to apply plot elements changes to live state."""
+        """Apply persisted Plot Elements and trace behaviors to one figure.
+
+        Purpose/Why: Keep display/export artist registries synchronized and migrate
+        legacy Combined text before its first render.
+        Inputs/Outputs: `fig` is the target figure and `plot_id` selects settings;
+        returns None.
+        Side Effects/Exceptions: Clears/recreates annotation artists, may persist a
+        one-time text migration, and arms a draw audit; guarded renderers contain
+        malformed optional element failures.
+        """
         if fig is None or not plot_id:
             return
         elements_map = settings.get("plot_elements", {})
         elements = elements_map.get(plot_id) if isinstance(elements_map, dict) else []
+        if plot_id == "fig_combined_triple_axis" and isinstance(elements, list):
+            if self._migrate_combined_text_coordinates(fig, elements):
+                self._schedule_save_settings()
         self._clear_plot_element_artists(fig)
         axes_map = self._resolve_plot_element_axes(fig)
         effective_elements = elements or []
         self._annotation_renderer.render(fig, axes_map, effective_elements)
+        if plot_id == "fig_combined_triple_axis":
+            self._arm_combined_text_visibility_audit(fig, axes_map, effective_elements)
         scatter_series_settings = settings.get("scatter_series", {})
         self._annotation_renderer.apply_trace_behavior_filters(
             fig,
@@ -128581,6 +129007,11 @@ class UnifiedApp(tk.Tk):
             Best-effort guards suppress refresh failures to keep UI responsive.
         """
         if not plot_id:
+            return
+        if (
+            plot_id == "fig_combined_triple_axis"
+            and not self._validate_temperature_axis_range(show_error=True)
+        ):
             return
         if isinstance(reason, str) and "data trace settings" in reason.lower():
             self._mark_plot_trace_dirty(plot_id)
@@ -147183,6 +147614,94 @@ class UnifiedApp(tk.Tk):
         }
         return label_map.get(key, fallback_labels.get(key, key.upper()))
 
+    def _temperature_source_display_options(self) -> Dict[str, str]:
+        """Return canonical temperature-source keys mapped to column-aware labels.
+
+        Purpose:
+            Present Z and Z2 using the names assigned on the Columns tab.
+        Why:
+            Persisted source keys must remain stable while users need meaningful
+            labels in Plot Settings instead of raw implementation keys.
+        Inputs:
+            None; reads the current effective column and grouped-trace mappings.
+        Outputs:
+            Ordered mapping containing `auto` and available `z`/`z2` labels.
+        Side Effects:
+            None.
+        Exceptions:
+            Missing mappings fall back to the existing combined dataset labels.
+        """
+        effective = self._get_effective_columns()
+        trace_groups = self._get_column_trace_groups()
+        options: Dict[str, str] = {"auto": "Auto"}
+        for role in ("z", "z2"):
+            columns = list(trace_groups.get(role, []) or [])
+            column_name = str(
+                (columns[0] if columns else effective.get(role)) or ""
+            ).strip()
+            if not column_name or column_name.lower() == "none":
+                continue
+            options[role] = f"{column_name} ({role.upper()})"
+        return options
+
+    def _refresh_temperature_source_choices(self) -> None:
+        """Refresh temperature-source labels while preserving the canonical key.
+
+        Purpose:
+            Synchronize every live source combobox after column/profile changes.
+        Why:
+            The visible label is column-dependent, but rendering and persistence
+            continue to use the compatible `auto`, `z`, and `z2` values.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Updates combobox values and the display StringVar; unavailable saved
+            sources fall back to `auto` without changing column assignments.
+        Exceptions:
+            Destroyed or partially built widgets are skipped safely.
+        """
+        options = self._temperature_source_display_options()
+        canonical = str(self.temperature_source.get() or "auto").strip().lower()
+        if canonical not in options:
+            canonical = "auto"
+            self.temperature_source.set(canonical)
+        self._temperature_source_display_map = {
+            label: key for key, label in options.items()
+        }
+        self.temperature_source_display.set(options[canonical])
+        live_combos: List[Any] = []
+        for combo in list(getattr(self, "_temperature_source_combos", []) or []):
+            try:
+                if combo.winfo_exists():
+                    combo.configure(values=tuple(options.values()))
+                    live_combos.append(combo)
+            except Exception:
+                continue
+        self._temperature_source_combos = live_combos
+
+    def _commit_temperature_source_display(self, _event: Any = None) -> None:
+        """Commit a displayed temperature-source label to its canonical key.
+
+        Purpose:
+            Translate the column-aware combobox selection back to `auto`/`z`/`z2`.
+        Why:
+            Existing profiles and render code rely on canonical persisted values.
+        Inputs:
+            _event: Optional Tk combobox event; its value is not otherwise used.
+        Outputs:
+            None.
+        Side Effects:
+            Updates `self.temperature_source` and refreshes the display label.
+        Exceptions:
+            Unknown display values resolve safely to `auto`.
+        """
+        display_value = str(self.temperature_source_display.get() or "").strip()
+        mapping = getattr(self, "_temperature_source_display_map", {}) or {}
+        self.temperature_source.set(str(mapping.get(display_value, "auto")))
+        self._refresh_temperature_source_choices()
+
     def _combined_axis_options(self, *, include_none: bool = False) -> List[str]:
         """Return combined-axis dataset keys for selector population.
 
@@ -147270,6 +147789,7 @@ class UnifiedApp(tk.Tk):
             "third": third_key,
         }
         self._sync_combined_zero_line_control()
+        self._refresh_temperature_source_choices()
 
     def _sync_combined_axis_display(self) -> None:
         """Perform sync combined axis display.
@@ -147493,20 +148013,20 @@ class UnifiedApp(tk.Tk):
         """Return whether combined plots should run post-first-draw refresh logic.
 
         Purpose:
-            Gate post-first-draw combined refresh scheduling by selected mode.
+            Gate the legacy post-first-draw combined refresh scheduling.
         Why:
-            Single-pass mode should avoid extra refresh passes for responsiveness.
+            The prepared render now owns final layout and draw completion, so a
+            second full refresh is redundant and can freeze the UI for minutes.
         Inputs:
             None.
         Outputs:
-            True when post-first-draw refresh should run, otherwise False.
+            Always False; the active render completes in one installed pass.
         Side Effects:
             None.
         Exceptions:
             None.
         """
-        mode = self._combined_refresh_mode()
-        return mode in {"adaptive", "two_pass"}
+        return False
 
     def _combined_second_refresh_disabled(self) -> bool:
         """Return whether the combined second refresh pass is disabled.
@@ -147519,13 +148039,13 @@ class UnifiedApp(tk.Tk):
         Inputs:
             None.
         Outputs:
-            True when mode is `single_pass`, otherwise False.
+            Always True because redundant post-draw refreshes are disabled.
         Side Effects:
             None.
         Exceptions:
             None.
         """
-        return self._combined_refresh_mode() == "single_pass"
+        return True
 
     def _combined_overlay_default_target_refreshes(self) -> int:
         """Return the default combined refresh pass target from current preferences.
@@ -147543,10 +148063,7 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             None.
         """
-        mode = self._combined_refresh_mode()
-        if mode == "single_pass":
-            return 1
-        return 2
+        return 1
 
     def _close_plot_render_settings_dialog(self) -> None:
         """Close the Plot Render Settings dialog.
@@ -149912,13 +150429,21 @@ class UnifiedApp(tk.Tk):
         ttk.Label(lf_axes, text="Source").grid(
             row=1, column=4, sticky="e", padx=6, pady=4
         )
-        ttk.Combobox(
+        temperature_source_combo = ttk.Combobox(
             lf_axes,
-            textvariable=self.temperature_source,
-            values=("auto", "z", "z2"),
+            textvariable=self.temperature_source_display,
+            values=(),
             state="readonly",
-            width=6,
-        ).grid(row=1, column=5, sticky="w", padx=6, pady=4)
+            width=30,
+        )
+        temperature_source_combo.grid(
+            row=1, column=5, sticky="w", padx=6, pady=4
+        )
+        temperature_source_combo.bind(
+            "<<ComboboxSelected>>", self._commit_temperature_source_display, add="+"
+        )
+        self._temperature_source_combos.append(temperature_source_combo)
+        self._refresh_temperature_source_choices()
         ttk.Checkbutton(
             lf_axes,
             text="Enable background mode",
@@ -151349,13 +151874,21 @@ class UnifiedApp(tk.Tk):
         ttk.Label(temperature_visual_frame, text="Temperature source").grid(
             row=0, column=2, sticky="w", padx=6, pady=3
         )
-        ttk.Combobox(
+        temperature_source_combo = ttk.Combobox(
             temperature_visual_frame,
-            textvariable=self.temperature_source,
-            values=("auto", "z", "z2"),
+            textvariable=self.temperature_source_display,
+            values=(),
             state="readonly",
-            width=8,
-        ).grid(row=0, column=3, sticky="w", padx=6, pady=3)
+            width=30,
+        )
+        temperature_source_combo.grid(
+            row=0, column=3, sticky="w", padx=6, pady=3
+        )
+        temperature_source_combo.bind(
+            "<<ComboboxSelected>>", self._commit_temperature_source_display, add="+"
+        )
+        self._temperature_source_combos.append(temperature_source_combo)
+        self._refresh_temperature_source_choices()
         ttk.Checkbutton(
             temperature_visual_frame,
             text="Enable Background mode",
@@ -243697,8 +244230,13 @@ class UnifiedApp(tk.Tk):
             return value
 
     def _get_axis_auto_range_flags(self) -> Dict[str, bool]:
-        """Return axis auto range flags.
-        Used to retrieve axis auto range flags for downstream logic."""
+        """Return normalized data-range policy flags for all plot axes.
+
+        Purpose/Why: Separate data-derived axis limits from independent automatic
+        tick-locator settings.
+        Inputs/Outputs: Reads Tk variables and returns canonical boolean flags.
+        Side Effects/Exceptions: None; normalization supplies safe defaults.
+        """
         flags = {
             "time": bool(self.axis_auto_time.get()),
             "pressure": bool(self.axis_auto_pressure.get()),
@@ -243707,9 +244245,54 @@ class UnifiedApp(tk.Tk):
         }
         return _sanitize_axis_auto_range_settings(flags)
 
+    def _validate_temperature_axis_range(self, *, show_error: bool = True) -> bool:
+        """Validate the effective manual temperature range before rendering.
+
+        Purpose:
+            Reject non-finite, reversed, or zero-width manual temperature bounds.
+        Why:
+            A disabled temperature auto-range flag must never silently fall back
+            to data-derived limits when the user's manual values are invalid.
+        Inputs:
+            show_error: Display a modal validation message when validation fails.
+        Outputs:
+            True when auto-range is enabled or the manual range is valid.
+        Side Effects:
+            May display an error dialog; no settings or plot state is mutated.
+        Exceptions:
+            Tk/value conversion errors are converted to a False result.
+        """
+        try:
+            if bool(self.axis_auto_temp.get()):
+                return True
+            lower = float(self.twin_y_min.get())
+            upper = float(self.twin_y_max.get())
+            valid = math.isfinite(lower) and math.isfinite(upper) and lower < upper
+        except Exception:
+            valid = False
+        if valid:
+            return True
+        if show_error:
+            try:
+                messagebox.showerror(
+                    "Invalid Temperature Range",
+                    "Temperature Auto-Range is off. Enter finite minimum and "
+                    "maximum values with minimum less than maximum.",
+                )
+            except Exception:
+                pass
+        return False
+
     def _compute_axis_ranges_from_current_selection(self):
-        """Compute axis ranges from current selection.
-        Used to derive axis ranges from current selection for analysis or plotting."""
+        """Compute effective axis ranges from the current selected traces.
+
+        Purpose/Why: Provide the synchronous UI helper with the same grouped-trace,
+        source-specific temperature, padding, and manual fallback policy as snapshots.
+        Inputs/Outputs: Reads current data/selection state and returns a range mapping
+        or None when data is unavailable.
+        Side Effects/Exceptions: Builds grouped series references but does not mutate
+        limits; individual invalid series fall back safely.
+        """
 
         if self.df is None or not self.columns:
 
@@ -243749,6 +244332,7 @@ class UnifiedApp(tk.Tk):
             fallback,
             trace_groups=trace_group_series,
             auto_flags=self._get_axis_auto_range_flags(),
+            temperature_source=self.temperature_source.get(),
         )
 
     def _compute_axis_ranges_for_snapshot(
@@ -243761,6 +244345,7 @@ class UnifiedApp(tk.Tk):
         trace_groups=None,
         auto_flags=None,
         df_snapshot=None,
+        temperature_source="auto",
     ):
         """Compute auto-axis limits for a data snapshot using current preferences.
 
@@ -243778,6 +244363,8 @@ class UnifiedApp(tk.Tk):
             trace_groups: Optional grouped trace series payload by logical role.
             auto_flags: Optional per-axis auto-enable flags.
             df_snapshot: Optional dataframe override; defaults to `self.df`.
+            temperature_source: Canonical `auto`, `z`, or `z2` selector used to
+                derive request-scoped automatic temperature bounds.
         Returns:
             Dict[str, float] | None: Computed limits or `None` when no dataframe exists.
         Side Effects:
@@ -243889,8 +244476,13 @@ class UnifiedApp(tk.Tk):
                     yield pd.Series(series_value).dropna()
 
         def _chunked_nanminmax(values):
-            """Perform chunked nanminmax.
-            Used to keep the workflow logic localized and testable."""
+            """Reduce a numeric array to finite bounds in bounded-memory chunks.
+
+            Purpose/Why: Avoid large temporary reductions during automatic ranging.
+            Inputs/Outputs: One ndarray-like `values`; returns `(minimum, maximum)`.
+            Side Effects/Exceptions: None; raises ValueError for empty/all-invalid data
+            so the owning axis branch can retain its fallback range.
+            """
             if values.size == 0:
                 raise ValueError("empty array")
 
@@ -243924,9 +244516,22 @@ class UnifiedApp(tk.Tk):
             return min_val, max_val
 
         def _series_extent(series):
-            """Perform series extent.
-            Used to keep the workflow logic localized and testable."""
-            values = series.to_numpy(dtype=float, copy=False)
+            """Return finite minimum/maximum values for one series-like input.
+
+            Purpose/Why:
+                Auto-ranging accepts pandas and grouped ndarray payloads without
+                copying already numeric arrays unnecessarily.
+            Inputs/Outputs:
+                `series` is a one-dimensional series-like object; returns its
+                `(minimum, maximum)` finite float pair.
+            Side Effects/Exceptions:
+                None; empty/all-nonfinite input raises ValueError through the
+                owning chunked reducer so the caller can retain fallback limits.
+            """
+            if hasattr(series, "to_numpy"):
+                values = series.to_numpy(dtype=float, copy=False)
+            else:
+                values = np.asarray(series, dtype=float)
             return _chunked_nanminmax(values)
 
         result = {}
@@ -244014,8 +244619,11 @@ class UnifiedApp(tk.Tk):
 
             t_candidates = []
 
-            # Iterate over ("z", "z2") to apply the per-item logic.
-            for key in ("z", "z2"):
+            source_key = str(temperature_source or "auto").strip().lower()
+            temperature_keys = (source_key,) if source_key in {"z", "z2"} else ("z", "z2")
+            # Auto uses all available sources; an explicit source uses only its
+            # grouped series so the axis and color encoding share one policy.
+            for key in temperature_keys:
 
                 grouped = list(_group_series(key) or [])
                 series_candidates = grouped if grouped else [_series(key, dropna=True)]
@@ -244681,6 +245289,16 @@ class UnifiedApp(tk.Tk):
             parallel_enabled=parallel_enabled_raw,
         )
         runtime_no_gil_value = bool(_is_runtime_gil_disabled())
+        auto_range_flags = self._get_axis_auto_range_flags()
+        temperature_visual_settings = _normalize_temperature_visualization_settings(
+            settings
+        )
+        request_generation = int(
+            getattr(self, "_combined_render_request_generation", 0) or 0
+        )
+        if plot_id == "fig_combined_triple_axis":
+            request_generation += 1
+            self._combined_render_request_generation = request_generation
 
         snapshot = {
             "plot_id": plot_id,
@@ -244692,6 +245310,9 @@ class UnifiedApp(tk.Tk):
                     float((fig_size or (11.0, 8.5))[0]) * 100.0 * 3.0,
                 )
             ),
+            "combined_request_generation": request_generation,
+            "axis_auto_range": dict(auto_range_flags),
+            "axis_pad_pct": float(self.axis_pad_pct.get()),
             "file_path": file_path,
             "sheet_key": sheet_key,
             "columns_snapshot": dict(self.columns or {}),
@@ -244762,6 +245383,9 @@ class UnifiedApp(tk.Tk):
                 "core_cycle_legend_fontsize": settings.get("core_cycle_legend_fontsize"),
                 "core_plot_render_profiles": copy.deepcopy(
                     _get_core_plot_render_profiles()
+                ),
+                "temperature_visualization_settings": copy.deepcopy(
+                    temperature_visual_settings
                 ),
             },
             "layout_ctx": {
@@ -245348,6 +245972,44 @@ class UnifiedApp(tk.Tk):
             apply_globals=False, perf=perf_run, snapshot=snapshot
         )
         data_ctx = dict(data_ctx or {})
+        effective_args = list(snapshot.get("args") or ())
+        auto_range_flags = _sanitize_axis_auto_range_settings(
+            snapshot.get("axis_auto_range")
+        )
+        if len(effective_args) >= 8 and bool(auto_range_flags.get("temperature")):
+            fallback_ranges = {
+                "x_min": effective_args[0],
+                "x_max": effective_args[1],
+                "y_min": effective_args[2],
+                "y_max": effective_args[3],
+                "twin_y_min": effective_args[4],
+                "twin_y_max": effective_args[5],
+                "deriv_y_min": effective_args[6],
+                "deriv_y_max": effective_args[7],
+            }
+            resolved_ranges = self._compute_axis_ranges_for_snapshot(
+                data_ctx.get("selected_columns")
+                or snapshot.get("effective_columns")
+                or {},
+                float(snapshot.get("axis_pad_pct", 0.0) or 0.0),
+                fallback_ranges,
+                series_map=data_ctx.get("series") or {},
+                trace_groups=data_ctx.get("trace_groups") or {},
+                auto_flags=auto_range_flags,
+                temperature_source=(
+                    (snapshot.get("style_ctx") or {}).get(
+                        "temperature_visualization_settings"
+                    )
+                    or {}
+                ).get("temperature_source", "auto"),
+            )
+            if isinstance(resolved_ranges, Mapping):
+                effective_args[4] = resolved_ranges.get(
+                    "twin_y_min", effective_args[4]
+                )
+                effective_args[5] = resolved_ranges.get(
+                    "twin_y_max", effective_args[5]
+                )
         decimation_start = time.perf_counter() if perf_run is not None else None
         series_map = data_ctx.get("series") or {}
         series_np = data_ctx.get("series_np") or {}
@@ -245362,6 +246024,10 @@ class UnifiedApp(tk.Tk):
             )
         except Exception:
             display_target_points = 0
+        if str(snapshot.get("target") or "display").lower() != "display":
+            # Export packets retain every source sample; decimation is strictly a
+            # responsive interactive-preview optimization.
+            display_target_points = 0
         display_fingerprint = CombinedDisplayFingerprint(
             data_fingerprint=data_fingerprint,
             target_points=display_target_points,
@@ -245371,21 +246037,68 @@ class UnifiedApp(tk.Tk):
         display_packet = self._render_cache.get_combined_display(display_fingerprint)
         display_cache_status = "hit" if display_packet is not None else "miss"
         if display_packet is None:
+            grouped_series: Dict[str, Any] = {}
+            grouped_metadata: Dict[str, List[Dict[str, Any]]] = {}
+            trace_groups_np = data_ctx.get("trace_groups_np") or {}
+            trace_groups = data_ctx.get("trace_groups") or {}
+            # Flatten every grouped trace into the shared decimation pass so all
+            # traces retain identical x indices and preserve gaps consistently.
+            for role in ("y1", "y2", "y3", "z", "z2"):
+                raw_entries = (
+                    trace_groups_np.get(role)
+                    if isinstance(trace_groups_np, Mapping)
+                    else None
+                ) or (
+                    trace_groups.get(role)
+                    if isinstance(trace_groups, Mapping)
+                    else None
+                ) or []
+                normalized_entries: List[Dict[str, Any]] = []
+                if isinstance(raw_entries, Sequence) and not isinstance(
+                    raw_entries, (str, bytes)
+                ):
+                    for index, raw_entry in enumerate(raw_entries):
+                        if not isinstance(raw_entry, Mapping):
+                            continue
+                        series_key = str(
+                            raw_entry.get("series_key")
+                            or _trace_group_series_key(role, index)
+                        )
+                        series = raw_entry.get("series")
+                        if series is None:
+                            continue
+                        grouped_series[series_key] = series
+                        metadata = dict(raw_entry)
+                        metadata["series_key"] = series_key
+                        metadata["role"] = role
+                        metadata["index"] = index
+                        normalized_entries.append(metadata)
+                grouped_metadata[role] = normalized_entries
+            decimation_series = {
+                key: series_np.get(key, series_map.get(key))
+                for key in ("y1", "y2", "y3", "z", "z2")
+            }
+            decimation_series.update(grouped_series)
             display_x, display_series = self._combined_preview_decimate(
                 None,
                 None,
                 series_np.get("x", series_map.get("x")),
-                {
-                    key: series_np.get(key, series_map.get(key))
-                    for key in ("y1", "y2", "y3", "z", "z2")
-                },
+                decimation_series,
                 series_arrays=series_np,
                 series_nan_mask=data_ctx.get("series_nan_mask") or {},
                 target_points=display_target_points or None,
             )
+            display_trace_groups: Dict[str, List[Dict[str, Any]]] = {}
+            for role, entries in grouped_metadata.items():
+                display_trace_groups[role] = []
+                for entry in entries:
+                    entry_copy = dict(entry)
+                    entry_copy["series"] = display_series.get(entry["series_key"])
+                    display_trace_groups[role].append(entry_copy)
             display_packet = {
                 "x": display_x,
                 "series": display_series,
+                "trace_groups": display_trace_groups,
             }
             self._render_cache.set_combined_display(
                 display_fingerprint,
@@ -245399,6 +246112,9 @@ class UnifiedApp(tk.Tk):
         # the complete source series in the existing prepared context.
         data_ctx["combined_display_x"] = display_x
         data_ctx["combined_display_series"] = display_series
+        data_ctx["combined_display_trace_groups"] = (
+            display_packet.get("trace_groups") or {}
+        )
         if perf_run is not None and decimation_start is not None:
             combined_perf = perf_run.setdefault("stages", {}).setdefault(
                 "combined", {}
@@ -245524,11 +246240,12 @@ class UnifiedApp(tk.Tk):
         return RenderPacket(
             render_ctx=render_ctx,
             data_fingerprint=data_fingerprint,
-            args=tuple(snapshot.get("args") or ()),
+            args=tuple(effective_args),
             fig_size=snapshot.get("fig_size"),
             plot_id=snapshot.get("plot_id"),
             target=snapshot.get("target", "display"),
             perf=perf_run,
+            request_generation=int(snapshot.get("combined_request_generation", 0) or 0),
         )
 
     def _compute_core_plot_data(self, snapshot: Dict[str, Any]) -> RenderPacket:
@@ -245975,7 +246692,10 @@ class UnifiedApp(tk.Tk):
 
         def _on_ok(packet):
             """Render the combined plot on the UI thread after compute completes."""
-            self._set_combined_render_busy(False)
+            if packet.request_generation != int(
+                getattr(self, "_combined_render_request_generation", 0) or 0
+            ):
+                return
             if frame is not None and (
                 task_state["id"] is None
                 or getattr(frame, "_plot_render_task_id", None) == task_state["id"]
@@ -245999,6 +246719,10 @@ class UnifiedApp(tk.Tk):
 
         def _on_err(exc):
             """Handle worker failures and clear loading overlays."""
+            if int(snapshot.get("combined_request_generation", 0) or 0) != int(
+                getattr(self, "_combined_render_request_generation", 0) or 0
+            ):
+                return
             self._set_combined_render_busy(False)
             try:
                 print(
@@ -246094,6 +246818,10 @@ class UnifiedApp(tk.Tk):
         resolved_perf_frame = frame
         if perf_run is not None:
             self._refresh_performance_diagnostics()
+        if packet.request_generation != int(
+            getattr(self, "_combined_render_request_generation", 0) or 0
+        ):
+            return
 
         def _runner_diag(runner: Any) -> Dict[str, Any]:
             """Return one lightweight task-runner diagnostics snapshot."""
@@ -246283,6 +247011,10 @@ class UnifiedApp(tk.Tk):
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
             self._perf_diag_active_run = None
+            if packet.request_generation == int(
+                getattr(self, "_combined_render_request_generation", 0) or 0
+            ):
+                self._set_combined_render_busy(False)
 
     def _generate_selected_plots(self) -> None:
         """Generate selected plots.
@@ -246673,6 +247405,9 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
+        if not self._validate_temperature_axis_range(show_error=True):
+            return
+
         if self.df is None:
 
             messagebox.showerror("No Data", "Load a file and sheet first (Data tab).")
@@ -246714,41 +247449,11 @@ class UnifiedApp(tk.Tk):
             target="display",
         )
 
-        def _export_after_render(_fig: Figure) -> None:
-            """Export the combined plot artifact after the UI render finishes.
-
-            Purpose:
-                Trigger export of the combined plot artifact post-render.
-            Why:
-                Ensures export runs only after the display render completes.
-            Inputs:
-                _fig: Rendered combined plot figure (unused by export logic).
-            Outputs:
-                None.
-            Side Effects:
-                Writes the combined plot artifact to disk via export workflow.
-            Exceptions:
-                Errors are caught to avoid interrupting the UI workflow.
-            """
-            try:
-                report_state = settings.get("final_report", {}) or {}
-                export_profile = report_state.get(
-                    "profile_key", FINAL_REPORT_DEFAULT_STATE["profile_key"]
-                )
-                self._export_combined_plot_artifact(
-                    export_profile,
-                    {"state": report_state, "fig_size": (11.0, 8.5)},
-                )
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-
         self._start_combined_render_async(
             snapshot,
             warn_on_failure=False,
             frame=combined_frame,
             canvas=combined_canvas,
-            on_success=_export_after_render,
             force_full_rebuild=False,
         )
 
@@ -247320,7 +248025,7 @@ class UnifiedApp(tk.Tk):
         enable_temp_axis = bool(base_args[22]) if len(base_args) > 22 else False
         enable_deriv_axis = bool(base_args[23]) if len(base_args) > 23 else False
         temperature_visual_signature = _normalize_temperature_visualization_settings(
-            settings
+            config.get("temperature_visualization_settings") or settings
         )
         cycle_sig = None
         if isinstance(cycle_overlay, dict):
@@ -247565,7 +248270,7 @@ class UnifiedApp(tk.Tk):
                 else {}
             )
             coord_space = str(element.get("coord_space") or "data").strip().lower()
-            if coord_space not in {"data", "axes"}:
+            if coord_space not in {"data", "axes", "data_x_axes_y"}:
                 coord_space = "data"
             trace_items.append(
                 _signature(
@@ -247795,6 +248500,18 @@ class UnifiedApp(tk.Tk):
         style_ctx = render_ctx.style_ctx if render_ctx else {}
         overlay_ctx = render_ctx.overlay_ctx if render_ctx else {}
         show_main_legend = bool(config.get("show_main_legend", True))
+        trace_topology_sig = tuple(
+            (
+                role,
+                tuple(
+                    str(entry.get("series_key") or _trace_group_series_key(role, idx))
+                    for idx, entry in enumerate(
+                        _trace_group_entries_from_context(data_ctx, role)
+                    )
+                ),
+            )
+            for role in ("y1", "y3", "y2", "z", "z2")
+        )
 
         scatter_config = style_ctx.get("scatter_config")
         scatter_series_configs = style_ctx.get("scatter_series_configs")
@@ -247858,6 +248575,7 @@ class UnifiedApp(tk.Tk):
         if (
             fig is None
             or state.get("structure_sig") != structure_sig
+            or state.get("trace_topology_sig") != trace_topology_sig
             or force_overlay_rebuild
         ):
             self._dbg(
@@ -247929,6 +248647,7 @@ class UnifiedApp(tk.Tk):
                 "style_sig": style_sig,
                 "legend_sig": legend_sig,
                 "cycle_overlay_sig": cycle_overlay_sig,
+                "trace_topology_sig": trace_topology_sig,
                 "elements_sig": None,
                 "trace_filter_sig": None,
             }
@@ -248109,6 +248828,21 @@ class UnifiedApp(tk.Tk):
                 "selected": selected_map["z2"],
             },
         }
+        entry_meta: Dict[str, Dict[str, Any]] = {}
+        for role, meta in dataset_meta.items():
+            entries = _trace_group_entries_from_context(
+                data_ctx,
+                role,
+                fallback_series=meta.get("series"),
+                fallback_label=meta.get("label"),
+            )
+            meta["entries"] = entries
+            for entry in entries:
+                series_key = str(entry.get("series_key") or role)
+                merged = dict(meta)
+                merged.update(entry)
+                merged["selected"] = bool(meta.get("selected"))
+                entry_meta[series_key] = merged
         valid_dataset_keys = set(dataset_meta.keys())
 
         def _resolve_dataset_key(
@@ -248402,6 +249136,39 @@ class UnifiedApp(tk.Tk):
             ax_overlay.patch.set_visible(False)
             ax_overlay.set_facecolor("none")
 
+        temperature_settings = _normalize_temperature_visualization_settings(
+            style_ctx.get("temperature_visualization_settings") or settings
+        )
+        if temperature_settings["temperature_visualization"] in {
+            "background",
+            "linecolor",
+        }:
+            temperature_norm = Normalize(vmin=twin_y_min, vmax=twin_y_max)
+            # Range-only refreshes keep artists alive while applying one shared
+            # normalization to the background, colored traces, and colorbar.
+            for candidate_axis in fig.axes:
+                for artist in (*candidate_axis.images, *candidate_axis.collections):
+                    if getattr(artist, "_gl260_temperature_visual", None):
+                        try:
+                            artist.set_norm(temperature_norm)
+                            if getattr(artist, "_gl260_temperature_visual", None) == "background":
+                                x0, x1 = ax.get_xlim()
+                                artist.set_extent((x0, x1, min_y, max_y))
+                        except Exception:
+                            pass
+            layout_artists = getattr(fig, "_gl260_layout_artists", {})
+            temperature_colorbar = (
+                layout_artists.get("temperature_colorbar")
+                if isinstance(layout_artists, Mapping)
+                else None
+            )
+            if temperature_colorbar is not None:
+                try:
+                    temperature_colorbar.mappable.set_norm(temperature_norm)
+                    temperature_colorbar.update_normal(temperature_colorbar.mappable)
+                except Exception:
+                    pass
+
         right_axis_meta = None
         if isinstance(right_axis_assignment, Mapping):
             right_axis_meta = right_axis_assignment.get("meta")
@@ -248587,6 +249354,13 @@ class UnifiedApp(tk.Tk):
             "z": series_np.get("z", series_map.get("z", globals().get("z"))),
             "z2": series_np.get("z2", series_map.get("z2", globals().get("z2"))),
         }
+        series_values.update(
+            {
+                series_key: meta.get("series")
+                for series_key, meta in entry_meta.items()
+                if meta.get("series") is not None
+            }
+        )
         worker_display_series = data_ctx.get("combined_display_series") or {}
         x_values = data_ctx.get(
             "combined_display_x",
@@ -248671,7 +249445,7 @@ class UnifiedApp(tk.Tk):
         for key, artist in line_map.items():
             if artist is None:
                 continue
-            meta = dataset_meta.get(key)
+            meta = entry_meta.get(str(key)) or dataset_meta.get(key)
             if not meta or not _is_available(meta):
                 try:
                     if artist.get_visible():
@@ -248743,17 +249517,7 @@ class UnifiedApp(tk.Tk):
                 )
                 if offsets is not None:
                     artist.set_offsets(offsets)
-            new_label = None
-            if key == "y1":
-                new_label = label_y1
-            elif key == "y3":
-                new_label = label_y3
-            elif key == "y2":
-                new_label = label_y2
-            elif key == "z":
-                new_label = label_z
-            elif key == "z2":
-                new_label = label_z2
+            new_label = meta.get("label") if isinstance(meta, Mapping) else None
             if new_label is not None:
                 try:
                     if artist.get_label() != new_label:
@@ -248802,9 +249566,13 @@ class UnifiedApp(tk.Tk):
 
         legend_handles: List[Any] = []
         # Iterate over ("y1", "y3", "z", "z2", "y2") to apply the per-item logic.
-        for key in ("y1", "y3", "z", "z2", "y2"):
+        for key in (
+            entry.get("series_key")
+            for role in ("y1", "y3", "z", "z2", "y2")
+            for entry in dataset_meta.get(role, {}).get("entries", [])
+        ):
             artist = line_map.get(key)
-            meta = dataset_meta.get(key)
+            meta = entry_meta.get(str(key))
             if artist is None or not meta or not _is_available(meta):
                 continue
             legend_handles.append(artist)
@@ -249416,6 +250184,7 @@ class UnifiedApp(tk.Tk):
             state["legend_sig"] = legend_sig
             state["style_sig"] = style_sig
             state["cycle_overlay_sig"] = cycle_overlay_sig
+            state["trace_topology_sig"] = trace_topology_sig
             state["elements_sig"] = plot_elements_sig
             state["trace_filter_sig"] = trace_filter_sig
             state["layout_sig"] = layout_sig
@@ -249598,6 +250367,9 @@ class UnifiedApp(tk.Tk):
         if config is None:
             _debug_build_end(None)
             return None
+        config["temperature_visualization_settings"] = copy.deepcopy(
+            style_ctx.get("temperature_visualization_settings") or settings
+        )
         config["calculated_trace_extensions"] = (
             self._combined_calculated_trace_extension_hook(
                 workflow_key=self._current_solubility_workflow()
@@ -249609,12 +250381,6 @@ class UnifiedApp(tk.Tk):
             if isinstance(gates_ctx, Mapping)
             else True
         )
-        trace_groups_payload = data_ctx.get("trace_groups") or data_ctx.get(
-            "trace_groups_np"
-        )
-        if _combined_trace_groups_require_rebuild(trace_groups_payload):
-            reuse = False
-
         perf_start = time.perf_counter() if perf_run is not None else None
         if reuse and mode == "display":
             with self._perf_time("plotting.render", "combined_refresh"):
