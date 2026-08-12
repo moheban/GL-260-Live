@@ -48547,6 +48547,92 @@ def _regression_test_combined_final_layout_health_resolves_artist_collisions() -
                 "Final layout pass did not report the rendered collision classes: "
                 f"{sorted(detected)!r}."
             )
+
+        # Reproduce the live lifecycle that originally escaped build-time checks:
+        # cache the valid geometry, then resize and reapply a bad profile/anchor.
+        fig._gl260_combined_live_layout_signature = (  # type: ignore[attr-defined]
+            _combined_live_layout_geometry_signature(fig, ax)
+        )
+        fig.set_size_inches(17.0, 8.0, forward=False)
+        fig.subplots_adjust(bottom=0.42)
+        layout_mgr._baseline_bottom = 0.42
+        legend.set_loc("lower center")
+        legend.set_bbox_to_anchor((0.5, 0.26), transform=fig.transFigure)
+        fig.canvas.draw()
+        invalid_annotations = _combined_lower_xaxis_annotations_bbox(
+            fig,
+            ax,
+            fig.canvas.get_renderer(),
+        )
+        if invalid_annotations is None:
+            raise AssertionError("Resize regression could not measure annotations.")
+        xlabel.set_position(
+            (
+                0.5,
+                float((invalid_annotations.y0 + invalid_annotations.y1) / 2.0),
+            )
+        )
+        fig.canvas.draw()
+        preverify_xlabel = _layout_health_bbox_in_fig(
+            fig,
+            xlabel,
+            fig.canvas.get_renderer(),
+        )
+        if preverify_xlabel is None or not preverify_xlabel.overlaps(
+            invalid_annotations
+        ):
+            raise AssertionError(
+                "Resize regression did not recreate the live x-label collision."
+            )
+        lifecycle_result = _verify_combined_live_canvas_layout(fig)
+        fig.canvas.draw()
+        lifecycle_renderer = fig.canvas.get_renderer()
+        lifecycle_xlabel = _layout_health_bbox_in_fig(
+            fig,
+            xlabel,
+            lifecycle_renderer,
+        )
+        lifecycle_legend = _layout_health_bbox_in_fig(
+            fig,
+            legend,
+            lifecycle_renderer,
+        )
+        lifecycle_annotations = _combined_lower_xaxis_annotations_bbox(
+            fig,
+            ax,
+            lifecycle_renderer,
+        )
+        if any(
+            item is None
+            for item in (
+                lifecycle_xlabel,
+                lifecycle_legend,
+                lifecycle_annotations,
+            )
+        ):
+            raise AssertionError("Live-canvas verification lost required geometry.")
+        if lifecycle_annotations.overlaps(lifecycle_xlabel):
+            raise AssertionError(
+                "Live-canvas verification left the x-label collision unresolved."
+            )
+        if float(lifecycle_annotations.y0) <= float(lifecycle_xlabel.y1):
+            raise AssertionError(
+                "Live-canvas verification did not restore annotation clearance."
+            )
+        if float(lifecycle_xlabel.y0) <= float(lifecycle_legend.y1):
+            raise AssertionError(
+                "Live-canvas verification did not restore legend clearance."
+            )
+        lifecycle_band = lifecycle_result.get("bottom_band") or {}
+        if lifecycle_band.get("unresolved"):
+            raise AssertionError(
+                "Live-canvas verification retained unresolved geometry: "
+                f"{lifecycle_band['unresolved']!r}."
+            )
+        if float(lifecycle_band.get("whitespace_pts") or 0.0) > 14.0:
+            raise AssertionError(
+                "Live-canvas verification failed to reclaim lower whitespace."
+            )
     finally:
         plt.close(fig)
 
@@ -100809,6 +100895,168 @@ def _pack_combined_bottom_band(
     return result
 
 
+def _combined_live_layout_geometry_signature(
+    fig: Figure,
+    axis: Axes,
+) -> Tuple[Any, ...]:
+    """Return the live Combined geometry state that controls bottom-band safety.
+
+    Purpose:
+        Detect whether final Tk canvas sizing or later profile/legend application
+        changed geometry after the last successful Combined layout verification.
+    Why:
+        The build occurs before the live widget has its final pixel dimensions;
+        verifying only the build geometry allows the resize/finalize lifecycle to
+        recreate label collisions afterward.
+    Inputs:
+        fig: Combined display figure.
+        axis: Primary Combined axis.
+    Outputs:
+        Hashable tuple covering canvas size, subplot bounds, x-label placement,
+        main-legend anchor, visible tick text, and exclusion-label positions.
+    Side Effects:
+        None.
+    Exceptions:
+        Unavailable metadata is represented by stable empty/default values.
+    """
+    try:
+        width_px, height_px = fig.canvas.get_width_height()
+    except Exception:
+        try:
+            size_inches = fig.get_size_inches()
+            dpi = float(fig.dpi or 100.0)
+            width_px = round(float(size_inches[0]) * dpi)
+            height_px = round(float(size_inches[1]) * dpi)
+        except Exception:
+            width_px, height_px = 0, 0
+    try:
+        subplot_signature = tuple(
+            round(float(value), 6)
+            for value in (
+                fig.subplotpars.left,
+                fig.subplotpars.right,
+                fig.subplotpars.bottom,
+                fig.subplotpars.top,
+            )
+        )
+    except Exception:
+        subplot_signature = ()
+    xlabel = _layout_health_primary_xlabel(
+        fig,
+        plot_id="fig_combined_triple_axis",
+    )
+    try:
+        xlabel_signature = (
+            str(xlabel.get_text() or ""),
+            tuple(round(float(value), 6) for value in xlabel.get_position()),
+            round(float(xlabel.get_fontsize()), 3),
+        )
+    except Exception:
+        xlabel_signature = ()
+    legend = _layout_health_primary_legend(
+        fig,
+        plot_id="fig_combined_triple_axis",
+    )
+    try:
+        legend_anchor = legend.get_bbox_to_anchor()
+        legend_signature = (
+            tuple(str(text.get_text() or "") for text in legend.get_texts()),
+            tuple(
+                round(float(value), 3)
+                for value in (
+                    legend_anchor.x0,
+                    legend_anchor.y0,
+                    legend_anchor.x1,
+                    legend_anchor.y1,
+                )
+            ),
+        )
+    except Exception:
+        legend_signature = ()
+    try:
+        tick_signature = tuple(
+            str(label.get_text() or "")
+            for label in axis.get_xticklabels()
+            if label.get_visible()
+        )
+    except Exception:
+        tick_signature = ()
+    break_signature: List[Tuple[str, Tuple[float, float]]] = []
+    for artist in list(
+        getattr(fig, "_gl260_combined_exclusion_break_label_artists", []) or []
+    ):
+        try:
+            break_signature.append(
+                (
+                    str(artist.get_text() or ""),
+                    tuple(round(float(value), 3) for value in artist.get_position()),
+                )
+            )
+        except Exception:
+            continue
+    return (
+        int(width_px),
+        int(height_px),
+        subplot_signature,
+        xlabel_signature,
+        legend_signature,
+        tick_signature,
+        tuple(break_signature),
+    )
+
+
+def _verify_combined_live_canvas_layout(
+    fig: Figure,
+    *,
+    force: bool = False,
+) -> Dict[str, Any]:
+    """Verify Combined layout after final live canvas sizing and profile updates.
+
+    Purpose:
+        Run the collision/packing pass on the exact geometry displayed by Tk.
+    Why:
+        Figure construction precedes widget sizing, display-profile application,
+        saved legend restoration, and resize events; any of those later operations
+        can invalidate an otherwise correct build-time layout.
+    Inputs:
+        fig: Candidate Combined display figure.
+        force: When True, bypass an unchanged-geometry signature cache.
+    Outputs:
+        Layout-health result mapping, or a skipped diagnostic for unchanged or
+        inapplicable figures.
+    Side Effects:
+        May draw and adjust the live figure through
+        ``_finalize_combined_rendered_layout`` and stores its verified signature.
+    Exceptions:
+        Missing axes or non-Combined figures return safely without mutation.
+    """
+    if fig is None:
+        return {"applied": False, "skipped": "missing_figure"}
+    plot_id = str(getattr(fig, "_gl260_plot_id", "") or "").strip().lower()
+    mode = str(getattr(fig, "_gl260_layout_mode", "display") or "display").lower()
+    if plot_id != "fig_combined_triple_axis" or mode != "display":
+        return {"applied": False, "skipped": "not_combined_display"}
+    axis = _layout_health_axis_for_role(fig, "primary")
+    if axis is None:
+        return {"applied": False, "skipped": "missing_primary_axis"}
+    before_signature = _combined_live_layout_geometry_signature(fig, axis)
+    prior_signature = getattr(
+        fig,
+        "_gl260_combined_live_layout_signature",
+        None,
+    )
+    if not force and prior_signature == before_signature:
+        cached_result = getattr(fig, "_gl260_last_layout_health_result", None)
+        if isinstance(cached_result, Mapping):
+            return dict(cached_result)
+        return {"applied": False, "skipped": "geometry_unchanged"}
+    result = _finalize_combined_rendered_layout(fig, axis)
+    fig._gl260_combined_live_layout_signature = (  # type: ignore[attr-defined]
+        _combined_live_layout_geometry_signature(fig, axis)
+    )
+    return result
+
+
 def build_combined_triple_axis_figure(
     min_time,
     max_time,
@@ -119523,6 +119771,32 @@ class UnifiedApp(tk.Tk):
                         "issues": [f"autofix_failed_{type(autofix_exc).__name__}"],
                         "elapsed_ms": None,
                     }
+                if combined_target:
+                    try:
+                        primary_axis = _layout_health_axis_for_role(
+                            fig_obj,
+                            "primary",
+                        )
+                        if primary_axis is not None:
+                            bottom_band = _pack_combined_bottom_band(
+                                fig_obj,
+                                primary_axis,
+                            )
+                            result["bottom_band"] = bottom_band
+                            if bool(bottom_band.get("applied", False)):
+                                result["applied"] = True
+                            fig_obj._gl260_combined_live_layout_signature = (  # type: ignore[attr-defined]
+                                _combined_live_layout_geometry_signature(
+                                    fig_obj,
+                                    primary_axis,
+                                )
+                            )
+                    except Exception as pack_exc:
+                        detected = list(result.get("detected_issues", []) or [])
+                        detected.append(
+                            f"combined_bottom_pack_failed_{type(pack_exc).__name__}"
+                        )
+                        result["detected_issues"] = list(dict.fromkeys(detected))
                 if timeline_target and not bool(result.get("applied", False)):
                     verify_fn = getattr(
                         self, "_run_cycle_timeline_layout_manager_verification", None
@@ -122052,6 +122326,13 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
 
+        if plot_id == "fig_combined_triple_axis":
+            try:
+                _verify_combined_live_canvas_layout(fig)
+            except Exception:
+                # Best-effort guard; keep final drawing available if verification fails.
+                pass
+
         if force_draw:
             try:
                 canvas.draw()
@@ -123437,6 +123718,11 @@ class UnifiedApp(tk.Tk):
                 except Exception:
                     # Best-effort guard; ignore failures.
                     pass
+            try:
+                _verify_combined_live_canvas_layout(fig)
+            except Exception:
+                # Best-effort guard; preserve display finalization on measurement failure.
+                pass
             try:
                 frame._combined_render_ready = True
             except Exception:
