@@ -48416,7 +48416,7 @@ def _regression_test_combined_final_layout_health_resolves_artist_collisions() -
     Exceptions:
         Raises AssertionError when any targeted collision remains unresolved.
     """
-    fig = Figure(figsize=(8.0, 4.5), dpi=100)
+    fig = Figure(figsize=(12.0, 8.5), dpi=100)
     FigureCanvasAgg(fig)
     ax = fig.add_subplot(111)
     ax._gl260_axis_role = "primary"  # type: ignore[attr-defined]
@@ -48430,12 +48430,12 @@ def _regression_test_combined_final_layout_health_resolves_artist_collisions() -
         [(0.40, 0.41), (0.42, 0.43), (0.44, 0.45)],
         (0.0, 1.0),
     )
-    xlabel = fig.supxlabel("Elapsed Time (Days)", y=0.24)
+    xlabel = fig.supxlabel("Elapsed Time (Days)", y=0.40)
     legend = fig.legend(
         [ax.lines[0]],
         ["Reactor Pressure (PSIg)"],
         loc="lower center",
-        bbox_to_anchor=(0.5, 0.23),
+        bbox_to_anchor=(0.5, 0.26),
     )
     fig._gl260_plot_id = "fig_combined_triple_axis"  # type: ignore[attr-defined]
     fig._gl260_layout_mode = "display"  # type: ignore[attr-defined]
@@ -48448,7 +48448,7 @@ def _regression_test_combined_final_layout_health_resolves_artist_collisions() -
             "left": 0.10,
             "right": 0.92,
             "top": 0.90,
-            "bottom": 0.12,
+            "bottom": 0.42,
         },
         margins_authoritative=True,
         legend_gap_pts=6.0,
@@ -48484,6 +48484,46 @@ def _regression_test_combined_final_layout_health_resolves_artist_collisions() -
         if legend_bbox.overlaps(ax.bbox):
             raise AssertionError(
                 "Final layout pass left the main legend inside the axes."
+            )
+        xlabel_bbox_fig = _layout_health_bbox_in_fig(fig, xlabel, renderer)
+        legend_bbox_fig = _layout_health_bbox_in_fig(fig, legend, renderer)
+        annotations_bbox = _combined_lower_xaxis_annotations_bbox(
+            fig,
+            ax,
+            renderer,
+        )
+        if annotations_bbox is None:
+            raise AssertionError("Final layout pass did not expose lower annotations.")
+        if xlabel_bbox_fig is None or legend_bbox_fig is None:
+            raise AssertionError("Final layout pass did not expose label geometry.")
+        if annotations_bbox.overlaps(xlabel_bbox_fig):
+            raise AssertionError(
+                "Final layout pass left the x label overlapping ticks/break labels."
+            )
+        if float(annotations_bbox.y0) <= float(xlabel_bbox_fig.y1):
+            raise AssertionError(
+                "Final layout stack should place ticks/break labels above the x label."
+            )
+        if float(xlabel_bbox_fig.y0) <= float(legend_bbox_fig.y1):
+            raise AssertionError(
+                "Final layout stack should place the x label above the main legend."
+            )
+        bottom_band = result.get("bottom_band") or {}
+        whitespace_pts = float(bottom_band.get("whitespace_pts") or 0.0)
+        if whitespace_pts > 14.0:
+            raise AssertionError(
+                "Final layout pass should reclaim lower whitespace, got "
+                f"{whitespace_pts:.2f} pt below the legend."
+            )
+        if float(fig.subplotpars.bottom) >= 0.25:
+            raise AssertionError(
+                "Final layout pass should move the plot stack into the lower "
+                "whitespace."
+            )
+        if bottom_band.get("unresolved"):
+            raise AssertionError(
+                "Final bottom stack retained unresolved geometry: "
+                f"{bottom_band['unresolved']!r}."
             )
         break_boxes = [
             label.get_window_extent(renderer)
@@ -100471,9 +100511,10 @@ def _finalize_combined_rendered_layout(fig: Figure, axis: Axes) -> Dict[str, Any
     Outputs:
         Layout-health result mapping, including detected issues and applied fixes.
     Side Effects:
-        Draws the figure, hides only colliding x tick labels, may move lower-band
-        artists or expand figure-local margins, and records non-destructive layout
-        suggestions on the figure.
+        Draws the figure, hides only colliding x tick labels, applies general
+        health corrections, then packs the axes annotations, x label, and main
+        legend into one compact ordered bottom band. Records non-destructive
+        layout suggestions on the figure.
     Exceptions:
         Failures return a diagnostic result and leave the existing figure usable.
     """
@@ -100509,6 +100550,10 @@ def _finalize_combined_rendered_layout(fig: Figure, axis: Axes) -> Dict[str, Any
             str(getattr(fig, "_gl260_layout_mode", "display") or "display"),
             policy,
         )
+        packing_result = _pack_combined_bottom_band(fig, axis)
+        result["bottom_band"] = packing_result
+        if bool(packing_result.get("applied", False)):
+            result["applied"] = True
         fig.canvas.draw()
         fig._gl260_last_layout_health_result = result  # type: ignore[attr-defined]
     except Exception as exc:
@@ -100518,6 +100563,249 @@ def _finalize_combined_rendered_layout(fig: Figure, axis: Axes) -> Dict[str, Any
             fig._gl260_layout_health_active = False  # type: ignore[attr-defined]
         except Exception:
             pass
+    return result
+
+
+def _pack_combined_bottom_band(
+    fig: Figure,
+    axis: Axes,
+    *,
+    max_passes: int = 4,
+) -> Dict[str, Any]:
+    """Pack the Combined lower artists into one measured collision-free stack.
+
+    Purpose:
+        Place the main legend near the canvas floor, the figure x label directly
+        above it, and the x ticks/exclusion labels directly above the x label.
+    Why:
+        Independent margin, legend, and x-label corrections can leave hundreds of
+        pixels of unused lower canvas while still overlapping each other. One
+        bottom-up packing authority makes whitespace reclamation and clearance the
+        same geometry operation.
+    Inputs:
+        fig: Rendered Combined triple-axis figure.
+        axis: Primary Combined axis owning ticks and exclusion annotations.
+        max_passes: Maximum renderer/adjustment iterations.
+    Outputs:
+        Mapping containing whether geometry changed, final bottom margin, measured
+        lower whitespace, pass count, and unresolved collision names.
+    Side Effects:
+        Reanchors the main legend, repositions the figure-level x label, changes
+        the figure-local subplot bottom margin, updates the attached layout-manager
+        baseline, redraws the canvas, and records a Combined margin suggestion.
+    Exceptions:
+        Missing or unmeasurable artists return a partial diagnostic result without
+        raising into the plot-building workflow.
+    """
+    result: Dict[str, Any] = {
+        "applied": False,
+        "passes": 0,
+        "bottom": None,
+        "whitespace_pts": None,
+        "unresolved": [],
+    }
+    if fig is None or axis is None:
+        return result
+    try:
+        canvas = fig.canvas or FigureCanvasAgg(fig)
+        if fig.canvas is None:
+            fig.set_canvas(canvas)
+        fig_h_pts = max(float(fig.get_size_inches()[1]) * 72.0, 1.0)
+    except Exception:
+        return result
+
+    layout_mgr = getattr(fig, "_gl260_layout_manager", None)
+    legend_gap_pts = max(
+        2.0,
+        float(getattr(layout_mgr, "legend_gap_pts", DEFAULT_COMBINED_LEGEND_GAP_PTS)),
+    )
+    xlabel_tick_gap_pts = max(
+        2.0,
+        float(
+            getattr(
+                layout_mgr,
+                "xlabel_tick_gap_pts",
+                DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS,
+            )
+        ),
+    )
+    legend_floor_pts = max(
+        6.0,
+        float(
+            getattr(
+                layout_mgr,
+                "legend_margin_pts",
+                DEFAULT_COMBINED_LEGEND_MARGIN_PTS,
+            )
+        ),
+    )
+    legend_floor = legend_floor_pts / fig_h_pts
+    legend_gap = legend_gap_pts / fig_h_pts
+    xlabel_tick_gap = xlabel_tick_gap_pts / fig_h_pts
+    xlabel = _layout_health_primary_xlabel(
+        fig,
+        plot_id="fig_combined_triple_axis",
+    )
+    legend = _layout_health_primary_legend(
+        fig,
+        plot_id="fig_combined_triple_axis",
+    )
+    if xlabel is None or legend is None:
+        result["unresolved"] = ["missing_xlabel_or_main_legend"]
+        return result
+
+    for pass_index in range(max(1, int(max_passes))):
+        result["passes"] = pass_index + 1
+        try:
+            canvas.draw()
+            renderer = canvas.get_renderer()
+        except Exception:
+            result["unresolved"] = ["renderer_unavailable"]
+            break
+        changed = False
+        try:
+            axis_position = axis.get_position()
+            axis_center_x = float(axis_position.x0 + (axis_position.width / 2.0))
+        except Exception:
+            axis_position = None
+            axis_center_x = 0.5
+
+        if bool(settings.get("combined_snap_cycle_legend_below_plot", False)):
+            _apply_combined_snapped_legend_layout(
+                fig,
+                allow_draw=False,
+            )
+        else:
+            try:
+                legend_bbox = _layout_health_bbox_in_fig(fig, legend, renderer)
+                if legend_bbox is not None and (
+                    abs(float(legend_bbox.y0) - legend_floor) > (0.5 / fig_h_pts)
+                    or abs(
+                        float((legend_bbox.x0 + legend_bbox.x1) / 2.0) - axis_center_x
+                    )
+                    > 1e-4
+                ):
+                    legend.set_loc("lower center")
+                    legend.set_bbox_to_anchor(
+                        (axis_center_x, legend_floor),
+                        transform=fig.transFigure,
+                    )
+                    changed = True
+            except Exception:
+                pass
+
+        try:
+            canvas.draw()
+            renderer = canvas.get_renderer()
+            legend_bbox = (
+                _combined_snapped_legend_bbox(fig, renderer)
+                if bool(settings.get("combined_snap_cycle_legend_below_plot", False))
+                else _layout_health_bbox_in_fig(fig, legend, renderer)
+            )
+            xlabel_bbox = _layout_health_bbox_in_fig(fig, xlabel, renderer)
+        except Exception:
+            legend_bbox = None
+            xlabel_bbox = None
+        if legend_bbox is None or xlabel_bbox is None:
+            result["unresolved"] = ["legend_or_xlabel_unmeasurable"]
+            break
+
+        target_xlabel_center_y = (
+            float(legend_bbox.y1) + legend_gap + (float(xlabel_bbox.height) / 2.0)
+        )
+        try:
+            current_x, current_y = xlabel.get_position()
+            if abs(float(current_x) - axis_center_x) > 1e-4 or abs(
+                float(current_y) - target_xlabel_center_y
+            ) > (0.5 / fig_h_pts):
+                xlabel.set_position((axis_center_x, target_xlabel_center_y))
+                changed = True
+        except Exception:
+            pass
+
+        try:
+            canvas.draw()
+            renderer = canvas.get_renderer()
+            xlabel_bbox = _layout_health_bbox_in_fig(fig, xlabel, renderer)
+            annotations_bbox = _combined_lower_xaxis_annotations_bbox(
+                fig,
+                axis,
+                renderer,
+            )
+        except Exception:
+            xlabel_bbox = None
+            annotations_bbox = None
+        if xlabel_bbox is None or annotations_bbox is None:
+            result["unresolved"] = ["lower_annotations_unmeasurable"]
+            break
+
+        target_annotations_floor = float(xlabel_bbox.y1) + xlabel_tick_gap
+        annotation_shift = target_annotations_floor - float(annotations_bbox.y0)
+        try:
+            current_bottom = float(fig.subplotpars.bottom)
+            current_top = float(fig.subplotpars.top)
+        except Exception:
+            current_bottom = (
+                float(axis_position.y0) if axis_position is not None else 0.2
+            )
+            current_top = 0.9
+        target_bottom = max(
+            0.04,
+            min(current_top - 0.24, current_bottom + annotation_shift),
+        )
+        if abs(target_bottom - current_bottom) > (0.5 / fig_h_pts):
+            try:
+                fig.subplots_adjust(bottom=target_bottom)
+                if layout_mgr is not None:
+                    layout_mgr._baseline_bottom = target_bottom
+                _layout_health_record_combined_suggestion(
+                    fig,
+                    str(getattr(fig, "_gl260_layout_mode", "display") or "display"),
+                    margins={"bottom": target_bottom},
+                )
+                changed = True
+            except Exception:
+                pass
+        result["applied"] = bool(result["applied"] or changed)
+        if not changed:
+            break
+
+    try:
+        canvas.draw()
+        renderer = canvas.get_renderer()
+        legend_bbox = (
+            _combined_snapped_legend_bbox(fig, renderer)
+            if bool(settings.get("combined_snap_cycle_legend_below_plot", False))
+            else _layout_health_bbox_in_fig(fig, legend, renderer)
+        )
+        xlabel_bbox = _layout_health_bbox_in_fig(fig, xlabel, renderer)
+        annotations_bbox = _combined_lower_xaxis_annotations_bbox(
+            fig,
+            axis,
+            renderer,
+        )
+        unresolved: List[str] = []
+        if legend_bbox is not None:
+            result["whitespace_pts"] = float(legend_bbox.y0 * fig_h_pts)
+        if xlabel_bbox is not None and legend_bbox is not None:
+            legend_xlabel_gap = float(xlabel_bbox.y0 - legend_bbox.y1) * fig_h_pts
+            if legend_xlabel_gap < legend_gap_pts - 0.5:
+                unresolved.append("legend_xlabel_clearance")
+        if annotations_bbox is not None and xlabel_bbox is not None:
+            if (
+                float(annotations_bbox.y0 - xlabel_bbox.y1) * fig_h_pts
+                < xlabel_tick_gap_pts - 0.5
+            ):
+                unresolved.append("xlabel_annotation_clearance")
+        if annotations_bbox is not None and axis_position is not None:
+            if float(axis.get_position().y0 - annotations_bbox.y1) < -1e-6:
+                unresolved.append("annotations_inside_axes")
+        result["bottom"] = float(fig.subplotpars.bottom)
+        result["unresolved"] = unresolved
+        reflow_temperature_colorbar(fig)
+    except Exception:
+        if not result["unresolved"]:
+            result["unresolved"] = ["postpack_measurement_failed"]
     return result
 
 
