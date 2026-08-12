@@ -2155,6 +2155,7 @@ import ast
 import contextlib
 import importlib
 import inspect
+import queue
 import subprocess
 import platform
 from datetime import datetime
@@ -6010,6 +6011,14 @@ def _detect_rust_runtime_requirements(
 
 
 class TkTaskRunner:
+    """Run background tasks while delivering every completion on Tk's thread.
+
+    The runner owns a bounded executor, latest-request cancellation metadata,
+    low-priority backpressure, and a thread-safe completion queue polled by the
+    Tk event loop. It exists to keep expensive work off the UI thread without
+    allowing worker threads to call Tcl/Tk APIs directly.
+    """
+
     def __init__(self, tk_root: tk.Misc, max_workers: int = 1) -> None:
         """Initialize a Tk-aware background task runner.
 
@@ -6037,6 +6046,10 @@ class TkTaskRunner:
         self._latest_task_id: Dict[str, int] = {}
         self._latest_future: Dict[str, Any] = {}
         self._futures: Dict[int, Any] = {}
+        self._completion_queue: queue.SimpleQueue[Tuple[Callable[..., None], Any]] = (
+            queue.SimpleQueue()
+        )
+        self._completion_poll_after_id: Optional[str] = None
         self._low_priority_backpressure_enabled = True
         self._low_priority_queue_limit = 6
         self._low_priority_pending_counts: Dict[str, int] = {}
@@ -6225,8 +6238,74 @@ class TkTaskRunner:
             if on_ok is not None:
                 on_ok(result)
 
-        future.add_done_callback(lambda fut: self._root.after(0, _handle_result, fut))
+        # Worker callbacks enqueue plain Python objects only. Tk polls this queue
+        # from its owning thread, avoiding unsafe worker-thread Tcl calls.
+        future.add_done_callback(
+            lambda fut: self._completion_queue.put((_handle_result, fut))
+        )
+        self._ensure_completion_polling()
         return task_id
+
+    def _ensure_completion_polling(self) -> None:
+        """Ensure Tk is polling worker completions on its owning thread.
+
+        Purpose:
+            Start one bounded polling callback for queued worker results.
+        Why:
+            Calling ``root.after`` from executor threads crosses into Tcl from a
+            non-owner thread and can intermittently block or freeze the UI.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Schedules one Tk ``after`` callback when no poll is active.
+        Exceptions:
+            Scheduling failures leave the poll marker clear for a later retry.
+        """
+        if self._completion_poll_after_id is not None:
+            return
+        try:
+            self._completion_poll_after_id = self._root.after(
+                25,
+                self._poll_completed_tasks,
+            )
+        except Exception:
+            self._completion_poll_after_id = None
+
+    def _poll_completed_tasks(self) -> None:
+        """Deliver queued worker completions and continue polling if needed.
+
+        Purpose:
+            Execute completion handlers exclusively from the Tk event thread.
+        Why:
+            A queue-based handoff preserves Tk thread affinity while retaining
+            asynchronous worker execution and latest-request semantics.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Drains ready completion callbacks, mutates task tracking through each
+            handler, and schedules another short poll while work remains active.
+        Exceptions:
+            Individual callback failures are contained so later results still run.
+        """
+        self._completion_poll_after_id = None
+        while True:
+            try:
+                handler, future = self._completion_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                handler(future)
+            except Exception:
+                # One failed UI callback must not strand other worker completions.
+                pass
+        with self._lock:
+            has_pending_tasks = bool(self._futures)
+        if has_pending_tasks:
+            self._ensure_completion_polling()
 
     def get_diagnostics(self) -> Dict[str, Any]:
         """Return runtime diagnostics for the current task-runner state.
@@ -21900,6 +21979,7 @@ class RenderPacket:
     requested_plot_keys: Tuple[str, ...] = ()
     cycle_side_effects_mode: str = "auto"
     request_generation: int = 0
+    figure: Optional[Figure] = None
 
 
 @dataclass(frozen=True)
@@ -48695,6 +48775,59 @@ def _regression_test_combined_final_layout_health_resolves_artist_collisions() -
             )
     finally:
         plt.close(fig)
+
+
+def _regression_test_tk_task_runner_completion_stays_on_tk_thread() -> None:
+    """Validate worker completion never calls Tk from an executor thread.
+
+    Purpose:
+        Exercise the queue-and-poll handoff used by ``TkTaskRunner``.
+    Why:
+        Cross-thread ``root.after`` calls can block Tcl/Tk and make long renders
+        appear frozen even when computation itself is asynchronous.
+    Inputs:
+        None.
+    Outputs:
+        None.
+    Side Effects:
+        Starts and shuts down one transient single-worker executor.
+    Exceptions:
+        Raises AssertionError when scheduling occurs from a worker or the queued
+        result is not delivered by the simulated Tk poll.
+    """
+
+    class _RootStub:
+        """Record Tk scheduling calls without creating a Tk interpreter."""
+
+        def __init__(self) -> None:
+            """Initialize owner-thread and callback tracking state."""
+            self.owner_thread = threading.get_ident()
+            self.after_threads: List[int] = []
+            self.callbacks: List[Callable[[], None]] = []
+
+        def after(self, _delay_ms: int, callback: Callable[[], None]) -> str:
+            """Record one owner-thread scheduling request for later execution."""
+            self.after_threads.append(threading.get_ident())
+            self.callbacks.append(callback)
+            return f"after-{len(self.callbacks)}"
+
+    root = _RootStub()
+    runner = TkTaskRunner(root, max_workers=1)
+    delivered: List[int] = []
+    try:
+        runner.submit("queue-check", lambda: 42, delivered.append, None)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not runner._completion_queue.qsize():
+            time.sleep(0.01)
+        if not root.callbacks:
+            raise AssertionError("Task runner did not schedule its UI-owned poll.")
+        root.callbacks.pop(0)()
+        if delivered != [42]:
+            raise AssertionError("UI-owned poll did not deliver worker result.")
+        if any(thread_id != root.owner_thread for thread_id in root.after_threads):
+            raise AssertionError("Worker thread called Tk scheduling directly.")
+    finally:
+        runner._executor.shutdown(wait=True)
 
 
 def _regression_test_combined_outer_axis_none_skips_third_axis_render() -> None:
@@ -106764,6 +106897,7 @@ class UnifiedApp(tk.Tk):
         )
         self._task_runner = TkTaskRunner(self, max_workers=task_workers)
         self._combined_render_runner = TkTaskRunner(self, max_workers=task_workers)
+        self._combined_figure_build_lock = threading.RLock()
         self._task_runner.configure_low_priority_backpressure(
             enabled=perf_low_priority_backpressure_enabled,
             queue_limit=perf_low_priority_queue_limit,
@@ -137317,13 +137451,13 @@ class UnifiedApp(tk.Tk):
         *,
         force_rebuild: bool = False,
     ) -> None:
-        """Open combined Plot Preview with async compute and splash overlay.
+        """Open Combined Plot Preview with an asynchronous render pipeline.
 
         Purpose:
             Show the preview window immediately, then build preview in stages.
         Why:
-            Data preparation is expensive; running it in a worker keeps Tk
-            responsive while the splash/progress stays active on the UI thread.
+            Data preparation, Matplotlib construction, and layout measurement are
+            expensive; worker execution keeps Tk and progress feedback active.
         Inputs:
             plot_key: Plot key requested for preview; only combined is supported.
             plot_id: Plot identifier for combined preview settings.
@@ -137333,14 +137467,29 @@ class UnifiedApp(tk.Tk):
         Outputs:
             None.
         Side Effects:
-            Opens/reuses preview window, runs async preview prep, installs preview
-            figure widgets, updates loading overlay progress stages, and avoids
-            overlapping preview rebuilds from repeated clicks.
+            Opens/reuses preview feedback windows, runs async preparation and
+            figure assembly, installs Tk widgets, updates progress stages, and
+            avoids overlapping preview rebuilds from repeated clicks.
         Exceptions:
             Failures are caught and reported via dialog while preventing stuck UI.
         """
         if plot_key != "fig_combined":
             return
+        launch_splash_context = "combined_plot_preview_open"
+        try:
+            self._show_operation_splash(
+                "Opening Plot Preview",
+                context=launch_splash_context,
+            )
+            self._update_operation_splash(
+                message="Opening preview window...",
+                progress=2.0,
+                stage_key="opening",
+                detail="Capturing current Combined plot settings.",
+            )
+        except Exception:
+            # The preview-owned overlay remains the fallback feedback surface.
+            pass
         try:
             # Ensure preview uses the latest staged Plot Settings values.
             self._flush_open_plot_settings_dialog(refresh_after_apply=False)
@@ -137434,9 +137583,17 @@ class UnifiedApp(tk.Tk):
                 message="Preview build already in progress...",
                 show=True,
             )
+            try:
+                self._hide_operation_splash(context=launch_splash_context)
+            except Exception:
+                pass
             return
         if preview_ready and not force_rebuild:
             self._hide_combined_plot_preview_loading(defer=False)
+            try:
+                self._hide_operation_splash(context=launch_splash_context)
+            except Exception:
+                pass
             return
 
         self._combined_plot_preview_request_token += 1
@@ -137452,6 +137609,10 @@ class UnifiedApp(tk.Tk):
             progress=20.0,
             message="Preparing Preview Data...",
         )
+        try:
+            self._hide_operation_splash(context=launch_splash_context)
+        except Exception:
+            pass
 
         try:
             snapshot = self._capture_combined_render_snapshot(
@@ -137475,6 +137636,12 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
             return
+
+        preview_config = self._combined_plot_config(
+            tuple(snapshot.get("args") or ()),
+            "export",
+        )
+        preview_workflow_key = self._current_solubility_workflow()
 
         def _is_stale_request() -> bool:
             """Return whether the async preview callback is stale.
@@ -137537,40 +137704,57 @@ class UnifiedApp(tk.Tk):
                 pass
 
         def _worker() -> RenderPacket:
-            """Compute preview packet on worker thread.
+            """Compute data and assemble the preview figure on a worker.
 
             Purpose:
-                Prepare combined preview data off the UI thread.
+                Prepare Combined preview data and the expensive Agg figure off
+                the UI thread.
             Why:
-                Keeps the app responsive while heavy prep runs.
+                Keeps Tk responsive through data preparation, artist creation,
+                and initial layout measurement.
             Inputs:
                 None.
             Outputs:
-                RenderPacket for UI-thread preview build/install.
+                RenderPacket containing the completed preview figure.
             Side Effects:
-                May update render cache metadata.
+                May update render cache metadata and Combined build state.
             Exceptions:
                 Worker exceptions are routed to error callback.
             """
-            return self._compute_combined_plot_data(snapshot)
+            packet = self._compute_combined_plot_data(snapshot)
+            if not isinstance(preview_config, Mapping):
+                return packet
+            return self._build_combined_packet_figure(
+                packet,
+                mode="export",
+                config=preview_config,
+                workflow_key=preview_workflow_key,
+            )
 
         def _on_ok(packet: RenderPacket) -> None:
-            """Handle worker success and build preview on UI thread.
+            """Handle worker success and install the preview on Tk.
 
             Purpose:
-                Build and install preview figure from prepared render packet.
+                Attach the worker-built preview figure and install its controls.
             Why:
-                Matplotlib/Tk widget installation must remain on UI thread.
+                Tk widget installation must remain on the UI thread, while the
+                expensive Matplotlib construction is already complete.
             Inputs:
                 packet: Worker-prepared render packet.
             Outputs:
                 None.
             Side Effects:
-                Replaces preview figure widgets and updates overlay stages.
+                Replaces preview widgets and updates overlay stages.
             Exceptions:
                 Build/install failures route through preview failure handler.
             """
             if _is_stale_request():
+                if packet.figure is not None:
+                    try:
+                        plt.close(packet.figure)
+                    except Exception:
+                        # Stale preview figures must not retain Agg resources.
+                        pass
                 return
             self._set_combined_plot_preview_loading_state(
                 progress=55.0,
@@ -137578,41 +137762,27 @@ class UnifiedApp(tk.Tk):
             )
 
             def _build_and_install() -> None:
-                """Build/install preview figure after overlay paint.
+                """Install the prepared preview figure after overlay paint.
 
                 Purpose:
-                    Defer heavy UI-thread preview build by one idle cycle.
+                    Defer Tk widget installation by one idle cycle.
                 Why:
-                    Allows splash stage updates to render before blocking work.
+                    Allows splash stage updates to render before attachment.
                 Inputs:
                     None.
                 Outputs:
                     None.
                 Side Effects:
-                    Builds preview figure and finalizes preview layout.
+                    Installs the prepared figure and performs one Tk-canvas draw.
                 Exceptions:
                     Failures route through preview failure handler.
                 """
                 if _is_stale_request():
                     return
-                perf_run = packet.perf if isinstance(packet.perf, dict) else None
-                try:
-                    fig = self._build_combined_triple_axis_from_state(
-                        args=packet.args,
-                        fig_size=(11.0, 8.5),
-                        mode="export",
-                        reuse=False,
-                        render_ctx=packet.render_ctx,
-                        perf_run=perf_run,
-                    )
-                except Exception as exc:
-                    _handle_preview_failure(
-                        "Combined plot could not be rebuilt for preview.", exc
-                    )
-                    return
+                fig = packet.figure
                 if fig is None:
                     _handle_preview_failure(
-                        "Combined plot could not be rebuilt for preview."
+                        "Combined plot could not be prepared for preview."
                     )
                     return
                 if _is_stale_request():
@@ -137766,6 +137936,13 @@ class UnifiedApp(tk.Tk):
                     Exceptions:
                         Best-effort behavior; failures are ignored.
                     """
+                    if bool(
+                        getattr(self, "_combined_plot_preview_build_inflight", False)
+                    ):
+                        # Canvas packing emits several initial configure events;
+                        # the worker figure is already final, so queuing more full
+                        # draws here only blocks Tk after the first installation.
+                        return
                     active_after_id = getattr(
                         self, "_combined_plot_preview_resize_after_id", None
                     )
@@ -137808,6 +137985,7 @@ class UnifiedApp(tk.Tk):
                                 keep_export_size=True,
                                 trigger_resize_event=False,
                                 force_draw=True,
+                                finalize_intent="no_change",
                             )
                         except Exception:
                             # Best-effort guard; ignore failures to avoid interrupting the workflow.
@@ -137843,6 +138021,7 @@ class UnifiedApp(tk.Tk):
                         keep_export_size=True,
                         trigger_resize_event=False,
                         force_draw=True,
+                        finalize_intent="no_change",
                     )
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
@@ -247141,16 +247320,17 @@ class UnifiedApp(tk.Tk):
         _refresh_list()
 
     def _compute_combined_plot_data(self, snapshot: Dict[str, Any]) -> RenderPacket:
-        """Compute combined plot data for UI-thread rendering.
+        """Compute Combined plot data for worker-side figure assembly.
 
         Purpose:
-            Prepare a combined-plot render packet in a worker-safe step.
+            Prepare a Combined render packet in a worker-safe step.
         Why:
-            Heavy data prep must not block the UI thread.
+            Heavy data prep and interactive pixel-scale decimation must not block
+            the UI thread or burden Preview with invisible full-resolution points.
         Inputs:
             snapshot: Snapshot of UI state and data selections.
         Outputs:
-            RenderPacket with prepared render context and args.
+            RenderPacket with prepared render context and effective arguments.
         Side Effects:
             Updates render cache entries and performance counters.
         Exceptions:
@@ -247222,9 +247402,11 @@ class UnifiedApp(tk.Tk):
             )
         except Exception:
             display_target_points = 0
-        if str(snapshot.get("target") or "display").lower() != "display":
-            # Export packets retain every source sample; decimation is strictly a
-            # responsive interactive-preview optimization.
+        render_target = str(snapshot.get("target") or "display").lower()
+        if render_target not in {"display", "preview"}:
+            # Saved exports retain every sample. Interactive display and Plot
+            # Preview use the shared pixel-scale decimation path because drawing
+            # invisible sub-pixel vertices can otherwise take several minutes.
             display_target_points = 0
         display_fingerprint = CombinedDisplayFingerprint(
             data_fingerprint=data_fingerprint,
@@ -247846,6 +248028,57 @@ class UnifiedApp(tk.Tk):
                 stage_key="preparing_data",
             )
 
+    def _build_combined_packet_figure(
+        self,
+        packet: RenderPacket,
+        *,
+        mode: str,
+        config: Mapping[str, Any],
+        workflow_key: str,
+    ) -> RenderPacket:
+        """Build a fresh Combined figure on the serialized render worker.
+
+        Purpose:
+            Complete expensive Matplotlib artist assembly and Agg layout work
+            before the render packet returns to Tk.
+        Why:
+            Array preparation alone does not keep Tk responsive when figure
+            construction and repeated text measurement dominate render time.
+        Inputs:
+            packet: Worker-prepared Combined render packet.
+            mode: Layout mode, normally ``display`` or ``export``.
+            config: UI-thread-captured Combined configuration mapping.
+            workflow_key: UI-thread-captured active workflow identifier.
+        Outputs:
+            The same packet with its ``figure`` field populated when successful.
+        Side Effects:
+            Serializes Combined Matplotlib construction, updates normal Combined
+            build state, and records the completed geometry signature.
+        Exceptions:
+            Builder exceptions propagate to the task runner's error callback.
+        """
+        build_lock = getattr(self, "_combined_figure_build_lock", None)
+        lock_context = build_lock if build_lock is not None else contextlib.nullcontext()
+        with lock_context:
+            fig = self._build_combined_triple_axis_from_state(
+                args=packet.args,
+                fig_size=packet.fig_size,
+                mode=mode,
+                reuse=False,
+                render_ctx=packet.render_ctx,
+                perf_run=packet.perf,
+                config_override=config,
+                workflow_key_override=workflow_key,
+            )
+            if fig is not None:
+                axis = _layout_health_axis_for_role(fig, "primary")
+                if axis is not None:
+                    fig._gl260_combined_final_layout_signature = (  # type: ignore[attr-defined]
+                        _combined_final_layout_geometry_signature(fig, axis)
+                    )
+            packet.figure = fig
+        return packet
+
     def _start_combined_render_async(
         self,
         snapshot: Dict[str, Any],
@@ -247860,9 +248093,11 @@ class UnifiedApp(tk.Tk):
         """Start combined render async.
 
         Purpose:
-            Run combined plot computation in a worker and render on the UI thread.
+            Run Combined data preparation and fresh figure assembly in a worker,
+            then install the completed figure on the UI thread.
         Why:
-            Keeps Tk responsive while combined plot data is prepared.
+            Keeps Tk responsive through both data preparation and the expensive
+            Matplotlib artist/layout build used by initial or forced renders.
         Inputs:
             snapshot: Snapshot payload captured on the UI thread.
             warn_on_failure: Whether to warn on render failure.
@@ -247883,16 +248118,45 @@ class UnifiedApp(tk.Tk):
         if frame is None or canvas is None:
             frame, canvas = self._find_plot_tab_canvas("fig_combined")
         task_state: Dict[str, Optional[int]] = {"id": None}
+        try:
+            existing_state = getattr(self, "_combined_plot_state", None)
+            existing_fig = (
+                existing_state.get("fig")
+                if isinstance(existing_state, Mapping)
+                else None
+            )
+        except Exception:
+            existing_fig = None
+        build_in_worker = bool(force_full_rebuild or existing_fig is None)
+        worker_config = self._combined_plot_config(
+            tuple(snapshot.get("args") or ()),
+            "display",
+        )
+        workflow_key = self._current_solubility_workflow()
 
-        def _worker():
-            """Compute the combined render packet in a worker thread."""
-            return self._compute_combined_plot_data(snapshot)
+        def _worker() -> RenderPacket:
+            """Prepare data and optionally assemble a fresh figure off Tk."""
+            packet = self._compute_combined_plot_data(snapshot)
+            if build_in_worker and isinstance(worker_config, Mapping):
+                return self._build_combined_packet_figure(
+                    packet,
+                    mode="display",
+                    config=worker_config,
+                    workflow_key=workflow_key,
+                )
+            return packet
 
         def _on_ok(packet):
-            """Render the combined plot on the UI thread after compute completes."""
+            """Install the worker-built figure or perform a reuse refresh on Tk."""
             if packet.request_generation != int(
                 getattr(self, "_combined_render_request_generation", 0) or 0
             ):
+                if packet.figure is not None:
+                    try:
+                        plt.close(packet.figure)
+                    except Exception:
+                        # Stale worker figures are disposable cache misses.
+                        pass
                 return
             if frame is not None and (
                 task_state["id"] is None
@@ -247901,7 +248165,11 @@ class UnifiedApp(tk.Tk):
                 self._update_plot_loading_overlay_progress(
                     frame,
                     progress=55.0,
-                    message="Data prepared. Rendering combined plot...",
+                    message=(
+                        "Figure prepared. Installing combined plot..."
+                        if packet.figure is not None
+                        else "Data prepared. Updating combined plot..."
+                    ),
                     stage_key="worker_compute",
                 )
             self._render_combined_plot_ui(
@@ -247987,14 +248255,17 @@ class UnifiedApp(tk.Tk):
         on_success: Optional[Callable[[Figure], None]] = None,
         force_full_rebuild: bool = False,
     ) -> None:
-        """Render the combined plot on the UI thread from a prepared packet.
+        """Install or update the Combined plot from a prepared render packet.
 
         Purpose:
-            Build and install the combined figure after background compute.
+            Install a worker-built figure, or update an existing Tk-owned figure
+            when the adaptive reuse path requires UI-thread artist mutation.
         Why:
-            Matplotlib/Tk operations must occur on the UI thread.
+            Tk widget attachment must occur on the UI thread, while fresh
+            Matplotlib construction can safely finish on the serialized worker.
         Inputs:
-            packet: RenderPacket computed in the worker phase.
+            packet: RenderPacket computed in the worker phase, optionally with a
+                completed fresh figure.
             warn_on_failure: Whether to warn on render failure.
             frame: Optional target tab frame to update.
             canvas: Optional target canvas to update.
@@ -248059,31 +248330,32 @@ class UnifiedApp(tk.Tk):
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
         try:
-            fig = None
+            fig = packet.figure
             render_error = None
-            try:
-                fig = self._build_combined_triple_axis_from_state(
-                    args=packet.args,
-                    fig_size=packet.fig_size,
-                    mode="display",
-                    reuse=not force_full_rebuild,
-                    render_ctx=packet.render_ctx,
-                    perf_run=perf_run,
-                )
-            except Exception as exc:
-                render_error = exc
-                fig = None
+            if fig is None:
                 try:
-                    print(
-                        "Combined plot generation failed on UI thread.",
-                        file=sys.stderr,
+                    fig = self._build_combined_triple_axis_from_state(
+                        args=packet.args,
+                        fig_size=packet.fig_size,
+                        mode="display",
+                        reuse=not force_full_rebuild,
+                        render_ctx=packet.render_ctx,
+                        perf_run=perf_run,
                     )
-                    traceback.print_exception(
-                        type(exc), exc, exc.__traceback__, file=sys.stderr
-                    )
-                except Exception:
-                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                    pass
+                except Exception as exc:
+                    render_error = exc
+                    fig = None
+                    try:
+                        print(
+                            "Combined plot generation failed during UI reuse.",
+                            file=sys.stderr,
+                        )
+                        traceback.print_exception(
+                            type(exc), exc, exc.__traceback__, file=sys.stderr
+                        )
+                    except Exception:
+                        # Best-effort guard; preserve normal render failure handling.
+                        pass
 
             if fig is not None:
                 target_frame = frame
@@ -251420,6 +251692,8 @@ class UnifiedApp(tk.Tk):
         canvas: Optional[FigureCanvasTkAgg] = None,
         render_ctx: Optional[RenderContext] = None,
         perf_run: Optional[Dict[str, Any]] = None,
+        config_override: Optional[Mapping[str, Any]] = None,
+        workflow_key_override: Optional[str] = None,
     ) -> Optional[Figure]:
         """Build the combined triple-axis figure from state or render context.
 
@@ -251435,6 +251709,10 @@ class UnifiedApp(tk.Tk):
             canvas: Optional Tk canvas used for sizing and draw operations.
             render_ctx: Optional RenderContext for prepared data/overlays.
             perf_run: Optional performance diagnostics accumulator.
+            config_override: Optional UI-thread-captured Combined configuration;
+                avoids reading Tk variables during a background figure build.
+            workflow_key_override: Optional UI-thread-captured workflow key used
+                during a background figure build.
         Returns:
             The combined Matplotlib Figure, or None if inputs are invalid.
         Side Effects:
@@ -251574,16 +251852,28 @@ class UnifiedApp(tk.Tk):
             _debug_build_end(None)
             return None
 
-        config = self._combined_plot_config(args, mode)
+        config = (
+            copy.deepcopy(dict(config_override))
+            if isinstance(config_override, Mapping)
+            else self._combined_plot_config(args, mode)
+        )
         if config is None:
             _debug_build_end(None)
             return None
+        if config_override is not None:
+            # Worker range calculation can update the first 24 axis arguments
+            # after Tk-owned configuration was captured on the UI thread.
+            config["base_args"] = tuple(args[:24])
         config["temperature_visualization_settings"] = copy.deepcopy(
             style_ctx.get("temperature_visualization_settings") or settings
         )
         config["calculated_trace_extensions"] = (
             self._combined_calculated_trace_extension_hook(
-                workflow_key=self._current_solubility_workflow()
+                workflow_key=(
+                    workflow_key_override
+                    if workflow_key_override is not None
+                    else self._current_solubility_workflow()
+                )
             )
         )
         gates_ctx = render_ctx.gates_ctx if render_ctx else {}
