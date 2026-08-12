@@ -48397,6 +48397,120 @@ def _regression_test_combined_exclusion_tick_and_xlabel_layout() -> None:
         plt.close(fig)
 
 
+def _regression_test_combined_final_layout_health_resolves_artist_collisions() -> None:
+    """Validate the final Combined safety pass resolves rendered collisions.
+
+    Purpose:
+        Reproduce tick-to-tick, x-label/axes, main-legend/axes, and paired break
+        label collisions on an authoritative display profile.
+    Why:
+        Layout Health settings can be numerically valid while their rebuilt text
+        artists overlap at the live canvas size; the final geometry pass must
+        verify the rendered result rather than trusting persisted margins.
+    Inputs:
+        None.
+    Outputs:
+        None.
+    Side Effects:
+        Builds, draws, mutates, and closes one transient Matplotlib figure.
+    Exceptions:
+        Raises AssertionError when any targeted collision remains unresolved.
+    """
+    fig = Figure(figsize=(8.0, 4.5), dpi=100)
+    FigureCanvasAgg(fig)
+    ax = fig.add_subplot(111)
+    ax._gl260_axis_role = "primary"  # type: ignore[attr-defined]
+    ax.plot([0.0, 1.0], [0.0, 1.0], label="Pressure")
+    ax.set_xlim(0.0, 1.0)
+    crowded_ticks = np.linspace(0.0, 1.0, 9)
+    ax.set_xticks(crowded_ticks)
+    ax.set_xticklabels([f"{value:.5f}" for value in crowded_ticks], fontsize=12)
+    _draw_combined_exclusion_break_labels(
+        ax,
+        [(0.40, 0.41), (0.42, 0.43), (0.44, 0.45)],
+        (0.0, 1.0),
+    )
+    xlabel = fig.supxlabel("Elapsed Time (Days)", y=0.24)
+    legend = fig.legend(
+        [ax.lines[0]],
+        ["Reactor Pressure (PSIg)"],
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.23),
+    )
+    fig._gl260_plot_id = "fig_combined_triple_axis"  # type: ignore[attr-defined]
+    fig._gl260_layout_mode = "display"  # type: ignore[attr-defined]
+    fig._gl260_xlabel_text = xlabel  # type: ignore[attr-defined]
+    legend._combined_main_legend = True  # type: ignore[attr-defined]
+    layout_mgr = PlotLayoutManager(
+        fig,
+        mode="display",
+        baseline_margins={
+            "left": 0.10,
+            "right": 0.92,
+            "top": 0.90,
+            "bottom": 0.12,
+        },
+        margins_authoritative=True,
+        legend_gap_pts=6.0,
+        xlabel_tick_gap_pts=8.0,
+        legend_margin_pts=2.0,
+    )
+    layout_mgr.register_axes(ax)
+    layout_mgr.register_artist("xlabel", xlabel)
+    layout_mgr.register_artist("plot_legend", legend)
+    fig._gl260_layout_manager = layout_mgr  # type: ignore[attr-defined]
+    try:
+        result = _finalize_combined_rendered_layout(fig, ax)
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        visible_tick_boxes = [
+            label.get_window_extent(renderer)
+            for label in ax.get_xticklabels()
+            if label.get_visible() and label.get_text().strip()
+        ]
+        if any(
+            left.overlaps(right)
+            for left, right in zip(
+                visible_tick_boxes[:-1],
+                visible_tick_boxes[1:],
+                strict=False,
+            )
+        ):
+            raise AssertionError("Final layout pass left adjacent x ticks overlapping.")
+        xlabel_bbox = xlabel.get_window_extent(renderer)
+        legend_bbox = legend.get_window_extent(renderer)
+        if xlabel_bbox.overlaps(ax.bbox):
+            raise AssertionError("Final layout pass left the x label inside the axes.")
+        if legend_bbox.overlaps(ax.bbox):
+            raise AssertionError(
+                "Final layout pass left the main legend inside the axes."
+            )
+        break_boxes = [
+            label.get_window_extent(renderer)
+            for label in getattr(
+                fig,
+                "_gl260_combined_exclusion_break_label_artists",
+                [],
+            )
+        ]
+        if any(
+            first.overlaps(second)
+            for index, first in enumerate(break_boxes)
+            for second in break_boxes[index + 1 :]
+        ):
+            raise AssertionError("Final layout pass left break labels overlapping.")
+        detected = set(result.get("detected_issues", []) or [])
+        if not {"combined_break_labels_overlap", "legend_axes_overlap"}.issubset(
+            detected
+        ):
+            raise AssertionError(
+                "Final layout pass did not report the rendered collision classes: "
+                f"{sorted(detected)!r}."
+            )
+    finally:
+        plt.close(fig)
+
+
 def _regression_test_combined_outer_axis_none_skips_third_axis_render() -> None:
     """Validate outer-right None suppresses detached axis rendering.
 
@@ -78025,6 +78139,10 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
         _regression_test_combined_exclusion_tick_and_xlabel_layout,
     ),
     (
+        "Combined final layout health resolves rendered artist collisions",
+        _regression_test_combined_final_layout_health_resolves_artist_collisions,
+    ),
+    (
         "Combined outer-right None skips third axis render",
         _regression_test_combined_outer_axis_none_skips_third_axis_render,
     ),
@@ -95433,6 +95551,60 @@ def _layout_health_primary_xticklabels_bbox(
     return candidates[0][1]
 
 
+def _layout_health_overlapping_xticklabels(
+    axis_obj: Any,
+    renderer: Any,
+    *,
+    clearance_px: float = 1.0,
+) -> List[Any]:
+    """Return later x tick labels that collide with an earlier visible label.
+
+    Purpose:
+        Identify individual x tick labels that cannot coexist at the rendered
+        canvas width.
+    Why:
+        A union tick-label bounding box can detect collisions with other artist
+        families but cannot reveal tick-to-tick overlap on a compressed Combined
+        time axis.
+    Inputs:
+        axis_obj: Matplotlib x-axis object exposing ``get_ticklabels``.
+        renderer: Active renderer used for extent measurement.
+        clearance_px: Extra horizontal clearance required between labels, in pixels.
+    Outputs:
+        List of later visible tick-label artists that overlap a retained label.
+    Side Effects:
+        None.
+    Exceptions:
+        Unmeasurable labels are ignored and an unavailable axis returns an empty list.
+    """
+    if axis_obj is None or renderer is None:
+        return []
+    try:
+        labels = list(axis_obj.get_ticklabels())
+    except Exception:
+        return []
+    measured: List[Tuple[Any, Bbox]] = []
+    for label in labels:
+        try:
+            if not label.get_visible() or not str(label.get_text() or "").strip():
+                continue
+            bbox = label.get_window_extent(renderer=renderer)
+        except Exception:
+            continue
+        measured.append((label, bbox))
+    measured.sort(key=lambda item: float(item[1].x0))
+    rejected: List[Any] = []
+    retained_bbox: Optional[Bbox] = None
+    pad = max(0.0, float(clearance_px))
+    for label, bbox in measured:
+        padded = Bbox.from_extents(bbox.x0 - pad, bbox.y0, bbox.x1 + pad, bbox.y1)
+        if retained_bbox is not None and retained_bbox.overlaps(padded):
+            rejected.append(label)
+            continue
+        retained_bbox = padded
+    return rejected
+
+
 def _format_cycle_legend_number(value: Any, precision: int = 2) -> str:
     """Format one numeric cycle-legend value with comma grouping.
 
@@ -95974,6 +96146,7 @@ def _layout_health_general_figure_audit(
         "issues": [],
         "xlabel": None,
         "xticks_bbox": None,
+        "overlapping_xticklabels": [],
         "xlabel_bbox": None,
         "xlabel_tick_gap_pts": None,
         "colorbar_axis": None,
@@ -96021,6 +96194,16 @@ def _layout_health_general_figure_audit(
             xlabel_artist = None
         xlabel_bbox = _layout_health_bbox_in_fig(fig, xlabel_artist, renderer)
         xticks_bbox = _layout_health_axis_ticklabels_bbox(fig, axis.xaxis, renderer)
+        overlapping_xticklabels = _layout_health_overlapping_xticklabels(
+            axis.xaxis,
+            renderer,
+        )
+        if overlapping_xticklabels:
+            _add_issue("xticklabels_overlap")
+            known_labels = audit.setdefault("overlapping_xticklabels", [])
+            for tick_label in overlapping_xticklabels:
+                if tick_label not in known_labels:
+                    known_labels.append(tick_label)
         if xlabel_bbox is not None and xticks_bbox is not None:
             gap_pts = float((xticks_bbox.y0 - xlabel_bbox.y1) * fig_h_pts)
             if audit["xlabel"] is None and _layout_health_artist_has_visible_text(
@@ -96906,6 +97089,7 @@ def layout_health_autofix(
         snapped_lower_band_gap_pts = None
         legend_xlabel_overlap_area = 0.0
         legend_xticks_overlap_area = 0.0
+        legend_axes_overlap_area = 0.0
         general_audit = _layout_health_general_figure_audit(
             fig,
             plot_id,
@@ -96920,6 +97104,30 @@ def layout_health_autofix(
         for audit_issue in list(general_audit.get("issues", []) or []):
             if audit_issue not in issues:
                 issues.append(str(audit_issue))
+        primary_axis = _layout_health_axis_for_role(fig, "primary")
+        if primary_axis is None:
+            try:
+                primary_axis = next(
+                    axis
+                    for axis in fig.get_axes()
+                    if axis is not None
+                    and not getattr(axis, "_gl260_legend_only", False)
+                )
+            except Exception:
+                primary_axis = None
+        try:
+            primary_axes_bbox = (
+                primary_axis.get_position() if primary_axis is not None else None
+            )
+        except Exception:
+            primary_axes_bbox = None
+        if combined_mode and legend_bbox is not None and primary_axes_bbox is not None:
+            legend_axes_overlap_area = _layout_health_bbox_overlap_area(
+                legend_bbox,
+                primary_axes_bbox,
+            )
+            if legend_axes_overlap_area > 1e-8:
+                issues.append("legend_axes_overlap")
         if (
             legend_conflict_checks_enabled
             and legend_bbox is not None
@@ -97562,6 +97770,17 @@ def layout_health_autofix(
                 if required_down > 1e-5:
                     anchor_y -= min(0.08, max(0.0, float(required_down)))
                     adjusted = True
+            if (
+                combined_mode
+                and primary_axes_bbox is not None
+                and "legend_axes_overlap" in issues
+            ):
+                required_down = float(legend_bbox.y1 - primary_axes_bbox.y0) + (
+                    float(min_gap_pts) / fig_h_pts
+                )
+                if required_down > 1e-5:
+                    anchor_y -= min(0.16, max(0.0, required_down))
+                    adjusted = True
             if "legend_off_canvas" in issues:
                 if legend_bbox.y0 < 0.0:
                     anchor_y += min(
@@ -97596,16 +97815,37 @@ def layout_health_autofix(
                     except Exception:
                         pass
 
+        overlapping_xticklabels = list(
+            general_audit.get("overlapping_xticklabels", []) or []
+        )
+        if "xticklabels_overlap" in issues and overlapping_xticklabels:
+            # Retain a readable subset of the existing ticks instead of
+            # rebuilding data or changing the user's time-range policy.
+            for tick_label in overlapping_xticklabels:
+                try:
+                    tick_label.set_visible(False)
+                    adjusted = True
+                except Exception:
+                    continue
+
         if any(
             issue_name in issues
             for issue_name in (
+                "combined_break_labels_overlap",
                 "combined_break_label_xticklabels_overlap",
                 "combined_break_label_xticklabels_gap_low",
             )
         ):
             break_label_gap_pts = general_audit.get("break_label_tick_gap_pts")
-            required_shift_pts = float(min_gap_pts)
-            if break_label_gap_pts is not None:
+            tick_break_issue = any(
+                issue_name in issues
+                for issue_name in (
+                    "combined_break_label_xticklabels_overlap",
+                    "combined_break_label_xticklabels_gap_low",
+                )
+            )
+            required_shift_pts = float(min_gap_pts) if tick_break_issue else 0.0
+            if tick_break_issue and break_label_gap_pts is not None:
                 try:
                     required_shift_pts = max(
                         required_shift_pts,
@@ -97613,18 +97853,63 @@ def layout_health_autofix(
                     )
                 except Exception:
                     pass
-            for break_label in list(
+            break_labels = list(
                 getattr(
                     fig,
                     "_gl260_combined_exclusion_break_label_artists",
                     [],
                 )
                 or []
+            )
+            measured_break_boxes: List[Bbox] = []
+            for break_label in sorted(
+                break_labels,
+                key=lambda artist: float(
+                    (
+                        _layout_health_bbox_in_fig(fig, artist, renderer)
+                        or Bbox.unit()
+                    ).x0
+                ),
             ):
                 try:
                     offset_x, offset_y = break_label.get_position()
+                    break_bbox = _layout_health_bbox_in_fig(fig, break_label, renderer)
+                    total_shift_pts = required_shift_pts
+                    if break_bbox is not None:
+                        for prior_bbox in measured_break_boxes:
+                            candidate_bbox = Bbox.from_extents(
+                                break_bbox.x0,
+                                break_bbox.y0 - (total_shift_pts / fig_h_pts),
+                                break_bbox.x1,
+                                break_bbox.y1 - (total_shift_pts / fig_h_pts),
+                            )
+                            if (
+                                _layout_health_bbox_overlap_area(
+                                    candidate_bbox,
+                                    prior_bbox,
+                                )
+                                > 1e-8
+                            ):
+                                total_shift_pts += (
+                                    float(
+                                        (candidate_bbox.y1 - prior_bbox.y0)
+                                        * fig_h_pts
+                                    )
+                                    + float(min_gap_pts)
+                                )
+                        measured_break_boxes.append(
+                            Bbox.from_extents(
+                                break_bbox.x0,
+                                break_bbox.y0 - (total_shift_pts / fig_h_pts),
+                                break_bbox.x1,
+                                break_bbox.y1 - (total_shift_pts / fig_h_pts),
+                            )
+                        )
                     break_label.set_position(
-                        (float(offset_x), float(offset_y) - required_shift_pts)
+                        (
+                            float(offset_x),
+                            float(offset_y) - total_shift_pts,
+                        )
                     )
                     # Annotation offsets are in points. Mark this as a full
                     # layout adjustment so export performs another renderer pass
@@ -97667,7 +97952,7 @@ def layout_health_autofix(
                 target_bottom = min(0.32, bottom_now + required_shift)
                 if (
                     authoritative_timeline_bottom is None
-                    and not authoritative_combined_bottom
+                    and (not authoritative_combined_bottom or combined_mode)
                 ):
                     fig.subplots_adjust(bottom=target_bottom)
                     if layout_mgr is not None:
@@ -97699,7 +97984,7 @@ def layout_health_autofix(
             and bottom_label_band_overlap_pts is not None
             and math.isfinite(float(bottom_label_band_overlap_pts))
             and authoritative_timeline_bottom is None
-            and not authoritative_combined_bottom
+            and (not authoritative_combined_bottom or combined_mode)
         ):
             # Raise the axes bottom margin after measuring the rendered legend,
             # x-label, and x tick label band so the plot no longer intrudes into it.
@@ -100077,7 +100362,10 @@ def _resolve_combined_export_break_label_collisions(
                     tick_obstacles.append(tick_label.get_window_extent(renderer))
             except Exception:
                 continue
-        xlabel = axis.xaxis.label
+        xlabel = _layout_health_primary_xlabel(
+            fig,
+            plot_id="fig_combined_triple_axis",
+        )
         try:
             xlabel_bbox = (
                 xlabel.get_window_extent(renderer)
@@ -100125,7 +100413,20 @@ def _resolve_combined_export_break_label_collisions(
             current_bottom = float(fig.subplotpars.bottom)
             fig.subplots_adjust(bottom=min(0.48, current_bottom + 0.035))
             if xlabel_collision:
-                axis.xaxis.labelpad = float(axis.xaxis.labelpad) + clearance_pts + 2.0
+                try:
+                    x_pos, y_pos = xlabel.get_position()
+                    xlabel.set_position(
+                        (
+                            float(x_pos),
+                            float(y_pos)
+                            - (
+                                (clearance_pts + 2.0)
+                                / (72.0 * fig.get_size_inches()[1])
+                            ),
+                        )
+                    )
+                except Exception:
+                    pass
             moved = True
         result["passes"] = pass_index + 1
         if not moved:
@@ -100152,6 +100453,71 @@ def _resolve_combined_export_break_label_collisions(
     except Exception:
         pass
     fig._gl260_combined_export_break_layout = result  # type: ignore[attr-defined]
+    return result
+
+
+def _finalize_combined_rendered_layout(fig: Figure, axis: Axes) -> Dict[str, Any]:
+    """Run one bounded geometry-aware safety pass on a rendered Combined figure.
+
+    Purpose:
+        Verify and correct live/export artist collisions after the figure has a
+        renderer and all exclusion labels, ticks, legends, and labels exist.
+    Why:
+        Saved Layout Health values describe intended spacing, but canvas size and
+        rendered text extents determine whether the rebuilt plot is actually safe.
+    Inputs:
+        fig: Combined triple-axis figure to verify.
+        axis: Primary Combined axis that owns the shared x ticks.
+    Outputs:
+        Layout-health result mapping, including detected issues and applied fixes.
+    Side Effects:
+        Draws the figure, hides only colliding x tick labels, may move lower-band
+        artists or expand figure-local margins, and records non-destructive layout
+        suggestions on the figure.
+    Exceptions:
+        Failures return a diagnostic result and leave the existing figure usable.
+    """
+    result: Dict[str, Any] = {
+        "applied": False,
+        "passes": 0,
+        "issues": ["combined_final_layout_check_failed"],
+    }
+    if fig is None or axis is None:
+        return result
+    policy = dict(settings)
+    policy.update(
+        {
+            "layout_health_autofix_enabled": True,
+            "layout_health_check_x_axis_conflicts": True,
+            "layout_health_check_axis_label_conflicts": True,
+            "layout_health_check_legend_conflicts": True,
+            "layout_health_max_passes": max(
+                3,
+                int(policy.get("layout_health_max_passes", 3) or 3),
+            ),
+        }
+    )
+    try:
+        if fig.canvas is None:
+            FigureCanvasAgg(fig)
+        fig.canvas.draw()
+        _suppress_combined_break_tick_label_collisions(axis)
+        fig._gl260_layout_health_active = True  # type: ignore[attr-defined]
+        result = layout_health_autofix(
+            fig,
+            "fig_combined_triple_axis",
+            str(getattr(fig, "_gl260_layout_mode", "display") or "display"),
+            policy,
+        )
+        fig.canvas.draw()
+        fig._gl260_last_layout_health_result = result  # type: ignore[attr-defined]
+    except Exception as exc:
+        result["issues"] = [f"combined_final_layout_check_failed_{type(exc).__name__}"]
+    finally:
+        try:
+            fig._gl260_layout_health_active = False  # type: ignore[attr-defined]
+        except Exception:
+            pass
     return result
 
 
@@ -102000,6 +102366,10 @@ def build_combined_triple_axis_figure(
         _suppress_combined_break_tick_label_collisions(ax)
         if mode_value == "export":
             _resolve_combined_export_break_label_collisions(fig, ax)
+    # Settings become authoritative only after their rebuilt artist geometry is
+    # verified. This final pass catches canvas-dependent collisions that numeric
+    # wizard values alone cannot predict.
+    _finalize_combined_rendered_layout(fig, ax)
 
     # Cycle legend offsets are normalized against a reference axis so detached
     # spines export consistently across DPI and canvas sizes.
@@ -250405,6 +250775,11 @@ class UnifiedApp(tk.Tk):
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+
+        if layout_dirty:
+            # Wizard/profile changes must be judged against the reused figure's
+            # current canvas, not only the geometry captured before persistence.
+            _finalize_combined_rendered_layout(fig, ax)
 
         # Combined display finalization owns the authoritative draw, so reuse
         # updates avoid issuing an extra draw_idle here.
