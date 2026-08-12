@@ -48288,6 +48288,115 @@ def _regression_test_combined_exclusion_coordinate_mapping() -> None:
         )
 
 
+def _regression_test_combined_exclusion_tick_and_xlabel_layout() -> None:
+    """Validate exclusion ticks and the Combined x-label retain readable bands.
+
+    Purpose:
+        Reproduce a wide Combined plot with several compacted time exclusions and
+        an undersized saved bottom margin.
+    Why:
+        Per-segment automatic locators crowded tick labels at every join, while an
+        authoritative low margin could clamp the figure x-label into plot space.
+    Inputs:
+        None.
+    Returns:
+        None.
+    Side Effects:
+        Builds, draws, and closes one transient Matplotlib figure; temporarily
+        disables layout-health autofix so the core layout manager is isolated.
+    Exceptions:
+        Raises AssertionError when tick density, overlap, or xlabel clearance
+        regresses.
+    """
+    fig = Figure(figsize=(17.0, 8.5), dpi=100)
+    FigureCanvasAgg(fig)
+    ax = fig.add_subplot(111)
+    ax.plot([0.0, 7.0], [0.0, 1.0], label="Pressure")
+    ranges = _normalize_combined_exclusion_ranges(
+        [
+            (0.30, 0.90),
+            (1.30, 2.25),
+            (2.80, 5.00),
+            (5.20, 5.40),
+            (5.50, 5.90),
+            (6.40, 6.80),
+        ]
+    )
+    display_range = _combined_exclusion_display_range((0.0, 7.0), ranges)
+    ax.set_xlim(*display_range)
+    _apply_combined_exclusion_time_axis(ax, ranges, (0.0, 7.0), True, 1.0, 0.2)
+    _draw_combined_exclusion_break_labels(ax, ranges, display_range)
+    xlabel = fig.supxlabel("Elapsed Time (Days)")
+    legend = fig.legend(
+        [ax.lines[0]],
+        ["Pressure"],
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.01),
+    )
+    fig._gl260_plot_id = "fig_combined_triple_axis"  # type: ignore[attr-defined]
+    fig._gl260_xlabel_text = xlabel  # type: ignore[attr-defined]
+    ax._gl260_axis_role = "primary"  # type: ignore[attr-defined]
+    layout_mgr = PlotLayoutManager(
+        fig,
+        mode="display",
+        baseline_margins={
+            "left": 0.051,
+            "right": 0.926,
+            "top": 0.895,
+            "bottom": 0.0387,
+        },
+        margins_authoritative=True,
+        legend_gap_pts=6.0,
+        xlabel_tick_gap_pts=12.0,
+        legend_margin_pts=2.0,
+    )
+    layout_mgr.register_axes(ax)
+    layout_mgr.register_artist("xlabel", xlabel)
+    layout_mgr.register_artist("plot_legend", legend)
+    fig._gl260_layout_manager = layout_mgr  # type: ignore[attr-defined]
+    prior_autofix_enabled = settings.get("layout_health_autofix_enabled")
+    settings["layout_health_autofix_enabled"] = False
+    try:
+        layout_mgr.solve(max_passes=2, allow_draw=False)
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        visible_tick_labels = [
+            label
+            for label in ax.get_xticklabels()
+            if label.get_visible() and label.get_text().strip()
+        ]
+        if not 3 <= len(visible_tick_labels) <= 12:
+            raise AssertionError(
+                "Compressed automatic tick count should stay readable, got "
+                f"{len(visible_tick_labels)}."
+            )
+        tick_boxes = [
+            label.get_window_extent(renderer) for label in visible_tick_labels
+        ]
+        if any(
+            left.overlaps(right)
+            for left, right in zip(tick_boxes[:-1], tick_boxes[1:], strict=False)
+        ):
+            raise AssertionError(
+                "Compressed automatic x tick labels should not overlap."
+            )
+        xlabel_bbox = xlabel.get_window_extent(renderer)
+        if xlabel_bbox.y1 >= ax.bbox.y0:
+            raise AssertionError("Combined x-label should remain below the plot axes.")
+        if any(xlabel_bbox.overlaps(tick_bbox) for tick_bbox in tick_boxes):
+            raise AssertionError("Combined x-label should not overlap x tick labels.")
+        if float(fig.subplotpars.bottom) <= 0.0387 + 1e-6:
+            raise AssertionError(
+                "An undersized authoritative bottom margin should expand for safety."
+            )
+    finally:
+        if prior_autofix_enabled is None:
+            settings.pop("layout_health_autofix_enabled", None)
+        else:
+            settings["layout_health_autofix_enabled"] = prior_autofix_enabled
+        plt.close(fig)
+
+
 def _regression_test_combined_outer_axis_none_skips_third_axis_render() -> None:
     """Validate outer-right None suppresses detached axis rendering.
 
@@ -73101,13 +73210,13 @@ def _regression_test_custom_trace_legend_labels_apply_to_core_entries() -> None:
 
 
 def _regression_test_combined_grouped_custom_labels_force_rebuild() -> None:
-    """Validate grouped custom labels remain eligible for safe Combined reuse.
+    """Validate grouped custom labels bypass unsafe Combined reuse.
 
     Purpose:
-        Guard the compatibility routing decision for grouped/custom trace metadata.
+        Guard the conservative routing decision for grouped/custom trace metadata.
     Why:
-        In-place refresh now maps stable series keys to grouped artists and updates
-        custom labels without rebuilding when topology remains unchanged.
+        Live in-place updates can otherwise diverge from the canonical Preview
+        renderer's trace type, marker, line style, and legend mapping.
     Inputs:
         None.
     Outputs:
@@ -73115,13 +73224,13 @@ def _regression_test_combined_grouped_custom_labels_force_rebuild() -> None:
     Side Effects:
         None.
     Exceptions:
-        Raises AssertionError when grouped/custom payloads still force rebuilding.
+        Raises AssertionError when rebuild detection misses grouped/custom data.
     """
-    if _combined_trace_groups_require_rebuild(
+    if not _combined_trace_groups_require_rebuild(
         {"y1": [{"series_key": "y1", "legend_label": "Cylinder A"}]}
     ):
-        raise AssertionError("Custom trace labels should remain reusable.")
-    if _combined_trace_groups_require_rebuild(
+        raise AssertionError("Custom trace labels should force Combined rebuild.")
+    if not _combined_trace_groups_require_rebuild(
         {
             "y1": [
                 {"series_key": "y1", "label": "Reactor A"},
@@ -73129,7 +73238,7 @@ def _regression_test_combined_grouped_custom_labels_force_rebuild() -> None:
             ]
         }
     ):
-        raise AssertionError("Stable grouped traces should remain reusable.")
+        raise AssertionError("Additional grouped traces should force Combined rebuild.")
     if _combined_trace_groups_require_rebuild(
         {"y1": [{"series_key": "y1", "label": "Reactor A"}]}
     ):
@@ -77910,6 +78019,10 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
     (
         "Combined exclusion coordinate mapping",
         _regression_test_combined_exclusion_coordinate_mapping,
+    ),
+    (
+        "Combined exclusion tick and xlabel layout",
+        _regression_test_combined_exclusion_tick_and_xlabel_layout,
     ),
     (
         "Combined outer-right None skips third axis render",
@@ -92331,25 +92444,39 @@ def _trace_group_entries_from_context(
 
 
 def _combined_trace_groups_require_rebuild(trace_groups_payload: Any) -> bool:
-    """Return whether grouped payload shape alone requires a full rebuild.
+    """Return whether combined grouped traces need a full rebuild.
 
     Purpose:
-        Preserve a compatibility hook for callers that previously treated every
-        grouped/custom-label payload as structurally unsafe.
+        Detect grouped trace states that the in-place combined refresh path
+        cannot safely update with canonical trace-type and marker settings.
     Why:
-        Reuse now keys artists by stable per-entry series keys and compares a
-        topology signature, so payload contents alone never require rebuilding.
+        Extra grouped traces and Columns-tab custom labels require the canonical
+        full renderer to preserve the established preview/live artist topology.
     Inputs:
         trace_groups_payload: Candidate `trace_groups` or `trace_groups_np`
             mapping from the render data context.
     Outputs:
-        False. Actual topology mismatch is resolved by the display state signature.
+        True when any role has multiple entries or an entry carries a custom
+        legend label marker; otherwise False.
     Side Effects:
         None.
     Exceptions:
-        None; the payload is intentionally not traversed.
+        Malformed payloads are treated as not requiring a rebuild.
     """
-    _ = trace_groups_payload
+    if not isinstance(trace_groups_payload, Mapping):
+        return False
+    for entries in trace_groups_payload.values():
+        if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
+            continue
+        if len(entries) > 1:
+            return True
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                continue
+            if str(entry.get("legend_label") or "").strip() or bool(
+                entry.get("label_is_custom")
+            ):
+                return True
     return False
 
 
@@ -96611,6 +96738,11 @@ def layout_health_autofix(
         min_axes_height = max(0.28, min_axes_height - 0.04)
 
     layout_mgr = getattr(fig, "_gl260_layout_manager", None)
+    authoritative_combined_bottom = bool(
+        combined_mode
+        and layout_mgr is not None
+        and getattr(layout_mgr, "margins_authoritative", False)
+    )
     authoritative_timeline_bottom = _layout_health_authoritative_timeline_bottom(
         fig,
         mode_norm,
@@ -97105,6 +97237,7 @@ def layout_health_autofix(
             "combined_snapped_lower_band_gap_high" in issues
             and snapped_lower_band_gap_pts is not None
             and math.isfinite(float(snapped_lower_band_gap_pts))
+            and not authoritative_combined_bottom
         ):
             # Move the axes band down by the measured excess while legends and
             # the figure-level xlabel remain fixed in their compact lower band.
@@ -97362,6 +97495,7 @@ def layout_health_autofix(
             )
             if (
                 combined_mode
+                and not authoritative_combined_bottom
                 and gap_pts is not None
                 and math.isfinite(float(gap_pts))
                 and "legend_xlabel_gap_high" in issues
@@ -97531,7 +97665,10 @@ def layout_health_autofix(
             try:
                 bottom_now = float(fig.subplotpars.bottom)
                 target_bottom = min(0.32, bottom_now + required_shift)
-                if authoritative_timeline_bottom is None:
+                if (
+                    authoritative_timeline_bottom is None
+                    and not authoritative_combined_bottom
+                ):
                     fig.subplots_adjust(bottom=target_bottom)
                     if layout_mgr is not None:
                         layout_mgr._baseline_bottom = target_bottom
@@ -97562,6 +97699,7 @@ def layout_health_autofix(
             and bottom_label_band_overlap_pts is not None
             and math.isfinite(float(bottom_label_band_overlap_pts))
             and authoritative_timeline_bottom is None
+            and not authoritative_combined_bottom
         ):
             # Raise the axes bottom margin after measuring the rendered legend,
             # x-label, and x tick label band so the plot no longer intrudes into it.
@@ -98095,7 +98233,7 @@ def layout_health_autofix(
                     (timeline_mode and not timeline_probe_reclaim_applied)
                     or (gap_ready_for_reclaim and primary_xticks_bbox is not None)
                 )
-                if geometry_ready_for_reclaim:
+                if geometry_ready_for_reclaim and not authoritative_combined_bottom:
                     # Keep subplot expansion bounded to preserve label/legend safety
                     # while reclaiming large dead space below the bottom legend.
                     whitespace_excess_pts = max(
@@ -98958,6 +99096,7 @@ class PlotLayoutManager:
                 else None
             )
             xlabel_anchor_x = None
+            bottom_band_overflow = False
             if xlabel is not None:
                 xlabel_height = xlabel_bbox.height if xlabel_bbox is not None else 0.02
                 axes_ref = (
@@ -99015,6 +99154,15 @@ class PlotLayoutManager:
                 if not math.isfinite(band_ceiling):
                     band_ceiling = band_floor + epsilon_frac
                 if band_ceiling < band_floor:
+                    # Remember that the saved axes bottom cannot contain the
+                    # measured legend/xlabel band. Compare against the measured
+                    # lower-band requirement and the solver's established 10%
+                    # safety floor, so generous authoritative margins stay fixed
+                    # when a transient pre-draw axes bbox is stale.
+                    required_bottom = (
+                        band_floor + (xlabel_height / 2.0) + xlabel_tick_gap_frac
+                    )
+                    bottom_band_overflow = bottom < 0.1 and bottom < required_bottom
                     band_ceiling = band_floor + epsilon_frac
                 desired_y = max(band_floor, min(desired_y, band_ceiling))
                 try:
@@ -99045,8 +99193,12 @@ class PlotLayoutManager:
             )
             xlabel_bbox = self._bbox_in_fig(xlabel, renderer) if xlabel else None
             if xlabel_bbox is not None and (
-                not self.margins_authoritative or snapped_legend_layout
+                not self.margins_authoritative
+                or snapped_legend_layout
+                or bottom_band_overflow
             ):
+                # An authoritative profile is a baseline, not permission to place
+                # the x-label inside the axes when its saved bottom band is too small.
                 bottom = max(bottom, xlabel_bbox.y1 + xlabel_tick_gap_frac)
             if legend_bbox is not None and xlabel_bbox is not None:
                 gap = xlabel_bbox.y0 - legend_bbox.y1
@@ -99079,7 +99231,9 @@ class PlotLayoutManager:
                         self._bbox_in_fig(xlabel, renderer) if xlabel else None
                     )
                     if xlabel_bbox is not None and (
-                        not self.margins_authoritative or snapped_legend_layout
+                        not self.margins_authoritative
+                        or snapped_legend_layout
+                        or bottom_band_overflow
                     ):
                         bottom = max(bottom, xlabel_bbox.y1 + xlabel_tick_gap_frac)
             renderer = self._get_renderer(allow_draw)
@@ -99153,7 +99307,11 @@ class PlotLayoutManager:
             if (
                 (lower_xaxis_annotations is not None or data_axes_tight is not None)
                 and xlabel_bbox is not None
-                and (not self.margins_authoritative or snapped_legend_layout)
+                and (
+                    not self.margins_authoritative
+                    or snapped_legend_layout
+                    or bottom_band_overflow
+                )
             ):
                 # Break annotations can extend below normal tick labels, so use
                 # their explicit union as the lower moving edge in snapped mode.
@@ -99616,64 +99774,109 @@ def _apply_combined_exclusion_time_axis(
     if source_max < source_min:
         source_min, source_max = source_max, source_min
     try:
-        segments: List[Tuple[float, float]] = []
-        cursor = source_min
-        for start, end in normalized:
-            if start > cursor:
-                segments.append((cursor, min(start, source_max)))
-            cursor = max(cursor, end)
-        if cursor < source_max:
-            segments.append((cursor, source_max))
-        total_visible_width = sum(
-            max(0.0, high - low) for low, high in segments
+        figure_width_px = (
+            float(axis.figure.get_size_inches()[0])
+            * float(axis.figure.dpi)
+            * float(axis.get_position().width)
         )
-        major_candidates: List[float] = []
-        minor_candidates: List[float] = []
-        for low, high in segments:
-            if high <= low:
-                continue
-            if auto_time_ticks:
-                width_fraction = (high - low) / max(total_visible_width, 1e-12)
-                major_locator = MaxNLocator(
-                    nbins=max(2, min(5, round(2 + (width_fraction * 8)))),
-                    min_n_ticks=2,
-                )
-            else:
-                major_locator = MultipleLocator(major_tick)
-            segment_major = major_locator.tick_values(low, high)
-            segment_major = segment_major[
-                (segment_major >= low - 1e-12) & (segment_major <= high + 1e-12)
+        target_major_ticks = max(4, min(12, int(figure_width_px // 110.0)))
+        if auto_time_ticks:
+            # Select one coherent visible-space grid. The inverse formatter below
+            # still reports true source time, while every label receives useful
+            # screen width even when exclusions remove most "nice" source values.
+            display_min, display_max = _combined_exclusion_display_range(
+                (source_min, source_max), normalized
+            )
+            major_locator = MaxNLocator(
+                nbins=max(3, target_major_ticks - 1),
+                min_n_ticks=3,
+            )
+            major_display = np.asarray(
+                major_locator.tick_values(display_min, display_max), dtype=float
+            )
+            major_display = major_display[
+                np.isfinite(major_display)
+                & (major_display >= display_min - 1e-12)
+                & (major_display <= display_max + 1e-12)
             ]
-            major_candidates.extend(float(value) for value in segment_major)
-            if auto_time_ticks:
-                for major_low, major_high in zip(
-                    segment_major[:-1], segment_major[1:]
-                ):
-                    step = (float(major_high) - float(major_low)) / 5.0
-                    minor_candidates.extend(
-                        float(major_low) + (step * index)
-                        for index in range(1, 5)
-                    )
-            else:
-                segment_minor = MultipleLocator(minor_tick).tick_values(low, high)
+            minor_candidates = []
+            for major_low, major_high in zip(
+                major_display[:-1], major_display[1:], strict=False
+            ):
+                step = (float(major_high) - float(major_low)) / 5.0
                 minor_candidates.extend(
-                    float(value)
-                    for value in segment_minor
-                    if low - 1e-12 <= value <= high + 1e-12
+                    float(major_low) + (step * index) for index in range(1, 5)
                 )
-        major_source = np.asarray(sorted(set(major_candidates)), dtype=float)
-        minor_source = np.asarray(sorted(set(minor_candidates)), dtype=float)
-        major_display = _combined_exclusion_display_x(major_source, normalized)
+            minor_display = np.asarray(minor_candidates, dtype=float)
+            removed = 0.0
+            join_coordinates = []
+            for start, end in normalized:
+                join_coordinates.append(float(start) - removed)
+                removed += float(end) - float(start)
+            join_tolerance = max(abs(display_max - display_min), 1.0) * 1e-9
+            for join_x in join_coordinates:
+                # Paired annotations own the exact discontinuity coordinate.
+                major_display = major_display[
+                    np.abs(major_display - join_x) > join_tolerance
+                ]
+                minor_display = minor_display[
+                    np.abs(minor_display - join_x) > join_tolerance
+                ]
+        else:
+            unfiltered_major = np.asarray(
+                MultipleLocator(major_tick).tick_values(source_min, source_max),
+                dtype=float,
+            )
+            unfiltered_minor = np.asarray(
+                MultipleLocator(minor_tick).tick_values(source_min, source_max),
+                dtype=float,
+            )
+
+            def _visible_source_ticks(values: np.ndarray) -> np.ndarray:
+                """Return finite source ticks that do not occupy an excluded join.
+
+                Purpose:
+                    Filter a source-time tick grid before coordinate compression.
+                Why:
+                    Exclusion endpoints already have explicit break labels, and
+                    ordinary ticks there would duplicate labels at the same pixel.
+                Inputs:
+                    values: Candidate source-time tick coordinates.
+                Returns:
+                    Sorted unique source-time coordinates outside hidden ranges.
+                Side Effects:
+                    None.
+                Exceptions:
+                    Invalid values are removed by finite/range masks.
+                """
+                candidates = np.asarray(values, dtype=float)
+                keep = (
+                    np.isfinite(candidates)
+                    & (candidates >= source_min - 1e-12)
+                    & (candidates <= source_max + 1e-12)
+                )
+                for start, end in normalized:
+                    # Break boundaries use explicit paired annotations.
+                    keep &= ~(
+                        (candidates >= start - 1e-12) & (candidates <= end + 1e-12)
+                    )
+                return np.unique(candidates[keep])
+
+            major_source = _visible_source_ticks(unfiltered_major)
+            minor_source = _visible_source_ticks(unfiltered_minor)
+            major_display = _combined_exclusion_display_x(major_source, normalized)
+            minor_display = _combined_exclusion_display_x(minor_source, normalized)
         axis.xaxis.set_major_locator(
             FixedLocator(major_display[np.isfinite(major_display)])
         )
-        minor_display = _combined_exclusion_display_x(minor_source, normalized)
         axis.xaxis.set_minor_locator(
             FixedLocator(minor_display[np.isfinite(minor_display)])
         )
         axis.xaxis.set_major_formatter(
             FuncFormatter(
-                lambda value, _position: f"{_combined_exclusion_source_x(float(value), normalized):g}"
+                lambda value, _position: (
+                    f"{_combined_exclusion_source_x(float(value), normalized):g}"
+                )
             )
         )
     except Exception:
@@ -248500,6 +248703,11 @@ class UnifiedApp(tk.Tk):
         style_ctx = render_ctx.style_ctx if render_ctx else {}
         overlay_ctx = render_ctx.overlay_ctx if render_ctx else {}
         show_main_legend = bool(config.get("show_main_legend", True))
+        exclusion_sig = tuple(
+            _normalize_combined_exclusion_ranges(
+                data_ctx.get("combined_exclusion_ranges")
+            )
+        )
         trace_topology_sig = tuple(
             (
                 role,
@@ -248576,6 +248784,7 @@ class UnifiedApp(tk.Tk):
             fig is None
             or state.get("structure_sig") != structure_sig
             or state.get("trace_topology_sig") != trace_topology_sig
+            or state.get("exclusion_sig") != exclusion_sig
             or force_overlay_rebuild
         ):
             self._dbg(
@@ -248648,6 +248857,7 @@ class UnifiedApp(tk.Tk):
                 "legend_sig": legend_sig,
                 "cycle_overlay_sig": cycle_overlay_sig,
                 "trace_topology_sig": trace_topology_sig,
+                "exclusion_sig": exclusion_sig,
                 "elements_sig": None,
                 "trace_filter_sig": None,
             }
@@ -250185,6 +250395,7 @@ class UnifiedApp(tk.Tk):
             state["style_sig"] = style_sig
             state["cycle_overlay_sig"] = cycle_overlay_sig
             state["trace_topology_sig"] = trace_topology_sig
+            state["exclusion_sig"] = exclusion_sig
             state["elements_sig"] = plot_elements_sig
             state["trace_filter_sig"] = trace_filter_sig
             state["layout_sig"] = layout_sig
@@ -250381,6 +250592,13 @@ class UnifiedApp(tk.Tk):
             if isinstance(gates_ctx, Mapping)
             else True
         )
+        trace_groups_payload = data_ctx.get("trace_groups") or data_ctx.get(
+            "trace_groups_np"
+        )
+        if _combined_trace_groups_require_rebuild(trace_groups_payload):
+            # Match the established Preview renderer for grouped/custom traces;
+            # the in-place path cannot safely reinterpret their artist topology.
+            reuse = False
         perf_start = time.perf_counter() if perf_run is not None else None
         if reuse and mode == "display":
             with self._perf_time("plotting.render", "combined_refresh"):
