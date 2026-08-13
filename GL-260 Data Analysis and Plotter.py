@@ -10614,8 +10614,28 @@ class AnnotationHitTest:
     def _text_bbox_display(
         self, ax: Axes, element: Mapping[str, Any]
     ) -> Optional[Tuple[float, float, float, float]]:
-        """Perform text bbox display.
-        Used to keep the workflow logic localized and testable."""
+        """Measure one text element in display pixels for pointer hit testing.
+
+        Purpose:
+            Recreate the rendered text bounds with the element's persisted
+            coordinate transform.
+        Why:
+            Drag selection must use the same data, axes, or Combined mixed
+            data-x/axes-y transform as the visible artist; otherwise clicks on
+            Combined text are tested against a different screen location.
+        Inputs:
+            ax: Matplotlib axis that owns the text element.
+            element: Normalized Plot Elements text payload.
+        Outputs:
+            Display-space ``(x0, y0, x1, y1)`` bounds, or None when the text
+            cannot be measured.
+        Side Effects:
+            Temporarily adds a text artist to ``ax`` and caches its measured
+            bounds before removing the temporary artist.
+        Exceptions:
+            Invalid geometry, transforms, or renderer state fail closed by
+            returning None.
+        """
         text_artist = None
         try:
             if ax is None or element is None:
@@ -10679,6 +10699,14 @@ class AnnotationHitTest:
                 wrapped = _wrap_text_for_display(
                     ax, str(text_value), x, y, wrap_width, fontsize
                 )
+            if coord_space == "data_x_axes_y":
+                from matplotlib.transforms import blended_transform_factory
+
+                text_transform = blended_transform_factory(ax.transData, ax.transAxes)
+            else:
+                text_transform = (
+                    ax.transAxes if coord_space == "axes" else ax.transData
+                )
             fig = ax.figure
             if fig is None or fig.canvas is None:
                 return None
@@ -10689,7 +10717,7 @@ class AnnotationHitTest:
                 x,
                 y,
                 wrapped,
-                transform=ax.transAxes if coord_space == "axes" else ax.transData,
+                transform=text_transform,
                 fontsize=fontsize,
                 fontfamily=style.get("fontfamily", None),
                 fontweight=style.get("fontweight", None),
@@ -10822,6 +10850,7 @@ class AnnotationHitTest:
                         if coord_space == "axes":
                             wrap_edge_x = ax.transAxes.transform((x + wrap_width, y))[0]
                         else:
+                            # Data and mixed-coordinate text both own x in data space.
                             wrap_edge_x = ax.transData.transform((x + wrap_width, y))[0]
                     except Exception:
                         wrap_edge_x = x1
@@ -70576,6 +70605,107 @@ def _regression_test_cycle_timeline_plot_elements_handles_do_not_expand_xlim() -
         plt.close(fig)
 
 
+def _regression_test_combined_mixed_coordinate_text_remains_draggable() -> None:
+    """Validate Combined mixed-coordinate text hit testing and drag movement.
+
+    Purpose:
+        Exercise the pointer path used by text Plot Elements after Combined text
+        is migrated to data-x/axes-y coordinates.
+    Why:
+        Measuring a mixed-coordinate artist with ``transData`` moves its hit box
+        away from the visible text and disables dragging in both live and preview
+        canvases.
+    Inputs:
+        None.
+    Outputs:
+        None.
+    Side Effects:
+        Builds and closes a local Agg figure and mutates a local annotation store.
+    Exceptions:
+        Raises AssertionError when a visible text click does not start a drag or
+        motion does not update both mixed-coordinate geometry components.
+    """
+    fig, ax = plt.subplots(figsize=(6.0, 4.0))
+    try:
+        canvas = FigureCanvasAgg(fig)
+        fig.set_canvas(canvas)
+        ax.set_xlim(0.0, 100.0)
+        ax.set_ylim(0.0, 10000.0)
+        element = {
+            "id": "combined-mixed-text-drag",
+            "name": "Combined note",
+            "type": "text",
+            "axes_target": "primary",
+            "coord_space": "data_x_axes_y",
+            "visible": True,
+            "locked": False,
+            "zorder": ANNOTATION_DEFAULT_ZORDER,
+            "style": _default_style_for_type("text"),
+            "geometry": {
+                "x": 40.0,
+                "y": 0.82,
+                "text": "Draggable Combined note",
+                "wrap_width_x": 24.0,
+            },
+        }
+        settings_ref = {"plot_elements": {"fig_combined_triple_axis": [element]}}
+        controller = PlotAnnotationsController(
+            "fig_combined_triple_axis",
+            fig,
+            canvas,
+            AnnotationStore(settings_ref),
+            AnnotationRenderer(),
+            {"primary": ax},
+            {"primary": "Primary"},
+        )
+        canvas.draw()
+        artist_map = getattr(fig, "_gl260_annotation_artist_map", {})
+        artists = list(artist_map.get(element["id"], []) or [])
+        if not artists:
+            raise AssertionError("Combined text regression did not render an artist.")
+        bbox = artists[0].get_window_extent(renderer=canvas.get_renderer())
+        press_x = float((bbox.x0 + bbox.x1) / 2.0)
+        press_y = float((bbox.y0 + bbox.y1) / 2.0)
+        press_data = ax.transData.inverted().transform((press_x, press_y))
+        press_event = SimpleNamespace(
+            name="button_press_event",
+            artist=None,
+            mouseevent=None,
+            x=press_x,
+            y=press_y,
+            xdata=float(press_data[0]),
+            ydata=float(press_data[1]),
+            inaxes=ax,
+            button=1,
+            key=None,
+        )
+        controller._on_press(press_event)
+        if controller._drag_state is None:
+            raise AssertionError("Visible Combined text did not enter drag state.")
+        tracked_element = controller._drag_state.get("element")
+        if not isinstance(tracked_element, dict):
+            raise AssertionError("Combined text drag lost its normalized payload.")
+        start_x = float(tracked_element["geometry"]["x"])
+        start_y = float(tracked_element["geometry"]["y"])
+        motion_event = SimpleNamespace(
+            name="motion_notify_event",
+            x=press_x + 18.0,
+            y=press_y - 14.0,
+            xdata=None,
+            ydata=None,
+            inaxes=ax,
+            button=1,
+            key=None,
+        )
+        controller._on_motion(motion_event)
+        if float(tracked_element["geometry"]["x"]) == start_x:
+            raise AssertionError("Combined text drag did not update data-space x.")
+        if float(tracked_element["geometry"]["y"]) == start_y:
+            raise AssertionError("Combined text drag did not update axes-space y.")
+    finally:
+        plt.close(fig)
+
+
 def _regression_test_cycle_timeline_layout_reset_preserves_nonlayout_prefs() -> None:
     """Validate Cycle Timeline layout reset clears only placement/layout state.
 
@@ -77916,6 +78046,10 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
     (
         "Timeline Plot Elements handles do not expand xlim",
         _regression_test_cycle_timeline_plot_elements_handles_do_not_expand_xlim,
+    ),
+    (
+        "Combined mixed-coordinate text remains draggable",
+        _regression_test_combined_mixed_coordinate_text_remains_draggable,
     ),
     (
         "Timeline layout-only reset preserves nonlayout prefs",
@@ -137515,6 +137649,26 @@ class UnifiedApp(tk.Tk):
             window = tk.Toplevel(self)
             window.title("Plot Preview (Export 11x8.5)")
             window.transient(self)
+            try:
+                screen_width = max(1, int(window.winfo_screenwidth()))
+                screen_height = max(1, int(window.winfo_screenheight()))
+                preview_width = min(1100, max(640, screen_width - 48))
+                preview_height = min(850, max(480, screen_height - 96))
+                preview_x = max(0, (screen_width - preview_width) // 2)
+                preview_y = max(0, (screen_height - preview_height) // 2)
+                # A placed overlay has no requested size of its own, so establish
+                # usable geometry before the empty content host reaches Windows.
+                window.geometry(
+                    f"{preview_width}x{preview_height}+{preview_x}+{preview_y}"
+                )
+                window.minsize(
+                    min(640, preview_width),
+                    min(480, preview_height),
+                )
+            except Exception:
+                # Geometry probing is best-effort; the preview can still render
+                # using the window manager's default placement.
+                pass
             host = ttk.Frame(window)
             host.pack(fill="both", expand=True)
             content = ttk.Frame(host)
@@ -138068,7 +138222,9 @@ class UnifiedApp(tk.Tk):
                 exc,
             )
 
-        runner = getattr(self, "_task_runner", None)
+        runner = getattr(self, "_combined_render_runner", None)
+        if runner is None or not hasattr(runner, "submit"):
+            runner = getattr(self, "_task_runner", None)
         if runner is not None and hasattr(runner, "submit"):
             self._combined_plot_preview_task_id = runner.submit(
                 "combined_plot_preview_render",
@@ -138078,29 +138234,66 @@ class UnifiedApp(tk.Tk):
             )
             return
 
-        def _thread_worker() -> None:
-            """Run preview compute fallback on daemon thread.
+        completion_queue: queue.SimpleQueue[Tuple[str, Any]] = queue.SimpleQueue()
+
+        def _poll_thread_worker() -> None:
+            """Poll the fallback preview worker from Tk's owning thread.
 
             Purpose:
-                Preserve async preview behavior without TkTaskRunner.
+                Deliver a fallback worker result without calling Tcl/Tk from the
+                daemon thread.
             Why:
-                Fallback avoids UI blocking if task runner is unavailable.
+                The preview must preserve the same queue-and-poll thread boundary
+                as the live Combined renderer even when no task runner exists.
             Inputs:
                 None.
             Outputs:
                 None.
             Side Effects:
-                Executes worker in background thread and marshals callbacks to UI.
+                Reschedules itself through Tk while the worker is pending, then
+                invokes the success or error callback on Tk's thread.
+            Exceptions:
+                Empty-queue checks reschedule safely; callback errors remain
+                owned by their existing handlers.
+            """
+            try:
+                outcome, payload = completion_queue.get_nowait()
+            except queue.Empty:
+                try:
+                    self.after(25, _poll_thread_worker)
+                except Exception:
+                    pass
+                return
+            if outcome == "ok":
+                _on_ok(payload)
+            else:
+                _on_err(payload)
+
+        def _thread_worker() -> None:
+            """Run preview compute fallback on a Tk-isolated daemon thread.
+
+            Purpose:
+                Preserve async preview behavior without TkTaskRunner.
+            Why:
+                Fallback avoids UI blocking if task runners are unavailable and
+                hands results to a queue instead of calling Tk from the worker.
+            Inputs:
+                None.
+            Outputs:
+                None.
+            Side Effects:
+                Executes work in a background thread and enqueues its outcome.
             Exceptions:
                 Worker errors are routed to `_on_err`.
             """
             try:
                 packet = _worker()
             except Exception as exc:
-                self.after(0, lambda exc=exc: _on_err(exc))
+                completion_queue.put(("error", exc))
                 return
-            self.after(0, lambda packet=packet: _on_ok(packet))
+            completion_queue.put(("ok", packet))
 
+        self.after(25, _poll_thread_worker)
         threading.Thread(target=_thread_worker, daemon=True).start()
 
     def _place_annotations_panel(
