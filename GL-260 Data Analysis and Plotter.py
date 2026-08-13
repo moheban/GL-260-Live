@@ -19205,6 +19205,10 @@ DEVELOPER_REGRESSION_CHECKS_SPLIT_FRAC_MAX = 0.8
 COMBINED_SVG_REDUCTION_MODE_SETTINGS_KEY = "combined_svg_reduction_mode"
 COMBINED_SVG_MAX_POINTS_SETTINGS_KEY = "combined_svg_max_points_per_trace"
 COMBINED_SVG_RASTER_DPI_SETTINGS_KEY = "combined_svg_raster_dpi"
+COMBINED_ELAPSED_TICK_DECIMALS_SETTINGS_KEY = "combined_elapsed_tick_decimals"
+DEFAULT_COMBINED_ELAPSED_TICK_DECIMALS = 5
+MIN_COMBINED_ELAPSED_TICK_DECIMALS = 0
+MAX_COMBINED_ELAPSED_TICK_DECIMALS = 8
 COMBINED_SVG_REDUCTION_FULL = "full"
 COMBINED_SVG_REDUCTION_NO_MARKERS = "no_markers"
 COMBINED_SVG_REDUCTION_DECIMATE = "decimate"
@@ -70706,6 +70710,52 @@ def _regression_test_combined_mixed_coordinate_text_remains_draggable() -> None:
         plt.close(fig)
 
 
+def _regression_test_combined_elapsed_tick_decimal_formatter() -> None:
+    """Validate configurable Combined elapsed-time label precision.
+
+    Purpose:
+        Exercise fixed decimal formatting on ordinary and exclusion-compressed
+        Combined x axes.
+    Why:
+        The Developer Tools setting must preserve source elapsed-day values while
+        presenting the same requested precision in live and preview/export plots.
+    Inputs:
+        None.
+    Outputs:
+        None.
+    Side Effects:
+        Builds and closes a local Agg figure and replaces its x-axis formatter.
+    Exceptions:
+        Raises AssertionError when precision, negative-zero normalization, setting
+        bounds, or compressed-to-source coordinate conversion regresses.
+    """
+    fig, ax = plt.subplots(figsize=(4.0, 3.0))
+    try:
+        _apply_combined_elapsed_tick_formatter(ax, (), 3)
+        formatter = ax.xaxis.get_major_formatter()
+        if formatter(1.23456, 0) != "1.235":
+            raise AssertionError("Ordinary elapsed ticks did not use three decimals.")
+        if formatter(-0.0001, 0) != "0.000":
+            raise AssertionError("Elapsed tick formatting exposed negative zero.")
+
+        ranges = ((2.0, 4.0),)
+        _apply_combined_elapsed_tick_formatter(ax, ranges, 2)
+        formatter = ax.xaxis.get_major_formatter()
+        source_value = _combined_exclusion_source_x(3.0, ranges)
+        if formatter(3.0, 0) != f"{source_value:.2f}":
+            raise AssertionError("Compressed elapsed tick did not restore source time.")
+        if _normalize_combined_elapsed_tick_decimals(-2) != 0:
+            raise AssertionError(
+                "Elapsed tick precision did not clamp its lower bound."
+            )
+        if _normalize_combined_elapsed_tick_decimals(99) != 8:
+            raise AssertionError(
+                "Elapsed tick precision did not clamp its upper bound."
+            )
+    finally:
+        plt.close(fig)
+
+
 def _regression_test_cycle_timeline_layout_reset_preserves_nonlayout_prefs() -> None:
     """Validate Cycle Timeline layout reset clears only placement/layout state.
 
@@ -78050,6 +78100,10 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
     (
         "Combined mixed-coordinate text remains draggable",
         _regression_test_combined_mixed_coordinate_text_remains_draggable,
+    ),
+    (
+        "Combined elapsed tick decimal formatter",
+        _regression_test_combined_elapsed_tick_decimal_formatter,
     ),
     (
         "Timeline layout-only reset preserves nonlayout prefs",
@@ -87465,6 +87519,34 @@ def _normalize_combined_svg_export_settings(value: Any) -> dict[str, Any]:
         COMBINED_SVG_MAX_POINTS_SETTINGS_KEY: max_points,
         COMBINED_SVG_RASTER_DPI_SETTINGS_KEY: raster_dpi,
     }
+
+
+def _normalize_combined_elapsed_tick_decimals(value: Any) -> int:
+    """Normalize the Combined elapsed-days tick-label precision setting.
+
+    Purpose:
+        Convert persisted or Developer Tools input into a bounded decimal count.
+    Why:
+        Matplotlib format precision must be a safe non-negative integer, while
+        Tk variables and older settings files may supply strings or bad values.
+    Inputs:
+        value: Candidate decimal-place count.
+    Outputs:
+        Integer between ``MIN_COMBINED_ELAPSED_TICK_DECIMALS`` and
+        ``MAX_COMBINED_ELAPSED_TICK_DECIMALS``.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid values use ``DEFAULT_COMBINED_ELAPSED_TICK_DECIMALS``.
+    """
+    try:
+        decimals = int(float(value))
+    except Exception:
+        decimals = DEFAULT_COMBINED_ELAPSED_TICK_DECIMALS
+    return max(
+        MIN_COMBINED_ELAPSED_TICK_DECIMALS,
+        min(MAX_COMBINED_ELAPSED_TICK_DECIMALS, decimals),
+    )
 
 
 def _sanitize_workspace_profile_name(value: Any) -> str:
@@ -100480,6 +100562,7 @@ def _apply_combined_exclusion_time_axis(
     auto_time_ticks: bool,
     major_tick: float,
     minor_tick: float,
+    elapsed_tick_decimals: Any = DEFAULT_COMBINED_ELAPSED_TICK_DECIMALS,
 ) -> None:
     """Configure compressed x ticks to display original stitched elapsed time.
 
@@ -100496,6 +100579,7 @@ def _apply_combined_exclusion_time_axis(
         auto_time_ticks: Whether automatic major tick selection is enabled.
         major_tick: Manual major tick interval when automatic ticks are disabled.
         minor_tick: Manual minor tick interval when automatic ticks are disabled.
+        elapsed_tick_decimals: Fixed decimal places for source-time labels.
     Returns:
         None.
     Side Effects:
@@ -100610,16 +100694,63 @@ def _apply_combined_exclusion_time_axis(
         axis.xaxis.set_minor_locator(
             FixedLocator(minor_display[np.isfinite(minor_display)])
         )
-        axis.xaxis.set_major_formatter(
-            FuncFormatter(
-                lambda value, _position: (
-                    f"{_combined_exclusion_source_x(float(value), normalized):g}"
-                )
-            )
+        _apply_combined_elapsed_tick_formatter(
+            axis,
+            normalized,
+            elapsed_tick_decimals,
         )
     except Exception:
         # Keep the established locator behavior if unusual user tick values fail.
         return
+
+
+def _apply_combined_elapsed_tick_formatter(
+    axis: Axes,
+    ranges: Sequence[Tuple[float, float]],
+    decimals: Any,
+) -> None:
+    """Apply fixed decimal precision to Combined elapsed-days tick labels.
+
+    Purpose:
+        Install one formatter shared by ordinary and exclusion-compressed
+        Combined x axes.
+    Why:
+        Normal axes and compressed axes previously used different general-number
+        formatters, preventing one Developer Tools precision choice from applying
+        consistently to live and export-preview figures.
+    Inputs:
+        axis: Combined primary Matplotlib axis.
+        ranges: Optional source-time exclusion ranges used to invert compressed x.
+        decimals: Requested number of digits after the decimal point.
+    Outputs:
+        None.
+    Side Effects:
+        Replaces the x-axis major formatter on ``axis``.
+    Exceptions:
+        Invalid precision is normalized; non-finite tick values render blank.
+    """
+    normalized_ranges = _normalize_combined_exclusion_ranges(ranges)
+    precision = _normalize_combined_elapsed_tick_decimals(decimals)
+
+    def _format_tick(value: Any, _position: Any) -> str:
+        """Format one visible display coordinate as source elapsed days."""
+        try:
+            numeric_value = float(value)
+            if normalized_ranges:
+                numeric_value = _combined_exclusion_source_x(
+                    numeric_value,
+                    normalized_ranges,
+                )
+            if not math.isfinite(numeric_value):
+                return ""
+            zero_tolerance = 0.5 * (10.0 ** (-precision))
+            if abs(numeric_value) < zero_tolerance:
+                numeric_value = 0.0
+            return f"{numeric_value:.{precision}f}"
+        except Exception:
+            return ""
+
+    axis.xaxis.set_major_formatter(FuncFormatter(_format_tick))
 
 
 def _draw_combined_exclusion_break_labels(
@@ -101448,6 +101579,7 @@ def build_combined_triple_axis_figure(
     legend_loc=None,
     cycle_legend_loc=None,
     cycle_legend_anchor_space=None,
+    elapsed_tick_decimals: Any = DEFAULT_COMBINED_ELAPSED_TICK_DECIMALS,
     mode: str = "display",
     fig_size=None,
     render_ctx: Optional[RenderContext] = None,
@@ -101469,6 +101601,7 @@ def build_combined_triple_axis_figure(
         cycle_legend_anchor_space: "figure" or "axes" to interpret the anchor.
         colorbar_detached_pad_pts: Optional colorbar gap from the outer combined
             y-axis, in points; used only for a right-side temperature colorbar.
+        elapsed_tick_decimals: Fixed decimal places for elapsed-days x tick labels.
         mode: "display" or "export" to control layout solving behavior.
         fig_size: Optional (width, height) in inches for display rendering.
         render_ctx: Optional RenderContext payload for prepared data/overlays.
@@ -102918,6 +103051,13 @@ def build_combined_triple_axis_figure(
             bool(auto_time_ticks),
             float(xmaj_tick),
             float(xmin_tick),
+            elapsed_tick_decimals,
+        )
+    else:
+        _apply_combined_elapsed_tick_formatter(
+            ax,
+            (),
+            elapsed_tick_decimals,
         )
 
     _apply_axis_ticks(
@@ -106827,6 +106967,15 @@ class UnifiedApp(tk.Tk):
         settings.update(layout_health_settings)
         combined_svg_settings = _normalize_combined_svg_export_settings(settings)
         settings.update(combined_svg_settings)
+        combined_elapsed_tick_decimals = _normalize_combined_elapsed_tick_decimals(
+            settings.get(
+                COMBINED_ELAPSED_TICK_DECIMALS_SETTINGS_KEY,
+                DEFAULT_COMBINED_ELAPSED_TICK_DECIMALS,
+            )
+        )
+        settings[COMBINED_ELAPSED_TICK_DECIMALS_SETTINGS_KEY] = (
+            combined_elapsed_tick_decimals
+        )
         workflow_probe_timeout_ms = _normalize_timeout_ms(
             settings.get("rust_workflow_probe_timeout_ms", 2500),
             default_ms=2500,
@@ -107486,6 +107635,7 @@ class UnifiedApp(tk.Tk):
         self._combined_plot_preview_canvas: Optional[FigureCanvasTkAgg] = None
         self._combined_plot_preview_toolbar: Optional[NavigationToolbar2Tk] = None
         self._combined_plot_preview_resize_after_id: Optional[str] = None
+        self._combined_plot_preview_needs_ready_geometry = False
         self._combined_plot_preview_task_id: Optional[int] = None
         self._combined_plot_preview_build_inflight = False
         self._combined_plot_preview_request_token = 0
@@ -108379,6 +108529,9 @@ class UnifiedApp(tk.Tk):
             _normalize_combined_cycle_legend_calculated_rows(
                 settings.get(COMBINED_CYCLE_LEGEND_CALCULATED_ROWS_SETTINGS_KEY)
             )
+        )
+        self._combined_elapsed_tick_decimals_var = tk.IntVar(
+            value=combined_elapsed_tick_decimals
         )
         core_side_effects_mode_default = _normalize_core_render_cycle_side_effects_mode(
             settings.get(
@@ -117442,9 +117595,9 @@ class UnifiedApp(tk.Tk):
         """Build the runtime/advanced tools tab inside Developer Tools.
 
         Purpose:
-            Expose concurrency/layout-health controls, combined SVG export
-            reduction controls, Compare debug actions, and entrypoints to
-            advanced diagnostics dialogs from a single tab.
+            Expose concurrency/layout-health controls, Combined elapsed-time tick
+            formatting and SVG export reduction controls, Compare debug actions,
+            and entrypoints to advanced diagnostics dialogs from a single tab.
         Why:
             Keeps unrelated expert tools accessible without overloading the main
             logging/debug tab.
@@ -117454,8 +117607,8 @@ class UnifiedApp(tk.Tk):
             None.
         Side Effects:
             Creates widgets that call existing runtime handlers, including
-            concurrency/layout-health/SVG-export apply logic and separate dialog
-            actions.
+            concurrency/layout-health/tick-format/SVG-export apply logic and
+            separate dialog actions.
         Exceptions:
             Delegates to existing guarded handlers so failures remain non-fatal.
         """
@@ -117638,10 +117791,43 @@ class UnifiedApp(tk.Tk):
             ),
         ).grid(row=6, column=3, sticky="w", padx=8, pady=(0, 8))
 
+        tick_format_frame = ttk.LabelFrame(
+            parent, text="Combined Triple-Axis Tick Formatting"
+        )
+        tick_format_frame.grid(
+            row=3, column=0, sticky="ew", padx=10, pady=(0, 10)
+        )
+        ttk.Label(
+            tick_format_frame,
+            text="Elapsed Time (days) x-axis decimal places:",
+        ).grid(row=0, column=0, sticky="w", padx=8, pady=8)
+        elapsed_tick_spin = ttk.Spinbox(
+            tick_format_frame,
+            from_=MIN_COMBINED_ELAPSED_TICK_DECIMALS,
+            to=MAX_COMBINED_ELAPSED_TICK_DECIMALS,
+            increment=1,
+            textvariable=self._combined_elapsed_tick_decimals_var,
+            width=6,
+            command=self._apply_combined_elapsed_tick_decimal_control,
+        )
+        elapsed_tick_spin.grid(row=0, column=1, sticky="w", pady=8)
+        elapsed_tick_spin.bind(
+            "<FocusOut>",
+            lambda _event: self._apply_combined_elapsed_tick_decimal_control(),
+        )
+        elapsed_tick_spin.bind(
+            "<Return>",
+            lambda _event: self._apply_combined_elapsed_tick_decimal_control(),
+        )
+        ttk.Label(
+            tick_format_frame,
+            text="Applies to Combined live plots and export previews (0-8).",
+        ).grid(row=0, column=2, sticky="w", padx=8, pady=8)
+
         svg_export_frame = ttk.LabelFrame(
             parent, text="Combined Triple-Axis SVG Export"
         )
-        svg_export_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 10))
+        svg_export_frame.grid(row=4, column=0, sticky="ew", padx=10, pady=(0, 10))
         for col_idx in range(4):
             svg_export_frame.columnconfigure(
                 col_idx, weight=1 if col_idx in {1, 3} else 0
@@ -117730,7 +117916,7 @@ class UnifiedApp(tk.Tk):
         ).grid(row=3, column=3, sticky="w", padx=8, pady=(0, 8))
 
         compare_debug_frame = ttk.LabelFrame(parent, text="Compare Debug")
-        compare_debug_frame.grid(row=4, column=0, sticky="ew", padx=10, pady=(0, 10))
+        compare_debug_frame.grid(row=5, column=0, sticky="ew", padx=10, pady=(0, 10))
         compare_debug_frame.columnconfigure(0, weight=1)
         compare_debug_frame.columnconfigure(1, weight=1)
         compare_debug_frame.columnconfigure(2, weight=1)
@@ -117751,7 +117937,7 @@ class UnifiedApp(tk.Tk):
         ).grid(row=0, column=2, sticky="w", padx=8, pady=6)
 
         speciation_diag_frame = ttk.LabelFrame(parent, text="Speciation Diagnostics")
-        speciation_diag_frame.grid(row=5, column=0, sticky="ew", padx=10, pady=(0, 10))
+        speciation_diag_frame.grid(row=6, column=0, sticky="ew", padx=10, pady=(0, 10))
         for col_idx in range(4):
             speciation_diag_frame.columnconfigure(
                 col_idx, weight=1 if col_idx in {1, 3} else 0
@@ -117943,7 +118129,7 @@ class UnifiedApp(tk.Tk):
         self._refresh_speciation_anchor_learning_usage_status()
 
         tools_frame = ttk.LabelFrame(parent, text="Advanced Tools")
-        tools_frame.grid(row=6, column=0, sticky="ew", padx=10, pady=(0, 10))
+        tools_frame.grid(row=7, column=0, sticky="ew", padx=10, pady=(0, 10))
         tools_frame.columnconfigure(0, weight=1)
         tools_frame.columnconfigure(1, weight=1)
         ttk.Button(
@@ -123154,6 +123340,74 @@ class UnifiedApp(tk.Tk):
             pass
         finally:
             self._loading_feedback_paint_active = False
+
+    def _apply_combined_elapsed_tick_decimal_control(self) -> None:
+        """Persist and apply Combined elapsed-days tick-label precision.
+
+        Purpose:
+            Normalize the Developer Tools spinbox value and refresh affected
+            Combined live/preview figures.
+        Why:
+            Tick precision is a render input, so changing it should take effect
+            immediately and remain consistent after restart.
+        Inputs:
+            None. Reads ``self._combined_elapsed_tick_decimals_var``.
+        Outputs:
+            None.
+        Side Effects:
+            Updates the Tk variable and global settings, schedules persistence,
+            marks Combined layout dirty, refreshes the live Combined plot, and
+            rebuilds an open export preview.
+        Exceptions:
+            Invalid values normalize to the default; refresh and persistence
+            failures are handled best-effort.
+        """
+        precision_var = getattr(self, "_combined_elapsed_tick_decimals_var", None)
+        try:
+            raw_value = precision_var.get() if precision_var is not None else None
+        except Exception:
+            raw_value = None
+        decimals = _normalize_combined_elapsed_tick_decimals(raw_value)
+        settings[COMBINED_ELAPSED_TICK_DECIMALS_SETTINGS_KEY] = decimals
+        if precision_var is not None:
+            try:
+                precision_var.set(decimals)
+            except Exception:
+                pass
+        try:
+            self._mark_plot_layout_dirty("fig_combined_triple_axis")
+        except Exception:
+            pass
+        try:
+            self._schedule_save_settings()
+        except Exception:
+            pass
+        try:
+            self._refresh_plot_for_plot_id(
+                "fig_combined_triple_axis",
+                reason="Applying elapsed-time tick precision...",
+                rearm_overlay=True,
+                capture_combined_legend=False,
+            )
+        except Exception:
+            pass
+        preview_window = getattr(self, "_combined_plot_preview_window", None)
+        try:
+            preview_open = bool(
+                preview_window is not None and preview_window.winfo_exists()
+            )
+        except Exception:
+            preview_open = False
+        if preview_open:
+            try:
+                self._open_plot_preview(
+                    "fig_combined",
+                    "fig_combined_triple_axis",
+                    "Plot Preview",
+                    force_rebuild=True,
+                )
+            except Exception:
+                pass
 
     def _stop_plot_loading_overlay_heartbeat(self, frame) -> None:
         """Stop one plot loading overlay heartbeat timer.
@@ -136920,6 +137174,7 @@ class UnifiedApp(tk.Tk):
         self._combined_plot_preview_canvas = None
         self._combined_plot_preview_toolbar = None
         self._combined_plot_preview_fig = None
+        self._combined_plot_preview_needs_ready_geometry = False
         self._combined_plot_preview_progress_value = 0.0
         self._combined_plot_preview_started_at = None
         self._combined_plot_preview_message_base = ""
@@ -137577,6 +137832,55 @@ class UnifiedApp(tk.Tk):
                 pass
         messagebox.showinfo("Layout Elements", status)
 
+    def _apply_combined_plot_preview_ready_geometry(self) -> None:
+        """Resize the newly opened Combined preview to its installed content.
+
+        Purpose:
+            Replace the temporary loading-window geometry with the natural size
+            requested by the finished canvas, toolbar, and layout controls.
+        Why:
+            The loading overlay needs an explicit initial size, but retaining
+            that size can compress the 11-by-8.5 preview canvas after its chrome
+            is installed. A one-shot ready-state resize lets the complete plot
+            fit without overriding later user-driven window resizing.
+        Inputs:
+            None. Preview window/content references are read from application
+            state after Tk canvas installation.
+        Outputs:
+            None.
+        Side Effects:
+            Flushes pending Tk geometry calculations, resizes and recenters the
+            preview window once, and clears the ready-geometry latch.
+        Exceptions:
+            Missing or destroyed widgets and geometry-query failures are handled
+            best-effort; the latch is always cleared to avoid resize loops.
+        """
+        if not bool(
+            getattr(self, "_combined_plot_preview_needs_ready_geometry", False)
+        ):
+            return
+        window = getattr(self, "_combined_plot_preview_window", None)
+        content = getattr(self, "_combined_plot_preview_content", None)
+        try:
+            if window is None or content is None or not window.winfo_exists():
+                return
+            window.update_idletasks()
+            content.update_idletasks()
+            requested_width = max(640, int(content.winfo_reqwidth()))
+            requested_height = max(480, int(content.winfo_reqheight()))
+            screen_width = max(1, int(window.winfo_screenwidth()))
+            screen_height = max(1, int(window.winfo_screenheight()))
+            target_width = min(requested_width, max(640, screen_width - 48))
+            target_height = min(requested_height, max(480, screen_height - 96))
+            pos_x = max(0, (screen_width - target_width) // 2)
+            pos_y = max(0, (screen_height - target_height) // 2)
+            window.geometry(f"{target_width}x{target_height}+{pos_x}+{pos_y}")
+        except Exception:
+            # Ready-state fitting is cosmetic and must not block preview reveal.
+            pass
+        finally:
+            self._combined_plot_preview_needs_ready_geometry = False
+
     def _open_plot_preview(
         self,
         plot_key: str | None,
@@ -137649,6 +137953,7 @@ class UnifiedApp(tk.Tk):
             window = tk.Toplevel(self)
             window.title("Plot Preview (Export 11x8.5)")
             window.transient(self)
+            self._combined_plot_preview_needs_ready_geometry = True
             try:
                 screen_width = max(1, int(window.winfo_screenwidth()))
                 screen_height = max(1, int(window.winfo_screenheight()))
@@ -138189,6 +138494,7 @@ class UnifiedApp(tk.Tk):
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
+                self._apply_combined_plot_preview_ready_geometry()
                 self._set_combined_plot_preview_loading_state(
                     progress=100.0,
                     message="Preview Ready.",
@@ -249413,6 +249719,12 @@ class UnifiedApp(tk.Tk):
             "title_font_value": title_font_value,
             "label_font_value": label_font_value,
             "tick_font_value": tick_font_value,
+            "elapsed_tick_decimals": _normalize_combined_elapsed_tick_decimals(
+                settings.get(
+                    COMBINED_ELAPSED_TICK_DECIMALS_SETTINGS_KEY,
+                    DEFAULT_COMBINED_ELAPSED_TICK_DECIMALS,
+                )
+            ),
             "legend_font_value": legend_font_value,
             "cycle_legend_font_value": cycle_legend_font_value,
             "font_family_value": font_family_value,
@@ -249763,6 +250075,7 @@ class UnifiedApp(tk.Tk):
             config.get("title_font_value"),
             config.get("label_font_value"),
             config.get("tick_font_value"),
+            config.get("elapsed_tick_decimals"),
             config.get("legend_font_value"),
             config.get("cycle_legend_font_value"),
             bool(config.get("show_main_legend", True)),
@@ -250974,6 +251287,13 @@ class UnifiedApp(tk.Tk):
                     bool(auto_time_ticks),
                     float(xmaj_tick),
                     float(xmin_tick),
+                    config.get("elapsed_tick_decimals"),
+                )
+            else:
+                _apply_combined_elapsed_tick_formatter(
+                    ax,
+                    (),
+                    config.get("elapsed_tick_decimals"),
                 )
             _apply_axis_ticks(ax, auto_y_ticks, ymaj_tick, ymin_tick)
             ax.tick_params(
@@ -252180,6 +252500,7 @@ class UnifiedApp(tk.Tk):
                 legend_loc=legend_loc,
                 cycle_legend_loc=cycle_legend_loc,
                 cycle_legend_anchor_space=cycle_legend_anchor_space,
+                elapsed_tick_decimals=config.get("elapsed_tick_decimals"),
                 baseline_margins=profile_margins,
                 legend_anchor_y=profile_legend_anchor_y,
                 xlabel_pad_pts=xlabel_pad_value,
