@@ -71,6 +71,18 @@ SCROLLBAR_FALLBACK_WIDTH = 18  # used only before the real width is known
 
 EXPORT_DPI = 600
 
+# Keep the standalone verifier aligned with the main application's default
+# Layout Health policy without importing the full GL-260 UI process.
+GENERAL_LAYOUT_HEALTH_POLICY = {
+    "max_passes": 3,
+    "min_gap_pts": 8.0,
+    "max_gap_pts": 28.0,
+    "min_axis_label_tick_gap_pts": 8.0,
+    "max_axis_label_tick_gap_pts": 18.0,
+    "max_bottom_whitespace_pts": 36.0,
+    "min_axes_height": 0.31,
+}
+
 
 def _safe_float(v, default=None):
     try:
@@ -102,6 +114,12 @@ def _percent_fmt(v, _):
 
 
 def _make_legend_draggable(legend):
+    """Enable interactive dragging for one Matplotlib legend when supported.
+
+    ``legend`` is an optional Matplotlib legend. The helper exists to keep
+    interactive render tabs editable, returns ``None``, and mutates the legend's
+    draggable state. Missing legends and backend-specific failures are ignored.
+    """
     if legend is None:
         return
     try:
@@ -111,6 +129,13 @@ def _make_legend_draggable(legend):
 
 
 def _make_legends_draggable(fig):
+    """Enable dragging once for every legend attached to a figure.
+
+    ``fig`` is an optional Matplotlib figure containing figure- or axes-level
+    legends. The helper returns ``None`` and updates each unique legend's
+    draggable state so rendered tabs remain interactive. Missing figures and
+    unsupported legend backends are handled by the delegated safe helper.
+    """
     if fig is None:
         return
     seen = set()
@@ -124,6 +149,352 @@ def _make_legends_draggable(fig):
         if legend is None or id(legend) in seen:
             continue
         _make_legend_draggable(legend)
+
+
+def _layout_artist_bbox(fig, artist, renderer):
+    """Return one visible artist's bounds in figure coordinates.
+
+    The helper exists so General Plotter layout checks use the same rendered-
+    extent model as the main application's Layout Health pass. ``fig`` owns the
+    artist, ``artist`` is any Matplotlib object with ``get_window_extent``, and
+    ``renderer`` is the active canvas renderer. It returns a transformed bbox or
+    ``None``. It has no side effects and treats hidden or unmeasurable artists as
+    unavailable instead of raising.
+    """
+    if artist is None or renderer is None:
+        return None
+    try:
+        if hasattr(artist, "get_visible") and not artist.get_visible():
+            return None
+        bbox = artist.get_window_extent(renderer=renderer)
+        return (
+            bbox.transformed(fig.transFigure.inverted()) if bbox is not None else None
+        )
+    except Exception:
+        return None
+
+
+def _layout_tick_bboxes(fig, axis_obj, renderer):
+    """Measure visible non-empty tick labels for one Matplotlib axis.
+
+    This supports collision and label-gap checks shared by x and y axes.
+    ``fig`` owns ``axis_obj`` and ``renderer`` supplies final pixel extents. The
+    return value is a list of ``(label, figure_bbox)`` pairs in display order.
+    There are no side effects; inaccessible labels are skipped.
+    """
+    measured = []
+    try:
+        labels = list(axis_obj.get_ticklabels())
+    except Exception:
+        return measured
+    for label in labels:
+        try:
+            if not label.get_visible() or not str(label.get_text() or "").strip():
+                continue
+        except Exception:
+            continue
+        bbox = _layout_artist_bbox(fig, label, renderer)
+        if bbox is not None:
+            measured.append((label, bbox))
+    return measured
+
+
+def _layout_bbox_overlap(lhs, rhs):
+    """Return whether two optional figure-coordinate bounding boxes overlap.
+
+    The predicate provides deterministic collision checks for the standalone
+    verifier. ``lhs`` and ``rhs`` are Matplotlib bbox-like values. It returns a
+    boolean, has no side effects, and returns ``False`` for missing boxes.
+    """
+    if lhs is None or rhs is None:
+        return False
+    try:
+        return bool(lhs.overlaps(rhs))
+    except Exception:
+        return False
+
+
+def _audit_general_plot_layout(fig, renderer):
+    """Measure General Plotter output against the main layout-health requirements.
+
+    The audit checks visible labels, tick labels, legends, titles, lower-band
+    spacing, canvas clipping, and usable axes height after rendering. ``fig`` is
+    the target Matplotlib figure and ``renderer`` is its active renderer. It
+    returns issue names plus correction metadata. The function does not mutate
+    the figure; artist inspection failures are ignored on a per-artist basis.
+    """
+    policy = GENERAL_LAYOUT_HEALTH_POLICY
+    fig_w_pts = max(float(fig.get_size_inches()[0]) * 72.0, 1.0)
+    fig_h_pts = max(float(fig.get_size_inches()[1]) * 72.0, 1.0)
+    issues = []
+    overlapping_xticklabels = []
+    label_gap_adjustments = []
+    edge_bboxes = []
+    lower_band_tops = []
+    axes_bottoms = []
+
+    def add_issue(name):
+        """Append one issue token while preserving first-seen order."""
+        if name not in issues:
+            issues.append(name)
+
+    for ax in list(getattr(fig, "axes", []) or []):
+        try:
+            if not ax.get_visible():
+                continue
+        except Exception:
+            continue
+        try:
+            axes_position = ax.get_position()
+            axes_bottoms.append(float(axes_position.y0))
+            if float(axes_position.height) < float(policy["min_axes_height"]):
+                add_issue("axes_over_compressed")
+        except Exception:
+            pass
+
+        x_ticks = _layout_tick_bboxes(fig, ax.xaxis, renderer)
+        x_ticks.sort(key=lambda item: float(item[1].x0))
+        retained_bbox = None
+        for label, bbox in x_ticks:
+            if retained_bbox is not None and _layout_bbox_overlap(retained_bbox, bbox):
+                overlapping_xticklabels.append(label)
+                add_issue("xticklabels_overlap")
+                continue
+            retained_bbox = bbox
+
+        x_tick_bboxes = [bbox for _, bbox in x_ticks]
+        y_tick_bboxes = [
+            bbox for _, bbox in _layout_tick_bboxes(fig, ax.yaxis, renderer)
+        ]
+        xlabel_bbox = _layout_artist_bbox(fig, ax.xaxis.get_label(), renderer)
+        ylabel_bbox = _layout_artist_bbox(fig, ax.yaxis.get_label(), renderer)
+        edge_bboxes.extend(x_tick_bboxes + y_tick_bboxes)
+        for bbox in (xlabel_bbox, ylabel_bbox):
+            if bbox is not None:
+                edge_bboxes.append(bbox)
+
+        if xlabel_bbox is not None and x_tick_bboxes:
+            ticks_y0 = min(float(bbox.y0) for bbox in x_tick_bboxes)
+            gap_pts = float((ticks_y0 - xlabel_bbox.y1) * fig_h_pts)
+            # Tick labels are intentionally attached directly below the axes;
+            # the lower-band clearance check targets the x-label and legends.
+            lower_band_tops.append(float(xlabel_bbox.y1))
+            if (
+                _layout_bbox_overlap(
+                    xlabel_bbox,
+                    type(xlabel_bbox).from_extents(
+                        min(bbox.x0 for bbox in x_tick_bboxes),
+                        min(bbox.y0 for bbox in x_tick_bboxes),
+                        max(bbox.x1 for bbox in x_tick_bboxes),
+                        max(bbox.y1 for bbox in x_tick_bboxes),
+                    ),
+                )
+                or gap_pts < float(policy["min_gap_pts"]) - 0.25
+            ):
+                add_issue("xlabel_xticklabels_overlap")
+                label_gap_adjustments.append((ax.xaxis, gap_pts, "x"))
+            elif gap_pts > float(policy["max_gap_pts"]) + 0.25:
+                add_issue("xlabel_xticklabels_gap_high")
+                label_gap_adjustments.append((ax.xaxis, gap_pts, "x"))
+
+        if ylabel_bbox is not None and y_tick_bboxes:
+            ticks_x0 = min(float(bbox.x0) for bbox in y_tick_bboxes)
+            ticks_x1 = max(float(bbox.x1) for bbox in y_tick_bboxes)
+            label_center = float((ylabel_bbox.x0 + ylabel_bbox.x1) / 2.0)
+            ticks_center = float((ticks_x0 + ticks_x1) / 2.0)
+            gap_pts = (
+                float(ylabel_bbox.x0 - ticks_x1) * fig_w_pts
+                if label_center >= ticks_center
+                else float(ticks_x0 - ylabel_bbox.x1) * fig_w_pts
+            )
+            if gap_pts < float(policy["min_axis_label_tick_gap_pts"]) - 0.25:
+                add_issue("axis_label_tick_overlap")
+                label_gap_adjustments.append((ax.yaxis, gap_pts, "y"))
+            elif gap_pts > float(policy["max_axis_label_tick_gap_pts"]) + 0.25:
+                add_issue("axis_label_tick_gap_high")
+                label_gap_adjustments.append((ax.yaxis, gap_pts, "y"))
+
+    legends = list(getattr(fig, "legends", []) or [])
+    legends.extend(
+        legend
+        for ax in list(getattr(fig, "axes", []) or [])
+        if (legend := ax.get_legend()) is not None
+    )
+    for legend in legends:
+        bbox = _layout_artist_bbox(fig, legend, renderer)
+        if bbox is None:
+            continue
+        edge_bboxes.append(bbox)
+        if legend in getattr(fig, "legends", []) or (
+            axes_bottoms and float(bbox.y1) <= min(axes_bottoms)
+        ):
+            # Only external/below-axes legends belong to the lower layout band;
+            # ordinary in-axes legends intentionally overlay the plotting area.
+            lower_band_tops.append(float(bbox.y1))
+        if bbox.x0 < -0.001 or bbox.x1 > 1.001 or bbox.y0 < -0.001 or bbox.y1 > 1.001:
+            add_issue("legend_off_canvas")
+
+    for text_artist in (getattr(fig, "_suptitle", None),):
+        bbox = _layout_artist_bbox(fig, text_artist, renderer)
+        if bbox is None:
+            continue
+        edge_bboxes.append(bbox)
+        if bbox.x0 < -0.001 or bbox.x1 > 1.001 or bbox.y0 < -0.001 or bbox.y1 > 1.003:
+            add_issue("text_artist_off_canvas")
+
+    bottom_whitespace_pts = None
+    if edge_bboxes:
+        bottom_whitespace_pts = max(
+            0.0,
+            min(float(bbox.y0) for bbox in edge_bboxes) * fig_h_pts,
+        )
+        if bottom_whitespace_pts > float(policy["max_bottom_whitespace_pts"]) + 0.25:
+            add_issue("bottom_whitespace_high")
+    bottom_band_overlap = 0.0
+    if lower_band_tops and axes_bottoms:
+        bottom_band_overlap = max(
+            0.0,
+            max(lower_band_tops)
+            + (float(policy["min_gap_pts"]) / fig_h_pts)
+            - min(axes_bottoms),
+        )
+        if bottom_band_overlap > (0.25 / fig_h_pts):
+            add_issue("bottom_margin_label_band_overlap")
+
+    return {
+        "issues": issues,
+        "overlapping_xticklabels": overlapping_xticklabels,
+        "label_gap_adjustments": label_gap_adjustments,
+        "edge_bboxes": edge_bboxes,
+        "bottom_whitespace_pts": bottom_whitespace_pts,
+        "bottom_band_overlap": bottom_band_overlap,
+    }
+
+
+def _verify_general_plot_layout(fig, *, outside_bottom=False, mode="display"):
+    """Run bounded layout-health correction and verification on one figure.
+
+    This is the General Plotter counterpart to the main application's final
+    Layout Health pass. ``fig`` is a completed preview/render/export figure,
+    ``outside_bottom`` preserves the reserved external-legend band, and ``mode``
+    records whether display or export geometry was checked. The returned dict
+    reports passes, corrections, detected issues, and unresolved final issues.
+    The function may adjust label padding/subplot margins and hide colliding x
+    tick labels; draw or artist failures stop safely and are reported as issues.
+    """
+    policy = GENERAL_LAYOUT_HEALTH_POLICY
+    result = {
+        "applied": False,
+        "passes": 0,
+        "detected_issues": [],
+        "issues": [],
+        "mode": str(mode or "display"),
+    }
+    minimum_bottom = 0.20 if outside_bottom else 0.06
+    for pass_index in range(int(policy["max_passes"])):
+        result["passes"] = pass_index + 1
+        try:
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+        except Exception as exc:
+            result["issues"] = [f"layout_draw_failed_{type(exc).__name__}"]
+            break
+        audit = _audit_general_plot_layout(fig, renderer)
+        issues = list(audit["issues"])
+        result["issues"] = issues
+        for issue in issues:
+            if issue not in result["detected_issues"]:
+                result["detected_issues"].append(issue)
+        if not issues:
+            break
+
+        adjusted = False
+        for tick_label in audit["overlapping_xticklabels"]:
+            try:
+                tick_label.set_visible(False)
+                adjusted = True
+            except Exception:
+                continue
+        for axis_obj, measured_gap, axis_kind in audit["label_gap_adjustments"]:
+            min_gap = float(
+                policy["min_gap_pts"]
+                if axis_kind == "x"
+                else policy["min_axis_label_tick_gap_pts"]
+            )
+            max_gap = float(
+                policy["max_gap_pts"]
+                if axis_kind == "x"
+                else policy["max_axis_label_tick_gap_pts"]
+            )
+            target_gap = max(min_gap, min(max_gap, (min_gap + max_gap) / 2.0))
+            try:
+                current_pad = float(axis_obj.labelpad)
+                new_pad = max(0.0, min(96.0, current_pad + target_gap - measured_gap))
+                if abs(new_pad - current_pad) > 1e-6:
+                    axis_obj.labelpad = new_pad
+                    adjusted = True
+            except Exception:
+                continue
+
+        edge_bboxes = list(audit["edge_bboxes"])
+        if edge_bboxes:
+            left_overflow = max(0.0, -min(float(bbox.x0) for bbox in edge_bboxes))
+            right_overflow = max(0.0, max(float(bbox.x1) for bbox in edge_bboxes) - 1.0)
+            bottom_overflow = max(0.0, -min(float(bbox.y0) for bbox in edge_bboxes))
+            top_overflow = max(0.0, max(float(bbox.y1) for bbox in edge_bboxes) - 1.0)
+            bottom_overlap = float(audit["bottom_band_overlap"])
+            try:
+                current = fig.subplotpars
+                margins = {
+                    "left": min(0.42, max(0.04, float(current.left) + left_overflow)),
+                    "right": max(
+                        0.58,
+                        min(0.98, float(current.right) - right_overflow),
+                    ),
+                    "bottom": min(
+                        0.46,
+                        max(
+                            minimum_bottom,
+                            float(current.bottom) + bottom_overflow + bottom_overlap,
+                        ),
+                    ),
+                    "top": max(0.54, min(0.97, float(current.top) - top_overflow)),
+                }
+                if "bottom_whitespace_high" in issues and not outside_bottom:
+                    excess = (
+                        float(audit["bottom_whitespace_pts"])
+                        - float(policy["max_bottom_whitespace_pts"])
+                    ) / max(float(fig.get_size_inches()[1]) * 72.0, 1.0)
+                    margins["bottom"] = max(minimum_bottom, margins["bottom"] - excess)
+                margin_changed = any(
+                    abs(float(margins[key]) - float(getattr(current, key))) > 1e-6
+                    for key in ("left", "right", "bottom", "top")
+                )
+                if (
+                    margin_changed
+                    and margins["left"] < margins["right"]
+                    and margins["bottom"] < margins["top"]
+                ):
+                    fig.subplots_adjust(**margins)
+                    adjusted = True
+            except Exception:
+                pass
+        if not adjusted:
+            break
+        result["applied"] = True
+
+    try:
+        fig.canvas.draw()
+        final_audit = _audit_general_plot_layout(fig, fig.canvas.get_renderer())
+        result["issues"] = list(final_audit["issues"])
+    except Exception as exc:
+        result["issues"] = [f"layout_verify_failed_{type(exc).__name__}"]
+    try:
+        fig._gl260_layout_health_result = result
+        fig._gl260_layout_mode = str(mode or "display")
+    except Exception:
+        pass
+    return result
 
 
 def _resolve_right_label(custom, fallback):
@@ -472,12 +843,36 @@ class GeneralPlotter(tk.Tk):
         ttk.Button(
             bottom,
             text="Export to PowerPoint",
-            command=lambda: self._export_pptx(
-                [plt.figure(n) for n in plt.get_fignums()]
-            ),
+            command=lambda: self._export_pptx(self._get_rendered_figures()),
         ).pack(side="left", padx=8)
 
+    def _get_rendered_figures(self):
+        """Return figures still owned by open General Plotter render tabs.
+
+        This registry lookup exists because embedding a pyplot figure in a Tk
+        canvas can detach it from pyplot's global figure-number registry.
+        There are no inputs. The method returns open figures in tab order,
+        de-duplicated by identity, and has no side effects or expected errors.
+        """
+        figures = []
+        seen = set()
+        for tab_info in list(self.render_tabs):
+            for fig in list(tab_info.get("figures", []) or []):
+                if fig is None or id(fig) in seen:
+                    continue
+                figures.append(fig)
+                seen.add(id(fig))
+        return figures
+
     def _display_rendered_figures(self, figs: list[plt.Figure]):
+        """Embed completed figures in a new General Plotter notebook tab.
+
+        The tab keeps rendered output and its export action accessible inside
+        the main window. ``figs`` is the ordered list of Matplotlib figures to
+        display. The method returns ``None`` and creates Tk canvas/toolbar
+        widgets, registers tab ownership, and selects the new tab. Empty input
+        is ignored; a missing notebook falls back to a non-blocking pyplot show.
+        """
         if not figs:
             return
         if self.nb is None:
@@ -504,6 +899,11 @@ class GeneralPlotter(tk.Tk):
             text="Close Tab",
             command=lambda info=tab_info: self._close_render_tab(info),
         ).pack(side="right")
+        ttk.Button(
+            header,
+            text="Export This Render",
+            command=lambda figures=figs: self.export_plots(figures),
+        ).pack(side="right", padx=(0, 8))
 
         if len(figs) == 1:
             container = ttk.Frame(tab)
@@ -1858,8 +2258,74 @@ class GeneralPlotter(tk.Tk):
                         label=ref.get("label", None),
                     )
 
+    def _apply_preview_axis_legend(self, ax, legend_loc, companion_axes=()):
+        """Apply the selected legend location to one preview subplot.
+
+        This helper exists so single, grid, and facet previews all honor the
+        same location control while combining labels from an optional right-Y
+        twin axis. ``ax`` is the primary Matplotlib axes, ``legend_loc`` is a
+        supported Matplotlib location string, and ``companion_axes`` contains
+        any axes whose entries belong in the same legend. The method returns
+        the created legend, or ``None`` when there are no labeled artists. It
+        mutates the primary axes by replacing its legend and does not raise for
+        an empty legend-entry set.
+        """
+        handles, labels, seen = [], [], set()
+        for source_ax in (ax, *companion_axes):
+            source_handles, source_labels = source_ax.get_legend_handles_labels()
+            for handle, label in zip(
+                source_handles,
+                source_labels,
+                strict=False,
+            ):
+                if not label or label in seen:
+                    continue
+                handles.append(handle)
+                labels.append(label)
+                seen.add(label)
+        if not handles:
+            return None
+        return ax.legend(
+            handles,
+            labels,
+            loc=legend_loc,
+            fontsize=LABEL_FONTSIZE - 1,
+        )
+
+    def _apply_preview_outside_legend(self):
+        """Create the shared outside-bottom legend for the preview figure.
+
+        This method centralizes the special layout used by the
+        ``outside bottom`` location so every preview mode reserves the same
+        space and avoids duplicate figure legends. It takes no parameters and
+        returns the created figure legend, or ``None`` when no labeled artists
+        exist. It mutates ``self.preview_fig`` by adjusting its bottom margin
+        and adding one legend; empty plots are handled without raising.
+        """
+        self.preview_fig.subplots_adjust(bottom=0.20)
+        handles, labels = self._collect_legend_entries(self.preview_fig)
+        if not handles:
+            return None
+        return self.preview_fig.legend(
+            handles,
+            labels,
+            loc="lower center",
+            ncol=min(6, len(labels)),
+            fontsize=LABEL_FONTSIZE - 1,
+            frameon=False,
+        )
+
     # ---------- Live preview ----------
     def draw_preview(self):
+        """Rebuild the embedded preview from the current General Plotter state.
+
+        The callback exists to reflect data selections and styling controls,
+        including the legend location, after live changes or an explicit
+        Refresh Preview click. It reads Tk variables and the current DataFrame,
+        takes no parameters, and returns ``None``. It clears and redraws the
+        preview figure/canvas, refreshes preview statistics where applicable,
+        and tolerates invalid filters or optional hover integration failures.
+        """
         self._preview_after_id = None
         self.preview_fig.clf()
         _apply_theme(self.theme.get())
@@ -1911,6 +2377,7 @@ class GeneralPlotter(tk.Tk):
 
         if ptype in ("single", "single_right"):
             ax = self.preview_fig.add_subplot(111)
+            ax2 = None
             ax.grid(
                 self.show_grid.get(), which="both", axis="both"
             )  # toggle grid on/off
@@ -1998,6 +2465,11 @@ class GeneralPlotter(tk.Tk):
             self.preview_fig.suptitle(
                 self.suptitle_text.get(), fontsize=SUPTITLE_FONTSIZE, y=SUPTITLE_Y
             )
+            if legend_outside:
+                self._apply_preview_outside_legend()
+            else:
+                companion_axes = (ax2,) if ax2 is not None else ()
+                self._apply_preview_axis_legend(ax, legend_loc, companion_axes)
 
         elif ptype in ("grid", "grid_right"):
             n = len(ycols)
@@ -2011,6 +2483,7 @@ class GeneralPlotter(tk.Tk):
 
             for i, col in enumerate(ycols):
                 ax = axs[i]
+                ax2 = None
                 ax.grid(self.show_grid.get())
                 st = self.series_style.get(col, {})
                 if st.get("visible", True) is False:
@@ -2064,96 +2537,11 @@ class GeneralPlotter(tk.Tk):
                 _apply_formatter_to_axis(ax.yaxis, self.y_left_format.get())
                 self._apply_references(ax)
                 if legend_loc != "outside bottom":
-                    ax.legend(loc="best", fontsize=LABEL_FONTSIZE - 1)
+                    companion_axes = (ax2,) if ax2 is not None else ()
+                    self._apply_preview_axis_legend(ax, legend_loc, companion_axes)
 
             for j in range(n, len(axs)):
                 axs[j].set_visible(False)
-            if legend_loc == "outside bottom":
-                # Gather unique handles/labels from all subplots (and any right twins)
-                handles, labels = [], []
-                twins = []
-                for i, col in enumerate(ycols):
-                    # collect from left axes
-                    h, l = axs[i].get_legend_handles_labels()
-                    handles += h
-                    labels += l
-                    # collect from right axes if created
-                    for child in axs[i].get_children():
-                        # no reliable handle, so instead track twins explicitly during creation
-                        pass
-                # If you created ax2 twins in the loop, append them to `twins` there; then:
-                for t in twins:
-                    try:
-                        h2, l2 = t.get_legend_handles_labels()
-                        handles += h2
-                        labels += l2
-                    except Exception:
-                        pass
-
-                seen, H, L = set(), [], []
-                for h, l in zip(handles, labels):
-                    if l and l not in seen:
-                        seen.add(l)
-                        H.append(h)
-                        L.append(l)
-
-                if H:
-                    self.preview_fig.legend(
-                        H,
-                        L,
-                        loc="upper center",
-                        bbox_to_anchor=(0.5, 0.02),  # inside reserved bottom margin
-                        ncol=min(3, len(L)),
-                        frameon=True,
-                        fancybox=True,
-                        shadow=True,
-                        borderaxespad=0.0,
-                    )
-                # Make room under subplots
-                self.preview_fig.subplots_adjust(bottom=0.22)
-            if legend_loc == "outside bottom":
-                # Gather unique handles/labels from all subplots (and any right twins)
-                handles, labels = [], []
-                twins = []
-                for i, col in enumerate(ycols):
-                    # collect from left axes
-                    h, l = axs[i].get_legend_handles_labels()
-                    handles += h
-                    labels += l
-                    # collect from right axes if created
-                    for child in axs[i].get_children():
-                        # no reliable handle, so instead track twins explicitly during creation
-                        pass
-                # If you created ax2 twins in the loop, append them to `twins` there; then:
-                for t in twins:
-                    try:
-                        h2, l2 = t.get_legend_handles_labels()
-                        handles += h2
-                        labels += l2
-                    except Exception:
-                        pass
-
-                seen, H, L = set(), [], []
-                for h, l in zip(handles, labels):
-                    if l and l not in seen:
-                        seen.add(l)
-                        H.append(h)
-                        L.append(l)
-
-                if H:
-                    self.preview_fig.legend(
-                        H,
-                        L,
-                        loc="upper center",
-                        bbox_to_anchor=(0.5, 0.02),  # inside reserved bottom margin
-                        ncol=min(3, len(L)),
-                        frameon=True,
-                        fancybox=True,
-                        shadow=True,
-                        borderaxespad=0.0,
-                    )
-                # Make room under subplots
-                self.preview_fig.subplots_adjust(bottom=0.22)
 
             self.preview_fig.tight_layout(rect=[0, 0, 1, 0.94])
             self.preview_fig.suptitle(
@@ -2161,28 +2549,16 @@ class GeneralPlotter(tk.Tk):
                 fontsize=SUPTITLE_FONTSIZE,
                 y=SUPTITLE_Y,
             )
-            if legend_loc == "outside bottom":
-                self.preview_fig.subplots_adjust(bottom=0.22)
-                handles, labels = self._collect_legend_entries(self.preview_fig)
-                if handles:
-                    self.preview_fig.legend(
-                        handles,
-                        labels,
-                        loc="upper center",
-                        bbox_to_anchor=(0.5, 0.02),
-                        ncol=min(3, len(labels)),
-                        frameon=True,
-                        fancybox=True,
-                        shadow=True,
-                        borderaxespad=0.0,
-                    )
+            if legend_outside:
+                self._apply_preview_outside_legend()
 
             try:
                 txt = []
                 for col in ycols[:6]:
                     s = pd.to_numeric(df[col], errors="coerce")
                     txt.append(
-                        f"{col}: min={s.min():.3g}, mean={s.mean():.3g}, max={s.max():.3g}"
+                        f"{col}: min={s.min():.3g}, mean={s.mean():.3g}, "
+                        f"max={s.max():.3g}"
                     )
                 self.stats_text.delete("1.0", "end")
                 self.stats_text.insert("1.0", "\n".join(txt) or "—")
@@ -2229,6 +2605,7 @@ class GeneralPlotter(tk.Tk):
 
             for i, lvl in enumerate(levels):
                 ax = axs[i]
+                ax2 = None
                 ax.grid(self.show_grid.get())
                 mask = cats == lvl
                 x_sub = pd.to_numeric(df.loc[mask, xcol], errors="coerce")
@@ -2275,7 +2652,8 @@ class GeneralPlotter(tk.Tk):
                 for lbl in ax.get_xticklabels():
                     lbl.set_rotation(self.x_tick_rotation.get())
                 if legend_loc != "outside bottom":
-                    ax.legend(loc="best", fontsize=LABEL_FONTSIZE - 1)
+                    companion_axes = (ax2,) if ax2 is not None else ()
+                    self._apply_preview_axis_legend(ax, legend_loc, companion_axes)
 
             for j in range(n, len(axs)):
                 axs[j].set_visible(False)
@@ -2286,19 +2664,14 @@ class GeneralPlotter(tk.Tk):
                 y=SUPTITLE_Y,
             )
             if legend_outside:
-                # Make room for the outside legend and place a single figure-level legend
-                self.preview_fig.subplots_adjust(bottom=0.20)
-                handles, labels = self._collect_legend_entries(self.preview_fig)
-                if handles:
-                    self.preview_fig.legend(
-                        handles,
-                        labels,
-                        loc="lower center",
-                        ncol=min(6, len(labels)),
-                        fontsize=LABEL_FONTSIZE - 1,
-                        frameon=False,
-                    )
+                self._apply_preview_outside_legend()
 
+        self.preview_fig._general_plotter_legend_outside_bottom = legend_outside
+        _verify_general_plot_layout(
+            self.preview_fig,
+            outside_bottom=legend_outside,
+            mode="display",
+        )
         if mplcursors is not None:
             try:
                 mplcursors.cursor(self.preview_fig, hover=True)
@@ -2324,6 +2697,15 @@ class GeneralPlotter(tk.Tk):
 
     # ---------- Full render/export ----------
     def render_plots(self):
+        """Build full-resolution plots and open them in a managed render tab.
+
+        The action turns the current General Plotter data and controls into
+        exportable Matplotlib figures. It takes no parameters and returns
+        ``None``. It validates required selections, creates figures, applies
+        layout-health verification, registers the figures in a notebook tab,
+        and persists settings. User-correctable input failures are reported via
+        dialogs and abort the render safely.
+        """
         if self.df is None:
             messagebox.showerror("No data", "Load a file/sheet first.")
             return
@@ -2354,6 +2736,13 @@ class GeneralPlotter(tk.Tk):
         figs = []
 
         def apply_common(ax):
+            """Apply shared axis formatting and the selected legend location.
+
+            ``ax`` is one completed render axis. The nested helper exists to
+            keep single, grid, and facet output consistent, returns ``None``,
+            and mutates labels, ticks, scales, limits, and the axes legend.
+            Invalid control values are handled by the delegated format helpers.
+            """
             # Labels (use custom if provided)
             ax.set_xlabel(self.x_label.get() or xcol, fontsize=LABEL_FONTSIZE)
             self._apply_ticks(ax)
@@ -2366,7 +2755,7 @@ class GeneralPlotter(tk.Tk):
                 lbl.set_rotation(self.x_tick_rotation.get())
             if legend_loc != "outside bottom":
                 ax.legend(
-                    loc=legend_loc if ptype.startswith("single") else "best",
+                    loc=legend_loc,
                     fontsize=LABEL_FONTSIZE,
                     ncol=min(3, len(ycols)),
                 )
@@ -2439,11 +2828,11 @@ class GeneralPlotter(tk.Tk):
                     pass
 
                 seen, H, L = set(), [], []
-                for h, l in zip(handles, labels):
-                    if l and l not in seen:
-                        seen.add(l)
-                        H.append(h)
-                        L.append(l)
+                for handle, label in zip(handles, labels, strict=False):
+                    if label and label not in seen:
+                        seen.add(label)
+                        H.append(handle)
+                        L.append(label)
 
                 if H:
                     ax.legend(
@@ -2505,11 +2894,14 @@ class GeneralPlotter(tk.Tk):
                         rotation=-90,
                         labelpad=12,
                     )
-            ax.set_title(col, fontsize=SUBPLOT_TITLE_FONTSIZE)
-            ax.set_ylabel(self.y_left_label.get() or col, fontsize=LABEL_FONTSIZE)
-            self._apply_references(ax)
-            apply_common(ax)
-            _apply_formatter_to_axis(ax.yaxis, self.y_left_format.get())
+                ax.set_title(col, fontsize=SUBPLOT_TITLE_FONTSIZE)
+                ax.set_ylabel(
+                    self.y_left_label.get() or col,
+                    fontsize=LABEL_FONTSIZE,
+                )
+                self._apply_references(ax)
+                apply_common(ax)
+                _apply_formatter_to_axis(ax.yaxis, self.y_left_format.get())
 
             for j in range(len(ycols), len(axes)):
                 axes[j].set_visible(False)
@@ -2517,9 +2909,9 @@ class GeneralPlotter(tk.Tk):
                 handles, labels = [], []
                 # collect from each subplot
                 for ax_i in axes:
-                    h, l = ax_i.get_legend_handles_labels()
-                    handles += h
-                    labels += l
+                    axis_handles, axis_labels = ax_i.get_legend_handles_labels()
+                    handles += axis_handles
+                    labels += axis_labels
                 # collect from right-side twins if any
                 for t in right_twins:
                     try:
@@ -2531,11 +2923,11 @@ class GeneralPlotter(tk.Tk):
 
                 # de-duplicate while preserving order
                 seen, H, L = set(), [], []
-                for h, l in zip(handles, labels):
-                    if l and l not in seen:
-                        seen.add(l)
-                        H.append(h)
-                        L.append(l)
+                for handle, label in zip(handles, labels, strict=False):
+                    if label and label not in seen:
+                        seen.add(label)
+                        H.append(handle)
+                        L.append(label)
 
                 if H:
                     fig.legend(
@@ -2626,7 +3018,7 @@ class GeneralPlotter(tk.Tk):
                         labelpad=12,
                     )
                 ax.set_title(f"{facet_col} = {lvl}", fontsize=SUBPLOT_TITLE_FONTSIZE)
-                ax.set.ylabel(
+                ax.set_ylabel(
                     self.y_left_label.get() or (", ".join(ycols)),
                     fontsize=LABEL_FONTSIZE,
                 )
@@ -2639,9 +3031,9 @@ class GeneralPlotter(tk.Tk):
             if legend_loc == "outside bottom":
                 handles, labels = [], []
                 for ax_i in axes:
-                    h, l = ax_i.get_legend_handles_labels()
-                    handles += h
-                    labels += l
+                    axis_handles, axis_labels = ax_i.get_legend_handles_labels()
+                    handles += axis_handles
+                    labels += axis_labels
                 for t in right_twins:
                     try:
                         h2, l2 = t.get_legend_handles_labels()
@@ -2651,11 +3043,11 @@ class GeneralPlotter(tk.Tk):
                         pass
 
                 seen, H, L = set(), [], []
-                for h, l in zip(handles, labels):
-                    if l and l not in seen:
-                        seen.add(l)
-                        H.append(h)
-                        L.append(l)
+                for handle, label in zip(handles, labels, strict=False):
+                    if label and label not in seen:
+                        seen.add(label)
+                        H.append(handle)
+                        L.append(label)
 
                 if H:
                     fig.legend(
@@ -2680,12 +3072,30 @@ class GeneralPlotter(tk.Tk):
             )
             figs.append(fig)
 
+        for fig in figs:
+            fig._general_plotter_legend_outside_bottom = legend_outside
+            _verify_general_plot_layout(
+                fig,
+                outside_bottom=legend_outside,
+                mode="display",
+            )
         if figs:
             self._display_rendered_figures(figs)
         self._save_settings()
 
-    def export_plots(self):
-        if not plt.get_fignums():
+    def export_plots(self, figs=None):
+        """Export open rendered figures to PNG, SVG, and PDF files.
+
+        ``figs`` may provide one render tab's figures; when omitted, all figures
+        owned by open render tabs are exported. The method returns ``None`` and
+        asks for an output directory, re-verifies final export geometry, then
+        writes three formats per figure. Missing renders and filesystem errors
+        are reported by dialogs without closing the open plot tabs.
+        """
+        target_figures = (
+            list(figs) if figs is not None else self._get_rendered_figures()
+        )
+        if not target_figures:
             messagebox.showerror("Nothing to export", "Render a plot first.")
             return
         outdir = filedialog.askdirectory(title="Choose export folder")
@@ -2697,12 +3107,18 @@ class GeneralPlotter(tk.Tk):
             .strip()
             .replace(" ", "_")
         )
-        for i, num in enumerate(plt.get_fignums(), 1):
-            fig = plt.figure(num)
+        for i, fig in enumerate(target_figures, 1):
             png = os.path.join(outdir, f"{base}_{i:02d}.png")
             svg = os.path.join(outdir, f"{base}_{i:02d}.svg")
             pdf = os.path.join(outdir, f"{base}_{i:02d}.pdf")
             try:
+                _verify_general_plot_layout(
+                    fig,
+                    outside_bottom=bool(
+                        getattr(fig, "_general_plotter_legend_outside_bottom", False)
+                    ),
+                    mode="export",
+                )
                 fig.savefig(png, dpi=EXPORT_DPI, bbox_inches="tight")
                 fig.savefig(svg, bbox_inches="tight")
                 fig.savefig(pdf, dpi=EXPORT_DPI, bbox_inches="tight")
@@ -2710,7 +3126,7 @@ class GeneralPlotter(tk.Tk):
                 messagebox.showerror("Export error", f"Could not save figure {i}: {e}")
                 return
         messagebox.showinfo(
-            "Export complete", f"Saved {len(plt.get_fignums())} figure(s) to:\n{outdir}"
+            "Export complete", f"Saved {len(target_figures)} figure(s) to:\n{outdir}"
         )
 
 

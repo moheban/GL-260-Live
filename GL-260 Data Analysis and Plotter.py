@@ -19735,6 +19735,17 @@ CSV_IMPORT_DEFAULT_DERIVATIVE_SOURCE = "reactor"
 CSV_IMPORT_DEFAULT_SHEET_EXISTS_MODE = "error"
 CSV_IMPORT_DEFAULT_DAMPENING = 0.98
 CSV_IMPORT_DEFAULT_MOVING_AVG_WINDOW = 100
+CSV_IMPORT_CALCULATED_COLUMN_LABELS = OrderedDict(
+    [
+        ("elapsed_days", "Elapsed Time (days)"),
+        ("elapsed_hours", "Elapsed Time (hours)"),
+        ("elapsed_minutes", "Elapsed Time (minutes)"),
+        ("elapsed_seconds", "Elapsed Time (seconds)"),
+        ("pressure_derivative", "First pressure derivative"),
+        ("smoothed_derivative", "Smoothed pressure derivative"),
+        ("derivative_moving_average", "Pressure derivative moving average"),
+    ]
+)
 CSV_IMPORT_MAPPING_FIELDS = OrderedDict(
     [
         ("date_time", "Date & Time"),
@@ -19774,6 +19785,32 @@ CSV_IMPORT_SHEET_MODE_LABELS = {
     "overwrite": "Overwrite existing sheet",
     "autosuffix": "Auto-suffix (_1, _2, ...)",
 }
+
+
+def _normalize_csv_calculated_columns(value: Any) -> Dict[str, bool]:
+    """Normalize optional calculated-column selections for CSV import.
+
+    Purpose:
+        Convert persisted or worker-provided calculation choices into one stable
+        boolean mapping.
+    Why:
+        Temperature-only and arbitrary-column imports must be able to omit
+        pressure derivatives or elapsed-time variants without changing legacy
+        defaults for existing users.
+    Inputs:
+        value: Candidate mapping keyed by `CSV_IMPORT_CALCULATED_COLUMN_LABELS`.
+    Outputs:
+        Dict containing every supported calculation key and its enabled state.
+    Side Effects:
+        None.
+    Exceptions:
+        Missing or malformed values fall back to enabled legacy behavior.
+    """
+    source = value if isinstance(value, Mapping) else {}
+    normalized = {}
+    for key in CSV_IMPORT_CALCULATED_COLUMN_LABELS:
+        normalized[key] = bool(source.get(key, True))
+    return normalized
 
 
 def _normalize_csv_repeatable_mapping_value(value: Any) -> List[str]:
@@ -19926,7 +19963,7 @@ def _apply_csv_import_settings_defaults(settings_dict: Dict[str, Any]) -> None:
     if not isinstance(mapping, dict):
         mapping = {}
     normalized_mapping = {}
-    # Normalize each mapping role independently so legacy scalar settings migrate safely.
+    # Normalize each role independently so legacy scalar settings migrate safely.
     for key in CSV_IMPORT_MAPPING_FIELDS.keys():
         value = mapping.get(key, "")
         if key in CSV_IMPORT_REPEATABLE_MAPPING_KEYS:
@@ -19943,8 +19980,11 @@ def _apply_csv_import_settings_defaults(settings_dict: Dict[str, Any]) -> None:
     settings_dict["csv_import_channel_metadata"] = _normalize_csv_channel_metadata(
         channel_metadata
     )
+    settings_dict["csv_import_calculated_columns"] = _normalize_csv_calculated_columns(
+        settings_dict.get("csv_import_calculated_columns")
+    )
 
-    # Iterate over ("csv_import_last_csv_path", "csv_import_last_workbook_path") to apply the per-item logic.
+    # Normalize both persisted paths through the same defensive text conversion.
     for key in ("csv_import_last_csv_path", "csv_import_last_workbook_path"):
         value = settings_dict.get(key, "")
         if value is None:
@@ -92017,6 +92057,9 @@ def _build_gl260_output_dataframe(
     derivative_source: str,
     dampening: float,
     window: int,
+    *,
+    included_columns: Optional[Sequence[str]] = None,
+    calculated_columns: Optional[Mapping[str, Any]] = None,
 ) -> pd.DataFrame:
     """Build the normalized workbook dataframe for a GL-260 CSV import.
 
@@ -92034,10 +92077,13 @@ def _build_gl260_output_dataframe(
             single-pressure compatibility.
         dampening: Exponential smoothing dampening factor in [0, 1).
         window: Moving-average window length in rows.
+        included_columns: Optional raw source columns to retain when they are not
+            consumed by a normalized channel mapping.
+        calculated_columns: Optional per-output calculation enablement mapping.
     Outputs:
         Pandas DataFrame ready for workbook insertion.
     Side Effects:
-        May use the optional Rust backend for derivative generation.
+        May use the optional Rust backend when derivative outputs are enabled.
     Exceptions:
         Raises ValueError for missing/invalid Date & Time input.
     """
@@ -92054,6 +92100,7 @@ def _build_gl260_output_dataframe(
     elapsed_minutes = elapsed_seconds / 60.0
 
     mapping_payload = mapping if isinstance(mapping, Mapping) else {}
+    calculation_policy = _normalize_csv_calculated_columns(calculated_columns)
     reactor_series_entries = _csv_mapped_series_entries(
         frame,
         mapping_payload,
@@ -92074,17 +92121,6 @@ def _build_gl260_output_dataframe(
         mapping_payload,
         "internal_temp",
     )
-    empty_series = pd.Series([np.nan] * len(frame), dtype=float)
-    manifold_output_entries = manifold_series_entries or [
-        ("Manifold Pressure (PSI)", "", empty_series)
-    ]
-    external_temp_output_entries = external_temp_entries or [
-        ("External Reactor Temperature", "", empty_series)
-    ]
-    internal_temp_output_entries = internal_temp_entries or [
-        ("Internal Reactor Temperature", "", empty_series)
-    ]
-
     elapsed_hours_values = np.asarray(elapsed_hours, dtype=float)
     pressure_derivative_entries: List[Tuple[str, pd.Series]] = [
         (label, series)
@@ -92097,35 +92133,50 @@ def _build_gl260_output_dataframe(
             (label, series) for label, _source_column, series in manifold_series_entries
         ]
 
-    pressure_payloads = [
-        np.asarray(series, dtype=float)
-        for _label, series in pressure_derivative_entries
-    ]
-    derivative_payloads = _compute_csv_pressure_derivatives(
-        elapsed_hours_values,
-        pressure_payloads,
-        dampening,
-        window,
+    derivatives_enabled = any(
+        calculation_policy[key]
+        for key in (
+            "pressure_derivative",
+            "smoothed_derivative",
+            "derivative_moving_average",
+        )
     )
+    derivative_payloads: List[Dict[str, List[float]]] = []
+    if derivatives_enabled and pressure_derivative_entries:
+        pressure_payloads = [
+            np.asarray(series, dtype=float)
+            for _label, series in pressure_derivative_entries
+        ]
+        derivative_payloads = _compute_csv_pressure_derivatives(
+            elapsed_hours_values,
+            pressure_payloads,
+            dampening,
+            window,
+        )
 
-    output_map: Dict[str, Any] = {
-        "Date & Time": dt_series,
-        "Elapsed Time (days)": elapsed_days,
-        "Elapsed Time (hours)": elapsed_hours,
-        "Elapsed Time (minutes)": elapsed_minutes,
-        "Elapsed Time (seconds)": elapsed_seconds,
-    }
-    output_columns = list(CSV_IMPORT_BASE_OUTPUT_COLUMNS)
+    output_map: Dict[str, Any] = {"Date & Time": dt_series}
+    output_columns = ["Date & Time"]
+    elapsed_outputs = (
+        ("elapsed_days", "Elapsed Time (days)", elapsed_days),
+        ("elapsed_hours", "Elapsed Time (hours)", elapsed_hours),
+        ("elapsed_minutes", "Elapsed Time (minutes)", elapsed_minutes),
+        ("elapsed_seconds", "Elapsed Time (seconds)", elapsed_seconds),
+    )
+    for policy_key, output_label, values in elapsed_outputs:
+        if not calculation_policy[policy_key]:
+            continue
+        output_map[output_label] = values
+        output_columns.append(output_label)
     for label, _source_column, series in reactor_series_entries:
         output_map[label] = series
         output_columns.append(label)
-    for label, _source_column, series in manifold_output_entries:
+    for label, _source_column, series in manifold_series_entries:
         output_map[label] = series
         output_columns.append(label)
-    for label, _source_column, series in external_temp_output_entries:
+    for label, _source_column, series in external_temp_entries:
         output_map[label] = series
         output_columns.append(label)
-    for label, _source_column, series in internal_temp_output_entries:
+    for label, _source_column, series in internal_temp_entries:
         output_map[label] = series
         output_columns.append(label)
     legacy_derivatives = (
@@ -92140,13 +92191,53 @@ def _build_gl260_output_dataframe(
             legacy=legacy_derivatives,
         )
         payload = derivative_payloads[idx]
-        output_map[labels[0]] = pd.Series(payload.get("derivative") or [], dtype=float)
-        output_map[labels[1]] = pd.Series(payload.get("smoothed") or [], dtype=float)
-        output_map[labels[2]] = pd.Series(
-            payload.get("moving_average") or [],
-            dtype=float,
+        calculated_payloads = (
+            (
+                "pressure_derivative",
+                labels[0],
+                pd.Series(payload.get("derivative") or [], dtype=float),
+            ),
+            (
+                "smoothed_derivative",
+                labels[1],
+                pd.Series(payload.get("smoothed") or [], dtype=float),
+            ),
+            (
+                "derivative_moving_average",
+                labels[2],
+                pd.Series(payload.get("moving_average") or [], dtype=float),
+            ),
         )
-        output_columns.extend(labels)
+        for policy_key, output_label, values in calculated_payloads:
+            if not calculation_policy[policy_key]:
+                continue
+            output_map[output_label] = values
+            output_columns.append(output_label)
+
+    consumed_columns = {dt_column}
+    for mapping_key in CSV_IMPORT_REPEATABLE_MAPPING_KEYS:
+        consumed_columns.update(
+            _normalize_csv_repeatable_mapping_value(mapping_payload.get(mapping_key))
+        )
+    if included_columns is not None:
+        # Preserve arbitrary, non-mapped raw channels in source order so the
+        # Ignore Columns control defines the actual import payload.
+        for raw_column in included_columns:
+            column_name = str(raw_column or "").strip()
+            if (
+                not column_name
+                or column_name in consumed_columns
+                or column_name not in frame.columns
+            ):
+                continue
+            output_label = column_name
+            if output_label in output_map:
+                suffix = 2
+                while f"{column_name} (Raw {suffix})" in output_map:
+                    suffix += 1
+                output_label = f"{column_name} (Raw {suffix})"
+            output_map[output_label] = frame[column_name].copy()
+            output_columns.append(output_label)
     output = pd.DataFrame(output_map)
     return output[output_columns]
 
@@ -104669,9 +104760,12 @@ class CsvImportDialog:
         self._repeatable_mapping_vars: Dict[str, List[tk.StringVar]] = {}
         self._repeatable_mapping_rows_frames: Dict[str, ttk.Frame] = {}
         saved_mapping = settings_dict.get("csv_import_mapping", {})
-        # Build Tk variables from persisted mappings, preserving repeatable role order.
+        # Build Tk variables from saved mappings while preserving repeatable order.
         for key in CSV_IMPORT_MAPPING_FIELDS.keys():
-            value = saved_mapping.get(key, "") if isinstance(saved_mapping, dict) else ""
+            if isinstance(saved_mapping, dict):
+                value = saved_mapping.get(key, "")
+            else:
+                value = ""
             if key in CSV_IMPORT_REPEATABLE_MAPPING_KEYS:
                 repeat_values = _normalize_csv_repeatable_mapping_value(value)
                 if not repeat_values:
@@ -104696,6 +104790,13 @@ class CsvImportDialog:
             label: key for key, label in CSV_IMPORT_DERIVATIVE_SOURCE_LABELS.items()
         }
         self._derivative_source_var = tk.StringVar(value=source_label)
+        calculated_columns = _normalize_csv_calculated_columns(
+            settings_dict.get("csv_import_calculated_columns")
+        )
+        self._calculated_column_vars = {
+            key: tk.BooleanVar(value=calculated_columns[key])
+            for key in CSV_IMPORT_CALCULATED_COLUMN_LABELS
+        }
 
         sheet_mode_key = settings_dict.get(
             "csv_import_sheet_exists_mode", CSV_IMPORT_DEFAULT_SHEET_EXISTS_MODE
@@ -105018,7 +105119,9 @@ class CsvImportDialog:
         self._content_container = container
         container.bind("<Configure>", self._refresh_dialog_scrollregion)
         canvas.bind("<Configure>", self._expand_dialog_content_width)
-        self.window.after_idle(lambda: self._bind_dialog_mousewheel_recursive(container))
+        self.window.after_idle(
+            lambda: self._bind_dialog_mousewheel_recursive(container)
+        )
         self.window.after_idle(self._refresh_dialog_scrollregion)
 
         input_frame = ttk.Labelframe(container, text="Input / Output")
@@ -105079,9 +105182,7 @@ class CsvImportDialog:
             textvariable=self._datetime_column_var,
         ).grid(row=1, column=0, sticky="w", padx=6, pady=(0, 4))
 
-        preview_text = scrolledtext.ScrolledText(
-            preview_frame, height=6, wrap="none"
-        )
+        preview_text = scrolledtext.ScrolledText(preview_frame, height=6, wrap="none")
         preview_text.grid(row=2, column=0, sticky="nsew", padx=6, pady=(0, 6))
         preview_text.configure(state="disabled")
         self._preview_text = preview_text
@@ -105091,7 +105192,7 @@ class CsvImportDialog:
         mapping_frame.grid_columnconfigure(1, weight=1)
 
         row = 0
-        # Repeatable channel roles share the same row editor; Date & Time remains scalar.
+        # Channel roles share one repeatable editor; Date & Time remains scalar.
         for key, label in CSV_IMPORT_MAPPING_FIELDS.items():
             if key in CSV_IMPORT_REPEATABLE_MAPPING_KEYS:
                 ttk.Label(mapping_frame, text=label).grid(
@@ -105173,6 +105274,20 @@ class CsvImportDialog:
             row=2, column=1, sticky="w", padx=6, pady=4
         )
 
+        ttk.Label(calc_frame, text="Calculated output columns").grid(
+            row=3, column=0, sticky="nw", padx=6, pady=(8, 4)
+        )
+        calculated_frame = ttk.Frame(calc_frame)
+        calculated_frame.grid(row=3, column=1, sticky="w", padx=6, pady=(8, 4))
+        for row_index, (key, label) in enumerate(
+            CSV_IMPORT_CALCULATED_COLUMN_LABELS.items()
+        ):
+            ttk.Checkbutton(
+                calculated_frame,
+                text=label,
+                variable=self._calculated_column_vars[key],
+            ).grid(row=row_index, column=0, sticky="w", pady=1)
+
         output_frame = ttk.Labelframe(container, text="Output Schema")
         output_frame.grid(row=4, column=0, sticky="ew", pady=(0, 10))
         output_frame.grid_columnconfigure(0, weight=1)
@@ -105184,7 +105299,9 @@ class CsvImportDialog:
             text=(
                 "\n".join(CSV_IMPORT_OUTPUT_COLUMNS)
                 + "\nMultiple mapped channel traces use numbered pressure/"
-                "temperature columns and source-qualified derivative columns."
+                "temperature columns and source-qualified derivative columns. "
+                "Unchecked calculations are omitted; non-ignored, unmapped raw "
+                "columns retain their source names."
             ),
             justify="left",
         ).grid(row=1, column=0, sticky="w", padx=6, pady=(0, 6))
@@ -105206,9 +105323,7 @@ class CsvImportDialog:
         progress_bar = ttk.Progressbar(
             footer, mode="indeterminate", length=self._scale_length(280)
         )
-        progress_bar.grid(
-            row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0)
-        )
+        progress_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         progress_bar.grid_remove()
         self._import_button = import_button
         self._close_button = close_button
@@ -106052,49 +106167,49 @@ class CsvImportDialog:
             messagebox.showerror("Missing Sheet Name", "Enter a sheet name.")
             return
         mapping = self._gather_mapping()
-        reactor_mappings = _normalize_csv_reactor_pressure_mapping(
-            mapping.get("reactor_pressure")
+        calculated_columns = _normalize_csv_calculated_columns(
+            {key: var.get() for key, var in self._calculated_column_vars.items()}
         )
-        if not reactor_mappings:
-            messagebox.showerror(
-                "Missing Mapping", "Select at least one Reactor Pressure column."
-            )
-            return
         derivative_label = self._derivative_source_var.get()
         derivative_source = self._derivative_source_display_map.get(
             derivative_label, CSV_IMPORT_DEFAULT_DERIVATIVE_SOURCE
         )
-        manifold_mappings = _normalize_csv_repeatable_mapping_value(
-            mapping.get("manifold_pressure")
+        pressure_mapping_present = any(
+            _normalize_csv_repeatable_mapping_value(mapping.get(role_key))
+            for role_key in ("reactor_pressure", "manifold_pressure")
         )
-        if derivative_source == "manifold" and not manifold_mappings:
-            messagebox.showerror(
-                "Missing Mapping",
-                (
-                    "Select at least one Manifold Pressure column for the "
-                    "derivative source."
-                ),
-            )
-            return
-        try:
-            dampening_value = float(self._dampening_var.get())
-        except (TypeError, ValueError):
-            messagebox.showerror("Invalid Value", "Enter a numeric dampening factor.")
-            return
-        if not (0.0 <= dampening_value < 1.0):
-            messagebox.showerror(
-                "Invalid Value",
-                "Dampening factor must be between 0 and 1 (non-inclusive).",
-            )
-            return
-        try:
-            window_value = int(self._window_var.get())
-        except (TypeError, ValueError):
-            messagebox.showerror("Invalid Value", "Enter an integer window size.")
-            return
-        if window_value < 1:
-            messagebox.showerror("Invalid Value", "Window size must be at least 1.")
-            return
+        smoothing_enabled = pressure_mapping_present and any(
+            calculated_columns[key]
+            for key in ("smoothed_derivative", "derivative_moving_average")
+        )
+        moving_average_enabled = (
+            pressure_mapping_present and calculated_columns["derivative_moving_average"]
+        )
+        dampening_value = CSV_IMPORT_DEFAULT_DAMPENING
+        if smoothing_enabled:
+            try:
+                dampening_value = float(self._dampening_var.get())
+            except (TypeError, ValueError):
+                messagebox.showerror(
+                    "Invalid Value", "Enter a numeric dampening factor."
+                )
+                return
+            if not (0.0 <= dampening_value < 1.0):
+                messagebox.showerror(
+                    "Invalid Value",
+                    "Dampening factor must be between 0 and 1 (non-inclusive).",
+                )
+                return
+        window_value = CSV_IMPORT_DEFAULT_MOVING_AVG_WINDOW
+        if moving_average_enabled:
+            try:
+                window_value = int(self._window_var.get())
+            except (TypeError, ValueError):
+                messagebox.showerror("Invalid Value", "Enter an integer window size.")
+                return
+            if window_value < 1:
+                messagebox.showerror("Invalid Value", "Window size must be at least 1.")
+                return
 
         sheet_mode_label = self._sheet_mode_var.get()
         sheet_mode = self._sheet_mode_display_map.get(
@@ -106113,10 +106228,12 @@ class CsvImportDialog:
         dampening_snapshot = float(dampening_value)
         window_snapshot = int(window_value)
         derivative_snapshot = derivative_source
+        calculated_snapshot = dict(calculated_columns)
+        ignored_columns_snapshot = set(self._ignored_columns)
         sheet_name_snapshot = sheet_name_input
         sheet_mode_snapshot = sheet_mode
 
-        # Closure captures _start_import state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _start_import.
+        # Keep asynchronous callback state scoped to this import request.
         def _worker() -> Dict[str, Any]:
             """Run CSV parse/transform/write stages and return diagnostics.
 
@@ -106167,6 +106284,12 @@ class CsvImportDialog:
                 derivative_snapshot,
                 dampening_snapshot,
                 window_snapshot,
+                included_columns=[
+                    column
+                    for column in columns
+                    if column not in ignored_columns_snapshot
+                ],
+                calculated_columns=calculated_snapshot,
             )
             transform_ms = (time.perf_counter() - transform_start) * 1000.0
             write_start = time.perf_counter()
@@ -106183,12 +106306,10 @@ class CsvImportDialog:
                     "transform_ms": float(transform_ms),
                     "write_ms": float(write_ms),
                 },
-                "channel_metadata": _normalize_csv_channel_metadata(
-                    channel_metadata
-                ),
+                "channel_metadata": _normalize_csv_channel_metadata(channel_metadata),
             }
 
-        # Closure captures _start_import state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _start_import.
+        # Keep asynchronous callback state scoped to this import request.
         def _on_ok(result: Dict[str, Any]) -> None:
             """Handle successful CSV import completion on the UI thread.
 
@@ -106252,7 +106373,7 @@ class CsvImportDialog:
                         write_ms if math.isfinite(write_ms) else float("nan"),
                     )
                 except Exception:
-                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    # Optional diagnostics must not interrupt a completed import.
                     pass
             self._persist_settings(
                 csv_path,
@@ -106264,15 +106385,17 @@ class CsvImportDialog:
                 dampening_snapshot,
                 window_snapshot,
                 sheet_mode_snapshot,
+                calculated_snapshot,
             )
             self._update_app_after_import(
                 workbook_path,
                 sheet_name,
                 mapping=mapping_snapshot,
                 channel_metadata=result.get("channel_metadata", {}),
+                calculated_columns=calculated_snapshot,
             )
 
-        # Closure captures _start_import state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _start_import.
+        # Keep asynchronous callback state scoped to this import request.
         def _on_err(exc: BaseException) -> None:
             """Handle err.
             Used as an event callback for err."""
@@ -106302,6 +106425,7 @@ class CsvImportDialog:
         dampening: float,
         window: int,
         sheet_mode: str,
+        calculated_columns: Mapping[str, Any],
     ) -> None:
         """Persist CSV import dialog choices to global settings storage.
 
@@ -106321,6 +106445,7 @@ class CsvImportDialog:
             dampening: Exponential smoothing factor in [0, 1).
             window: Moving-average window size in rows.
             sheet_mode: Conflict behavior when the sheet already exists.
+            calculated_columns: Enabled elapsed-time and derivative outputs.
         Returns:
             None.
         Side Effects:
@@ -106339,6 +106464,9 @@ class CsvImportDialog:
         settings["csv_import_smoothing_factor"] = dampening
         settings["csv_import_moving_average_window"] = window
         settings["csv_import_sheet_exists_mode"] = sheet_mode
+        settings["csv_import_calculated_columns"] = _normalize_csv_calculated_columns(
+            calculated_columns
+        )
         try:
             _save_settings_to_disk()
         except Exception:
@@ -106485,6 +106613,7 @@ class CsvImportDialog:
         *,
         mapping: Optional[Mapping[str, Any]] = None,
         channel_metadata: Optional[Mapping[str, Any]] = None,
+        calculated_columns: Optional[Mapping[str, Any]] = None,
     ) -> None:
         """Synchronize the main app state after a successful CSV import.
 
@@ -106499,6 +106628,8 @@ class CsvImportDialog:
             sheet_name: Sheet name resolved by the import flow.
             mapping: Optional raw CSV mapping snapshot from the completed import.
             channel_metadata: Optional Graphtec channel metadata from the source CSV.
+            calculated_columns: Optional calculation-selection payload used to
+                choose valid default X and derivative trace mappings.
         Returns:
             None.
         Side Effects:
@@ -106548,10 +106679,28 @@ class CsvImportDialog:
                 columns_map["dt"] = "Date & Time"
             x_value = str(columns_map.get("x", "") or "").strip()
             if not x_value:
-                columns_map["x"] = "Elapsed Time (hours)"
+                calculation_policy = _normalize_csv_calculated_columns(
+                    calculated_columns
+                )
+                elapsed_candidates = (
+                    ("elapsed_hours", "Elapsed Time (hours)"),
+                    ("elapsed_days", "Elapsed Time (days)"),
+                    ("elapsed_minutes", "Elapsed Time (minutes)"),
+                    ("elapsed_seconds", "Elapsed Time (seconds)"),
+                )
+                columns_map["x"] = next(
+                    (
+                        label
+                        for key, label in elapsed_candidates
+                        if calculation_policy[key]
+                    ),
+                    "Date & Time",
+                )
 
-            csv_mapping = mapping if isinstance(mapping, Mapping) else settings.get(
-                "csv_import_mapping", {}
+            csv_mapping = (
+                mapping
+                if isinstance(mapping, Mapping)
+                else settings.get("csv_import_mapping", {})
             )
             csv_mapping = csv_mapping if isinstance(csv_mapping, Mapping) else {}
             metadata = _normalize_csv_channel_metadata(
@@ -106588,29 +106737,30 @@ class CsvImportDialog:
                     for idx, _column_name in enumerate(manifold_columns)
                 ]
                 pressure_labels.extend(imported_groups["y3"])
+            calculation_policy = _normalize_csv_calculated_columns(calculated_columns)
             if pressure_labels:
                 legacy_derivative_labels = (
                     len(pressure_labels) == 1
                     and pressure_labels[0] == "Reactor Pressure (PSI)"
                 )
-                reactor_pressure_labels = [
-                    pressure_label
-                    for pressure_label in pressure_labels
-                    if str(pressure_label or "").strip().lower().startswith(
-                        "reactor pressure"
-                    )
-                ]
-                if reactor_pressure_labels:
-                    # Default derivative plotting should follow the reactor
-                    # moving average only; raw derivatives remain available for
-                    # manual selection but are not auto-enabled on import/apply.
-                    primary_reactor_label = reactor_pressure_labels[0]
-                    imported_groups["y2"] = [
-                        _csv_derivative_output_labels(
-                            primary_reactor_label,
-                            legacy=legacy_derivative_labels,
-                        )[2]
-                    ]
+                derivative_labels = _csv_derivative_output_labels(
+                    pressure_labels[0],
+                    legacy=legacy_derivative_labels,
+                )
+                preferred_derivative = next(
+                    (
+                        derivative_labels[index]
+                        for key, index in (
+                            ("derivative_moving_average", 2),
+                            ("smoothed_derivative", 1),
+                            ("pressure_derivative", 0),
+                        )
+                        if calculation_policy[key]
+                    ),
+                    None,
+                )
+                if preferred_derivative:
+                    imported_groups["y2"] = [preferred_derivative]
             if internal_temp_columns:
                 imported_groups["z"] = [
                     _csv_channel_output_label(
@@ -106629,10 +106779,7 @@ class CsvImportDialog:
                     )
                     for idx, _column_name in enumerate(external_temp_columns)
                 ]
-            if any(
-                imported_groups.get(role)
-                for role in ("y1", "y2", "y3", "z", "z2")
-            ):
+            if any(imported_groups.get(role) for role in ("y1", "y2", "y3", "z", "z2")):
                 self.app.columns = columns_map
                 self.app._set_column_trace_groups(
                     imported_groups,
@@ -106776,9 +106923,12 @@ class CsvImportDialog:
         for role_vars in list(self._repeatable_mapping_vars.values()):
             for var_obj in list(role_vars):
                 _release_var(var_obj)
+        for var_obj in list(self._calculated_column_vars.values()):
+            _release_var(var_obj)
 
         self._mapping_vars.clear()
         self._repeatable_mapping_vars.clear()
+        self._calculated_column_vars.clear()
         self._repeatable_mapping_rows_frames.clear()
         self._mapping_combos.clear()
         self._ignore_listbox = None
@@ -138492,7 +138642,7 @@ class UnifiedApp(tk.Tk):
                         plot_id=preview_plot_id,
                     )
                 except Exception:
-                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                    # Optional diagnostics must not interrupt a completed import.
                     pass
                 self._apply_combined_plot_preview_ready_geometry()
                 self._set_combined_plot_preview_loading_state(
