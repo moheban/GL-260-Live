@@ -43,6 +43,8 @@ LINEWIDTH_DEFAULT = 1.0
 MARKERSIZE_DEFAULT = 2.0
 
 SETTINGS_FILE = "general_plotter_settings.json"
+MAIN_SETTINGS_GENERAL_PLOTTER_KEY = "general_plotter_profile_settings"
+DEFAULT_MAIN_PROFILE_KEY = "__default__"
 MARKER_CHOICES = [
     "",
     ".",
@@ -151,6 +153,48 @@ def _make_legends_draggable(fig):
         _make_legend_draggable(legend)
 
 
+def _insert_celsius_into_focused_widget(event):
+    """Insert ``°C`` into the focused editable Tk text widget.
+
+    Purpose:
+        Provide the General Plotter side of the program-wide Ctrl+Shift+C shortcut.
+    Why:
+        The General Plotter runs in a separate process, so the main GL-260 root
+        binding cannot service its entries, spinboxes, comboboxes, or text boxes.
+    Inputs:
+        event: Tk key event whose widget identifies the active application root.
+    Outputs:
+        ``"break"`` when insertion succeeds; otherwise ``None`` so normal Tk
+        event processing can continue.
+    Side Effects:
+        Replaces the focused widget's selected text, when present, and inserts
+        the Unicode text ``°C`` at the insertion cursor.
+    Exceptions:
+        Read-only, disabled, or unsupported widgets are ignored without raising.
+    """
+    try:
+        widget = event.widget.focus_get()
+    except Exception:
+        widget = None
+    if widget is None:
+        return None
+    try:
+        state = str(widget.cget("state") or "normal").lower()
+    except Exception:
+        state = "normal"
+    if state in {"disabled", "readonly"}:
+        return None
+    try:
+        widget.delete("sel.first", "sel.last")
+    except Exception:
+        pass
+    try:
+        widget.insert("insert", "°C")
+    except Exception:
+        return None
+    return "break"
+
+
 def _layout_artist_bbox(fig, artist, renderer):
     """Return one visible artist's bounds in figure coordinates.
 
@@ -217,11 +261,23 @@ def _layout_bbox_overlap(lhs, rhs):
 def _audit_general_plot_layout(fig, renderer):
     """Measure General Plotter output against the main layout-health requirements.
 
-    The audit checks visible labels, tick labels, legends, titles, lower-band
-    spacing, canvas clipping, and usable axes height after rendering. ``fig`` is
-    the target Matplotlib figure and ``renderer`` is its active renderer. It
-    returns issue names plus correction metadata. The function does not mutate
-    the figure; artist inspection failures are ignored on a per-artist basis.
+    Purpose:
+        Inspect visible labels, ticks, legends, titles, subplot relationships,
+        lower-band whitespace, clipping, and usable axes height after rendering.
+    Why:
+        Final layout correction must use rendered geometry and preserve element
+        ownership so upper-row labels do not distort the figure's bottom margin.
+    Inputs:
+        fig: Completed Matplotlib figure to inspect.
+        renderer: Active Matplotlib renderer for final artist extents.
+    Outputs:
+        Dictionary of issue tokens, measured artists, whitespace, and overlap
+        magnitudes used by the bounded correction pass.
+    Side Effects:
+        None; this function only measures existing figure artists.
+    Exceptions:
+        Individual missing, hidden, or unmeasurable artists are skipped; the
+        function does not intentionally raise for artist inspection failures.
     """
     policy = GENERAL_LAYOUT_HEALTH_POLICY
     fig_w_pts = max(float(fig.get_size_inches()[0]) * 72.0, 1.0)
@@ -232,6 +288,8 @@ def _audit_general_plot_layout(fig, renderer):
     edge_bboxes = []
     lower_band_tops = []
     axes_bottoms = []
+    axis_records = []
+    element_records = []
 
     def add_issue(name):
         """Append one issue token while preserving first-seen order."""
@@ -247,8 +305,7 @@ def _audit_general_plot_layout(fig, renderer):
         try:
             axes_position = ax.get_position()
             axes_bottoms.append(float(axes_position.y0))
-            if float(axes_position.height) < float(policy["min_axes_height"]):
-                add_issue("axes_over_compressed")
+            axis_records.append((ax, axes_position))
         except Exception:
             pass
 
@@ -269,16 +326,18 @@ def _audit_general_plot_layout(fig, renderer):
         xlabel_bbox = _layout_artist_bbox(fig, ax.xaxis.get_label(), renderer)
         ylabel_bbox = _layout_artist_bbox(fig, ax.yaxis.get_label(), renderer)
         edge_bboxes.extend(x_tick_bboxes + y_tick_bboxes)
-        for bbox in (xlabel_bbox, ylabel_bbox):
+        for kind, bbox in (("xlabel", xlabel_bbox), ("ylabel", ylabel_bbox)):
             if bbox is not None:
                 edge_bboxes.append(bbox)
+                element_records.append((ax, kind, bbox))
+        title_bbox = _layout_artist_bbox(fig, ax.title, renderer)
+        if title_bbox is not None:
+            edge_bboxes.append(title_bbox)
+            element_records.append((ax, "title", title_bbox))
 
         if xlabel_bbox is not None and x_tick_bboxes:
             ticks_y0 = min(float(bbox.y0) for bbox in x_tick_bboxes)
             gap_pts = float((ticks_y0 - xlabel_bbox.y1) * fig_h_pts)
-            # Tick labels are intentionally attached directly below the axes;
-            # the lower-band clearance check targets the x-label and legends.
-            lower_band_tops.append(float(xlabel_bbox.y1))
             if (
                 _layout_bbox_overlap(
                     xlabel_bbox,
@@ -314,17 +373,18 @@ def _audit_general_plot_layout(fig, renderer):
                 add_issue("axis_label_tick_gap_high")
                 label_gap_adjustments.append((ax.yaxis, gap_pts, "y"))
 
-    legends = list(getattr(fig, "legends", []) or [])
+    legends = [(None, legend) for legend in list(getattr(fig, "legends", []) or [])]
     legends.extend(
-        legend
+        (ax, legend)
         for ax in list(getattr(fig, "axes", []) or [])
         if (legend := ax.get_legend()) is not None
     )
-    for legend in legends:
+    for owner_axis, legend in legends:
         bbox = _layout_artist_bbox(fig, legend, renderer)
         if bbox is None:
             continue
         edge_bboxes.append(bbox)
+        element_records.append((owner_axis, "legend", bbox))
         if legend in getattr(fig, "legends", []) or (
             axes_bottoms and float(bbox.y1) <= min(axes_bottoms)
         ):
@@ -339,8 +399,100 @@ def _audit_general_plot_layout(fig, renderer):
         if bbox is None:
             continue
         edge_bboxes.append(bbox)
+        element_records.append((None, "suptitle", bbox))
         if bbox.x0 < -0.001 or bbox.x1 > 1.001 or bbox.y0 < -0.001 or bbox.y1 > 1.003:
             add_issue("text_artist_off_canvas")
+
+    # De-duplicate twin axes by their shared plotting rectangle before deriving
+    # row geometry. Bottom-band ownership must use only the lowest subplot row;
+    # treating upper x-labels as figure-bottom content caused the one-column grid
+    # correction loop to raise the bottom margin and compress every subplot.
+    unique_axis_records = []
+    seen_positions = set()
+    axis_position_by_id = {id(axis): position for axis, position in axis_records}
+    for axis, position in axis_records:
+        position_key = tuple(round(float(value), 6) for value in position.bounds)
+        if position_key in seen_positions:
+            continue
+        seen_positions.add(position_key)
+        unique_axis_records.append((axis, position))
+    distinct_row_bottoms = sorted(
+        {round(float(position.y0), 6) for _, position in unique_axis_records}
+    )
+    row_count = max(1, len(distinct_row_bottoms))
+    minimum_axes_height = float(policy["min_axes_height"]) / row_count
+    if any(
+        float(position.height) < minimum_axes_height
+        for _, position in unique_axis_records
+    ):
+        add_issue("axes_over_compressed")
+
+    bottom_axis_ids = set()
+    if unique_axis_records:
+        lowest_bottom = min(float(position.y0) for _, position in unique_axis_records)
+        bottom_axis_ids = {
+            id(axis)
+            for axis, position in unique_axis_records
+            if abs(float(position.y0) - lowest_bottom) <= 1e-5
+        }
+    for owner_axis, kind, bbox in element_records:
+        if (
+            kind == "xlabel"
+            and owner_axis is not None
+            and id(owner_axis) in bottom_axis_ids
+        ):
+            lower_band_tops.append(float(bbox.y1))
+
+    vertical_overlap = 0.0
+    horizontal_overlap = 0.0
+    top_band_overlap = 0.0
+    for owner_axis, kind, bbox in element_records:
+        if kind == "suptitle":
+            for other_owner, other_kind, other_bbox in element_records:
+                if other_kind != "title" or other_owner is None:
+                    continue
+                if _layout_bbox_overlap(bbox, other_bbox):
+                    measured_overlap = max(
+                        0.0,
+                        float(other_bbox.y1) - float(bbox.y0),
+                    )
+                    if measured_overlap * fig_h_pts > 0.25:
+                        add_issue("plot_elements_overlap")
+                        top_band_overlap = max(top_band_overlap, measured_overlap)
+            continue
+        if owner_axis is None:
+            continue
+        owner_position = axis_position_by_id.get(id(owner_axis))
+        if owner_position is None:
+            continue
+        for _other_axis, other_position in unique_axis_records:
+            same_plot_rectangle = all(
+                abs(float(lhs) - float(rhs)) <= 1e-6
+                for lhs, rhs in zip(
+                    owner_position.bounds,
+                    other_position.bounds,
+                    strict=False,
+                )
+            )
+            if same_plot_rectangle or not _layout_bbox_overlap(bbox, other_position):
+                continue
+            overlap_x = max(
+                0.0,
+                min(float(bbox.x1), float(other_position.x1))
+                - max(float(bbox.x0), float(other_position.x0)),
+            )
+            overlap_y = max(
+                0.0,
+                min(float(bbox.y1), float(other_position.y1))
+                - max(float(bbox.y0), float(other_position.y0)),
+            )
+            if overlap_x * fig_w_pts <= 0.25 or overlap_y * fig_h_pts <= 0.25:
+                continue
+            add_issue("plot_elements_overlap")
+            if overlap_x >= overlap_y:
+                vertical_overlap = max(vertical_overlap, overlap_y)
+            else:
+                horizontal_overlap = max(horizontal_overlap, overlap_x)
 
     bottom_whitespace_pts = None
     if edge_bboxes:
@@ -368,19 +520,34 @@ def _audit_general_plot_layout(fig, renderer):
         "edge_bboxes": edge_bboxes,
         "bottom_whitespace_pts": bottom_whitespace_pts,
         "bottom_band_overlap": bottom_band_overlap,
+        "vertical_overlap": vertical_overlap,
+        "horizontal_overlap": horizontal_overlap,
+        "top_band_overlap": top_band_overlap,
     }
 
 
 def _verify_general_plot_layout(fig, *, outside_bottom=False, mode="display"):
     """Run bounded layout-health correction and verification on one figure.
 
-    This is the General Plotter counterpart to the main application's final
-    Layout Health pass. ``fig`` is a completed preview/render/export figure,
-    ``outside_bottom`` preserves the reserved external-legend band, and ``mode``
-    records whether display or export geometry was checked. The returned dict
-    reports passes, corrections, detected issues, and unresolved final issues.
-    The function may adjust label padding/subplot margins and hide colliding x
-    tick labels; draw or artist failures stop safely and are reported as issues.
+    Purpose:
+        Apply the standalone counterpart of the main application's final Layout
+        Health pass to preview, render, and export figures.
+    Why:
+        Rendered element collisions and excess lower whitespace can remain after
+        initial ``tight_layout`` or fixed subplot margins.
+    Inputs:
+        fig: Completed Matplotlib figure to verify and, when needed, correct.
+        outside_bottom: Whether an external bottom legend requires a reserved band.
+        mode: Geometry context label such as ``"display"`` or ``"export"``.
+    Outputs:
+        Dictionary reporting passes, corrections, detected issues, and unresolved
+        final issues.
+    Side Effects:
+        Draws the canvas, may change label padding, tick visibility, subplot
+        margins/spacing, and records layout-health metadata on ``fig``.
+    Exceptions:
+        Draw and artist failures stop correction safely and are returned as issue
+        tokens rather than intentionally raised.
     """
     policy = GENERAL_LAYOUT_HEALTH_POLICY
     result = {
@@ -443,6 +610,9 @@ def _verify_general_plot_layout(fig, *, outside_bottom=False, mode="display"):
             bottom_overflow = max(0.0, -min(float(bbox.y0) for bbox in edge_bboxes))
             top_overflow = max(0.0, max(float(bbox.y1) for bbox in edge_bboxes) - 1.0)
             bottom_overlap = float(audit["bottom_band_overlap"])
+            vertical_overlap = float(audit["vertical_overlap"])
+            horizontal_overlap = float(audit["horizontal_overlap"])
+            top_band_overlap = float(audit["top_band_overlap"])
             try:
                 current = fig.subplotpars
                 margins = {
@@ -458,7 +628,31 @@ def _verify_general_plot_layout(fig, *, outside_bottom=False, mode="display"):
                             float(current.bottom) + bottom_overflow + bottom_overlap,
                         ),
                     ),
-                    "top": max(0.54, min(0.97, float(current.top) - top_overflow)),
+                    "top": max(
+                        0.54,
+                        min(
+                            0.97,
+                            float(current.top) - top_overflow - top_band_overlap,
+                        ),
+                    ),
+                    "hspace": min(
+                        1.5,
+                        float(current.hspace)
+                        + (
+                            max(0.15, vertical_overlap * 8.0)
+                            if vertical_overlap
+                            else 0.0
+                        ),
+                    ),
+                    "wspace": min(
+                        1.5,
+                        float(current.wspace)
+                        + (
+                            max(0.15, horizontal_overlap * 8.0)
+                            if horizontal_overlap
+                            else 0.0
+                        ),
+                    ),
                 }
                 if "bottom_whitespace_high" in issues and not outside_bottom:
                     excess = (
@@ -468,7 +662,7 @@ def _verify_general_plot_layout(fig, *, outside_bottom=False, mode="display"):
                     margins["bottom"] = max(minimum_bottom, margins["bottom"] - excess)
                 margin_changed = any(
                     abs(float(margins[key]) - float(getattr(current, key))) > 1e-6
-                    for key in ("left", "right", "bottom", "top")
+                    for key in ("left", "right", "bottom", "top", "hspace", "wspace")
                 )
                 if (
                     margin_changed
@@ -581,11 +775,41 @@ def _safe_color_dialog(initial="#1f77b4"):
 
 
 class GeneralPlotter(tk.Tk):
-    def __init__(self):
+    def __init__(self, *, main_settings_json="", profile_name=""):
+        """Initialize the standalone General Plotter window and persisted state.
+
+        Purpose:
+            Build the root window, plotting controls, preview state, and optional
+            prior-file restore used by the standalone plotting workflow.
+        Why:
+            Centralized initialization keeps persisted controls, keyboard
+            shortcuts, and preview wiring consistent for every launch path.
+        Inputs:
+            main_settings_json: Optional main GL-260 ``settings.json`` path.
+            profile_name: Active workspace profile used to scope persisted state.
+        Outputs:
+            None.
+        Side Effects:
+            Creates Tk variables/widgets, binds Ctrl+Shift+C, may reload the last
+            data file, and registers the window-close callback.
+        Exceptions:
+            Recoverable settings and file-restore failures are handled by the
+            delegated best-effort loading helpers.
+        """
         super().__init__()
+        raw_main_settings_path = str(main_settings_json or "").strip()
+        self.main_settings_json = (
+            os.path.abspath(raw_main_settings_path) if raw_main_settings_path else ""
+        )
+        self.profile_name = str(profile_name or "").strip()
         self.title("General Plotter")
         self.minsize(1200, 840)
         self.geometry(self._load_window_geom() or "1260x920+50+50")
+        self.bind_all(
+            "<Control-Shift-C>",
+            _insert_celsius_into_focused_widget,
+            add="+",
+        )
 
         # State
         self.df: pd.DataFrame | None = None
@@ -643,7 +867,8 @@ class GeneralPlotter(tk.Tk):
             value=self.settings.get("markersize", MARKERSIZE_DEFAULT)
         )
 
-        self.ncols = tk.IntVar(value=int(self.settings.get("ncols", 2)))
+        self.ncols = tk.IntVar(value=max(1, int(self.settings.get("ncols", 2))))
+        self.nrows = tk.IntVar(value=max(1, int(self.settings.get("nrows", 1))))
 
         self.right_axis_series = tk.StringVar(
             value=self.settings.get("right_axis_series", "None")
@@ -708,15 +933,168 @@ class GeneralPlotter(tk.Tk):
 
     # ---------- Persistence ----------
     def _load_settings(self):
+        """Load standalone defaults overlaid by active-profile main-app settings.
+
+        Purpose:
+            Restore General Plotter state for direct launches and main-app launches.
+        Why:
+            Profile-scoped state in the main program's JSON must take precedence
+            when the child tool is opened from that same workspace profile, while
+            the standalone JSON remains a safe fallback.
+        Inputs:
+            None; persistence paths and profile identity come from instance state.
+        Outputs:
+            Dictionary containing the merged General Plotter settings payload.
+        Side Effects:
+            Reads up to two JSON files; no files or Tk state are modified.
+        Exceptions:
+            Missing, malformed, or inaccessible files are ignored and return the
+            best valid fallback payload available.
+        """
+        loaded = {}
         try:
             if os.path.exists(SETTINGS_FILE):
-                with open(SETTINGS_FILE, "r") as f:
-                    return json.load(f)
+                with open(SETTINGS_FILE, encoding="utf-8") as f:
+                    standalone = json.load(f)
+                if isinstance(standalone, dict):
+                    loaded.update(standalone)
         except Exception:
             pass
-        return {}
+        main_settings_path = str(getattr(self, "main_settings_json", "") or "")
+        profile_key = self._main_profile_settings_key()
+        try:
+            if main_settings_path and os.path.isfile(main_settings_path):
+                with open(main_settings_path, encoding="utf-8") as handle:
+                    main_document = json.load(handle)
+                profile_map = main_document.get(MAIN_SETTINGS_GENERAL_PLOTTER_KEY, {})
+                profile_settings = (
+                    profile_map.get(profile_key)
+                    if isinstance(profile_map, dict)
+                    else None
+                )
+                if isinstance(profile_settings, dict):
+                    loaded.update(profile_settings)
+        except Exception:
+            pass
+        return loaded
+
+    def _main_profile_settings_key(self):
+        """Return the stable main-settings key for the active workspace profile.
+
+        Purpose:
+            Select one profile-scoped General Plotter settings slot.
+        Why:
+            Separate workspace profiles must not overwrite one another's loaded
+            file, selected columns, grid dimensions, or formatting preferences.
+        Inputs:
+            None.
+        Outputs:
+            Active profile name, or ``"__default__"`` when no profile is active.
+        Side Effects:
+            None.
+        Exceptions:
+            None.
+        """
+        return self.profile_name or DEFAULT_MAIN_PROFILE_KEY
+
+    def _persist_settings_to_main_json(self, payload):
+        """Merge one profile's General Plotter state into main ``settings.json``.
+
+        Purpose:
+            Persist the standalone tool's loaded-data and plotting state inside
+            the main GL-260 settings document under the active profile name.
+        Why:
+            The child process has separate memory, so it must perform an atomic
+            read-modify-write while preserving unrelated main-program settings.
+        Inputs:
+            payload: General Plotter settings dictionary to store.
+        Outputs:
+            ``True`` when the main JSON contains the requested profile payload;
+            otherwise ``False``.
+        Side Effects:
+            May atomically replace the configured main settings JSON and uses a
+            process-specific temporary sibling file during each bounded attempt.
+        Exceptions:
+            Missing paths, malformed JSON, concurrent replacement, and filesystem
+            failures return ``False`` after cleanup instead of raising.
+        """
+        main_settings_path = str(getattr(self, "main_settings_json", "") or "")
+        if not main_settings_path or not os.path.isfile(main_settings_path):
+            return False
+        temp_path = f"{main_settings_path}.general_plotter.{os.getpid()}.tmp"
+        profile_key = self._main_profile_settings_key()
+        try:
+            for _attempt in range(3):
+                before_stat = os.stat(main_settings_path)
+                with open(main_settings_path, encoding="utf-8") as handle:
+                    main_document = json.load(handle)
+                if not isinstance(main_document, dict):
+                    return False
+                profile_map = main_document.get(MAIN_SETTINGS_GENERAL_PLOTTER_KEY)
+                if not isinstance(profile_map, dict):
+                    profile_map = {}
+                profile_map[profile_key] = dict(payload)
+                main_document[MAIN_SETTINGS_GENERAL_PLOTTER_KEY] = profile_map
+
+                current_stat = os.stat(main_settings_path)
+                if (
+                    current_stat.st_mtime_ns != before_stat.st_mtime_ns
+                    or current_stat.st_size != before_stat.st_size
+                ):
+                    continue
+                with open(temp_path, "w", encoding="utf-8") as handle:
+                    json.dump(main_document, handle, indent=2, ensure_ascii=False)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                final_stat = os.stat(main_settings_path)
+                if (
+                    final_stat.st_mtime_ns != before_stat.st_mtime_ns
+                    or final_stat.st_size != before_stat.st_size
+                ):
+                    try:
+                        os.remove(temp_path)
+                    except Exception:
+                        pass
+                    continue
+                os.replace(temp_path, main_settings_path)
+                with open(main_settings_path, encoding="utf-8") as handle:
+                    verified_document = json.load(handle)
+                verified_map = verified_document.get(
+                    MAIN_SETTINGS_GENERAL_PLOTTER_KEY, {}
+                )
+                if isinstance(verified_map, dict) and verified_map.get(
+                    profile_key
+                ) == dict(payload):
+                    return True
+        except Exception:
+            return False
+        finally:
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except Exception:
+                pass
+        return False
 
     def _save_settings(self):
+        """Persist the current General Plotter control state to JSON.
+
+        Purpose:
+            Save plot, grid, axis, style, filter, and file-selection preferences.
+        Why:
+            Standalone launches and named presets must restore the same grid shape
+            and plotting behavior the user last selected.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Writes ``general_plotter_settings.json``, attempts an atomic merge into
+            the main app's active-profile settings slot, and replaces
+            ``self.settings`` with the payload that was attempted.
+        Exceptions:
+            Widget lookup and file-write failures are contained best-effort.
+        """
         payload = dict(self.settings)
         payload.update(
             {
@@ -743,6 +1121,7 @@ class GeneralPlotter(tk.Tk):
                 "linewidth": self.linewidth.get(),
                 "markersize": self.markersize.get(),
                 "ncols": self.ncols.get(),
+                "nrows": self.nrows.get(),
                 "x_col": self.cb_x.get() if hasattr(self, "cb_x") else "",
                 "facet_col": (
                     self.cb_facet.get() if hasattr(self, "cb_facet") else "None"
@@ -775,10 +1154,11 @@ class GeneralPlotter(tk.Tk):
         except Exception:
             pass
         try:
-            with open(SETTINGS_FILE, "w") as f:
-                json.dump(payload, f, indent=2)
+            with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, ensure_ascii=False)
         except Exception:
             pass
+        self._persist_settings_to_main_json(payload)
         self.settings = payload
 
     def _load_window_geom(self):
@@ -804,6 +1184,23 @@ class GeneralPlotter(tk.Tk):
 
     # ---------- UI ----------
     def _build_ui(self):
+        """Build the standalone window's tabs, controls, preview, and actions.
+
+        Purpose:
+            Assemble every General Plotter widget and connect render/export actions.
+        Why:
+            Keeping construction centralized lets contextual plot-type state and
+            live-preview bindings operate over one consistent widget tree.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Creates and packs Tk widgets, stores widget references, and binds window
+            geometry tracking plus control callbacks.
+        Exceptions:
+            Delegated UI builders contain optional toolkit-specific failures.
+        """
         self.bind("<Configure>", self._remember_geom)
 
         nb = ttk.Notebook(self)
@@ -1403,13 +1800,33 @@ class GeneralPlotter(tk.Tk):
         ttk.Label(lf_layout, text="Grid columns").grid(
             row=1, column=0, sticky="e", padx=(0, 6), pady=2
         )
-        ttk.Spinbox(lf_layout, from_=1, to=6, textvariable=self.ncols, width=8).grid(
-            row=1, column=1, sticky="w", pady=2
+        self.grid_columns_spinbox = ttk.Spinbox(
+            lf_layout,
+            from_=1,
+            to=6,
+            textvariable=self.ncols,
+            width=8,
+            command=self._schedule_preview,
         )
+        self.grid_columns_spinbox.grid(row=1, column=1, sticky="w", pady=2)
+
+        self.grid_rows_label = ttk.Label(lf_layout, text="Grid rows")
+        self.grid_rows_label.grid(
+            row=2, column=0, sticky="e", padx=(0, 6), pady=2
+        )
+        self.grid_rows_spinbox = ttk.Spinbox(
+            lf_layout,
+            from_=1,
+            to=12,
+            textvariable=self.nrows,
+            width=8,
+            command=self._schedule_preview,
+        )
+        self.grid_rows_spinbox.grid(row=2, column=1, sticky="w", pady=2)
 
         ttk.Checkbutton(
             lf_layout, text="Decimate preview for speed", variable=self.decimate_preview
-        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         # NEW: grid toggle
         ttk.Checkbutton(
@@ -1417,7 +1834,7 @@ class GeneralPlotter(tk.Tk):
             text="Show grid lines",
             variable=self.show_grid,
             command=self._schedule_preview,
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         # ---------- Box 3 (full width): Axis label formatting ----------
         lf_fmt = ttk.Labelframe(
@@ -1669,6 +2086,24 @@ class GeneralPlotter(tk.Tk):
         return tips.get(key, "")
 
     def _on_plot_type_change(self, *_):
+        """Refresh contextual controls after the selected plot type changes.
+
+        Purpose:
+            Synchronize plot descriptions and the right-axis, facet, and grid-row
+            controls with the active layout mode.
+        Why:
+            Controls that do not apply to a layout must be visibly unavailable
+            while relevant controls remain editable and trigger a fresh preview.
+        Inputs:
+            Positional trace/event arguments supplied by Tk; their values are unused.
+        Outputs:
+            None.
+        Side Effects:
+            Re-packs contextual frames, changes widget states, and schedules one
+            debounced preview rebuild.
+        Exceptions:
+            Optional widget state/display failures are contained best-effort.
+        """
         key = self.plot_type.get()
         self.lbl_type_desc.configure(text=self._plot_type_description(key))
         self.lbl_type_tip.configure(text=self._plot_type_tip(key))
@@ -1695,7 +2130,51 @@ class GeneralPlotter(tk.Tk):
         except Exception:
             pass
 
+        grid_state = "normal" if key in {"grid", "grid_right"} else "disabled"
+        try:
+            self.grid_rows_label.configure(state=grid_state)
+            self.grid_rows_spinbox.configure(state=grid_state)
+        except Exception:
+            pass
+
         self._schedule_preview()
+
+    def _resolve_grid_shape(self, item_count):
+        """Return a capacity-safe row/column shape for a grid plot.
+
+        Purpose:
+            Apply the user's Grid rows and Grid columns values to preview and
+            full-resolution small-multiple figures.
+        Why:
+            A grid must always contain every selected Y series; when a saved or
+            newly edited row count is too small, expanding it is safer than
+            dropping series or raising an index error.
+        Inputs:
+            item_count: Number of subplot items that must fit in the grid.
+        Outputs:
+            ``(nrows, ncols)`` tuple of positive integers.
+        Side Effects:
+            Raises the Grid rows Tk variable to the minimum required capacity
+            when the current row/column selection is insufficient.
+        Exceptions:
+            Invalid Tk variable values fall back to one row and one column.
+        """
+        try:
+            ncols = max(1, int(self.ncols.get()))
+        except Exception:
+            ncols = 1
+        try:
+            requested_rows = max(1, int(self.nrows.get()))
+        except Exception:
+            requested_rows = 1
+        required_rows = max(1, int(np.ceil(max(0, int(item_count)) / ncols)))
+        nrows = max(requested_rows, required_rows)
+        if nrows != requested_rows:
+            try:
+                self.nrows.set(nrows)
+            except Exception:
+                pass
+        return nrows, ncols
 
     def _wire_live_preview(self, root):
         def schedule(*_):
@@ -1875,6 +2354,23 @@ class GeneralPlotter(tk.Tk):
             messagebox.showerror("Preset error", str(e))
 
     def _load_preset(self):
+        """Load a saved General Plotter JSON preset into active controls.
+
+        Purpose:
+            Restore plot type, grid dimensions, styles, filters, and formatting.
+        Why:
+            Presets must reproduce the complete layout configuration, including
+            the newly explicit Grid rows value.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Opens a file chooser, reads JSON, mutates settings/Tk variables, updates
+            contextual control states, schedules a preview, and shows status dialogs.
+        Exceptions:
+            JSON, conversion, and filesystem errors are shown in a preset error dialog.
+        """
         path = filedialog.askopenfilename(
             title="Load preset",
             initialdir="presets",
@@ -1883,7 +2379,7 @@ class GeneralPlotter(tk.Tk):
         if not path:
             return
         try:
-            with open(path, "r") as f:
+            with open(path, encoding="utf-8") as f:
                 loaded = json.load(f)
             self.settings.update(loaded)
             self.title_text.set(self.settings.get("title_text", ""))
@@ -1895,6 +2391,8 @@ class GeneralPlotter(tk.Tk):
             self.references = self.settings.get("references", [])
             self.filter_query.set(self.settings.get("filter_query", ""))
             self.decimate_preview.set(self.settings.get("decimate_preview", True))
+            self.ncols.set(max(1, int(self.settings.get("ncols", 2))))
+            self.nrows.set(max(1, int(self.settings.get("nrows", 1))))
             self.yerr_col.set(self.settings.get("yerr_col", "None"))
             self.y_left_format.set(self.settings.get("y_left_format", "plain"))
             self.y_right_format.set(self.settings.get("y_right_format", "plain"))
@@ -2053,7 +2551,8 @@ class GeneralPlotter(tk.Tk):
             None.
         Side Effects:
             Reads payload JSON/CSV files, replaces current in-memory dataset,
-            updates Data/Plot controls, and schedules a preview refresh.
+            updates Data/Plot controls, persists active-profile settings, and
+            schedules a preview refresh.
         Exceptions:
             Invalid payloads are handled with user-facing error dialogs.
         """
@@ -2067,7 +2566,7 @@ class GeneralPlotter(tk.Tk):
             return
 
         try:
-            with open(payload_path, "r", encoding="utf-8") as handle:
+            with open(payload_path, encoding="utf-8") as handle:
                 payload = json.load(handle)
         except Exception as exc:
             messagebox.showerror(
@@ -2119,8 +2618,17 @@ class GeneralPlotter(tk.Tk):
 
         self._update_sheet_indicator(True)
         self.lbl_status.configure(
-            text=f"Handoff loaded from GL-260 | Rows: {len(self.df)} | Cols: {len(self.columns)}"
+            text=(
+                f"Handoff loaded from GL-260 | Rows: {len(self.df)} | "
+                f"Cols: {len(self.columns)}"
+            )
         )
+        # Handoff CSVs are temporary transport files, so persist their selected
+        # controls/source identity without retaining an obsolete standalone path.
+        self.settings.pop("last_file_path", None)
+        self.settings["last_load_source"] = "main_handoff"
+        self.settings["handoff_source_app"] = str(payload.get("source_app") or "")
+        self._save_settings()
         self._schedule_preview()
 
     # ---------- Plotting helpers ----------
@@ -2319,12 +2827,22 @@ class GeneralPlotter(tk.Tk):
     def draw_preview(self):
         """Rebuild the embedded preview from the current General Plotter state.
 
-        The callback exists to reflect data selections and styling controls,
-        including the legend location, after live changes or an explicit
-        Refresh Preview click. It reads Tk variables and the current DataFrame,
-        takes no parameters, and returns ``None``. It clears and redraws the
-        preview figure/canvas, refreshes preview statistics where applicable,
-        and tolerates invalid filters or optional hover integration failures.
+        Purpose:
+            Reflect current data selections, grid dimensions, styles, and legend
+            location after live changes or an explicit Refresh Preview action.
+        Why:
+            Users need the embedded canvas to match the full render before export.
+        Inputs:
+            None; state is read from Tk variables and ``self.df``.
+        Outputs:
+            None.
+        Side Effects:
+            Clears/rebuilds and draws the preview figure, may raise an undersized
+            Grid rows value to fit all series, refreshes statistics, and installs
+            optional hover support.
+        Exceptions:
+            Invalid filters and optional plotting integrations are handled
+            best-effort; missing required selections render guidance text.
         """
         self._preview_after_id = None
         self.preview_fig.clf()
@@ -2473,8 +2991,7 @@ class GeneralPlotter(tk.Tk):
 
         elif ptype in ("grid", "grid_right"):
             n = len(ycols)
-            ncols = max(1, int(self.ncols.get()))
-            nrows = int(np.ceil(n / ncols))
+            nrows, ncols = self._resolve_grid_shape(n)
             axs = self.preview_fig.subplots(nrows=nrows, ncols=ncols)
             axs = np.array(axs).reshape(-1)
             right_series = (
@@ -2699,12 +3216,21 @@ class GeneralPlotter(tk.Tk):
     def render_plots(self):
         """Build full-resolution plots and open them in a managed render tab.
 
-        The action turns the current General Plotter data and controls into
-        exportable Matplotlib figures. It takes no parameters and returns
-        ``None``. It validates required selections, creates figures, applies
-        layout-health verification, registers the figures in a notebook tab,
-        and persists settings. User-correctable input failures are reported via
-        dialogs and abort the render safely.
+        Purpose:
+            Turn the current data and controls into exportable Matplotlib figures.
+        Why:
+            Full-resolution output must use the same grid shape and layout-health
+            behavior as the live preview.
+        Inputs:
+            None; state is read from Tk variables and ``self.df``.
+        Outputs:
+            None.
+        Side Effects:
+            Creates figures, may raise an undersized Grid rows value, verifies
+            layout, opens a render tab, persists settings, and may show dialogs.
+        Exceptions:
+            User-correctable selections abort safely with dialogs; delegated
+            plotting helpers contain optional artist failures best-effort.
         """
         if self.df is None:
             messagebox.showerror("No data", "Load a file/sheet first.")
@@ -2854,8 +3380,7 @@ class GeneralPlotter(tk.Tk):
 
         elif ptype in ("grid", "grid_right"):
             n = len(ycols)
-            ncols = max(1, int(self.ncols.get()))
-            nrows = int(np.ceil(n / ncols))
+            nrows, ncols = self._resolve_grid_shape(n)
             fig, axes = plt.subplots(
                 nrows=nrows, ncols=ncols, figsize=(12, max(6, 3 * nrows))
             )
@@ -3141,7 +3666,7 @@ def _parse_cli_args():
     Inputs:
         None.
     Outputs:
-        argparse.Namespace: Parsed CLI options including `handoff_json`.
+        argparse.Namespace: Parsed handoff path, main settings path, and profile name.
     Side Effects:
         Consumes process arguments from `sys.argv`.
     Exceptions:
@@ -3153,12 +3678,25 @@ def _parse_cli_args():
         default="",
         help="Optional JSON payload produced by GL-260 for data handoff.",
     )
+    parser.add_argument(
+        "--main-settings-json",
+        default="",
+        help="Optional main GL-260 settings.json used for profile-scoped persistence.",
+    )
+    parser.add_argument(
+        "--profile-name",
+        default="",
+        help="Active GL-260 workspace profile name for General Plotter settings.",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     cli_args = _parse_cli_args()
-    app = GeneralPlotter()
+    app = GeneralPlotter(
+        main_settings_json=(cli_args.main_settings_json or "").strip(),
+        profile_name=(cli_args.profile_name or "").strip(),
+    )
     app.apply_handoff_from_json((cli_args.handoff_json or "").strip())
     try:
         app.draw_preview()

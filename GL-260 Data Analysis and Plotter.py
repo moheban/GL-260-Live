@@ -2088,6 +2088,48 @@ def _ui_combobox(parent, *args, **kwargs):
     return widget
 
 
+def _insert_celsius_into_focused_widget(event: tk.Event) -> str | None:
+    """Insert ``°C`` into the currently focused editable Tk widget.
+
+    Purpose:
+        Implement the application-wide Ctrl+Shift+C temperature-unit shortcut.
+    Why:
+        Labels, notes, settings, and dialogs use several Tk text-capable widget
+        classes, so one root binding must safely handle their shared edit API.
+    Inputs:
+        event: Tk key event whose source widget can resolve the current focus.
+    Outputs:
+        ``"break"`` after a successful insertion; otherwise ``None`` so Tk can
+        continue normal key processing.
+    Side Effects:
+        Replaces selected text, when present, and inserts Unicode ``°C`` at
+        the focused widget's insertion cursor.
+    Exceptions:
+        Disabled, read-only, and unsupported widgets are ignored without raising.
+    """
+    try:
+        widget = event.widget.focus_get()
+    except Exception:
+        widget = None
+    if widget is None:
+        return None
+    try:
+        state = str(widget.cget("state") or "normal").lower()
+    except Exception:
+        state = "normal"
+    if state in {"disabled", "readonly"}:
+        return None
+    try:
+        widget.delete("sel.first", "sel.last")
+    except Exception:
+        pass
+    try:
+        widget.insert("insert", "°C")
+    except Exception:
+        return None
+    return "break"
+
+
 def _ui_scrollbar(parent, *args, **kwargs):
     """Create a scrollbar using CTk when available, else ttk.
 
@@ -86222,8 +86264,10 @@ def _reaction_catalog_labels(catalog: Mapping[str, Mapping[str, Any]]) -> List[s
 # Load saved settings if they exist
 
 SETTINGS_FILE = "settings.json"
+GENERAL_PLOTTER_PROFILE_SETTINGS_KEY = "general_plotter_profile_settings"
 _SETTINGS_LOAD_ERROR = None
 _SETTINGS_BACKUP_PATH = None
+_SETTINGS_DISK_MTIME_NS = None
 
 settings = {}
 _SETTINGS_LOCK = threading.RLock()
@@ -89094,10 +89138,70 @@ settings["final_report_split_frac"] = _normalize_final_report_split_frac(
 _normalize_current_workspace_profile_settings(settings)
 
 
+def _merge_general_plotter_profile_settings_from_disk() -> None:
+    """Merge externally saved General Plotter profile state into runtime settings.
+
+    Purpose:
+        Preserve profile-scoped General Plotter state written by the standalone
+        child process before the main application rewrites ``settings.json``.
+    Why:
+        The two processes do not share memory; without a disk-change merge, a later
+        main-app save could overwrite the child's newly persisted profile payload.
+    Inputs:
+        None.
+    Outputs:
+        None.
+    Side Effects:
+        Performs a cheap file-stat check and, only after an external modification,
+        reads ``settings.json`` and updates one key in the global ``settings`` map.
+    Exceptions:
+        Missing, malformed, or inaccessible disk state is ignored without raising.
+    """
+    global _SETTINGS_DISK_MTIME_NS
+    try:
+        disk_stat = os.stat(SETTINGS_FILE)
+    except Exception:
+        return
+    disk_mtime_ns = int(disk_stat.st_mtime_ns)
+    if _SETTINGS_DISK_MTIME_NS == disk_mtime_ns:
+        return
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as handle:
+            disk_settings = json.load(handle)
+    except Exception:
+        return
+    if not isinstance(disk_settings, dict):
+        return
+    disk_profile_settings = disk_settings.get(GENERAL_PLOTTER_PROFILE_SETTINGS_KEY)
+    if isinstance(disk_profile_settings, dict):
+        settings[GENERAL_PLOTTER_PROFILE_SETTINGS_KEY] = copy.deepcopy(
+            disk_profile_settings
+        )
+    _SETTINGS_DISK_MTIME_NS = disk_mtime_ns
+
+
 def _save_settings_to_disk() -> None:
-    """Save settings to disk.
-    Used when persisting settings to disk to storage."""
+    """Atomically persist main settings while retaining child-process updates.
+
+    Purpose:
+        Write the shared application settings mapping to ``settings.json``.
+    Why:
+        Main-app saves must merge externally changed General Plotter profile state
+        before replacement so separate-process persistence is not lost.
+    Inputs:
+        None.
+    Outputs:
+        None.
+    Side Effects:
+        May read externally modified settings, writes/fsyncs a temporary JSON file,
+        atomically replaces ``settings.json``, and refreshes its cached mtime.
+    Exceptions:
+        Write failures propagate to existing callers; temporary-file cleanup is
+        best-effort and external General Plotter merge failures are ignored.
+    """
+    global _SETTINGS_DISK_MTIME_NS
     with _SETTINGS_LOCK:
+        _merge_general_plotter_profile_settings_from_disk()
         settings_dir = os.path.dirname(os.path.abspath(SETTINGS_FILE)) or "."
         fd, tmp_path = tempfile.mkstemp(
             prefix=f"{os.path.basename(SETTINGS_FILE)}.", dir=settings_dir
@@ -89108,6 +89212,10 @@ def _save_settings_to_disk() -> None:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(tmp_path, SETTINGS_FILE)
+            try:
+                _SETTINGS_DISK_MTIME_NS = int(os.stat(SETTINGS_FILE).st_mtime_ns)
+            except Exception:
+                _SETTINGS_DISK_MTIME_NS = None
         finally:
             try:
                 if os.path.exists(tmp_path):
@@ -108347,6 +108455,11 @@ class UnifiedApp(tk.Tk):
         self.bind_all("<Control-KP_Subtract>", self._handle_font_decrease, add="+")
         self.bind_all("<Control-0>", self._handle_font_reset, add="+")
         self.bind_all("<Control-KP_0>", self._handle_font_reset, add="+")
+        self.bind_all(
+            "<Control-Shift-C>",
+            _insert_celsius_into_focused_widget,
+            add="+",
+        )
 
         # State
 
@@ -150730,14 +150843,14 @@ class UnifiedApp(tk.Tk):
             Start the external plotting tool with optional transfer payload.
         Why:
             Centralizing launch behavior ensures consistent path resolution,
-            preference persistence, and error handling.
+            active-profile persistence context, and error handling.
         Inputs:
             None.
         Outputs:
             None.
         Side Effects:
-            Persists checkbox state, optionally creates temp transfer files, and
-            starts a subprocess.
+            Persists checkbox state, resolves the current profile, optionally
+            creates temp transfer files, and starts a subprocess.
         Exceptions:
             Launch failures are reported to the user and do not close the launcher.
         """
@@ -150746,7 +150859,24 @@ class UnifiedApp(tk.Tk):
             return
         self._persist_general_plotter_handoff_preference()
 
-        command = [sys.executable, script_path]
+        main_settings_path = os.path.abspath(SETTINGS_FILE)
+        try:
+            profile_name, _profile_path = self._resolve_current_workspace_profile(
+                normalize=True,
+                persist=False,
+            )
+        except Exception:
+            profile_name = str(
+                settings.get("current_workspace_profile_name") or ""
+            ).strip()
+        command = [
+            sys.executable,
+            script_path,
+            "--main-settings-json",
+            main_settings_path,
+            "--profile-name",
+            str(profile_name or ""),
+        ]
         handoff_var = getattr(self, "_general_plotter_handoff_var", None)
         handoff_enabled = (
             bool(handoff_var.get()) if isinstance(handoff_var, tk.BooleanVar) else True
