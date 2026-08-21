@@ -1,8 +1,8 @@
 {
-  "window_geometry": "1260x920+2155+38",
-  "title_text": "Diazonium Salt Temp Log (Celcius)",
-  "suptitle_text": "PR-29434 Batch 1 Step 3",
-  "plot_type": "grid",
+  "window_geometry": "1260x920+50+50",
+  "title_text": "Diazonium Salt Temp Log (°C) Batch 2",
+  "suptitle_text": "PR-29434 Batch 2 Step 3",
+  "plot_type": "single",
   "legend_loc": "upper center",
   "plot_kind": "line",
   "auto_x": true,
@@ -26,8 +26,8 @@
   "x_col": "Elapsed Time (hours)",
   "facet_col": "None",
   "y_cols": [
-    "External Cooling Bath Temperature",
-    "Internal Solution Temperature"
+    "External Reactor Temperature",
+    "Internal Reactor Temperature"
   ],
   "right_axis_series": "None",
   "log_x": false,
@@ -39,14 +39,15 @@
   "filter_query": "",
   "decimate_preview": true,
   "x_label": "Elapsed Time (hours)",
-  "y_left_label": "Temperature (C)",
+  "y_left_label": "Temperature (°C)",
   "y_right_label": "",
   "show_grid": false,
   "yerr_col": "None",
   "y_left_format": "plain",
-  "y_right_format": "plain",
+  "y_right_format": "sci",
   "theme": "classic",
   "top_k_facets": 0,
-  "last_sheet_name": "Batch 1 Step 3 Temp Log",
-  "last_file_path": "C:/Users/mmoheban/Local Documents/Python/PR-29434 Phenol unlabeled/Batch 1 Step 3 Temp Log.xlsx"
+  "last_sheet_name": "Batch 2 Step 3 Temp Log",
+  "last_file_path": "C:/Users/mmoheban/Local Documents/Python/PR-29434 Phenol unlabeled/Batch 1 Step 3 Temp Log.xlsx",
+  "nrows": 2
 }
