@@ -107182,6 +107182,7 @@ class UnifiedApp(tk.Tk):
         self._startup_background_restore_started = False
         self._startup_background_restore_after_id = None
         self._startup_rust_preflight_after_id = None
+        self._startup_rust_preflight_task_id: Optional[int] = None
         self._startup_rust_preflight_started = False
         self._startup_rust_preflight_completed = False
         self._startup_rust_preflight_status: Dict[str, Any] = {}
@@ -111099,23 +111100,22 @@ class UnifiedApp(tk.Tk):
                 pass
 
     def _schedule_startup_rust_backend_preflight(self) -> None:
-        """Schedule one startup-time Rust backend readiness preflight callback.
+        """Schedule Rust readiness probing without blocking the Tk event loop.
 
         Purpose:
-            Queue the optional Rust readiness prompt/install flow once startup
-            interaction-readiness gates pass, while the startup splash is still
-            visible.
+            Queue the compute and import portion of Rust readiness checking once
+            startup interaction-readiness gates pass.
         Why:
-            The startup splash should stay visible until Rust readiness checks
-            complete, preventing a frozen-looking gap before the workspace is
-            fully interactive.
+            Rust module import and capability probing can take noticeable time;
+            they must not prevent the splash heartbeat or progress bar from
+            painting. Tk-only status and dialog work stays on the UI thread.
         Inputs:
             None.
         Outputs:
             None.
         Side Effects:
-            Schedules one `after_idle` callback and updates startup-preflight
-            tracking state.
+            Submits one worker through `TkTaskRunner` and updates
+            startup-preflight tracking state. Completion handlers run on Tk.
         Exceptions:
             Tk scheduling failures are suppressed so startup remains stable.
         """
@@ -111123,57 +111123,196 @@ class UnifiedApp(tk.Tk):
             return
         if bool(getattr(self, "_startup_rust_preflight_completed", False)):
             return
+        if getattr(self, "_startup_rust_preflight_task_id", None) is not None:
+            return
         UnifiedApp._set_startup_rust_preflight_status(
             self,
             state="queued",
             message="Startup Rust preflight queued.",
             details="Waiting for idle callback scheduling.",
         )
-        after_id = getattr(self, "_startup_rust_preflight_after_id", None)
-        if after_id is not None:
-            try:
-                self.after_cancel(after_id)
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-            self._startup_rust_preflight_after_id = None
+        runner = getattr(self, "_task_runner", None)
+        if runner is None or not hasattr(runner, "submit"):
+            # This fallback is retained only for partially constructed test/UI
+            # harnesses that do not have the shared worker bridge yet.
+            self._run_startup_rust_backend_preflight()
+            return
 
-        def _run_preflight() -> None:
-            """Run startup Rust preflight callback on the Tk thread.
+        def _on_ready(payload: Mapping[str, Any]) -> None:
+            """Apply a completed Rust readiness probe on Tk's event thread.
 
             Purpose:
-                Execute the deferred startup Rust preflight once idle.
+                Publish worker probe results without allowing the worker to
+                mutate Tk variables or create dialogs.
             Why:
-                Runs preflight during the final splash stage so startup can
-                gate splash teardown on Rust readiness completion.
+                Tcl/Tk is single-threaded, while import/capability work is not.
             Inputs:
-                None.
+                payload: Readiness data returned by the background probe.
             Outputs:
                 None.
             Side Effects:
-                Clears tracked idle callback id and invokes preflight flow.
+                Updates startup diagnostics and may continue with the existing
+                Tk-only install-choice flow when Rust is not ready.
             Exceptions:
-                Exceptions are handled by the parent preflight flow.
+                Invalid worker payloads fail closed to the Python fallback path.
             """
-            self._startup_rust_preflight_after_id = None
+            self._startup_rust_preflight_task_id = None
+            if bool(payload.get("ready", False)):
+                UnifiedApp._set_startup_rust_preflight_status(
+                    self,
+                    state="ready",
+                    message="Rust backend is ready for this startup runtime.",
+                    details=(
+                        "Background startup preflight loaded the Rust extension "
+                        "successfully."
+                    ),
+                    module_path=str(payload.get("module_path") or ""),
+                    runtime_fingerprint=payload.get("runtime_fingerprint"),
+                    capability_payload=payload.get("capability_payload"),
+                )
+                self._startup_rust_preflight_completed = True
+                self._dbg(
+                    "rust.backend",
+                    "Background startup Rust preflight ready; keeping Tk responsive.",
+                )
+                return
+            if bool(payload.get("skip_interactive_flow", False)):
+                UnifiedApp._set_startup_rust_preflight_status(
+                    self,
+                    state=str(payload.get("state") or "skipped"),
+                    message=str(
+                        payload.get("message") or "Startup Rust preflight skipped."
+                    ),
+                    details=str(payload.get("details") or ""),
+                )
+                self._startup_rust_preflight_completed = True
+                return
+            # The existing method owns user prompts and interactive repair. It is
+            # intentionally invoked only on Tk after the slow worker probe ends.
+            self._startup_rust_preflight_started = False
             self._run_startup_rust_backend_preflight()
 
+        def _on_error(exc: BaseException) -> None:
+            """Fail closed when the background Rust readiness probe raises.
+
+            Purpose:
+                Complete startup safely when worker preflight cannot run.
+            Why:
+                A diagnostic probe must never hold the splash open indefinitely.
+            Inputs:
+                exc: Worker exception raised while probing Rust readiness.
+            Outputs:
+                None.
+            Side Effects:
+                Records failure diagnostics and releases the startup gate.
+            Exceptions:
+                Status publication is best-effort.
+            """
+            self._startup_rust_preflight_task_id = None
+            self._startup_rust_preflight_completed = True
+            UnifiedApp._set_startup_rust_preflight_status(
+                self,
+                state="failed",
+                message="Startup Rust preflight worker failed.",
+                details=f"{type(exc).__name__}: {exc}",
+            )
+
         try:
-            self._startup_rust_preflight_after_id = self.after_idle(_run_preflight)
+            self._startup_rust_preflight_task_id = runner.submit(
+                "startup_rust_backend_preflight",
+                self._probe_startup_rust_backend_readiness,
+                _on_ready,
+                _on_error,
+            )
             UnifiedApp._set_startup_rust_preflight_status(
                 self,
                 state="queued",
                 message="Startup Rust preflight scheduled.",
-                details="Running once startup splash reaches idle state.",
+                details=(
+                    "Running module and capability checks in a background worker."
+                ),
             )
         except Exception:
-            self._startup_rust_preflight_after_id = None
+            self._startup_rust_preflight_task_id = None
             UnifiedApp._set_startup_rust_preflight_status(
                 self,
                 state="failed",
-                message="Unable to schedule startup Rust preflight.",
-                details="Tk idle scheduling failed.",
+                message="Unable to schedule background startup Rust preflight.",
+                details="Worker submission failed; Python fallback remains active.",
             )
+
+    def _probe_startup_rust_backend_readiness(self) -> Dict[str, Any]:
+        """Probe Rust backend readiness from a background worker.
+
+        Purpose:
+            Perform startup Rust import and capability checks outside the Tk
+            event thread.
+        Why:
+            Extension loading and capability inspection can block long enough to
+            freeze the splash animation; this method returns data only so worker
+            threads never access Tcl/Tk objects.
+        Inputs:
+            None; settings and Rust runtime state are read from established
+            process-level stores.
+        Outputs:
+            Dictionary containing readiness, module path, capability payload,
+            and runtime fingerprint for a Tk-thread completion handler.
+        Side Effects:
+            Updates Rust capability/identity caches and may persist a verified
+            runtime fingerprint. It does not modify UI state.
+        Exceptions:
+            Unexpected probe failures propagate to `TkTaskRunner`, whose error
+            handler marks the preflight failed and preserves Python fallback.
+        """
+        _apply_rust_runtime_settings_defaults(self.settings)
+        if not _is_rust_backend_enabled():
+            return {
+                "ready": False,
+                "skip_interactive_flow": True,
+                "state": "disabled",
+                "message": "Rust backend is disabled in settings.",
+                "details": "Startup preflight skipped because Rust execution is disabled.",
+            }
+        if not bool(self.settings.get("rust_startup_preflight_enabled", True)):
+            return {
+                "ready": False,
+                "skip_interactive_flow": True,
+                "state": "skipped",
+                "message": "Startup Rust preflight is disabled.",
+                "details": "Enable rust_startup_preflight_enabled to run startup checks.",
+            }
+        rust_backend = _load_rust_backend()
+        capability_payload = _snapshot_rust_backend_capability_status()
+        if rust_backend is None:
+            return {
+                "ready": False,
+                "capability_payload": capability_payload,
+            }
+        capability_payload = _evaluate_rust_backend_capability(rust_backend)
+        _set_rust_backend_capability_status(capability_payload)
+        if str(capability_payload.get("state") or "").strip().lower() != "ready":
+            return {
+                "ready": False,
+                "capability_payload": capability_payload,
+            }
+        _set_rust_backend_expected_identity(
+            capability_payload,
+            source="startup_preflight_ready",
+        )
+        capability_payload = _evaluate_rust_backend_capability(rust_backend)
+        _set_rust_backend_capability_status(capability_payload)
+        if str(capability_payload.get("state") or "").strip().lower() != "ready":
+            return {
+                "ready": False,
+                "capability_payload": capability_payload,
+            }
+        _record_rust_backend_ready_for_current_runtime(persist=True)
+        return {
+            "ready": True,
+            "module_path": str(getattr(rust_backend, "__file__", "") or ""),
+            "runtime_fingerprint": _runtime_rust_install_fingerprint_payload(),
+            "capability_payload": capability_payload,
+        }
 
     def _run_startup_rust_backend_preflight(self) -> None:
         """Run startup Rust readiness preflight and optional install prompt flow.
