@@ -214977,6 +214977,14 @@ class UnifiedApp(tk.Tk):
                 fig._gl260_retained_export_vertices = retained_vertices  # type: ignore[attr-defined]
             except Exception:
                 pass
+        try:
+            # The report title override and high-fidelity preparation occur after
+            # the Combined builder's initial solve, so verify the final export
+            # canvas before saving to reclaim any newly introduced lower whitespace.
+            _verify_combined_final_canvas_layout(fig, force=True)
+        except Exception:
+            # Best-effort guard; retain the established artifact export fallback.
+            pass
         if not self._assert_combined_export_size(fig, expected=fig_size):
             try:
                 plt.close(fig)
