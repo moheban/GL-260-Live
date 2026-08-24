@@ -5688,7 +5688,8 @@ def _build_maturin_subprocess_env(
         toolchain settings are deterministic.
     Why:
         Rust extension builds can fail on Windows when shim executables, missing
-        linkers, or mismatched host/target toolchains are discovered implicitly.
+        linkers, mismatched host/target toolchains, or project-folder execution
+        controls are discovered implicitly.
     Inputs:
         toolchain: Rustup toolchain token used for `rustc`/`cargo` resolution.
         target_triple: Optional cargo target triple passed through environment.
@@ -5705,6 +5706,20 @@ def _build_maturin_subprocess_env(
         Missing tool paths are tolerated; returned env falls back to base values.
     """
     env = dict(os.environ)
+    if os.name == "nt" and not str(env.get("CARGO_TARGET_DIR") or "").strip():
+        local_app_data = str(env.get("LOCALAPPDATA") or "").strip()
+        if local_app_data:
+            target_label = str(target_triple or "host").replace("-", "_")
+            toolchain_label = str(toolchain or "default").replace("-", "_")
+            # Some Windows policies deny generated executables under Documents;
+            # keep Cargo build scripts in the user-local application cache instead.
+            env["CARGO_TARGET_DIR"] = os.path.join(
+                local_app_data,
+                "GL-260",
+                "cargo-target",
+                toolchain_label,
+                target_label,
+            )
     scripts_dir = str(sysconfig.get_path("scripts") or "").strip()
     base_prefix = getattr(sys, "base_prefix", sys.prefix)
     in_virtual_env = bool(getattr(sys, "real_prefix", "")) or sys.prefix != base_prefix
@@ -19890,7 +19905,8 @@ def _normalize_csv_calculated_columns(value: Any) -> Dict[str, bool]:
     Outputs:
         Dict containing every supported calculation key and its enabled state.
     Side Effects:
-        None.
+        Sets subprocess-only build variables, including a per-user Cargo target
+        directory on Windows when one was not already selected.
     Exceptions:
         Missing or malformed values fall back to enabled legacy behavior.
     """
