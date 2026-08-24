@@ -22133,11 +22133,11 @@ class RenderContext:
 
 @dataclass
 class RenderPacket:
-    """Background render packet for UI-thread plot assembly.
+    """Background render packet for Tk-thread figure installation.
 
     Purpose/Why:
-        Carries immutable prepared state from worker threads to Tk while allowing
-        stale Combined requests to be rejected before artist installation.
+        Carries worker-prepared data and detached Agg figures to Tk while allowing
+        stale requests to be rejected before Tk canvas installation.
     Inputs/Outputs:
         Dataclass fields contain render context, ranges, geometry, identity, and
         optional diagnostics; instances are consumed by UI render callbacks.
@@ -22157,6 +22157,7 @@ class RenderPacket:
     cycle_side_effects_mode: str = "auto"
     request_generation: int = 0
     figure: Optional[Figure] = None
+    figures: Optional[Dict[str, Figure]] = None
 
 
 @dataclass(frozen=True)
@@ -247787,6 +247788,9 @@ class UnifiedApp(tk.Tk):
                 "font_family": settings.get("font_family"),
                 "core_legend_fontsize": settings.get("core_legend_fontsize"),
                 "core_cycle_legend_fontsize": settings.get("core_cycle_legend_fontsize"),
+                "include_zero_line": bool(
+                    settings.get("combined_include_zero_line", True)
+                ),
                 "core_plot_render_profiles": copy.deepcopy(
                     _get_core_plot_render_profiles()
                 ),
@@ -248771,6 +248775,40 @@ class UnifiedApp(tk.Tk):
             cycle_side_effects_mode=cycle_side_effects_mode,
         )
 
+    def _build_core_packet_figures(self, packet: RenderPacket) -> RenderPacket:
+        """Build detached core Matplotlib figures in a background worker.
+
+        Purpose:
+            Complete core figure and artist construction before control returns to
+            the Tk event loop.
+        Why:
+            Core refreshes previously prepared arrays on a worker but assembled
+            figures in Tk completion callbacks, freezing loading overlays during
+            expensive Matplotlib work.
+        Inputs:
+            packet: Worker-prepared core render packet containing detached data
+                and render configuration snapshots.
+        Outputs:
+            The input packet with its ``figures`` mapping populated.
+        Side Effects:
+            Allocates detached Agg-backed Matplotlib figures only; it does not
+            access Tk widgets or mutate Tk-owned application state.
+        Exceptions:
+            Figure-construction failures propagate to the task runner error
+            handler, which clears the corresponding loading overlays safely.
+        """
+        packet.figures = main_plotting_function(
+            *packet.args,
+            fig_size=packet.fig_size,
+            render_ctx=packet.render_ctx,
+            requested_plot_keys=packet.requested_plot_keys,
+            cycle_side_effects_mode=packet.cycle_side_effects_mode,
+            include_zero_line=bool(
+                (packet.render_ctx.style_ctx or {}).get("include_zero_line", True)
+            ),
+        )
+        return packet
+
     def _render_core_plot_ui(
         self,
         packet: RenderPacket,
@@ -248781,14 +248819,14 @@ class UnifiedApp(tk.Tk):
         task_id: Optional[int] = None,
         force_full_rebuild: bool = False,
     ) -> None:
-        """Render core plots on the UI thread from a prepared packet.
+        """Install worker-built core figures on the UI thread.
 
         Purpose:
-            Build Matplotlib figures from precomputed render context.
+            Attach prebuilt detached Matplotlib figures to Tk-owned canvases.
         Why:
             UI thread must own Matplotlib rendering and Tk canvas updates.
         Inputs:
-            packet: RenderPacket computed in the worker phase.
+            packet: RenderPacket whose figures were built in the worker phase.
             plot_keys: Plot keys to render (e.g., "fig1", "fig2").
             warn_on_failure: Whether to warn when no plots render.
             placement_states: Optional placement state per plot key.
@@ -248798,7 +248836,7 @@ class UnifiedApp(tk.Tk):
         Outputs:
             None.
         Side Effects:
-            Updates globals, installs figures into tabs, and clears overlays.
+            Installs figures into tabs, updates overlays, and clears overlays.
         Exceptions:
             Errors are caught to avoid interrupting UI workflows.
         """
@@ -248816,35 +248854,10 @@ class UnifiedApp(tk.Tk):
             self._update_plot_loading_overlay_progress(
                 frame,
                 progress=65.0,
-                message="Building plot figure...",
+                message="Installing prepared plot...",
                 stage_key="building_figure",
             )
-        try:
-            # Apply snapshot-derived globals on the UI thread for legacy consumers.
-            self._apply_series_payload_from_snapshot(packet.render_ctx.data_ctx)
-        except Exception:
-            # Best-effort guard; ignore failures to avoid interrupting the workflow.
-            pass
-        try:
-            figs = main_plotting_function(
-                *packet.args,
-                fig_size=packet.fig_size,
-                render_ctx=packet.render_ctx,
-                requested_plot_keys=packet.requested_plot_keys,
-                cycle_side_effects_mode=packet.cycle_side_effects_mode,
-                include_zero_line=bool(settings.get("combined_include_zero_line", True)),
-            )
-        except Exception as exc:
-            figs = None
-            if warn_on_failure:
-                try:
-                    messagebox.showwarning(
-                        "Plot Selection",
-                        f"Core plot generation failed due to internal error.\n{exc}",
-                    )
-                except Exception:
-                    # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                    pass
+        figs = packet.figures
         if not isinstance(figs, dict):
             for key in plot_keys_list:
                 frame, _ = self._find_plot_tab_canvas(key)
@@ -248961,12 +248974,47 @@ class UnifiedApp(tk.Tk):
             return
         task_state: Dict[str, Optional[int]] = {"id": None}
 
-        def _worker():
-            """Compute core plot packet in a worker thread."""
-            return self._compute_core_plot_data(snapshot)
+        def _worker() -> RenderPacket:
+            """Prepare core data and detached figures off the Tk thread.
+
+            Purpose:
+                Run the full core refresh compute and Matplotlib assembly phase
+                before the Tk completion callback is eligible to run.
+            Why:
+                A compute-only worker still left core figure construction on Tk,
+                which stalled loading-overlay animation for large refreshes.
+            Inputs:
+                None; closes over the immutable UI-thread-captured snapshot.
+            Outputs:
+                RenderPacket containing worker-built detached core figures.
+            Side Effects:
+                Allocates detached Matplotlib figures and updates worker-safe
+                render caches without touching Tk widgets.
+            Exceptions:
+                Preparation or figure-construction failures propagate to the task
+                runner's error callback for normal overlay cleanup.
+            """
+            packet = self._compute_core_plot_data(snapshot)
+            return self._build_core_packet_figures(packet)
 
         def _on_ok(packet):
-            """Render core plots on the UI thread after compute completes."""
+            """Install worker-built core figures after computation completes.
+
+            Purpose:
+                Advance overlay state and hand detached figures to Tk canvases.
+            Why:
+                Tk owns widget attachment, but must receive only completed figure
+                objects so the completion callback stays short and responsive.
+            Inputs:
+                packet: RenderPacket returned by the background worker.
+            Outputs:
+                None.
+            Side Effects:
+                Updates Tk overlay labels and installs current task figures.
+            Exceptions:
+                Delegates guarded installation/failure handling to the shared UI
+                renderer; stale task results are ignored by task identifiers.
+            """
             for key in plot_keys_list:
                 frame, _ = self._find_plot_tab_canvas(key)
                 if frame is None:
@@ -248978,7 +249026,7 @@ class UnifiedApp(tk.Tk):
                 self._update_plot_loading_overlay_progress(
                     frame,
                     progress=55.0,
-                    message="Data prepared. Rendering plot...",
+                    message="Figure prepared. Installing plot...",
                     stage_key="worker_compute",
                 )
             self._render_core_plot_ui(
@@ -249147,16 +249195,9 @@ class UnifiedApp(tk.Tk):
         if frame is None or canvas is None:
             frame, canvas = self._find_plot_tab_canvas("fig_combined")
         task_state: Dict[str, Optional[int]] = {"id": None}
-        try:
-            existing_state = getattr(self, "_combined_plot_state", None)
-            existing_fig = (
-                existing_state.get("fig")
-                if isinstance(existing_state, Mapping)
-                else None
-            )
-        except Exception:
-            existing_fig = None
-        build_in_worker = bool(force_full_rebuild or existing_fig is None)
+        # Every Combined refresh builds detached artists in the worker. Reusing an
+        # existing Tk-installed figure here would move expensive artist mutation
+        # back onto Tk's event loop and freeze the loading overlay.
         worker_config = self._combined_plot_config(
             tuple(snapshot.get("args") or ()),
             "display",
@@ -249164,16 +249205,35 @@ class UnifiedApp(tk.Tk):
         workflow_key = self._current_solubility_workflow()
 
         def _worker() -> RenderPacket:
-            """Prepare data and optionally assemble a fresh figure off Tk."""
+            """Prepare data and assemble one fresh Combined figure off Tk.
+
+            Purpose:
+                Run Combined data preparation and detached Agg artist assembly
+                in the serialized background render worker.
+            Why:
+                Reuse updates on an installed Tk figure can spend seconds in
+                Matplotlib artist mutation and prevent splash animation.
+            Inputs:
+                None; closes over the UI-thread-captured snapshot, configuration,
+                and workflow token.
+            Outputs:
+                RenderPacket with a completed detached Combined figure.
+            Side Effects:
+                Allocates Matplotlib objects and updates worker-safe render cache
+                state; it does not access Tk widgets.
+            Exceptions:
+                Raises RuntimeError if the captured configuration is unavailable;
+                other compute failures propagate to the task-runner error handler.
+            """
             packet = self._compute_combined_plot_data(snapshot)
-            if build_in_worker and isinstance(worker_config, Mapping):
-                return self._build_combined_packet_figure(
-                    packet,
-                    mode="display",
-                    config=worker_config,
-                    workflow_key=workflow_key,
-                )
-            return packet
+            if not isinstance(worker_config, Mapping):
+                raise RuntimeError("Combined refresh configuration is unavailable.")
+            return self._build_combined_packet_figure(
+                packet,
+                mode="display",
+                config=worker_config,
+                workflow_key=workflow_key,
+            )
 
         def _on_ok(packet):
             """Install the worker-built figure or perform a reuse refresh on Tk."""
@@ -249360,31 +249420,6 @@ class UnifiedApp(tk.Tk):
                     pass
         try:
             fig = packet.figure
-            render_error = None
-            if fig is None:
-                try:
-                    fig = self._build_combined_triple_axis_from_state(
-                        args=packet.args,
-                        fig_size=packet.fig_size,
-                        mode="display",
-                        reuse=not force_full_rebuild,
-                        render_ctx=packet.render_ctx,
-                        perf_run=perf_run,
-                    )
-                except Exception as exc:
-                    render_error = exc
-                    fig = None
-                    try:
-                        print(
-                            "Combined plot generation failed during UI reuse.",
-                            file=sys.stderr,
-                        )
-                        traceback.print_exception(
-                            type(exc), exc, exc.__traceback__, file=sys.stderr
-                        )
-                    except Exception:
-                        # Best-effort guard; preserve normal render failure handling.
-                        pass
 
             if fig is not None:
                 target_frame = frame
@@ -249465,12 +249500,7 @@ class UnifiedApp(tk.Tk):
                     try:
                         messagebox.showwarning(
                             "Plot Selection",
-                            (
-                                "Combined plot generation failed due to internal error. "
-                                "See console for details."
-                                if render_error is not None
-                                else "No plots were generated for the current data."
-                            ),
+                            "No plots were generated for the current data.",
                         )
                     except Exception:
                         # Best-effort guard; ignore failures to avoid interrupting the workflow.
