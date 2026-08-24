@@ -5793,6 +5793,37 @@ def _resolve_active_interpreter_pip_path() -> Optional[str]:
     return None
 
 
+def _create_maturin_pip_cmd_shim() -> Tuple[Optional[str], Optional[str]]:
+    """Create a temporary Windows pip command shim for Maturin.
+
+    Purpose:
+        Supply Maturin with an executable pip command when Windows policy blocks
+        the virtual environment's generated ``pip.exe`` launcher.
+    Why:
+        ``python -m pip`` remains functional in environments where application
+        control denies ``pip.exe`` execution; the shim retains the active
+        interpreter and avoids selecting an unrelated global pip installation.
+    Inputs:
+        None. The active interpreter is read from ``sys.executable``.
+    Outputs:
+        ``(pip_command_path, shim_directory)`` on Windows, otherwise
+        ``(None, None)``.
+    Side Effects:
+        Creates a temporary directory containing ``pip.cmd``. The caller owns
+        removing the returned directory after the Maturin invocation.
+    Exceptions:
+        Filesystem errors propagate so the build status can report the actual
+        setup failure rather than silently selecting a different environment.
+    """
+    if os.name != "nt":
+        return None, None
+    shim_dir = tempfile.mkdtemp(prefix="gl260-maturin-pip-")
+    shim_path = os.path.join(shim_dir, "pip.cmd")
+    with open(shim_path, "w", encoding="utf-8", newline="") as fh:
+        fh.write(f'@echo off\r\n"{sys.executable}" -m pip %*\r\n')
+    return shim_path, shim_dir
+
+
 def _run_maturin_develop_build(
     manifest_path: str,
     *,
@@ -5822,7 +5853,7 @@ def _run_maturin_develop_build(
     Outputs:
         `(ok, details)` command status tuple.
     Side Effects:
-        Executes build tooling and creates/removes temporary files.
+        Executes build tooling and may create/remove temporary command shims.
     Exceptions:
         Command/runtime failures are surfaced through the returned status tuple.
     """
@@ -5834,6 +5865,7 @@ def _run_maturin_develop_build(
         cargo_path_override=cargo_path,
     )
     shim_dir: Optional[str] = None
+    pip_shim_dir: Optional[str] = None
     pip_path = _resolve_active_interpreter_pip_path()
     try:
         rustup_exe = shutil.which("rustup")
@@ -5852,6 +5884,14 @@ def _run_maturin_develop_build(
             # Force subprocesses to resolve cargo/rustc through rustup wrappers
             # first; this avoids incompatible shim binaries on PATH.
             env["PATH"] = _prepend_directories_to_path(env.get("PATH", ""), [shim_dir])
+        if pip_path and os.name == "nt":
+            pip_ok, _pip_details = _run_command_for_status(
+                [pip_path, "--version"], timeout_seconds=5.0
+            )
+            if not pip_ok:
+                # Windows application control can deny venv-generated pip.exe
+                # while permitting the interpreter's module invocation.
+                pip_path, pip_shim_dir = _create_maturin_pip_cmd_shim()
         command = [
             sys.executable,
             "-m",
@@ -5871,6 +5911,12 @@ def _run_maturin_develop_build(
                 shutil.rmtree(shim_dir, ignore_errors=True)
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
+        if pip_shim_dir:
+            try:
+                shutil.rmtree(pip_shim_dir, ignore_errors=True)
+            except Exception:
+                # Best-effort guard; the temporary shim must not mask build status.
                 pass
 
 
@@ -43873,6 +43919,7 @@ def _regression_test_combined_overlay_completion_guard() -> None:
             self.active_fig = active_fig
             self.clear_calls = 0
             self.progress_calls = 0
+            self.progress_payloads: List[Dict[str, Any]] = []
             self.logs: List[str] = []
 
         def _finalize_core_overlay(self, _frame) -> None:
@@ -43891,9 +43938,26 @@ def _regression_test_combined_overlay_completion_guard() -> None:
             """Capture debug logs for assertion context."""
             self.logs.append(str(message))
 
-        def _update_plot_loading_overlay_progress(self, _frame, **_kwargs) -> None:
-            """Track progress updates without touching Tk widgets."""
+        def _update_plot_loading_overlay_progress(self, _frame, **kwargs) -> None:
+            """Track progress payloads without touching Tk widgets.
+
+            Purpose:
+                Capture Combined completion status messaging for assertions.
+            Why:
+                The overlay must not report a ready state while finalization work
+                is still being acknowledged.
+            Inputs:
+                _frame: Ignored frame placeholder from the production callback.
+                kwargs: Progress-update keyword payload.
+            Outputs:
+                None.
+            Side Effects:
+                Increments the update count and stores a shallow payload copy.
+            Exceptions:
+                None.
+            """
             self.progress_calls += 1
+            self.progress_payloads.append(dict(kwargs))
 
         def _clear_plot_loading_overlay(self, _frame) -> None:
             """Track overlay clear calls for guard assertions."""
@@ -43925,6 +43989,12 @@ def _regression_test_combined_overlay_completion_guard() -> None:
         raise AssertionError("Combined overlay did not clear after pending draw work resolved.")
     if getattr(frame, "_plot_auto_refresh_state", None) != "done":
         raise AssertionError("Combined auto-refresh completion did not transition to done.")
+    if not harness.progress_payloads or harness.progress_payloads[-1].get(
+        "message"
+    ) != "Dotting i's and crossing t's...":
+        raise AssertionError(
+            "Combined completion must show finalization work instead of ready status."
+        )
 
 
 def _regression_test_combined_overlay_single_draw_geometry_release() -> None:
@@ -115023,11 +115093,15 @@ class UnifiedApp(tk.Tk):
         Outputs:
             None.
         Side Effects:
-            Destroys the dialog window when it exists and resets dialog-related
-            attributes on the application instance.
+            Commits the staged Combined elapsed-tick precision, destroys the
+            dialog window when it exists, and resets dialog-related attributes
+            on the application instance.
         Exceptions:
             Uses best-effort guards so close failures do not interrupt the UI.
         """
+        # Commit the tick-format edit at the dialog boundary so spinbox changes
+        # cannot trigger expensive Combined redraws while the dialog is open.
+        self._apply_combined_elapsed_tick_decimal_control()
         dialog = getattr(self, "_developer_tools_dialog", None)
         if dialog is not None and dialog.winfo_exists():
             try:
@@ -118071,20 +118145,14 @@ class UnifiedApp(tk.Tk):
             increment=1,
             textvariable=self._combined_elapsed_tick_decimals_var,
             width=6,
-            command=self._apply_combined_elapsed_tick_decimal_control,
         )
         elapsed_tick_spin.grid(row=0, column=1, sticky="w", pady=8)
-        elapsed_tick_spin.bind(
-            "<FocusOut>",
-            lambda _event: self._apply_combined_elapsed_tick_decimal_control(),
-        )
-        elapsed_tick_spin.bind(
-            "<Return>",
-            lambda _event: self._apply_combined_elapsed_tick_decimal_control(),
-        )
         ttk.Label(
             tick_format_frame,
-            text="Applies to Combined live plots and export previews (0-8).",
+            text=(
+                "Applies when Developer Tools closes to live plots and export previews "
+                "(0-8)."
+            ),
         ).grid(row=0, column=2, sticky="w", padx=8, pady=8)
 
         svg_export_frame = ttk.LabelFrame(
@@ -123608,19 +123676,20 @@ class UnifiedApp(tk.Tk):
         """Persist and apply Combined elapsed-days tick-label precision.
 
         Purpose:
-            Normalize the Developer Tools spinbox value and refresh affected
-            Combined live/preview figures.
+            Commit the staged Developer Tools spinbox value and refresh affected
+            Combined live/preview figures after the dialog closes.
         Why:
-            Tick precision is a render input, so changing it should take effect
-            immediately and remain consistent after restart.
+            Tick precision is a render input, but applying every intermediate
+            spinbox edit causes unnecessary redraws while the dialog is open.
         Inputs:
             None. Reads ``self._combined_elapsed_tick_decimals_var``.
         Outputs:
             None.
         Side Effects:
-            Updates the Tk variable and global settings, schedules persistence,
-            marks Combined layout dirty, refreshes the live Combined plot, and
-            rebuilds an open export preview.
+            Normalizes the Tk variable and, when the staged value changed,
+            updates global settings, schedules persistence, marks Combined layout
+            dirty, refreshes the live Combined plot, and rebuilds an open export
+            preview.
         Exceptions:
             Invalid values normalize to the default; refresh and persistence
             failures are handled best-effort.
@@ -123631,12 +123700,20 @@ class UnifiedApp(tk.Tk):
         except Exception:
             raw_value = None
         decimals = _normalize_combined_elapsed_tick_decimals(raw_value)
-        settings[COMBINED_ELAPSED_TICK_DECIMALS_SETTINGS_KEY] = decimals
         if precision_var is not None:
             try:
                 precision_var.set(decimals)
             except Exception:
                 pass
+        persisted_decimals = _normalize_combined_elapsed_tick_decimals(
+            settings.get(
+                COMBINED_ELAPSED_TICK_DECIMALS_SETTINGS_KEY,
+                DEFAULT_COMBINED_ELAPSED_TICK_DECIMALS,
+            )
+        )
+        if decimals == persisted_decimals:
+            return
+        settings[COMBINED_ELAPSED_TICK_DECIMALS_SETTINGS_KEY] = decimals
         try:
             self._mark_plot_layout_dirty("fig_combined_triple_axis")
         except Exception:
@@ -124245,12 +124322,21 @@ class UnifiedApp(tk.Tk):
             self._log_plot_tab_debug(
                 "Combined auto-refresh complete; clearing loading overlay."
             )
-        self._update_plot_loading_overlay_progress(
-            frame,
-            progress=100.0,
-            message="Plot ready.",
-            stage_key="ready",
-        )
+        if plot_key == "fig_combined":
+            self._update_plot_loading_overlay_progress(
+                frame,
+                progress=100.0,
+                message="Dotting i's and crossing t's...",
+                detail="Verifying final layout and completing background work.",
+                stage_key="finalizing",
+            )
+        else:
+            self._update_plot_loading_overlay_progress(
+                frame,
+                progress=100.0,
+                message="Plot ready.",
+                stage_key="ready",
+            )
         self._clear_plot_loading_overlay(frame)
 
     def _finalize_combined_plot_display(
@@ -164902,8 +164988,9 @@ class UnifiedApp(tk.Tk):
             self._update_plot_loading_overlay_progress(
                 target_frame,
                 progress=100.0,
-                message="Combined plot ready.",
-                stage_key="ready",
+                message="Dotting i's and crossing t's...",
+                detail="Verifying final layout and completing background work.",
+                stage_key="finalizing",
             )
             self._clear_plot_loading_overlay(target_frame)
 
