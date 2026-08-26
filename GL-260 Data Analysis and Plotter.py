@@ -107714,6 +107714,8 @@ class UnifiedApp(tk.Tk):
         self._apply_vdw_indicator_state = "success"
         self._apply_vdw_indicator_canvases = []
         self._apply_columns_buttons = []
+        self._sheet_load_task_id = None
+        self._load_selected_sheets_button = None
         self._last_applied_columns = None
         self._vdw_trace_ids = []
 
@@ -238309,9 +238311,10 @@ class UnifiedApp(tk.Tk):
 
         multi_actions = ttk.Frame(self._data_multi_frame)
         multi_actions.grid(row=1, column=0, sticky="w", padx=6, pady=(0, 6))
-        _make_button(multi_actions, "Load Selected Sheets", self._load_dataframe).pack(
-            side="left"
+        self._load_selected_sheets_button = _make_button(
+            multi_actions, "Load Selected Sheets", self._load_dataframe
         )
+        self._load_selected_sheets_button.pack(side="left")
         _make_button(
             multi_actions, "Import GL-260 CSV...", self._open_csv_import_dialog
         ).pack(side="left", padx=(6, 0))
@@ -242749,6 +242752,10 @@ class UnifiedApp(tk.Tk):
                     except Exception:
                         # Continue to generic enable fallback below.
                         pass
+                try:
+                    button.configure(text="Apply Column Selection")
+                except Exception:
+                    pass
                 self._set_widget_enabled(button, True)
                 if isinstance(button, tk.Button):
                     button.config(relief=tk.RAISED)
@@ -242756,6 +242763,36 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 continue
         self._apply_columns_buttons = buttons
+
+    def _set_apply_columns_busy(self, busy: bool) -> None:
+        """Show whether Apply Column Selection is running in a worker.
+
+        Purpose:
+            Give users immediate visual confirmation that an apply request has
+            been accepted and prevent duplicate applies during processing.
+        Why:
+            The worker intentionally leaves Tk responsive, so the control itself
+            needs to communicate that its background operation is still active.
+        Args:
+            busy: True while worksheet stitching or series preparation is active.
+        Returns:
+            None.
+        Side Effects:
+            Changes text and enabled state of registered Apply buttons.
+        Exceptions:
+            Destroyed or incompatible widgets are skipped.
+        """
+        active_buttons = []
+        for button in getattr(self, "_apply_columns_buttons", []):
+            try:
+                if not button.winfo_exists():
+                    continue
+                button.configure(text="Applying Columns..." if busy else "Apply Column Selection")
+                self._set_widget_enabled(button, not busy)
+                active_buttons.append(button)
+            except Exception:
+                continue
+        self._apply_columns_buttons = active_buttons
 
     def _apply_columns_from_cycle_tab(self):
         """Apply columns from cycle tab.
@@ -243305,9 +243342,244 @@ class UnifiedApp(tk.Tk):
             )
         return stitched_df
 
+    def _build_stitched_dataframe_in_worker(
+        self,
+        *,
+        file_path: str,
+        selected_sheets: List[str],
+        dt_col: str,
+        per_sheet_maps: Mapping[str, Mapping[str, str]],
+        elapsed_unit_seconds: float,
+    ) -> Tuple[pd.DataFrame, Dict[str, pd.DataFrame], List[str]]:
+        """Build selected-sheet data without accessing Tk state.
+
+        Purpose:
+            Read and stitch workbook sheets for the loading and apply workflows.
+        Why:
+            Excel I/O and dataframe transforms can take seconds and must not
+            hold Tk's event thread.
+        Args:
+            file_path: Workbook to read.
+            selected_sheets: Ordered sheets to stitch.
+            dt_col: Default Date & Time column.
+            per_sheet_maps: Snapshot of effective column maps by sheet.
+            elapsed_unit_seconds: Seconds represented by one elapsed-X unit.
+        Returns:
+            Stitched dataframe, source dataframes, and sheets missing Date & Time.
+        Side Effects:
+            Reads workbook data only; never mutates application or Tk state.
+        Exceptions:
+            Raises ValueError for invalid inputs or no valid datetime values;
+            reader errors propagate to the caller.
+        """
+        if not file_path or not selected_sheets or not dt_col or dt_col == "None":
+            raise ValueError("Workbook, selected sheets, and Date & Time are required.")
+        def _format_elapsed_hms_worker(seconds: Any) -> Any:
+            """Format elapsed seconds for the worker-created display column.
+        
+            Purpose:
+                Match the legacy stitched elapsed-time text representation.
+            Why:
+                The worker must not capture the prior Tk-bound stitch helper.
+            Args:
+                seconds: Numeric elapsed seconds or a missing value.
+            Returns:
+                Formatted elapsed-time text or `numpy.nan` for invalid input.
+            Side Effects:
+                None.
+            Exceptions:
+                Invalid numeric values return `numpy.nan`.
+            """
+            try:
+                if seconds is None or not math.isfinite(seconds):
+                    return np.nan
+                total_seconds = int(round(seconds))
+            except (TypeError, ValueError):
+                return np.nan
+            sign = "-" if total_seconds < 0 else ""
+            days, remainder = divmod(abs(total_seconds), 86400)
+            hours, remainder = divmod(remainder, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            return f"{sign}{days} {hours:02d}:{minutes:02d}:{seconds:02d}" if days else f"{sign}{hours:02d}:{minutes:02d}:{seconds:02d}"
+        sheet_dfs, frames, t0_candidates, missing = {}, [], [], []
+        for sheet_name in selected_sheets:
+            source = _read_excel_dataframe(file_path, sheet_name)
+            mapping = per_sheet_maps.get(sheet_name, {})
+            sheet_dt_col = str(mapping.get("dt") or dt_col).strip() or dt_col
+            working = source.copy()
+            if sheet_dt_col in working.columns:
+                dt_series = pd.to_datetime(working[sheet_dt_col], errors="coerce")
+            else:
+                missing.append(sheet_name)
+                dt_series = pd.Series([pd.NaT] * len(working))
+            working[self._stitched_dt_col] = dt_series
+            dt_min = dt_series.min()
+            if pd.notna(dt_min):
+                t0_candidates.append(dt_min)
+            sheet_dfs[sheet_name] = working
+            frames.append(working)
+        if not t0_candidates:
+            raise ValueError("No valid Date & Time values found for stitching.")
+        t0, parts = min(t0_candidates), []
+        for index, frame in enumerate(frames):
+            elapsed_seconds = (frame[self._stitched_dt_col] - t0).dt.total_seconds()
+            frame[self._stitched_x_col] = elapsed_seconds / elapsed_unit_seconds
+            frame[self._stitched_hms_col] = elapsed_seconds.map(_format_elapsed_hms_worker)
+            if index:
+                # Separator rows preserve legacy plot breaks between worksheets.
+                separator = {}
+                for column in frame.columns:
+                    dtype = frame[column].dtype
+                    separator[column] = (
+                        pd.NaT if pd.api.types.is_datetime64_any_dtype(dtype)
+                        else "" if pd.api.types.is_bool_dtype(dtype)
+                        else np.nan if pd.api.types.is_numeric_dtype(dtype)
+                        else ""
+                    )
+                parts.append(pd.DataFrame([separator]))
+            parts.append(frame)
+        return pd.concat(parts, ignore_index=True, sort=False), sheet_dfs, missing
+
+    def _set_sheet_load_busy(self, busy: bool) -> None:
+        """Update the selected-sheet button to show worker activity.
+
+        Purpose:
+            Prevent duplicate loads and provide visible background-work feedback.
+        Why:
+            Status text alone is easy to miss during a long workbook operation.
+        Args:
+            busy: True while a sheet-load worker is active.
+        Returns:
+            None.
+        Side Effects:
+            Changes the Data-tab load button text and enabled state.
+        Exceptions:
+            Missing or destroyed widgets are ignored.
+        """
+        button = getattr(self, "_load_selected_sheets_button", None)
+        if button is None:
+            return
+        try:
+            if button.winfo_exists():
+                button.configure(text="Loading Sheets..." if busy else "Load Selected Sheets")
+                self._set_widget_enabled(button, not busy)
+        except Exception:
+            pass
+
     def _load_dataframe(self):
-        """Load dataframe.
-        Used when restoring dataframe from storage."""
+        """Schedule workbook data loading and commit the result on Tk's thread.
+
+        Purpose:
+            Keep worksheet reads and multi-sheet dataframe stitching out of the
+            Tk event loop.
+        Why:
+            Large Excel workbooks previously made the application unresponsive
+            while the Load Selected Sheets action executed synchronously.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Updates the load button/status, submits a worker, commits dataframe
+            state, refreshes Columns UI, and may resume a pending column apply.
+        Exceptions:
+            Input validation and worker failures are reported on Tk's thread.
+        """
+        if getattr(self, "_sheet_load_task_id", None) is not None:
+            self.lbl_status.config(text="Sheet loading is already in progress...")
+            return
+        if not self.file_path:
+            messagebox.showerror("Missing Data", "Please choose a file first.")
+            return
+        is_multi_sheet = bool(self.multi_sheet_enabled)
+        selected_sheets = list(self.selected_sheets)
+        selected_sheet = str(self.selected_sheet.get() or "").strip()
+        file_path = str(self.file_path)
+        if is_multi_sheet:
+            if not selected_sheets:
+                messagebox.showerror("Missing Data", "Select at least one sheet to include.")
+                return
+            dt_col = str((self.columns or {}).get("dt") or "").strip()
+            if not dt_col or dt_col == "None":
+                messagebox.showerror("Missing Columns", "Multi-sheet mode requires selecting a Date & Time column on the Columns tab.")
+                return
+            per_sheet_maps = {
+                name: dict(self._get_effective_sheet_column_map(name))
+                for name in selected_sheets
+            }
+            elapsed_unit_seconds = self._elapsed_unit_seconds()
+        elif not selected_sheet:
+            messagebox.showerror("Missing Data", "Please choose a file and sheet.")
+            return
+
+        self._set_sheet_load_busy(True)
+        self.lbl_status.config(text="Loading selected sheets in background..." if is_multi_sheet else "Loading sheet in background...")
+
+        def _worker():
+            """Read the immutable workbook snapshot without calling Tk."""
+            if is_multi_sheet:
+                return self._build_stitched_dataframe_in_worker(
+                    file_path=file_path,
+                    selected_sheets=selected_sheets,
+                    dt_col=dt_col,
+                    per_sheet_maps=per_sheet_maps,
+                    elapsed_unit_seconds=elapsed_unit_seconds,
+                )
+            return _read_excel_dataframe(file_path, selected_sheet)
+
+        def _on_ok(result):
+            """Commit a completed sheet-load result on the Tk event thread."""
+            self._sheet_load_task_id = None
+            self._set_sheet_load_busy(False)
+            try:
+                if is_multi_sheet:
+                    dataframe, source_frames, missing_dt_sheets = result
+                    self.df, self.sheet_dfs = dataframe, source_frames
+                    if missing_dt_sheets:
+                        messagebox.showwarning("Stitching Warning", "Date & Time column missing for: " + ", ".join(missing_dt_sheets) + ". These rows will be NaN.")
+                    self.columns["x"] = self._stitched_x_col
+                    settings_columns = settings.get("columns") or {}
+                    settings_columns["x"] = self._stitched_x_col
+                    settings["columns"] = settings_columns
+                    self._multi_sheet_stitch_signature = self._build_multi_sheet_stitch_signature(dt_col)
+                    settings["selected_sheets"] = list(selected_sheets)
+                    settings["multi_sheet_enabled"] = True
+                    self.lbl_status.config(text=f"Sheets loaded: {len(selected_sheets)} ({len(self.df)} rows).")
+                else:
+                    self.df = result
+                    settings["last_sheet_name"] = selected_sheet
+                    self.lbl_status.config(text=f"Sheet loaded: {selected_sheet} ({len(self.df)} rows).")
+                self._clear_numeric_cache()
+                self._invalidate_auto_title_datetime_cache()
+                _save_settings_to_disk()
+                self._last_applied_columns = None
+                self._refresh_columns_ui()
+                self._mark_columns_dirty(reason="load sheets" if is_multi_sheet else "load sheet")
+                self._update_auto_title_preview()
+                resume_apply = bool(getattr(self, "_resume_apply_after_sheet_load", False))
+                self._resume_apply_after_sheet_load = False
+                if resume_apply:
+                    self._apply_columns(auto_refresh_axes=True)
+            except Exception as exc:
+                _on_err(exc)
+
+        def _on_err(exc):
+            """Restore UI state and route loading failures to the right workflow."""
+            self._sheet_load_task_id = None
+            self._set_sheet_load_busy(False)
+            self.df = None
+            self._clear_numeric_cache()
+            self._invalidate_auto_title_datetime_cache()
+            resume_apply = bool(getattr(self, "_resume_apply_after_sheet_load", False))
+            self._resume_apply_after_sheet_load = False
+            if resume_apply:
+                self._on_apply_columns_failed(exc)
+            else:
+                self.lbl_status.config(text=f"Sheet loading failed: {exc}")
+                messagebox.showerror("Load Error", f"Could not load sheet(s): {exc}")
+
+        self._sheet_load_task_id = self._task_runner.submit("load_dataframe", _worker, _on_ok, _on_err)
+        return
 
         if not self.file_path:
 
@@ -243490,6 +243762,7 @@ class UnifiedApp(tk.Tk):
             return
 
         self._is_applying_columns = True
+        self._set_apply_columns_busy(True)
         if DEBUG_SERIES_FLOW:
             self._series_flow_active = True
             self._series_flow_apply_id = getattr(self, "_series_flow_apply_id", 0) + 1
@@ -243511,11 +243784,6 @@ class UnifiedApp(tk.Tk):
         _save_settings_to_disk()
 
         if self.multi_sheet_enabled:
-            stitched_ready = self._ensure_multi_sheet_stitched_data(
-                reason="apply columns",
-                persist=True,
-                refresh_columns_ui=True,
-            )
             dt_col = self.columns.get("dt")
             if not dt_col or dt_col == "None":
                 self._is_applying_columns = False
@@ -243550,17 +243818,20 @@ class UnifiedApp(tk.Tk):
                     "Missing Data", "Select at least one sheet to include."
                 )
                 return
+            expected_signature = self._build_multi_sheet_stitch_signature(str(dt_col))
+            stitched_ready = (
+                expected_signature == getattr(self, "_multi_sheet_stitch_signature", None)
+                and self.df is not None
+                and self._stitched_dt_col in self.df.columns
+                and self._stitched_x_col in self.df.columns
+            )
             if not stitched_ready:
-                self._is_applying_columns = False
-                self._update_apply_columns_indicator("pending")
-                self._reset_apply_buttons_state()
-                self._abort_deferred_profile_restore(
-                    detail=(
-                        "Profile restore could not apply columns because selected "
-                        "sheets could not be stitched."
-                    ),
-                    status_text="Profile restore skipped: sheet stitching failed.",
+                # Defer Excel reads and dataframe construction before series work.
+                self._resume_apply_after_sheet_load = True
+                self.lbl_status.config(
+                    text="Loading selected sheets in background before applying columns..."
                 )
+                self._load_dataframe()
                 return
             try:
                 _save_settings_to_disk()
