@@ -45379,6 +45379,59 @@ def _regression_test_startup_splash_waits_for_restore_completion() -> None:
         raise AssertionError("Startup splash clear callback should keep the existing 60 ms delay.")
 
 
+def _regression_test_background_startup_restore_is_deferred() -> None:
+    """Validate background restore state bypasses the splash readiness gate.
+
+    Purpose:
+        Exercise the startup state transition used before splash teardown.
+    Why:
+        Background restore must not be normalized back to `pending`, which would
+        reintroduce the startup status loop and block interactive reveal.
+    Inputs:
+        None; uses a local status-capture harness.
+    Outputs:
+        None.
+    Side Effects:
+        Calls `_mark_startup_restore_state` against isolated in-memory state.
+    Exceptions:
+        Raises AssertionError when deferred restore status is not terminal for
+        splash gating or does not show the background-restore handoff message.
+    """
+
+    class _Harness:
+        """Capture deferred restore status without constructing Tk widgets."""
+
+        def __init__(self) -> None:
+            """Initialize the minimal state used by the startup status setter."""
+            self._startup_restore_state = "pending"
+            self._startup_restore_post_refresh_done = False
+            self.progress_updates: list[dict[str, Any]] = []
+
+        @staticmethod
+        def _startup_autorestore_mode() -> str:
+            """Return the configured background mode for this regression."""
+            return STARTUP_AUTORESTORE_MODE_BACKGROUND
+
+        def _update_startup_loading_splash_progress(self, **kwargs: Any) -> None:
+            """Record splash updates emitted by the restore state setter."""
+            self.progress_updates.append(dict(kwargs))
+
+    harness = _Harness()
+    UnifiedApp._mark_startup_restore_state(harness, "deferred")
+    if harness._startup_restore_state != "deferred":
+        raise AssertionError("Background startup restore should retain deferred state.")
+    if not harness._startup_restore_post_refresh_done:
+        raise AssertionError(
+            "Deferred restore should not hold the startup refresh gate."
+        )
+    progress_update = harness.progress_updates[-1] if harness.progress_updates else {}
+    message = str(progress_update.get("message") or "")
+    if message != "Opening workspace...":
+        raise AssertionError(
+            "Deferred restore should publish the interactive handoff message."
+        )
+
+
 def _regression_test_startup_completion_finalizes_data_tab_after_restore() -> None:
     """Validate startup completion path re-selects Data tab after restore churn.
 
@@ -78711,6 +78764,10 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
         _regression_test_startup_splash_waits_for_restore_completion,
     ),
     (
+        "Background startup restore defers until interactive reveal",
+        _regression_test_background_startup_restore_is_deferred,
+    ),
+    (
         "Loading footer timer and progress contracts",
         _regression_test_loading_footer_timer_and_progress_contracts,
     ),
@@ -109545,10 +109602,16 @@ class UnifiedApp(tk.Tk):
                 ),
             )
 
-        # Keep restore under startup overlay gating in all modes so startup
-        # completes only after restore + timeline refresh are truly settled.
-        self._mark_startup_restore_state("pending")
-        self.after(200, self._restore_last_session_async)
+        # Background restore must not participate in the reveal gate.  The
+        # previous implementation still started it here, then the splash poller
+        # and restore completion callback overwrote each other's status text.
+        # Leave the state explicitly deferred until splash teardown schedules the
+        # single background restore callback.
+        if self._startup_autorestore_mode() == STARTUP_AUTORESTORE_MODE_BACKGROUND:
+            self._mark_startup_restore_state("deferred")
+        else:
+            self._mark_startup_restore_state("pending")
+            self.after(200, self._restore_last_session_async)
         self.after(400, self._maybe_warn_gil_reenabled_import)
         try:
             self._startup_loading_poll_after_id = self.after(
@@ -112388,7 +112451,9 @@ class UnifiedApp(tk.Tk):
             getattr(self, "_startup_rust_preflight_completed", False)
         )
         interactive_tabs_ready = False
-        restore_ready = restore_state in {"success", "failed", "skipped"}
+        # A deferred restore is intentionally non-blocking: the splash may close
+        # while the one-shot background callback waits to restore the workspace.
+        restore_ready = restore_state in {"deferred", "success", "failed", "skipped"}
         if restore_ready and not bool(
             getattr(self, "_startup_restore_post_refresh_done", False)
         ):
@@ -112858,8 +112923,8 @@ class UnifiedApp(tk.Tk):
             Restore can be skipped, running, successful, or failed; a single setter
             keeps progress messaging and completion gating deterministic.
         Inputs:
-            state: Restore state value (`pending`, `running`, `success`, `failed`,
-                or `skipped`).
+            state: Restore state value (`pending`, `deferred`, `running`,
+                `success`, `failed`, or `skipped`).
             path: Optional workbook path associated with the state transition.
             error: Optional exception used for failure diagnostics/log messaging.
         Outputs:
@@ -112870,7 +112935,14 @@ class UnifiedApp(tk.Tk):
             Invalid states are normalized to `pending`; widget updates are best-effort.
         """
         normalized_state = str(state or "").strip().lower()
-        if normalized_state not in {"pending", "running", "success", "failed", "skipped"}:
+        if normalized_state not in {
+            "pending",
+            "deferred",
+            "running",
+            "success",
+            "failed",
+            "skipped",
+        }:
             normalized_state = "pending"
         self._startup_restore_state = normalized_state
         if normalized_state in {"pending", "running"}:
@@ -112881,6 +112953,19 @@ class UnifiedApp(tk.Tk):
                 progress=40.0,
                 message="Preparing startup restore...",
                 detail="Restore source check:\n[ ] Autosave workspace profile\n[ ] Legacy workbook fallback",
+            )
+            return
+        if normalized_state == "deferred":
+            # The background callback begins after splash teardown, so no
+            # restore work is allowed to keep the startup readiness gate open.
+            self._startup_restore_post_refresh_done = True
+            self._update_startup_loading_splash_progress(
+                progress=90.0,
+                message="Opening workspace...",
+                detail=(
+                    "Previous workspace restore is queued.\n"
+                    "It will continue once the main window is interactive."
+                ),
             )
             return
         if normalized_state == "running":
