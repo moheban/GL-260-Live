@@ -1,4 +1,4 @@
-use numpy::PyReadonlyArray1;
+use numpy::{PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyString};
@@ -33,10 +33,10 @@ const PITZER_KA2: f64 = 4.5782552279169414e-11;
 const PITZER_KW: f64 = 1e-14;
 const PITZER_REACTIVE_CARBON_TRANSITION_FRACTION: f64 = 0.90;
 const RUST_BACKEND_INTERFACE_ID: &str = "gl260_rust_backend";
-const RUST_BACKEND_INTERFACE_VERSION: &str = "3";
+const RUST_BACKEND_INTERFACE_VERSION: &str = "4";
 const RUST_BACKEND_MODULE_NAME: &str = env!("CARGO_PKG_NAME");
 const RUST_BACKEND_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
-const RUST_EXPORTED_KERNELS: [&str; 26] = [
+const RUST_EXPORTED_KERNELS: [&str; 28] = [
     "simulate_reaction_state_with_accounting",
     "analyze_bicarbonate_core",
     "carbonate_state_core",
@@ -61,6 +61,8 @@ const RUST_EXPORTED_KERNELS: [&str; 26] = [
     "ledger_sort_filter_indices_core",
     "ledger_prefill_metrics_core",
     "csv_pressure_derivatives_core",
+    "csv_pressure_derivatives_array_core",
+    "plot_envelope_indices_core",
     "reaction_solution_charge_core",
     "reaction_dashboard_core",
 ];
@@ -5265,6 +5267,162 @@ fn csv_pressure_derivatives_core(
 }
 
 #[pyfunction]
+#[pyo3(signature = (elapsed_hours, pressure_columns, dampening, window))]
+/// Compute CSV pressure derivatives from contiguous NumPy arrays.
+///
+/// This array-native companion to `csv_pressure_derivatives_core` avoids
+/// materializing nested Python lists for large imports. `pressure_columns` is a
+/// `(trace_count, row_count)` float64 array; shorter rows are not accepted so
+/// Python can retain its compatibility fallback for irregular inputs.
+fn csv_pressure_derivatives_array_core(
+    py: Python<'_>,
+    elapsed_hours: PyReadonlyArray1<'_, f64>,
+    pressure_columns: PyReadonlyArray2<'_, f64>,
+    dampening: f64,
+    window: usize,
+) -> PyResult<Py<PyDict>> {
+    let elapsed = elapsed_hours.as_array().to_owned();
+    let source = pressure_columns.as_array().to_owned();
+    let row_count = elapsed.len();
+    if source.ncols() != row_count {
+        return Err(PyRuntimeError::new_err(
+            "pressure_columns must have one value per elapsed-hours row",
+        ));
+    }
+    let damp = if dampening.is_finite() {
+        dampening.clamp(0.0, 0.999999)
+    } else {
+        0.98
+    };
+    let window_size = window.max(1);
+    let trace_count = source.nrows();
+    let (derivative, smoothed, moving_average) = py.detach(move || {
+        let alpha = 1.0 - damp;
+        let mut derivative = vec![vec![0.0_f64; row_count]; trace_count];
+        let mut smoothed = vec![vec![0.0_f64; row_count]; trace_count];
+        let mut moving_average = vec![vec![f64::NAN; row_count]; trace_count];
+
+        // Release Python execution while the Rust-owned buffers perform the
+        // O(traces * rows) calculation for a potentially large CSV import.
+        for trace_idx in 0..trace_count {
+            for idx in 1..row_count {
+                let dt_hours = elapsed[idx] - elapsed[idx - 1];
+                let prev_val = source[(trace_idx, idx - 1)];
+                let curr_val = source[(trace_idx, idx)];
+                if dt_hours.is_finite()
+                    && dt_hours > 0.0
+                    && prev_val.is_finite()
+                    && curr_val.is_finite()
+                {
+                    derivative[trace_idx][idx] = (curr_val - prev_val) / dt_hours;
+                }
+            }
+            if row_count > 0 {
+                smoothed[trace_idx][0] = derivative[trace_idx][0];
+            }
+            if row_count > 1 {
+                smoothed[trace_idx][1] = derivative[trace_idx][0];
+            }
+            for idx in 2..row_count {
+                smoothed[trace_idx][idx] = alpha * derivative[trace_idx][idx - 1]
+                    + damp * smoothed[trace_idx][idx - 1];
+            }
+            let mut rolling_sum = 0.0_f64;
+            for idx in 0..row_count {
+                rolling_sum += smoothed[trace_idx][idx];
+                if idx >= window_size {
+                    rolling_sum -= smoothed[trace_idx][idx - window_size];
+                }
+                if idx + 1 >= window_size {
+                    moving_average[trace_idx][idx] = rolling_sum / window_size as f64;
+                }
+            }
+        }
+        (derivative, smoothed, moving_average)
+    });
+
+    let result = PyDict::new(py);
+    result.set_item("derivative", PyArray2::from_vec2(py, &derivative)?)?;
+    result.set_item("smoothed", PyArray2::from_vec2(py, &smoothed)?)?;
+    result.set_item("moving_average", PyArray2::from_vec2(py, &moving_average)?)?;
+    Ok(result.unbind())
+}
+
+#[pyfunction]
+#[pyo3(signature = (x_values, series_values, target_points))]
+/// Select a shared min/max envelope index set for interactive plotting.
+///
+/// Each finite series contributes its local extrema in every display bucket,
+/// while endpoints and non-finite values with immediate neighbors are retained
+/// so Matplotlib preserves sharp events and visible gaps. The returned indices
+/// are bounded by the trace count and display budget rather than source length.
+fn plot_envelope_indices_core(
+    x_values: PyReadonlyArray1<'_, f64>,
+    series_values: PyReadonlyArray2<'_, f64>,
+    target_points: usize,
+) -> PyResult<Vec<usize>> {
+    let x_view = x_values.as_array();
+    let series_view = series_values.as_array();
+    let data_len = x_view.len();
+    if data_len == 0 || series_view.ncols() != data_len {
+        return Ok(Vec::new());
+    }
+    let bucket_count = target_points.max(1).min(data_len);
+    let bucket_width = (data_len + bucket_count - 1) / bucket_count;
+    let mut keep = BTreeSet::new();
+    keep.insert(0);
+    keep.insert(data_len - 1);
+
+    for idx in 0..data_len {
+        let mut required = !x_view[idx].is_finite();
+        for trace_idx in 0..series_view.nrows() {
+            if !series_view[(trace_idx, idx)].is_finite() {
+                required = true;
+                break;
+            }
+        }
+        if required {
+            keep.insert(idx);
+            if idx > 0 {
+                keep.insert(idx - 1);
+            }
+            if idx + 1 < data_len {
+                keep.insert(idx + 1);
+            }
+        }
+    }
+
+    for bucket_start in (0..data_len).step_by(bucket_width) {
+        let bucket_end = (bucket_start + bucket_width).min(data_len);
+        keep.insert(bucket_start);
+        keep.insert(bucket_end - 1);
+        for trace_idx in 0..series_view.nrows() {
+            let mut min_idx = None;
+            let mut max_idx = None;
+            for idx in bucket_start..bucket_end {
+                let value = series_view[(trace_idx, idx)];
+                if !value.is_finite() {
+                    continue;
+                }
+                if min_idx.is_none_or(|current| value < series_view[(trace_idx, current)]) {
+                    min_idx = Some(idx);
+                }
+                if max_idx.is_none_or(|current| value > series_view[(trace_idx, current)]) {
+                    max_idx = Some(idx);
+                }
+            }
+            if let Some(idx) = min_idx {
+                keep.insert(idx);
+            }
+            if let Some(idx) = max_idx {
+                keep.insert(idx);
+            }
+        }
+    }
+    Ok(keep.into_iter().collect())
+}
+
+#[pyfunction]
 #[pyo3(signature = (y_values, mask, auto_peaks, auto_troughs, add_peaks, add_troughs, rm_peaks, rm_troughs, min_cycle_drop, ignore_min_drop=false, manual_only=false))]
 fn cycle_segmentation_core(
     py: Python<'_>,
@@ -5656,6 +5814,11 @@ fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
     )?)?;
     module.add_function(wrap_pyfunction!(ledger_prefill_metrics_core, module)?)?;
     module.add_function(wrap_pyfunction!(csv_pressure_derivatives_core, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        csv_pressure_derivatives_array_core,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(plot_envelope_indices_core, module)?)?;
     module.add_function(wrap_pyfunction!(reaction_solution_charge_core, module)?)?;
     module.add_function(wrap_pyfunction!(reaction_dashboard_core, module)?)?;
     Ok(())

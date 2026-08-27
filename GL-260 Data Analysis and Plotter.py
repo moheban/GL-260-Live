@@ -1,6 +1,6 @@
 ﻿# GL-260 Data Analysis and Plotter
-# Version: v4.17.1
-# Date: 2026-07-31
+# Version: v4.18.0
+# Date: 2026-08-27
 
 import os
 import sys
@@ -2666,7 +2666,7 @@ _RUST_BACKEND_RESTART_REQUIRED_PREFIX = "restart_required:"
 _RUST_KERNEL_AUTO_POLICY_SESSION_CACHE: Dict[str, bool] = {}
 _RUST_KERNEL_HEALTH_SESSION: Dict[str, Dict[str, Any]] = {}
 RUST_BACKEND_INTERFACE_ID_EXPECTED = "gl260_rust_backend"
-RUST_BACKEND_INTERFACE_VERSION_EXPECTED = "3"
+RUST_BACKEND_INTERFACE_VERSION_EXPECTED = "4"
 RUST_REQUIRED_KERNEL_EXPORTS: Tuple[str, ...] = (
     "simulate_reaction_state_with_accounting",
     "analyze_bicarbonate_core",
@@ -2692,6 +2692,8 @@ RUST_REQUIRED_KERNEL_EXPORTS: Tuple[str, ...] = (
     "ledger_sort_filter_indices_core",
     "ledger_prefill_metrics_core",
     "csv_pressure_derivatives_core",
+    "csv_pressure_derivatives_array_core",
+    "plot_envelope_indices_core",
     "reaction_solution_charge_core",
     "reaction_dashboard_core",
 )
@@ -16865,7 +16867,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v4.17.1"
+APP_VERSION = "v4.18.0"
 
 ANALYSIS_ANCHOR_LEARNING_ENABLED_SETTINGS_KEY = "analysis_anchor_learning_enabled"
 ANALYSIS_TERMINAL_PH_RANGE_LOW_SETTINGS_KEY = "analysis_terminal_ph_range_low"
@@ -34747,6 +34749,67 @@ def _rust_combined_decimation_indices(
     if int(unique_sorted[-1]) != int(data_len - 1):
         return None
     return unique_sorted
+
+
+def _rust_plot_envelope_indices_core(
+    x_values: Any,
+    series_values: Sequence[Any],
+    target_points: int,
+) -> Optional[np.ndarray]:
+    """Return Rust-selected min/max envelope indices for aligned plot traces.
+
+    Purpose:
+        Prepare a bounded shared index set for large interactive plots without
+        transferring one Python object per source sample.
+    Why:
+        A shared envelope preserves narrow extrema and gap boundaries across
+        all visible traces while allowing Tk to receive only display-scale data.
+    Inputs:
+        x_values: One-dimensional float-like x-axis sequence.
+        series_values: Aligned float-like y-axis sequences to envelope together.
+        target_points: Positive display bucket budget.
+    Outputs:
+        Sorted integer ndarray, or ``None`` when the Rust path is unavailable.
+    Side Effects:
+        May mark the Rust kernel unhealthy through the shared timeout wrapper.
+    Exceptions:
+        Conversion and extension failures return ``None`` for Python fallback.
+    """
+    backend = _load_rust_backend()
+    if backend is None:
+        return None
+    resolver = getattr(backend, "plot_envelope_indices_core", None)
+    if not callable(resolver):
+        return None
+    try:
+        x_array = np.ascontiguousarray(np.asarray(x_values, dtype=float).reshape(-1))
+        if x_array.size <= 1:
+            return None
+        aligned = []
+        for values in series_values:
+            if values is None:
+                continue
+            series = np.asarray(values, dtype=float).reshape(-1)
+            if series.size == x_array.size:
+                aligned.append(series)
+        if not aligned:
+            return None
+        series_array = np.ascontiguousarray(np.vstack(aligned), dtype=float)
+        payload = _run_rust_kernel_with_timeout(
+            "plot_envelope_indices_core",
+            lambda: resolver(x_array, series_array, max(1, int(target_points))),
+        )
+        indices = np.asarray(payload, dtype=int).reshape(-1)
+        if (
+            indices.size == 0
+            or indices[0] != 0
+            or indices[-1] != x_array.size - 1
+            or np.any(indices[1:] <= indices[:-1])
+        ):
+            return None
+        return indices
+    except Exception:
+        return None
 
 
 def _build_reusable_scatter_offsets(
@@ -78141,7 +78204,73 @@ def _regression_test_loading_footer_timer_and_progress_contracts() -> None:
         raise AssertionError("Short replacement status should overwrite previous text.")
 
 
+def _regression_test_large_dataset_envelope_handoff() -> None:
+    """Validate a 120k-row envelope packet is bounded before Tk handoff.
+
+    Purpose:
+        Exercise the worker-side interactive decimation contract without
+        allocating Tk widgets or relying on a locally compiled extension.
+    Why:
+        Large imports must retain selected extrema and non-finite gap boundaries
+        while handing only the Rust-prepared display arrays to plotting code.
+    Inputs:
+        None; creates synthetic aligned NumPy traces and a local method harness.
+    Outputs:
+        None; raises ``AssertionError`` when envelope handoff semantics regress.
+    Side Effects:
+        Temporarily replaces the Rust-envelope adapter in this module and
+        restores it before returning.
+    Exceptions:
+        Raises ``AssertionError`` for unbounded or incorrectly sliced payloads.
+    """
+    row_count = 120_000
+    spike_index = 60_001
+    gap_index = 90_000
+    x_values = np.arange(row_count, dtype=float)
+    y_values = np.sin(x_values / 500.0)
+    y_values[spike_index] = 10_000.0
+    y_values[gap_index] = np.nan
+    expected_indices = np.asarray(
+        [0, spike_index, gap_index - 1, gap_index, gap_index + 1, row_count - 1],
+        dtype=int,
+    )
+    original_adapter = globals().get("_rust_plot_envelope_indices_core")
+
+    class _Harness:
+        """Minimal instance used to invoke the display-decimation method."""
+
+        _last_combined_decimation_backend = ""
+
+    try:
+        globals()["_rust_plot_envelope_indices_core"] = (
+            lambda _x_values, _series_values, _target_points: expected_indices
+        )
+        display_x, display_series = UnifiedApp._combined_preview_decimate(
+            _Harness(),
+            None,
+            None,
+            x_values,
+            {"y1": y_values},
+            target_points=600,
+        )
+    finally:
+        globals()["_rust_plot_envelope_indices_core"] = original_adapter
+    if not np.array_equal(display_x, x_values[expected_indices]):
+        raise AssertionError("Envelope handoff did not preserve selected x values.")
+    if not np.array_equal(
+        np.isnan(display_series["y1"]),
+        np.isnan(y_values[expected_indices]),
+    ):
+        raise AssertionError("Envelope handoff did not preserve the selected gap.")
+    if display_series["y1"][1] != y_values[spike_index]:
+        raise AssertionError("Envelope handoff dropped the narrow synthetic spike.")
+
+
 REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
+    (
+        "Large dataset Rust envelope handoff",
+        _regression_test_large_dataset_envelope_handoff,
+    ),
     (
         "Auto Title startup warning suppression",
         _regression_test_auto_title_startup_warning_suppression,
@@ -92382,7 +92511,7 @@ def _rust_csv_pressure_derivatives_core(
     pressure_columns: Sequence[Sequence[Any]],
     dampening: float,
     window: int,
-) -> Optional[List[Dict[str, List[float]]]]:
+) -> Optional[List[Dict[str, np.ndarray]]]:
     """Run the Rust CSV derivative kernel when available.
 
     Purpose:
@@ -92405,46 +92534,50 @@ def _rust_csv_pressure_derivatives_core(
     backend = _load_rust_backend()
     if backend is None:
         return None
-    elapsed_payload = [
-        float(value) for value in np.asarray(elapsed_hours_values, dtype=float)
-    ]
-    pressure_payload = [
-        [float(value) for value in np.asarray(series, dtype=float)]
-        for series in list(pressure_columns or [])
-    ]
-    payload = _run_rust_kernel_with_timeout(
-        "csv_pressure_derivatives_core",
-        lambda: backend.csv_pressure_derivatives_core(
-            elapsed_payload,
-            pressure_payload,
-            float(dampening),
-            int(window),
-        ),
-    )
-    if payload is None:
+    resolver = getattr(backend, "csv_pressure_derivatives_array_core", None)
+    if not callable(resolver):
         return None
     try:
-        normalized: List[Dict[str, List[float]]] = []
-        for item in list(payload):
-            if not isinstance(item, Mapping):
-                return None
-            normalized.append(
-                {
-                    "derivative": [
-                        float(value) for value in list(item.get("derivative") or [])
-                    ],
-                    "smoothed": [
-                        float(value) for value in list(item.get("smoothed") or [])
-                    ],
-                    "moving_average": [
-                        float(value) for value in list(item.get("moving_average") or [])
-                    ],
-                }
-            )
+        elapsed_array = np.ascontiguousarray(
+            np.asarray(elapsed_hours_values, dtype=float).reshape(-1)
+        )
+        pressure_array = np.ascontiguousarray(np.asarray(pressure_columns, dtype=float))
+        if pressure_array.ndim == 1:
+            pressure_array = pressure_array.reshape(1, -1)
+        if pressure_array.ndim != 2 or pressure_array.shape[1] != elapsed_array.size:
+            return None
+        payload = _run_rust_kernel_with_timeout(
+            "csv_pressure_derivatives_array_core",
+            lambda: resolver(
+                elapsed_array,
+                pressure_array,
+                float(dampening),
+                int(window),
+            ),
+        )
+        if not isinstance(payload, Mapping):
+            return None
+        derivative = np.asarray(payload.get("derivative"), dtype=float)
+        smoothed = np.asarray(payload.get("smoothed"), dtype=float)
+        moving_average = np.asarray(payload.get("moving_average"), dtype=float)
+        expected_shape = pressure_array.shape
+        if not all(
+            array.shape == expected_shape
+            for array in (derivative, smoothed, moving_average)
+        ):
+            return None
+        normalized: List[Dict[str, np.ndarray]] = [
+            {
+                "derivative": derivative[index],
+                "smoothed": smoothed[index],
+                "moving_average": moving_average[index],
+            }
+            for index in range(expected_shape[0])
+        ]
         return normalized
     except Exception as exc:
         _mark_rust_kernel_session_unhealthy(
-            "csv_pressure_derivatives_core",
+            "csv_pressure_derivatives_array_core",
             reason="invalid_payload",
             detail=str(exc),
         )
@@ -92456,7 +92589,7 @@ def _compute_csv_pressure_derivatives(
     pressure_columns: Sequence[Sequence[Any]],
     dampening: float,
     window: int,
-) -> List[Dict[str, List[float]]]:
+) -> List[Dict[str, Any]]:
     """Compute CSV pressure derivative payloads with Rust-first fallback.
 
     Purpose:
@@ -92651,7 +92784,7 @@ def _build_gl260_output_dataframe(
             "derivative_moving_average",
         )
     )
-    derivative_payloads: List[Dict[str, List[float]]] = []
+    derivative_payloads: List[Dict[str, Any]] = []
     if derivatives_enabled and pressure_derivative_entries:
         pressure_payloads = [
             np.asarray(series, dtype=float)
@@ -92705,17 +92838,17 @@ def _build_gl260_output_dataframe(
             (
                 "pressure_derivative",
                 labels[0],
-                pd.Series(payload.get("derivative") or [], dtype=float),
+                pd.Series(payload.get("derivative", []), dtype=float),
             ),
             (
                 "smoothed_derivative",
                 labels[1],
-                pd.Series(payload.get("smoothed") or [], dtype=float),
+                pd.Series(payload.get("smoothed", []), dtype=float),
             ),
             (
                 "derivative_moving_average",
                 labels[2],
-                pd.Series(payload.get("moving_average") or [], dtype=float),
+                pd.Series(payload.get("moving_average", []), dtype=float),
             ),
         )
         for policy_key, output_label, values in calculated_payloads:
@@ -119392,6 +119525,16 @@ class UnifiedApp(tk.Tk):
                 if entry.get("cycle_workers") is not None:
                     lines.append(
                         "cycle_workers: %s" % int(entry.get("cycle_workers") or 1)
+                    )
+                if entry.get("decimation_backend") is not None:
+                    lines.append(
+                        "decimation: %s (array_native=%s, source=%s, display=%s)"
+                        % (
+                            entry.get("decimation_backend"),
+                            bool(entry.get("array_native", False)),
+                            int(entry.get("source_points") or 0),
+                            int(entry.get("display_points") or 0),
+                        )
                     )
                 runner_start = entry.get("runner_start")
                 runner_end = entry.get("runner_end")
@@ -249323,7 +249466,14 @@ class UnifiedApp(tk.Tk):
                 time.perf_counter() - decimation_start
             ) * 1000.0
             combined_perf["display_cache"] = display_cache_status
-            combined_perf["decimation_backend"] = "python_vectorized"
+            combined_perf["decimation_backend"] = getattr(
+                self,
+                "_last_combined_decimation_backend",
+                "numpy_stride_fallback",
+            )
+            combined_perf["array_native"] = bool(
+                combined_perf["decimation_backend"] == "rust_envelope"
+            )
             try:
                 combined_perf["source_points"] = int(
                     np.asarray(series_np.get("x", series_map.get("x"))).size
@@ -249539,6 +249689,37 @@ class UnifiedApp(tk.Tk):
             if gates_ctx.get("include_moles")
             else None
         )
+
+        # Cycle analysis above deliberately consumed the full prepared arrays.
+        # Replace only render-facing core traces so detached Matplotlib figures
+        # receive a bounded envelope without changing analytics or exports.
+        series_map = data_ctx.get("series") or {}
+        series_np = data_ctx.get("series_np") or {}
+        display_x, display_series = self._combined_preview_decimate(
+            None,
+            None,
+            series_np.get("x", series_map.get("x")),
+            {
+                key: series_np.get(key, series_map.get(key))
+                for key in ("y1", "y2", "y3", "z", "z2")
+            },
+            series_arrays=series_np,
+            series_nan_mask=data_ctx.get("series_nan_mask") or {},
+            target_points=int(snapshot.get("combined_display_target_points") or 0)
+            or None,
+        )
+        if display_x is not None:
+            data_ctx = dict(data_ctx)
+            display_map = dict(series_map)
+            display_np = dict(series_np)
+            display_map["x"] = display_x
+            display_np["x"] = display_x
+            for key, values in display_series.items():
+                if values is not None:
+                    display_map[key] = values
+                    display_np[key] = values
+            data_ctx["series"] = display_map
+            data_ctx["series_np"] = display_np
 
         render_ctx = RenderContext(
             data_ctx=data_ctx,
@@ -251645,7 +251826,7 @@ class UnifiedApp(tk.Tk):
         Returns:
             Tuple `(x_decimated, decimated_series_map)`.
         Side Effects:
-            None.
+            Records the selected decimation backend for performance diagnostics.
         Exceptions:
             Best-effort guards keep original arrays when decimation fails.
         """
@@ -251689,83 +251870,51 @@ class UnifiedApp(tk.Tk):
         step = int(math.ceil(x_array.size / float(target_points)))
         if step <= 1:
             return x_array, series_values
-        idx = np.arange(0, x_array.size, step)
-        if idx.size == 0:
-            return x_values, series_values
-        if idx[-1] != x_array.size - 1:
-            idx = np.append(idx, x_array.size - 1)
-        # Profiling on the bundled workload and 500k points showed that these
-        # vectorized masks are materially faster than crossing the Python/Rust
-        # boundary and converting required indices to/from Python lists.
-        required_mask = np.zeros(x_array.size, dtype=bool)
-        x_nan = series_nan_mask.get("x")
-        if x_nan is None:
-            try:
-                x_nan = ~np.isfinite(x_array)
-            except Exception:
-                x_nan = None
-        else:
-            try:
-                x_nan = np.asarray(x_nan, dtype=bool).reshape(-1) | (
-                    ~np.isfinite(x_array)
-                )
-            except Exception:
-                x_nan = None
-        if x_nan is not None:
-            try:
-                x_nan = np.asarray(x_nan, dtype=bool).reshape(-1)
-            except Exception:
-                x_nan = None
-        if x_nan is not None and x_nan.size == x_array.size:
-            required_mask |= x_nan
-        # All available series contribute NaN neighborhoods so gaps remain exact.
+        aligned_series = []
         for key, values in series_values.items():
-            if values is None:
+            candidate = series_arrays.get(key, values)
+            try:
+                candidate_array = np.asarray(candidate, dtype=float).reshape(-1)
+            except Exception:
                 continue
-            y_array = series_arrays.get(key)
-            if y_array is None:
+            if candidate_array.size == x_array.size:
+                aligned_series.append(candidate_array)
+        idx = _rust_plot_envelope_indices_core(
+            x_array,
+            aligned_series,
+            target_points,
+        )
+        decimation_backend = "rust_envelope" if idx is not None else "numpy_stride_fallback"
+        if idx is None:
+            # Preserve the established NumPy stride fallback if the optional Rust
+            # kernel cannot run; it keeps Tk responsive without changing data.
+            idx = np.arange(0, x_array.size, step)
+            if idx.size == 0:
+                return x_values, series_values
+            if idx[-1] != x_array.size - 1:
+                idx = np.append(idx, x_array.size - 1)
+            required_mask = np.zeros(x_array.size, dtype=bool)
+            try:
+                required_mask |= ~np.isfinite(x_array)
+            except Exception:
+                pass
+            # All available series contribute NaN neighborhoods so gaps remain exact.
+            for values in aligned_series:
                 try:
-                    y_array = np.asarray(values)
+                    required_mask |= ~np.isfinite(values)
                 except Exception:
                     continue
-            if y_array.shape[0] != x_array.shape[0]:
-                continue
-            y_nan = series_nan_mask.get(key)
-            if y_nan is None:
-                try:
-                    y_nan = ~np.isfinite(y_array)
-                except Exception:
-                    try:
-                        y_nan = pd.isna(y_array)
-                    except Exception:
-                        y_nan = None
-            else:
-                try:
-                    y_nan = np.asarray(y_nan, dtype=bool).reshape(-1) | (
-                        ~np.isfinite(y_array)
-                    )
-                except Exception:
-                    y_nan = None
-            if y_nan is None:
-                continue
-            try:
-                y_nan = np.asarray(y_nan, dtype=bool).reshape(-1)
-            except Exception:
-                continue
-            if y_nan.size == x_array.size:
-                required_mask |= y_nan
-        required_idx = np.flatnonzero(required_mask) if required_mask.any() else None
-        if required_idx is not None and required_idx.size:
-            # Preserve immediate neighbors around NaN points so plot gaps and edge
-            # transitions remain visually faithful after decimation.
-            neighbor_idx = np.unique(
-                np.concatenate([required_idx - 1, required_idx + 1])
-            )
-            neighbor_idx = neighbor_idx[
-                (neighbor_idx >= 0) & (neighbor_idx < x_array.size)
-            ]
-            required_keep = np.unique(np.concatenate([required_idx, neighbor_idx]))
-            idx = np.unique(np.concatenate([idx, required_keep]))
+            required_idx = np.flatnonzero(required_mask) if required_mask.any() else None
+            if required_idx is not None and required_idx.size:
+                neighbor_idx = np.unique(
+                    np.concatenate([required_idx - 1, required_idx + 1])
+                )
+                neighbor_idx = neighbor_idx[
+                    (neighbor_idx >= 0) & (neighbor_idx < x_array.size)
+                ]
+                required_keep = np.unique(np.concatenate([required_idx, neighbor_idx]))
+                idx = np.unique(np.concatenate([idx, required_keep]))
+        self._last_combined_decimation_backend = decimation_backend
         x_dec = x_array[idx]
         decimated: Dict[str, Any] = {}
         # Iterate over items from series_values to apply the per-item logic.
