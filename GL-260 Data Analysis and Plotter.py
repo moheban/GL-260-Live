@@ -270,6 +270,36 @@ def _format_bootstrap_startup_footer(progress_value: object, elapsed_text: str) 
     return f"{percent_value}% | {elapsed_text}"
 
 
+def _compose_bootstrap_startup_detail(detail_base: object, elapsed_text: str) -> str:
+    """Build a live, detailed status readout for the bootstrap splash.
+
+    Purpose:
+        Add visible within-stage activity information to the pre-import splash
+        detail line.
+    Why:
+        Startup imports can remain in one milestone for several seconds; a live
+        elapsed duration and update sequence show that the application is still
+        actively progressing instead of appearing stalled.
+    Inputs:
+        detail_base: Stable descriptive text for the current startup milestone.
+        elapsed_text: Formatted elapsed wall-clock duration for the splash.
+    Outputs:
+        str: Detail text containing the stable milestone description and a live
+        activity/update readout.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid inputs are normalized to safe text defaults.
+    """
+    base_text = str(detail_base or "Startup work in progress.").strip()
+    elapsed_value = str(elapsed_text or "0.00s").strip() or "0.00s"
+    try:
+        update_number = max(1, int(float(elapsed_value.rstrip("s")) * 10.0) + 1)
+    except Exception:
+        update_number = 1
+    return f"{base_text} | Active {elapsed_value} | Update {update_number}"
+
+
 def _stop_bootstrap_startup_splash_heartbeat(splash_handle: object) -> None:
     """Cancel the bootstrap splash heartbeat callback when present.
 
@@ -346,6 +376,18 @@ def _start_bootstrap_startup_splash_heartbeat(splash_handle: object) -> None:
         elapsed_text = _format_bootstrap_startup_elapsed(
             max(0.0, time.monotonic() - float(started_at))
         )
+        detail_label = splash_handle.get("detail_label")
+        if detail_label is not None:
+            try:
+                detail_label.configure(
+                    text=_compose_bootstrap_startup_detail(
+                        splash_handle.get("detail_base", ""),
+                        elapsed_text,
+                    )
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to keep startup moving.
+                pass
         progress_label = splash_handle.get("progress_label")
         if progress_label is not None:
             try:
@@ -419,21 +461,23 @@ def _update_bootstrap_startup_splash(
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
-    if detail is not None:
-        splash_handle["detail_base"] = str(detail).strip()
-        detail_label = splash_handle.get("detail_label")
-        if detail_label is not None:
-            try:
-                detail_label.configure(text=str(detail))
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
     started_at = splash_handle.get("started_at")
     if not isinstance(started_at, (int, float)):
         started_at = time.monotonic()
         splash_handle["started_at"] = float(started_at)
     elapsed_value = max(0.0, time.monotonic() - float(started_at))
     elapsed_text = _format_bootstrap_startup_elapsed(elapsed_value)
+    if detail is not None:
+        splash_handle["detail_base"] = str(detail).strip()
+        detail_label = splash_handle.get("detail_label")
+        if detail_label is not None:
+            try:
+                detail_label.configure(
+                    text=_compose_bootstrap_startup_detail(detail, elapsed_text)
+                )
+            except Exception:
+                # Best-effort guard; ignore failures to avoid interrupting the workflow.
+                pass
     if progress is not None:
         current_value = float(splash_handle.get("progress_value", 0.0) or 0.0)
         target_value = max(current_value, max(0.0, min(100.0, float(progress))))
@@ -123881,27 +123925,29 @@ class UnifiedApp(tk.Tk):
         message: Optional[str],
         elapsed_text: str,
     ) -> str:
-        """Compose stable splash detail text without footer timer duplication.
+        """Compose a detailed live splash status readout.
 
         Purpose:
-            Build one consistent detail line for all splash/overlay controllers.
+            Build one consistent, live detail line for all splash/overlay
+            controllers.
         Why:
-            The live timer belongs in the progress footer; keeping detail text
-            stable prevents repeated repainting from leaving stale status glyphs.
+            A progress bar alone does not explain a long-running stage. Including
+            the active stage, elapsed duration, and update sequence shows that
+            work continues even when no new milestone is available.
         Inputs:
             detail_base: Caller-resolved detail baseline text.
             stage_key: Optional normalized stage token.
             message: Optional stage/status message.
-            elapsed_text: Formatted elapsed-time text, accepted for caller
-                compatibility but intentionally not included in the detail line.
+            elapsed_text: Formatted elapsed-time text included in the live
+                activity readout.
         Outputs:
-            str: Detail text with a readable stage/detail baseline.
+            str: Detail text with a readable stage/detail baseline and live
+            activity metadata.
         Side Effects:
             None.
         Exceptions:
             Missing detail base falls back to a normalized stage label.
         """
-        _ = elapsed_text
         base_text = str(detail_base or "").strip()
         if not base_text:
             base_text = self._resolve_loading_detail_base(
@@ -123911,7 +123957,19 @@ class UnifiedApp(tk.Tk):
                 detail=None,
                 clear_on_message=False,
             )
-        return base_text
+        active_stage = self._format_loading_stage_label(
+            stage_key=stage_key,
+            message=message,
+        )
+        elapsed_value = str(elapsed_text or "0.00s").strip() or "0.00s"
+        try:
+            update_number = max(1, int(float(elapsed_value.rstrip("s")) * 10.0) + 1)
+        except Exception:
+            update_number = 1
+        return (
+            f"{base_text} | {active_stage}: active {elapsed_value} "
+            f"| Update {update_number}"
+        )
 
     def _paint_loading_feedback(self, widget: Optional[tk.Misc]) -> None:
         """Flush one guarded paint cycle for a loading widget.
@@ -136093,7 +136151,8 @@ class UnifiedApp(tk.Tk):
         """Start high-frequency real-time elapsed updates for preview overlays.
 
         Purpose:
-            Keep preview splash text synchronized with wall-clock elapsed time.
+            Keep preview splash text synchronized with wall-clock elapsed time
+            and within-stage activity updates.
         Why:
             Preview builds span worker/UI phases and should show continuously
             updating elapsed status derived from the true start timestamp.
@@ -136103,7 +136162,7 @@ class UnifiedApp(tk.Tk):
             None.
         Side Effects:
             Schedules recurring Tk callbacks that update preview message/progress
-            labels with elapsed wall-clock time.
+            labels with elapsed wall-clock time and a numbered live update.
         Exceptions:
             Missing/destroyed overlay widgets short-circuit safely.
         """
@@ -136131,7 +136190,12 @@ class UnifiedApp(tk.Tk):
             message_base = str(
                 getattr(self, "_combined_plot_preview_message_base", "") or ""
             ).strip()
-            composed_message = message_base or "Preparing preview..."
+            composed_message = self._compose_loading_detail_with_elapsed(
+                detail_base=message_base or "Preparing preview...",
+                stage_key="preview",
+                message=message_base,
+                elapsed_text=elapsed_text,
+            )
             label = getattr(self, "_combined_plot_preview_overlay_label", None)
             if label is not None:
                 try:
@@ -136178,7 +136242,8 @@ class UnifiedApp(tk.Tk):
         """Update combined Plot Preview loading overlay message/progress.
 
         Purpose:
-            Keep preview splash progress synchronized with async preview stages.
+            Keep preview splash progress and live activity text synchronized with
+            asynchronous preview stages.
         Why:
             Preview rendering runs across worker/UI phases and needs deterministic
             user feedback.
@@ -136192,7 +136257,7 @@ class UnifiedApp(tk.Tk):
             None.
         Side Effects:
             Mutates preview overlay widgets, cached progress state, and preview
-            timer lifecycle.
+            timer lifecycle, including the live within-stage status readout.
         Exceptions:
             Best-effort behavior; missing widgets are ignored.
         """
@@ -136237,7 +136302,12 @@ class UnifiedApp(tk.Tk):
         message_base = str(
             getattr(self, "_combined_plot_preview_message_base", "") or ""
         ).strip()
-        composed_message = message_base or "Preparing preview..."
+        composed_message = self._compose_loading_detail_with_elapsed(
+            detail_base=message_base or "Preparing preview...",
+            stage_key="preview",
+            message=message_base,
+            elapsed_text=elapsed_text,
+        )
         label = getattr(self, "_combined_plot_preview_overlay_label", None)
         if label is not None:
             try:
@@ -139159,9 +139229,13 @@ class UnifiedApp(tk.Tk):
                 exc,
             )
 
-        runner = getattr(self, "_combined_render_runner", None)
+        # Preview work must not wait behind the live Combined renderer's
+        # serialized refresh/finalize callbacks. Figure construction still uses
+        # the shared build lock, so this independent queue cannot mutate the
+        # Combined Matplotlib state concurrently.
+        runner = getattr(self, "_task_runner", None)
         if runner is None or not hasattr(runner, "submit"):
-            runner = getattr(self, "_task_runner", None)
+            runner = getattr(self, "_combined_render_runner", None)
         if runner is not None and hasattr(runner, "submit"):
             self._combined_plot_preview_task_id = runner.submit(
                 "combined_plot_preview_render",
