@@ -46459,9 +46459,9 @@ def _regression_test_startup_splash_clear_skips_post_reveal_tab_warmup() -> None
         raise AssertionError(
             "Startup splash clear should schedule post-reveal heavy tasks exactly once."
         )
-    if harness.background_restore_calls != 1:
+    if harness.background_restore_calls != 0:
         raise AssertionError(
-            "Startup splash clear should schedule background restore exactly once."
+            "Startup splash clear must not schedule restore after startup completes."
         )
     if harness.background_warmup_calls != 0:
         raise AssertionError(
@@ -109861,16 +109861,12 @@ class UnifiedApp(tk.Tk):
                 ),
             )
 
-        # Background restore must not participate in the reveal gate.  The
-        # previous implementation still started it here, then the splash poller
-        # and restore completion callback overwrote each other's status text.
-        # Leave the state explicitly deferred until splash teardown schedules the
-        # single background restore callback.
-        if self._startup_autorestore_mode() == STARTUP_AUTORESTORE_MODE_BACKGROUND:
-            self._mark_startup_restore_state("deferred")
-        else:
-            self._mark_startup_restore_state("pending")
-            self.after(200, self._restore_last_session_async)
+        # Autosave restore must participate in the reveal gate.  The
+        # Restore must begin while the splash is still active.  Treating it as
+        # post-reveal work allowed plot/profile callbacks to select Plot Settings
+        # after Data had already been handed to the user.
+        self._mark_startup_restore_state("pending")
+        self.after(200, self._restore_last_session_async)
         self.after(400, self._maybe_warn_gil_reenabled_import)
         try:
             self._startup_loading_poll_after_id = self.after(
@@ -110996,7 +110992,6 @@ class UnifiedApp(tk.Tk):
         self._reveal_main_window_after_startup()
         self._replay_deferred_plot_loading_overlays()
         self._schedule_startup_post_reveal_heavy_tasks()
-        self._start_startup_background_restore()
 
     def _schedule_startup_post_reveal_heavy_tasks(self) -> None:
         """Schedule deferred-heavy startup tasks after splash teardown.
@@ -112702,7 +112697,6 @@ class UnifiedApp(tk.Tk):
         ui_ready = bool(getattr(self, "_startup_ui_built", False))
         tab_warmup_ready = bool(getattr(self, "_startup_tab_warmup_done", False))
         interactive_first = self._startup_interactive_first_enabled()
-        deferred_heavy_init_enabled = self._startup_deferred_heavy_init_enabled()
         rust_preflight_started = bool(
             getattr(self, "_startup_rust_preflight_started", False)
         )
@@ -112710,9 +112704,10 @@ class UnifiedApp(tk.Tk):
             getattr(self, "_startup_rust_preflight_completed", False)
         )
         interactive_tabs_ready = False
-        # A deferred restore is intentionally non-blocking: the splash may close
-        # while the one-shot background callback waits to restore the workspace.
-        restore_ready = restore_state in {"deferred", "success", "failed", "skipped"}
+        # Do not reveal the workspace until restore has reached a terminal state.
+        # A deferred state is retained only for backward-compatible settings, not
+        # as permission to expose a partially restored UI.
+        restore_ready = restore_state in {"success", "failed", "skipped"}
         if restore_ready and not bool(
             getattr(self, "_startup_restore_post_refresh_done", False)
         ):
@@ -112817,12 +112812,10 @@ class UnifiedApp(tk.Tk):
                     )
                 )
             if interaction_ready:
-                # Deferred-heavy startup can reveal immediately after interaction
-                # readiness; startup Rust preflight and policy prewarm continue
-                # post-reveal in background stages.
-                rust_must_gate_reveal = not (
-                    interactive_first and deferred_heavy_init_enabled
-                )
+                # Rust readiness is part of startup completion.  Do not expose
+                # the workspace while a preflight callback can still mutate
+                # startup status or compete with the final Data-tab handoff.
+                rust_must_gate_reveal = True
                 if rust_must_gate_reveal:
                     if (
                         not rust_preflight_started
@@ -112847,13 +112840,8 @@ class UnifiedApp(tk.Tk):
                         progress=100.0,
                         message="Startup complete. Opening workspace...",
                         detail=(
-                            "Interactive startup is ready; Rust checks continue."
-                            if (interactive_first and deferred_heavy_init_enabled)
-                            else (
-                                "Interactive startup and Rust backend checks passed."
-                                if interactive_first
-                                else "All startup and Rust backend checks passed."
-                            )
+                            "All startup restore, interface, and Rust backend "
+                            "checks passed."
                         ),
                     )
                     try:
