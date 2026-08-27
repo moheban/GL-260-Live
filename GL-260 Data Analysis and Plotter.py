@@ -37315,7 +37315,7 @@ def _render_reaction_dashboard_cycle_pdf_pages(
         fig.text(
             0.055,
             0.035,
-            "GL-260 Data Analysis and Plotter",
+            "GL-260 Data Analysis and Plotter. Written & Maintained by: Mike Moheban, M.S.",
             ha="left",
             va="center",
             color=slate,
@@ -45532,7 +45532,10 @@ def _regression_test_startup_completion_finalizes_data_tab_after_restore() -> No
             self._initial_tab_after_id = None
             self._initial_tab_map_bind_id = None
             self._initial_tab_shown = False
+            self._startup_background_warmup_after_id = "warmup-pending"
+            self._startup_pending_warmup_tabs = [self.tab_plot]
             self.after_calls: List[Tuple[int, Any]] = []
+            self.after_cancel_calls: List[str] = []
 
         @staticmethod
         def _cleanup_stale_startup_loading_overlays(*, keep_overlay: Any = None) -> None:
@@ -45603,6 +45606,10 @@ def _regression_test_startup_completion_finalizes_data_tab_after_restore() -> No
             self.after_calls.append((int(delay_ms), callback))
             return f"after-{len(self.after_calls)}"
 
+        def after_cancel(self, callback_id: str) -> None:
+            """Record cancellation of a deferred startup callback."""
+            self.after_cancel_calls.append(str(callback_id))
+
         @staticmethod
         def update_idletasks() -> None:
             """No-op root idle update hook used by startup finalize."""
@@ -45617,6 +45624,12 @@ def _regression_test_startup_completion_finalizes_data_tab_after_restore() -> No
         raise AssertionError("Startup completion should land on Data tab after restore.")
     if not bool(getattr(harness, "_initial_tab_shown", False)):
         raise AssertionError("Startup completion should mark initial Data-tab state as shown.")
+    if harness._startup_background_warmup_after_id is not None:
+        raise AssertionError("Startup completion should cancel pending tab warmup.")
+    if harness._startup_pending_warmup_tabs:
+        raise AssertionError("Startup completion should clear pending tab warmup work.")
+    if "warmup-pending" not in harness.after_cancel_calls:
+        raise AssertionError("Startup completion should cancel the warmup callback.")
     if len(harness._startup_loading_overlay.after_calls) != 1:
         raise AssertionError("Startup completion should schedule one splash-clear callback.")
 
@@ -75764,6 +75777,19 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
         for figure in figures:
             plt.close(figure)
         raise AssertionError("A long Cycle table should paginate across PDF pages.")
+    footer_attribution = (
+        "GL-260 Data Analysis and Plotter. Written & Maintained by: "
+        "Mike Moheban, M.S."
+    )
+    if any(
+        footer_attribution not in {artist.get_text() for artist in figure.texts}
+        for figure in figures
+    ):
+        for figure in figures:
+            plt.close(figure)
+        raise AssertionError(
+            "Every Cycle Report page should include the requested attribution footer."
+        )
     table_artists = [table for axis in figures[0].axes for table in axis.tables]
     if not table_artists:
         for figure in figures:
@@ -112840,8 +112866,9 @@ class UnifiedApp(tk.Tk):
         Outputs:
             None.
         Side Effects:
-            Cancels pending initial-tab timers, selects Data, flushes idle geometry,
-            and sets keyboard focus on a stable Data-tab widget when possible.
+            Cancels pending initial-tab and background-warmup timers, selects Data,
+            flushes idle geometry, and sets keyboard focus on a stable Data-tab
+            widget when possible.
         Exceptions:
             Best-effort guards prevent focus/selection issues from blocking startup.
         """
@@ -112853,6 +112880,18 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
             self._initial_tab_after_id = None
+
+        warmup_after_id = getattr(self, "_startup_background_warmup_after_id", None)
+        if warmup_after_id is not None:
+            try:
+                # A deferred warmup may have left Plot Settings selected when the
+                # splash completes; cancel it before committing the Data-tab handoff.
+                self.after_cancel(warmup_after_id)
+            except Exception:
+                # Best-effort guard; ignore callbacks that have already run.
+                pass
+            self._startup_background_warmup_after_id = None
+        self._startup_pending_warmup_tabs = []
 
         nb = getattr(self, "nb", None)
         data_tab = getattr(self, "tab_data", None)
