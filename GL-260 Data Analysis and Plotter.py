@@ -59694,11 +59694,15 @@ def _regression_test_startup_solubility_refresh_uses_widget_rehydrate_path() -> 
         """Harness exposing startup solubility refresh dependencies."""
 
         _refresh_startup_solubility_views = UnifiedApp._refresh_startup_solubility_views
+        _should_defer_startup_solubility_refresh = (
+            UnifiedApp._should_defer_startup_solubility_refresh
+        )
 
         def __init__(self) -> None:
             self.widget_calls: List[Dict[str, Any]] = []
             self.spec_calls: List[Dict[str, Any]] = []
             self.layout_calls = 0
+            self._startup_solubility_refresh_pending = False
             self._result_payload = {
                 "timeline": [{"cycle_id": 1, "co2_mass_g": 1.2}],
                 "analysis_progress_text": "Persisted startup payload",
@@ -59771,6 +59775,186 @@ def _regression_test_startup_solubility_refresh_uses_widget_rehydrate_path() -> 
         )
     if harness.layout_calls != 1:
         raise AssertionError("Startup refresh should request exactly one workflow layout refresh.")
+
+
+def _regression_test_post_reveal_restore_defers_inactive_solubility_refresh() -> None:
+    """Validate post-reveal restore defers inactive Advanced Speciation drawing.
+
+    Purpose:
+        Ensure the Data-tab startup handoff does not redraw the inactive cycle
+        timeline when background autosave restoration completes.
+    Why:
+        Rendering that canvas after splash teardown blocks Tk for seconds and can
+        leave the notebook on the wrong startup tab.
+    Inputs:
+        None.
+    Outputs:
+        None.
+    Side Effects:
+        Executes the startup solubility refresh helper on an in-memory harness.
+    Exceptions:
+        Raises AssertionError when inactive post-reveal drawing is not deferred.
+    """
+
+    class _Notebook:
+        """Notebook stub reporting Data as the selected outer tab."""
+
+        def __init__(self, selected_tab: object) -> None:
+            """Store the deterministic selected tab used by the refresh check.
+
+            Purpose:
+                Supply the minimum ttk-notebook selection contract for this test.
+            Why:
+                The defer decision depends only on the selected outer tab.
+            Inputs:
+                selected_tab: Opaque tab identity returned from ``select``.
+            Outputs:
+                None.
+            Side Effects:
+                Retains the selected tab identity for ``select`` calls.
+            Exceptions:
+                None.
+            """
+            self._selected_tab = selected_tab
+
+        def select(self) -> object:
+            """Return the selected tab identity for the startup refresh helper.
+
+            Purpose:
+                Emulate ttk's no-argument ``select`` query behavior.
+            Why:
+                The test must prove that Data visibility triggers deferral.
+            Inputs:
+                None.
+            Outputs:
+                object: The configured selected tab identity.
+            Side Effects:
+                None.
+            Exceptions:
+                None.
+            """
+            return self._selected_tab
+
+    class _Harness:
+        """Harness exposing only post-reveal solubility refresh dependencies."""
+
+        _refresh_startup_solubility_views = UnifiedApp._refresh_startup_solubility_views
+        _should_defer_startup_solubility_refresh = (
+            UnifiedApp._should_defer_startup_solubility_refresh
+        )
+
+        def __init__(self) -> None:
+            """Initialize Data-selected post-reveal restore state.
+
+            Purpose:
+                Model the exact state after splash teardown schedules autosave
+                restoration while the required Data-tab handoff is active.
+            Why:
+                This isolates the regression from real Tk and plotting work.
+            Inputs:
+                None.
+            Outputs:
+                None.
+            Side Effects:
+                Creates counters that detect any forbidden eager render attempt.
+            Exceptions:
+                None.
+            """
+            self.tab_data = object()
+            self.nb = _Notebook(self.tab_data)
+            self._startup_background_restore_started = True
+            self._startup_loading_overlay = None
+            self._startup_solubility_refresh_pending = False
+            self.widget_calls = 0
+            self.spec_calls = 0
+            self.layout_calls = 0
+
+        def _dbg(self, *_args: Any) -> None:
+            """Accept deferred-refresh diagnostics without requiring a logger.
+
+            Purpose:
+                Provide the debug-call contract used by the deferred refresh path.
+            Why:
+                The regression must exercise the production helper without
+                configuring application logging.
+            Inputs:
+                _args: Ignored diagnostic message arguments.
+            Outputs:
+                None.
+            Side Effects:
+                None.
+            Exceptions:
+                None.
+            """
+
+        def _update_cycle_solubility_widgets(self, *_args: Any, **_kwargs: Any) -> None:
+            """Count forbidden eager widget redraw requests for this regression.
+
+            Purpose:
+                Detect a production call that would redraw inactive timeline UI.
+            Why:
+                The deferred path must avoid all widget rendering while Data is
+                the active post-reveal startup tab.
+            Inputs:
+                _args: Ignored positional render arguments.
+                _kwargs: Ignored keyword render arguments.
+            Outputs:
+                None.
+            Side Effects:
+                Increments the eager-widget-render counter.
+            Exceptions:
+                None.
+            """
+            self.widget_calls += 1
+
+        def _update_cycle_spec_view(self, *_args: Any, **_kwargs: Any) -> None:
+            """Count forbidden eager plot redraw requests for this regression.
+
+            Purpose:
+                Detect a fallback plot draw requested during the defer check.
+            Why:
+                Fallback rendering is equally disruptive to the Data-tab handoff.
+            Inputs:
+                _args: Ignored positional render arguments.
+                _kwargs: Ignored keyword render arguments.
+            Outputs:
+                None.
+            Side Effects:
+                Increments the eager-plot-render counter.
+            Exceptions:
+                None.
+            """
+            self.spec_calls += 1
+
+        def _refresh_sol_workflow_layout(self) -> None:
+            """Count forbidden eager layout refresh requests for this regression.
+
+            Purpose:
+                Detect workflow-layout work requested during inactive-tab deferral.
+            Why:
+                Layout flushing can trigger the same post-splash Tk stall as a
+                timeline redraw even when plot creation is avoided.
+            Inputs:
+                None.
+            Outputs:
+                None.
+            Side Effects:
+                Increments the eager-layout-refresh counter.
+            Exceptions:
+                None.
+            """
+            self.layout_calls += 1
+
+    harness = _Harness()
+    UnifiedApp._refresh_startup_solubility_views(harness)
+    if not harness._startup_solubility_refresh_pending:
+        raise AssertionError(
+            "Post-reveal Data-tab restore should retain one deferred refresh."
+        )
+    if harness.widget_calls or harness.spec_calls or harness.layout_calls:
+        raise AssertionError(
+            "Post-reveal Data-tab restore must not render inactive solubility widgets."
+        )
 
 
 def _regression_test_startup_apply_auto_jump_suppressed_during_restore() -> None:
@@ -79228,6 +79412,10 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
     (
         "Startup Analysis widget rehydrate path",
         _regression_test_startup_solubility_refresh_uses_widget_rehydrate_path,
+    ),
+    (
+        "Post-reveal restore defers inactive Analysis refresh",
+        _regression_test_post_reveal_restore_defers_inactive_solubility_refresh,
     ),
     (
         "Startup apply auto-jump suppression",
@@ -107325,6 +107513,7 @@ class UnifiedApp(tk.Tk):
         self._startup_restore_post_refresh_done = False
         self._startup_background_restore_started = False
         self._startup_background_restore_after_id = None
+        self._startup_solubility_refresh_pending = False
         self._startup_rust_preflight_after_id = None
         self._startup_rust_preflight_task_id: Optional[int] = None
         self._startup_rust_preflight_started = False
@@ -113208,8 +113397,8 @@ class UnifiedApp(tk.Tk):
         """Refresh Advanced Speciation workflow/timeline layout during startup gating.
 
         Purpose:
-            Ensure the Advanced Speciation timeline table and plot are visible before
-            startup splash teardown.
+            Rehydrate the Advanced Speciation timeline table and plot from restored
+            startup state when it is appropriate to render that workspace.
         Why:
             Deferred geometry updates can leave timeline widgets hidden until a later
             tab switch unless layout and timeline draws are explicitly refreshed.
@@ -113219,10 +113408,23 @@ class UnifiedApp(tk.Tk):
             None.
         Side Effects:
             Re-renders current workflow timeline/dashboard view and flushes
-            workflow layout.
+            workflow layout, or records one deferred refresh while Data remains
+            the active post-splash startup tab.
         Exceptions:
             Best-effort guards keep startup resilient when widgets are unavailable.
         """
+        if self._should_defer_startup_solubility_refresh():
+            # The autosave restore runs after the splash in background mode.  Do
+            # not spend several seconds redrawing an inactive Advanced
+            # Speciation canvas or let its callbacks disturb the Data-tab handoff.
+            self._startup_solubility_refresh_pending = True
+            self._dbg(
+                "plotting.render",
+                "Deferred startup solubility refresh until Advanced Speciation is selected.",
+            )
+            return
+
+        self._startup_solubility_refresh_pending = False
         try:
             workflow_key = self._current_solubility_workflow()
         except Exception:
@@ -113254,6 +113456,107 @@ class UnifiedApp(tk.Tk):
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+
+    def _should_defer_startup_solubility_refresh(self) -> bool:
+        """Return whether a post-reveal restore should defer inactive plotting.
+
+        Purpose:
+            Identify the narrow startup state where autosave restoration is
+            running after the splash has handed control to the Data tab.
+        Why:
+            Rendering the Advanced Speciation timeline while its outer tab is
+            inactive blocks Tk for seconds and can displace the required Data-tab
+            landing; rendering on first visit preserves both responsiveness and
+            restored content.
+        Inputs:
+            None.
+        Outputs:
+            bool: True only for a post-reveal background restore while Data is
+            the selected main notebook tab.
+        Side Effects:
+            None.
+        Exceptions:
+            Widget lookup failures return False so normal refresh behavior is
+            retained safely.
+        """
+        if not bool(getattr(self, "_startup_background_restore_started", False)):
+            return False
+        if getattr(self, "_startup_loading_overlay", None) is not None:
+            return False
+        nb = getattr(self, "nb", None)
+        data_tab = getattr(self, "tab_data", None)
+        if nb is None or data_tab is None:
+            return False
+        try:
+            return str(nb.select()) == str(data_tab)
+        except Exception:
+            return False
+
+    def _refresh_deferred_startup_solubility_views_if_visible(self) -> None:
+        """Render a deferred startup timeline when Advanced Speciation is opened.
+
+        Purpose:
+            Apply one pending autosave-derived Advanced Speciation refresh after
+            the user selects its main notebook tab.
+        Why:
+            Deferring inactive canvas work keeps post-splash startup responsive
+            without leaving restored timeline/dashboard content stale on first
+            visit.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Clears the pending marker and redraws restored Advanced Speciation
+            widgets when that outer tab is visible.
+        Exceptions:
+            Selection or render failures are handled defensively and preserve the
+            pending marker for a later tab visit.
+        """
+        if not bool(getattr(self, "_startup_solubility_refresh_pending", False)):
+            return
+        nb = getattr(self, "nb", None)
+        solubility_tab = getattr(self, "tab_solubility_new", None)
+        if nb is None or solubility_tab is None:
+            return
+        try:
+            if str(nb.select()) != str(solubility_tab):
+                return
+        except Exception:
+            return
+        self._startup_solubility_refresh_pending = False
+        try:
+            self._refresh_startup_solubility_views()
+        except Exception:
+            # Keep the deferred work eligible for the next explicit tab visit.
+            self._startup_solubility_refresh_pending = True
+
+    def _finalize_post_reveal_startup_restore(self) -> None:
+        """Reassert the Data-tab handoff after a deferred startup restore settles.
+
+        Purpose:
+            Return focus to Data after all asynchronous profile/data restoration
+            callbacks have completed post-splash.
+        Why:
+            Restore callbacks can update plot and analysis widgets after the
+            original splash finalization, so the original one-time handoff alone
+            cannot guarantee the requested landing tab.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Selects and focuses the Data tab through the shared startup
+            finalization helper when this is a post-reveal background restore.
+        Exceptions:
+            No-op safely when startup is still covered by its splash; selection
+            failures are contained by the shared finalization helper.
+        """
+        if not bool(getattr(self, "_startup_background_restore_started", False)):
+            return
+        if getattr(self, "_startup_loading_overlay", None) is not None:
+            return
+        self._finalize_startup_to_data_tab()
 
     def _complete_startup_autosave_restore_when_ready(
         self, autosave_path_text: str, status_text: str
@@ -113315,6 +113618,7 @@ class UnifiedApp(tk.Tk):
             # Complete the restore post-refresh gate even on refresh failure so
             # startup does not stall on this terminal autosave stage.
             self._startup_restore_post_refresh_done = True
+            self._finalize_post_reveal_startup_restore()
 
     def _restore_last_session_async(self):
         """Start asynchronous workbook restore for the previous session.
@@ -113656,6 +113960,8 @@ class UnifiedApp(tk.Tk):
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+        finally:
+            self._finalize_post_reveal_startup_restore()
 
     def _load_sheets_from_current_path(self):
         """Load sheets from current path.
@@ -123194,6 +123500,30 @@ class UnifiedApp(tk.Tk):
         self._apply_solubility_tab_visibility(initial=True)
         self._apply_reaction_dashboard_tab_visibility(initial=True)
         self._apply_tab_order_from_settings(initial=True)
+
+        def _on_main_notebook_tab_changed(_event: Any = None) -> None:
+            """Refresh deferred startup analysis views when their outer tab opens.
+
+            Purpose:
+                Route the first explicit Advanced Speciation tab visit to the
+                refresh deferred during the post-splash autosave restore.
+            Why:
+                Startup must land on Data without rendering inactive analysis
+                canvases, while restored analysis content must still be ready
+                when the user intentionally opens its tab.
+            Inputs:
+                _event: Optional Tk notebook-selection event payload.
+            Outputs:
+                None.
+            Side Effects:
+                May draw one pending Advanced Speciation timeline/dashboard view.
+            Exceptions:
+                Refresh failures are handled by the deferred-refresh helper.
+            """
+            _ = _event
+            self._refresh_deferred_startup_solubility_views_if_visible()
+
+        self.nb.bind("<<NotebookTabChanged>>", _on_main_notebook_tab_changed, add="+")
 
         self._plot_tab_stage_two_built = False
 
