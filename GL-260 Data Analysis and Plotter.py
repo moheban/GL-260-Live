@@ -45486,57 +45486,36 @@ def _regression_test_startup_splash_waits_for_restore_completion() -> None:
         raise AssertionError("Startup splash clear callback should keep the existing 60 ms delay.")
 
 
-def _regression_test_background_startup_restore_is_deferred() -> None:
-    """Validate background restore state bypasses the splash readiness gate.
+def _regression_test_startup_autorestore_stays_splash_gated() -> None:
+    """Validate legacy startup settings cannot defer work until after splash teardown.
 
     Purpose:
-        Exercise the startup state transition used before splash teardown.
+        Verify persisted startup restore settings consistently select the blocking
+        policy used by the startup completion gate.
     Why:
-        Background restore must not be normalized back to `pending`, which would
-        reintroduce the startup status loop and block interactive reveal.
+        A legacy ``background`` value previously allowed Advanced Speciation
+        rendering after the UI became visible, creating a frozen startup gap.
     Inputs:
-        None; uses a local status-capture harness.
+        None.
     Outputs:
         None.
     Side Effects:
-        Calls `_mark_startup_restore_state` against isolated in-memory state.
+        Calls the pure startup-mode normalization helper.
     Exceptions:
-        Raises AssertionError when deferred restore status is not terminal for
-        splash gating or does not show the background-restore handoff message.
+        Raises AssertionError when a current or legacy setting can select a
+        post-reveal restore policy.
     """
-
-    class _Harness:
-        """Capture deferred restore status without constructing Tk widgets."""
-
-        def __init__(self) -> None:
-            """Initialize the minimal state used by the startup status setter."""
-            self._startup_restore_state = "pending"
-            self._startup_restore_post_refresh_done = False
-            self.progress_updates: list[dict[str, Any]] = []
-
-        @staticmethod
-        def _startup_autorestore_mode() -> str:
-            """Return the configured background mode for this regression."""
-            return STARTUP_AUTORESTORE_MODE_BACKGROUND
-
-        def _update_startup_loading_splash_progress(self, **kwargs: Any) -> None:
-            """Record splash updates emitted by the restore state setter."""
-            self.progress_updates.append(dict(kwargs))
-
-    harness = _Harness()
-    UnifiedApp._mark_startup_restore_state(harness, "deferred")
-    if harness._startup_restore_state != "deferred":
-        raise AssertionError("Background startup restore should retain deferred state.")
-    if not harness._startup_restore_post_refresh_done:
-        raise AssertionError(
-            "Deferred restore should not hold the startup refresh gate."
-        )
-    progress_update = harness.progress_updates[-1] if harness.progress_updates else {}
-    message = str(progress_update.get("message") or "")
-    if message != "Opening workspace...":
-        raise AssertionError(
-            "Deferred restore should publish the interactive handoff message."
-        )
+    for raw_mode in (
+        STARTUP_AUTORESTORE_MODE_BLOCKING,
+        STARTUP_AUTORESTORE_MODE_BACKGROUND,
+        "invalid",
+        None,
+    ):
+        normalized_mode = _normalize_startup_autorestore_mode(raw_mode)
+        if normalized_mode != STARTUP_AUTORESTORE_MODE_BLOCKING:
+            raise AssertionError(
+                "Startup autorestore must remain splash-gated for every persisted mode."
+            )
 
 
 def _regression_test_autosave_restore_wait_uses_one_callback() -> None:
@@ -46499,15 +46478,15 @@ def _regression_test_startup_rust_preflight_ready_status_prompt() -> None:
         )
 
 
-def _regression_test_startup_splash_clear_schedules_background_restore() -> None:
-    """Validate splash teardown launches the configured background restore once.
+def _regression_test_startup_splash_clear_has_no_background_restore() -> None:
+    """Validate splash teardown does not launch a post-reveal restore.
 
     Purpose:
-    Ensure background autosave restoration begins only after the interactive
-    startup handoff and that heavy-tab warmup remains unscheduled here.
+    Ensure autosave restoration has already completed before the interactive
+    handoff and that heavy-tab warmup remains unscheduled here.
     Why:
-    Background restore is the default policy and must not run while the splash
-    is active; the separate heavy-tab warmup remains intentionally suppressed.
+    Startup work must be complete before splash dismissal; the separate
+    heavy-tab warmup remains intentionally suppressed.
     Inputs:
         None.
     Outputs:
@@ -46516,8 +46495,8 @@ def _regression_test_startup_splash_clear_schedules_background_restore() -> None
         Temporarily monkeypatches bootstrap-splash clear helper and executes
         `_clear_startup_loading_splash` on a local harness.
     Exceptions:
-        Raises AssertionError when splash clear still schedules post-reveal
-        background tab warmup.
+        Raises AssertionError when splash clear schedules a post-reveal restore
+        or background tab warmup.
     """
     original_bootstrap_clear = globals().get("_clear_bootstrap_startup_splash")
     original_bootstrap_splash = globals().get("_BOOTSTRAP_STARTUP_SPLASH")
@@ -46596,7 +46575,7 @@ def _regression_test_startup_splash_clear_schedules_background_restore() -> None
             self.post_reveal_heavy_calls += 1
 
         def _start_startup_background_restore(self) -> None:
-            """Record background-restore scheduling."""
+            """Record an unexpected post-reveal restore scheduling attempt."""
             self.background_restore_calls += 1
 
         def _start_startup_background_tab_warmup(self) -> None:
@@ -46619,9 +46598,9 @@ def _regression_test_startup_splash_clear_schedules_background_restore() -> None
         raise AssertionError(
             "Startup splash clear should schedule post-reveal heavy tasks exactly once."
         )
-    if harness.background_restore_calls != 1:
+    if harness.background_restore_calls != 0:
         raise AssertionError(
-            "Startup splash clear should schedule one background restore after reveal."
+            "Startup splash clear must not schedule a background restore after reveal."
         )
     if harness.background_warmup_calls != 0:
         raise AssertionError(
@@ -60010,15 +59989,15 @@ def _regression_test_startup_solubility_refresh_uses_widget_rehydrate_path() -> 
         raise AssertionError("Startup refresh should request exactly one workflow layout refresh.")
 
 
-def _regression_test_post_reveal_restore_defers_inactive_solubility_refresh() -> None:
-    """Validate post-reveal restore defers inactive Advanced Speciation drawing.
+def _regression_test_startup_solubility_refresh_completes_under_splash() -> None:
+    """Validate Advanced Speciation refresh completes while the splash is active.
 
     Purpose:
-        Ensure the Data-tab startup handoff does not redraw the inactive cycle
-        timeline when background autosave restoration completes.
+        Ensure restored Advanced Speciation content is rendered before the
+        Data-tab startup handoff.
     Why:
         Rendering that canvas after splash teardown blocks Tk for seconds and can
-        leave the notebook on the wrong startup tab.
+        leave the newly exposed workspace temporarily unresponsive.
     Inputs:
         None.
     Outputs:
@@ -60026,11 +60005,12 @@ def _regression_test_post_reveal_restore_defers_inactive_solubility_refresh() ->
     Side Effects:
         Executes the startup solubility refresh helper on an in-memory harness.
     Exceptions:
-        Raises AssertionError when inactive post-reveal drawing is not deferred.
+        Raises AssertionError when startup drawing is deferred until after splash
+        teardown instead of being completed under the overlay.
     """
 
     class _Notebook:
-        """Notebook stub reporting Data as the selected outer tab."""
+        """Notebook stub reporting Data as the selected startup outer tab."""
 
         def __init__(self, selected_tab: object) -> None:
             """Store the deterministic selected tab used by the refresh check.
@@ -60069,7 +60049,7 @@ def _regression_test_post_reveal_restore_defers_inactive_solubility_refresh() ->
             return self._selected_tab
 
     class _Harness:
-        """Harness exposing only post-reveal solubility refresh dependencies."""
+        """Harness exposing splash-gated solubility refresh dependencies."""
 
         _refresh_startup_solubility_views = UnifiedApp._refresh_startup_solubility_views
         _should_defer_startup_solubility_refresh = (
@@ -60077,13 +60057,13 @@ def _regression_test_post_reveal_restore_defers_inactive_solubility_refresh() ->
         )
 
         def __init__(self) -> None:
-            """Initialize Data-selected post-reveal restore state.
+            """Initialize Data-selected splash-gated restore state.
 
             Purpose:
-                Model the exact state after splash teardown schedules autosave
-                restoration while the required Data-tab handoff is active.
+                Model the state before splash teardown while the required Data-tab
+                handoff remains pending.
             Why:
-                This isolates the regression from real Tk and plotting work.
+                This isolates the startup refresh contract from real Tk and plotting work.
             Inputs:
                 None.
             Outputs:
@@ -60095,12 +60075,24 @@ def _regression_test_post_reveal_restore_defers_inactive_solubility_refresh() ->
             """
             self.tab_data = object()
             self.nb = _Notebook(self.tab_data)
-            self._startup_background_restore_started = True
-            self._startup_loading_overlay = None
+            self._startup_background_restore_started = False
+            self._startup_loading_overlay = object()
             self._startup_solubility_refresh_pending = False
             self.widget_calls = 0
             self.spec_calls = 0
             self.layout_calls = 0
+            self._result_payload = {"timeline": [{"cycle_id": 1}]}
+
+        @staticmethod
+        def _current_solubility_workflow() -> str:
+            """Return the restored workflow key used by the startup refresh."""
+            return "Analysis"
+
+        def _get_cycle_result_for_workflow(
+            self, _workflow_key: Optional[str] = None
+        ) -> Dict[str, Any]:
+            """Return a persisted timeline payload for the startup refresh."""
+            return dict(self._result_payload)
 
         def _dbg(self, *_args: Any) -> None:
             """Accept deferred-refresh diagnostics without requiring a logger.
@@ -60121,13 +60113,13 @@ def _regression_test_post_reveal_restore_defers_inactive_solubility_refresh() ->
             """
 
         def _update_cycle_solubility_widgets(self, *_args: Any, **_kwargs: Any) -> None:
-            """Count forbidden eager widget redraw requests for this regression.
+            """Count the required splash-gated widget redraw for this regression.
 
             Purpose:
-                Detect a production call that would redraw inactive timeline UI.
+                Detect the production call that rehydrates the restored timeline UI.
             Why:
-                The deferred path must avoid all widget rendering while Data is
-                the active post-reveal startup tab.
+                Startup must complete this redraw while its overlay still covers
+                the Data-selected notebook.
             Inputs:
                 _args: Ignored positional render arguments.
                 _kwargs: Ignored keyword render arguments.
@@ -60141,12 +60133,12 @@ def _regression_test_post_reveal_restore_defers_inactive_solubility_refresh() ->
             self.widget_calls += 1
 
         def _update_cycle_spec_view(self, *_args: Any, **_kwargs: Any) -> None:
-            """Count forbidden eager plot redraw requests for this regression.
+            """Count unexpected fallback plot redraw requests for this regression.
 
             Purpose:
-                Detect a fallback plot draw requested during the defer check.
+                Detect a fallback plot draw requested despite a persisted result.
             Why:
-                Fallback rendering is equally disruptive to the Data-tab handoff.
+                The widget-rehydrate path is required when a persisted result exists.
             Inputs:
                 _args: Ignored positional render arguments.
                 _kwargs: Ignored keyword render arguments.
@@ -60160,13 +60152,13 @@ def _regression_test_post_reveal_restore_defers_inactive_solubility_refresh() ->
             self.spec_calls += 1
 
         def _refresh_sol_workflow_layout(self) -> None:
-            """Count forbidden eager layout refresh requests for this regression.
+            """Count the required splash-gated layout refresh for this regression.
 
             Purpose:
-                Detect workflow-layout work requested during inactive-tab deferral.
+                Detect workflow-layout work requested by the startup rehydrate path.
             Why:
-                Layout flushing can trigger the same post-splash Tk stall as a
-                timeline redraw even when plot creation is avoided.
+                Layout flushing belongs under the splash so it cannot create a
+                post-reveal Tk stall.
             Inputs:
                 None.
             Outputs:
@@ -60180,13 +60172,13 @@ def _regression_test_post_reveal_restore_defers_inactive_solubility_refresh() ->
 
     harness = _Harness()
     UnifiedApp._refresh_startup_solubility_views(harness)
-    if not harness._startup_solubility_refresh_pending:
+    if harness._startup_solubility_refresh_pending:
         raise AssertionError(
-            "Post-reveal Data-tab restore should retain one deferred refresh."
+            "Splash-gated startup restore must not retain a deferred refresh."
         )
-    if harness.widget_calls or harness.spec_calls or harness.layout_calls:
+    if harness.widget_calls != 1 or harness.spec_calls or harness.layout_calls != 1:
         raise AssertionError(
-            "Post-reveal Data-tab restore must not render inactive solubility widgets."
+            "Startup must rehydrate Advanced Speciation widgets and layout under splash."
         )
 
 
@@ -79321,8 +79313,8 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
         _regression_test_startup_splash_waits_for_restore_completion,
     ),
     (
-        "Background startup restore defers until interactive reveal",
-        _regression_test_background_startup_restore_is_deferred,
+        "Startup restore remains splash-gated",
+        _regression_test_startup_autorestore_stays_splash_gated,
     ),
     (
         "Autosave restore wait owns one callback",
@@ -79357,8 +79349,8 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
         _regression_test_startup_rust_preflight_ready_status_prompt,
     ),
     (
-        "Startup splash clear schedules background restore",
-        _regression_test_startup_splash_clear_schedules_background_restore,
+        "Startup splash clear has no background restore",
+        _regression_test_startup_splash_clear_has_no_background_restore,
     ),
     (
         "Cycle timeline render failure recovery",
@@ -79721,8 +79713,8 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
         _regression_test_startup_solubility_refresh_uses_widget_rehydrate_path,
     ),
     (
-        "Post-reveal restore defers inactive Analysis refresh",
-        _regression_test_post_reveal_restore_defers_inactive_solubility_refresh,
+        "Startup Analysis refresh completes under splash",
+        _regression_test_startup_solubility_refresh_completes_under_splash,
     ),
     (
         "Startup apply auto-jump suppression",
@@ -87191,23 +87183,23 @@ def _normalize_startup_autorestore_mode(value: Any) -> str:
     """Normalize startup autorestore mode for persistence.
 
     Purpose:
-        Coerce startup restore mode values into one stable set.
+        Coerce current and legacy startup restore values to the splash-gated policy.
     Why:
-        Startup splash gating now supports background restore mode, and settings
-        must remain valid across upgrades and manual edits.
+        Restore-driven Advanced Speciation refreshes must finish before splash
+        teardown so the first exposed workspace is immediately interactive.
     Args:
         value: Incoming settings value for startup autorestore mode.
     Returns:
-        str: One of `"blocking"` or `"background"`.
+        str: The canonical splash-gated `"blocking"` policy token.
     Side Effects:
         None.
     Exceptions:
-        Invalid values fall back to `"background"`.
+        Invalid and legacy values are safely migrated to `"blocking"`.
     """
-    normalized = str(value or "").strip().lower()
-    if normalized not in STARTUP_AUTORESTORE_MODE_OPTIONS:
-        return STARTUP_AUTORESTORE_MODE_BACKGROUND
-    return normalized
+    _ = value
+    # ``background`` remains an accepted persisted legacy token, but never
+    # permits post-reveal restore work that can freeze the newly visible UI.
+    return STARTUP_AUTORESTORE_MODE_BLOCKING
 
 
 def _normalize_perf_cache_limits(value: Any) -> Dict[str, int]:
@@ -89458,7 +89450,7 @@ else:
     settings["startup_background_warmup_budget_ms"] = (
         STARTUP_BACKGROUND_WARMUP_BUDGET_DEFAULT_MS
     )
-    settings["startup_autorestore_mode"] = STARTUP_AUTORESTORE_MODE_BACKGROUND
+    settings["startup_autorestore_mode"] = STARTUP_AUTORESTORE_MODE_BLOCKING
     settings["perf_low_priority_backpressure_enabled"] = True
     settings["perf_low_priority_queue_limit"] = PERF_LOW_PRIORITY_QUEUE_LIMIT_DEFAULT
     settings["perf_cache_limits"] = dict(PERF_CACHE_LIMITS_DEFAULT)
@@ -89493,7 +89485,7 @@ settings["startup_background_warmup_budget_ms"] = max(
     ),
 )
 settings["startup_autorestore_mode"] = _normalize_startup_autorestore_mode(
-    settings.get("startup_autorestore_mode", STARTUP_AUTORESTORE_MODE_BACKGROUND)
+    settings.get("startup_autorestore_mode", STARTUP_AUTORESTORE_MODE_BLOCKING)
 )
 settings["perf_low_priority_backpressure_enabled"] = bool(
     settings.get("perf_low_priority_backpressure_enabled", True)
@@ -110420,14 +110412,10 @@ class UnifiedApp(tk.Tk):
                 ),
             )
 
-        # Background mode must reveal an interactive Data tab before potentially
-        # long autosave data work starts. Blocking mode retains restore-before-
-        # reveal behavior for users who explicitly select it.
-        if self._startup_autorestore_mode() == STARTUP_AUTORESTORE_MODE_BACKGROUND:
-            self._mark_startup_restore_state("deferred")
-        else:
-            self._mark_startup_restore_state("pending")
-            self.after(200, self._restore_last_session_async)
+        # Restore and tab refresh remain covered by the splash. Legacy
+        # background settings normalize to this path before construction.
+        self._mark_startup_restore_state("pending")
+        self.after(200, self._restore_last_session_async)
         self.after(400, self._maybe_warn_gil_reenabled_import)
         try:
             self._startup_loading_poll_after_id = self.after(
@@ -111553,7 +111541,6 @@ class UnifiedApp(tk.Tk):
         self._reveal_main_window_after_startup()
         self._replay_deferred_plot_loading_overlays()
         self._schedule_startup_post_reveal_heavy_tasks()
-        self._start_startup_background_restore()
 
     def _schedule_startup_post_reveal_heavy_tasks(self) -> None:
         """Schedule deferred-heavy startup tasks after splash teardown.
@@ -112831,22 +112818,22 @@ class UnifiedApp(tk.Tk):
         """Return normalized startup autorestore mode from current settings.
 
         Purpose:
-            Resolve whether startup restore is splash-blocking or post-reveal.
+            Resolve the canonical splash-gated startup restore policy.
         Why:
-            Startup gating needs one canonical mode switch so interactive-first
-            reveal can defer heavy restore work without altering restore logic.
+            Restore-driven tab refreshes must finish before the workspace is
+            exposed, eliminating post-reveal UI stalls.
         Inputs:
             None.
         Outputs:
-            str: `"blocking"` or `"background"`.
+            str: Always the canonical `"blocking"` policy token.
         Side Effects:
             None.
         Exceptions:
-            Invalid values are normalized to `"background"`.
+            Invalid and legacy values are normalized to `"blocking"`.
         """
         return _normalize_startup_autorestore_mode(
             settings.get(
-                "startup_autorestore_mode", STARTUP_AUTORESTORE_MODE_BACKGROUND
+                "startup_autorestore_mode", STARTUP_AUTORESTORE_MODE_BLOCKING
             )
         )
 
