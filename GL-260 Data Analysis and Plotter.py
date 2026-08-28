@@ -57333,6 +57333,11 @@ def _regression_test_combined_layout_health_reclaims_horizontal_whitespace() -> 
             and float(fig.subplotpars.right) > original[1]
         ):
             raise AssertionError("Combined horizontal whitespace was not reclaimed.")
+        if float(fig.subplotpars.right) < 0.985:
+            raise AssertionError(
+                "Combined right whitespace should reclaim up to the configured "
+                "frame-clearance limit rather than the legacy 0.98 cap."
+            )
         fig.canvas.draw()
         renderer = fig.canvas.get_renderer()
         for axis in (ax, right, third):
@@ -97532,7 +97537,14 @@ def _layout_health_combined_horizontal_whitespace(
         right_edge = max(right_edges)
         result["right_whitespace_pts"] = max(0.0, (1.0 - right_edge) * fig_w_pts)
         proposed_right = current_right + max(0.0, (1.0 - clearance_frac) - right_edge)
-        result["proposed_right"] = min(0.98, max(current_left + 0.12, proposed_right))
+        # A fixed 0.98 cap left a visible right-side strip on wide canvases.
+        # Cap at the configured clearance instead, so the outer detached label
+        # or colorbar label can approach the frame without clipping.
+        maximum_right = max(current_left + 0.12, 1.0 - clearance_frac)
+        result["proposed_right"] = min(
+            maximum_right,
+            max(current_left + 0.12, proposed_right),
+        )
     return result
 
 
