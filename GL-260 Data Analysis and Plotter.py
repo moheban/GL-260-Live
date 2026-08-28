@@ -57540,6 +57540,7 @@ def _regression_test_combined_layout_suggestion_apply_updates_profile_only() -> 
             """Initialize no-op refresh tracking for the harness."""
             self.combined_deriv_axis_offset = _OffsetVar()
             self.refreshed = False
+            self.refresh_kwargs: Dict[str, Any] = {}
 
         def _mark_plot_layout_dirty(self, _plot_id: str) -> None:
             """Record layout dirty calls without touching UI state."""
@@ -57548,6 +57549,7 @@ def _regression_test_combined_layout_suggestion_apply_updates_profile_only() -> 
         def _refresh_plot_for_plot_id(self, *_args: Any, **_kwargs: Any) -> None:
             """Record refresh calls without rebuilding UI figures."""
             self.refreshed = True
+            self.refresh_kwargs = dict(_kwargs)
 
     original_layout_profiles = copy.deepcopy(settings.get("layout_profiles"))
     original_unrelated = copy.deepcopy(settings.get("combined_temp_axis_label"))
@@ -57592,11 +57594,100 @@ def _regression_test_combined_layout_suggestion_apply_updates_profile_only() -> 
             raise AssertionError("Unrelated combined label setting mutated.")
         if not harness.refreshed:
             raise AssertionError("Apply path should refresh the combined plot.")
+        if not bool(harness.refresh_kwargs.get("force_full_rebuild", False)):
+            raise AssertionError(
+                "Applied Combined layout margins must force a full display rebuild."
+            )
     finally:
         settings["layout_profiles"] = original_layout_profiles
         settings["combined_temp_axis_label"] = original_unrelated
         if original_save is not None:
             globals()["_save_settings_to_disk"] = original_save
+
+
+def _regression_test_combined_layout_suggestion_collection_prefers_current_target() -> (
+    None
+):
+    """Validate wizard collection rejects stale cross-mode preview suggestions.
+
+    Purpose:
+        Reproduce an open export preview that retains an obsolete display
+        recommendation while the active Combined display figure has just been
+        widened by Layout Health.
+    Why:
+        Autofix and Apply must persist the current target's measured display
+        margin, not restore the stale preview margin through source precedence.
+    Inputs:
+        None; creates two isolated Matplotlib figures and a collection harness.
+    Outputs:
+        None; raises AssertionError when target/mode precedence regresses.
+    Side Effects:
+        Attaches figure-local suggestion metadata and closes transient figures.
+    Exceptions:
+        Raises AssertionError when display/export suggestion routing is incorrect.
+    """
+
+    class _CanvasStub:
+        """Expose a display figure through the active-tab canvas contract."""
+
+        def __init__(self, figure: Figure) -> None:
+            """Store the figure returned to the collection helper."""
+            self.figure = figure
+
+    class _Harness:
+        """Provide the minimal Combined suggestion collection dependencies."""
+
+        _combined_layout_suggestions_from_figure = (
+            UnifiedApp._combined_layout_suggestions_from_figure
+        )
+        _collect_combined_layout_suggestions = (
+            UnifiedApp._collect_combined_layout_suggestions
+        )
+
+        def __init__(self, preview_fig: Figure, display_fig: Figure) -> None:
+            """Store the preview and active-display figures for collection."""
+            self._combined_plot_preview_fig = preview_fig
+            self._display_fig = display_fig
+
+        def _find_plot_tab_canvas(self, _plot_key: str) -> Tuple[None, _CanvasStub]:
+            """Return the active Combined display canvas for the regression."""
+            return None, _CanvasStub(self._display_fig)
+
+    preview_fig = Figure()
+    display_fig = Figure()
+    try:
+        preview_fig._gl260_layout_mode = "export"  # type: ignore[attr-defined]
+        preview_fig._gl260_combined_layout_suggestions = {  # type: ignore[attr-defined]
+            "display": {"margins": {"right": 0.90}},
+            "export": {"margins": {"right": 0.84}},
+        }
+        display_fig._gl260_layout_mode = "display"  # type: ignore[attr-defined]
+        display_fig._gl260_combined_layout_suggestions = {  # type: ignore[attr-defined]
+            "display": {"margins": {"right": 0.96}},
+        }
+        suggestions = _Harness(
+            preview_fig,
+            display_fig,
+        )._collect_combined_layout_suggestions(
+            include_hidden_display_check=False,
+            include_hidden_export_check=False,
+            preferred_fig=display_fig,
+            preferred_mode="display",
+        )
+        display_right = float(suggestions["display"]["margins"]["right"])
+        export_right = float(suggestions["export"]["margins"]["right"])
+        if display_right != 0.96:
+            raise AssertionError(
+                "Current Combined display suggestion did not override stale "
+                "preview data."
+            )
+        if export_right != 0.84:
+            raise AssertionError(
+                "Export preview suggestion should remain available only for export."
+            )
+    finally:
+        plt.close(preview_fig)
+        plt.close(display_fig)
 
 
 def _regression_test_cycle_timeline_layout_manager_autofix_reclaims_bottom_whitespace() -> (
@@ -78676,6 +78767,10 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
     (
         "Combined layout suggestion apply updates profile only",
         _regression_test_combined_layout_suggestion_apply_updates_profile_only,
+    ),
+    (
+        "Combined layout suggestion collection prefers current target",
+        _regression_test_combined_layout_suggestion_collection_prefers_current_target,
     ),
     (
         "Cycle Analysis Primary Y selector choices + selection",
@@ -123177,6 +123272,118 @@ class UnifiedApp(tk.Tk):
                 == "fig_combined_triple_axis"
             ]
 
+        def _sync_combined_layout_controls_from_settings() -> None:
+            """Refresh wizard Combined controls from the persisted layout profile.
+
+            Purpose:
+                Replace the dialog's opening values with margins and spacing that
+                were just accepted from a measured layout-health suggestion.
+            Why:
+                Autofix and Apply can persist a wider safe plot area, so leaving
+                the original controls visible falsely suggests the action did not
+                take effect.
+            Inputs:
+                None; uses the surrounding Tk variables and saved combined profile.
+            Outputs:
+                None.
+            Side Effects:
+                Updates display/export margin and spacing Tk variables in the
+                currently open Layout Health Wizard.
+            Exceptions:
+                Invalid or missing values retain their current control value.
+            """
+            profile = _get_layout_profile("fig_combined_triple_axis")
+            mode_bindings = (
+                (
+                    "display",
+                    (
+                        ("left", combined_margin_left_var),
+                        ("right", combined_margin_right_var),
+                        ("top", combined_margin_top_var),
+                        ("bottom", combined_margin_bottom_var),
+                    ),
+                    combined_xlabel_pad_var,
+                    combined_detached_offset_var,
+                    combined_detached_labelpad_var,
+                    combined_colorbar_detached_pad_var,
+                    combined_inner_right_labelpad_var,
+                ),
+                (
+                    "export",
+                    (
+                        ("left", combined_export_margin_left_var),
+                        ("right", combined_export_margin_right_var),
+                        ("top", combined_export_margin_top_var),
+                        ("bottom", combined_export_margin_bottom_var),
+                    ),
+                    combined_export_xlabel_pad_var,
+                    combined_export_detached_offset_var,
+                    combined_export_detached_labelpad_var,
+                    combined_export_colorbar_detached_pad_var,
+                    combined_export_inner_right_labelpad_var,
+                ),
+            )
+            for (
+                mode_key,
+                margin_bindings,
+                xlabel_pad_var,
+                detached_offset_var,
+                detached_labelpad_var,
+                colorbar_pad_var,
+                inner_right_pad_var,
+            ) in mode_bindings:
+                section = _layout_profile_section(profile, mode_key)
+                margins = _normalize_layout_margins(
+                    section.get("margins"),
+                    _default_layout_margins("fig_combined_triple_axis", mode_key),
+                )
+                axis_pads = section.get("axis_labelpads")
+                if not isinstance(axis_pads, Mapping):
+                    axis_pads = {}
+                for margin_key, margin_var in margin_bindings:
+                    try:
+                        margin_var.set(float(margins[margin_key]))
+                    except Exception:
+                        continue
+                control_values = (
+                    (
+                        xlabel_pad_var,
+                        _safe_float(
+                            section.get("xlabel_pad_pts"),
+                            _safe_float(axis_pads.get("x"), None),
+                        ),
+                    ),
+                    (
+                        detached_offset_var,
+                        _safe_float(section.get("detached_spine_offset"), None),
+                    ),
+                    (
+                        detached_labelpad_var,
+                        _safe_float(section.get("detached_labelpad"), None),
+                    ),
+                    (
+                        colorbar_pad_var,
+                        _safe_float(section.get("colorbar_detached_pad_pts"), None),
+                    ),
+                    (
+                        inner_right_pad_var,
+                        _safe_float(
+                            axis_pads.get("right"),
+                            _safe_float(
+                                axis_pads.get(str(combined_right_semantic or "")),
+                                None,
+                            ),
+                        ),
+                    ),
+                )
+                for control_var, value in control_values:
+                    if value is None or not math.isfinite(float(value)):
+                        continue
+                    try:
+                        control_var.set(float(value))
+                    except Exception:
+                        continue
+
         def _apply_combined_suggestions_from_wizard(
             *,
             include_tweaks: bool,
@@ -123202,8 +123409,12 @@ class UnifiedApp(tk.Tk):
             """
             if not _combined_targets():
                 return False
+            combined_targets = _combined_targets()
+            preferred_target = combined_targets[0] if combined_targets else {}
             suggestions = self._collect_combined_layout_suggestions(
-                include_hidden_export_check=True
+                include_hidden_export_check=True,
+                preferred_fig=preferred_target.get("fig"),
+                preferred_mode=preferred_target.get("mode"),
             )
             if bool(include_tweaks):
                 staged_suggestions = _current_combined_layout_values()
@@ -123213,7 +123424,10 @@ class UnifiedApp(tk.Tk):
                     suggestions[mode_key] = merged_payload
             if not suggestions:
                 return False
-            return self._apply_combined_layout_suggestions_to_settings(suggestions)
+            applied = self._apply_combined_layout_suggestions_to_settings(suggestions)
+            if applied:
+                _sync_combined_layout_controls_from_settings()
+            return applied
 
         def _apply_timeline_suggestions_from_wizard(
             *,
@@ -138885,6 +139099,8 @@ class UnifiedApp(tk.Tk):
         *,
         include_hidden_export_check: bool = True,
         include_hidden_display_check: bool = True,
+        preferred_fig: Optional[Figure] = None,
+        preferred_mode: Optional[str] = None,
     ) -> Dict[str, Dict[str, Any]]:
         """Collect current display/export combined layout suggestions.
 
@@ -138899,6 +139115,11 @@ class UnifiedApp(tk.Tk):
                 if no export suggestion is available yet.
             include_hidden_display_check: When True, run/build a display-mode
                 measurement when no display suggestion is available yet.
+            preferred_fig: Figure most recently measured by the invoking layout
+                workflow; its matching mode must take precedence over stale
+                preview suggestions.
+            preferred_mode: Layout mode measured on ``preferred_fig``. Invalid
+                values fall back to the figure's recorded layout mode.
         Outputs:
             Dict keyed by `display` and/or `export` with suggested layout updates.
         Side Effects:
@@ -138908,20 +139129,72 @@ class UnifiedApp(tk.Tk):
             Hidden-check failures are ignored; available suggestions are returned.
         """
         suggestions: Dict[str, Dict[str, Any]] = {}
+
+        def _mode_payload_from_figure(
+            source_fig: Optional[Figure],
+            requested_mode: Optional[str] = None,
+        ) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+            """Return one figure's suggestion only for its authoritative mode.
+
+            Purpose:
+                Keep a figure's historic display/export payloads from being
+                mistaken for a recommendation produced by its current canvas.
+            Why:
+                An open export preview can retain an older display suggestion;
+                allowing that payload to win causes wizard Apply to restore the
+                stale margin instead of the just-measured display expansion.
+            Inputs:
+                source_fig: Candidate Combined figure that owns suggestions.
+                requested_mode: Explicit mode from the current workflow, when
+                    available.
+            Outputs:
+                A ``(mode, payload)`` pair, or ``(None, None)`` when unavailable.
+            Side Effects:
+                None.
+            Exceptions:
+                Invalid figure metadata and payloads return no suggestion.
+            """
+            if source_fig is None:
+                return None, None
+            mode_value = (
+                str(
+                    requested_mode
+                    or getattr(source_fig, "_gl260_layout_mode", "")
+                    or ""
+                )
+                .strip()
+                .lower()
+            )
+            if mode_value not in {"display", "export"}:
+                return None, None
+            payload = self._combined_layout_suggestions_from_figure(source_fig).get(
+                mode_value
+            )
+            return (
+                mode_value,
+                copy.deepcopy(dict(payload)) if isinstance(payload, Mapping) else None,
+            )
+
+        preferred_mode_value, preferred_payload = _mode_payload_from_figure(
+            preferred_fig,
+            preferred_mode,
+        )
+        if preferred_mode_value is not None and preferred_payload is not None:
+            # The Wizard just measured this exact target, so it supersedes an
+            # older recommendation retained by another preview canvas.
+            suggestions[preferred_mode_value] = preferred_payload
         preview_fig = getattr(self, "_combined_plot_preview_fig", None)
-        for mode_key, payload in self._combined_layout_suggestions_from_figure(
-            preview_fig
-        ).items():
-            suggestions[mode_key] = payload
+        preview_mode, preview_payload = _mode_payload_from_figure(preview_fig)
+        if preview_mode is not None and preview_payload is not None:
+            suggestions.setdefault(preview_mode, preview_payload)
         try:
             _display_frame, display_canvas = self._find_plot_tab_canvas("fig_combined")
             display_fig = getattr(display_canvas, "figure", None)
         except Exception:
             display_fig = None
-        for mode_key, payload in self._combined_layout_suggestions_from_figure(
-            display_fig
-        ).items():
-            suggestions.setdefault(mode_key, payload)
+        display_mode, display_payload = _mode_payload_from_figure(display_fig)
+        if display_mode is not None and display_payload is not None:
+            suggestions.setdefault(display_mode, display_payload)
         if include_hidden_display_check and "display" not in suggestions:
             if display_fig is not None:
                 try:
@@ -139305,6 +139578,7 @@ class UnifiedApp(tk.Tk):
                 reason="Applying Layout Elements...",
                 rearm_overlay=True,
                 capture_combined_legend=False,
+                force_full_rebuild=True,
             )
         except Exception:
             pass
