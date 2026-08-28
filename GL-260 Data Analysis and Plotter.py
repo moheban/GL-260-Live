@@ -45539,6 +45539,103 @@ def _regression_test_background_startup_restore_is_deferred() -> None:
         )
 
 
+def _regression_test_autosave_restore_wait_uses_one_callback() -> None:
+    """Validate autosave completion polling does not redraw or duplicate callbacks.
+
+    Purpose:
+        Exercise the pending autosave completion path with repeated callers.
+    Why:
+        Repeating the generic running-state transition repainted restore status on
+        every poll, producing a visible restore/apply loop during large restores.
+    Inputs:
+        None; uses an isolated callback-capture harness.
+    Outputs:
+        None.
+    Side Effects:
+        Invokes `_complete_startup_autosave_restore_when_ready` against in-memory
+        state and executes the captured continuation once.
+    Exceptions:
+        Raises AssertionError when polling queues duplicate callbacks or does not
+        transition to success after the deferred apply state settles.
+    """
+
+    class _LabelStub:
+        """Capture status-label writes from autosave completion."""
+
+        def __init__(self) -> None:
+            """Initialize the list of configured status messages."""
+            self.messages: list[str] = []
+
+        def config(self, *, text: str) -> None:
+            """Record one status-label message without creating Tk widgets."""
+            self.messages.append(str(text))
+
+    class _Harness:
+        """Expose the minimal autosave-completion contract for this regression."""
+
+        _complete_startup_autosave_restore_when_ready = (
+            UnifiedApp._complete_startup_autosave_restore_when_ready
+        )
+
+        def __init__(self) -> None:
+            """Initialize active apply state and callback/status recorders."""
+            self._is_applying_columns = True
+            self._profile_restore_pending: dict[str, Any] | None = {"pending": True}
+            self._startup_restore_state = "running"
+            self._startup_restore_post_refresh_done = False
+            self._startup_autosave_completion_after_id: str | None = None
+            self.after_calls: list[tuple[int, Callable[[], None]]] = []
+            self.state_calls: list[str] = []
+            self.progress_updates: list[dict[str, Any]] = []
+            self.lbl_status = _LabelStub()
+            self.refresh_calls = 0
+            self.finalize_calls = 0
+
+        def _mark_startup_restore_state(self, state: str, **_kwargs: Any) -> None:
+            """Record state changes and mirror the terminal state for assertions."""
+            self.state_calls.append(str(state))
+            self._startup_restore_state = str(state)
+
+        def _update_startup_loading_splash_progress(self, **kwargs: Any) -> None:
+            """Record splash progress updates emitted by the wait owner."""
+            self.progress_updates.append(dict(kwargs))
+
+        def after(self, delay_ms: int, callback: Callable[[], None]) -> str:
+            """Capture one Tk-style continuation and return its deterministic id."""
+            self.after_calls.append((int(delay_ms), callback))
+            return f"after-{len(self.after_calls)}"
+
+        def _refresh_startup_solubility_views(self) -> None:
+            """Record terminal refresh work without touching application widgets."""
+            self.refresh_calls += 1
+
+        def _finalize_post_reveal_startup_restore(self) -> None:
+            """Record the post-reveal Data-tab handoff request."""
+            self.finalize_calls += 1
+
+    harness = _Harness()
+    UnifiedApp._complete_startup_autosave_restore_when_ready(
+        harness, "profiles/_autosave_last_workspace.json", "Autosave workspace restored."
+    )
+    UnifiedApp._complete_startup_autosave_restore_when_ready(
+        harness, "profiles/_autosave_last_workspace.json", "Autosave workspace restored."
+    )
+    if len(harness.after_calls) != 1:
+        raise AssertionError("Autosave wait should own exactly one pending callback.")
+    if harness.state_calls:
+        raise AssertionError("An already-running autosave wait should not repaint restore state.")
+    if len(harness.progress_updates) != 1:
+        raise AssertionError("Autosave wait should publish one stable applying message.")
+
+    harness._is_applying_columns = False
+    harness._profile_restore_pending = None
+    harness.after_calls[0][1]()
+    if harness.state_calls != ["success"]:
+        raise AssertionError("Settled autosave work should transition to success once.")
+    if harness.refresh_calls != 1 or harness.finalize_calls != 1:
+        raise AssertionError("Settled autosave work should run terminal refresh and handoff once.")
+
+
 def _regression_test_startup_completion_finalizes_data_tab_after_restore() -> None:
     """Validate startup completion path re-selects Data tab after restore churn.
 
@@ -46402,15 +46499,15 @@ def _regression_test_startup_rust_preflight_ready_status_prompt() -> None:
         )
 
 
-def _regression_test_startup_splash_clear_skips_post_reveal_tab_warmup() -> None:
-    """Validate splash teardown skips post-reveal background tab warmup scheduling.
+def _regression_test_startup_splash_clear_schedules_background_restore() -> None:
+    """Validate splash teardown launches the configured background restore once.
 
     Purpose:
-        Ensure startup splash clear no longer schedules background heavy-tab warmup
-        after reveal.
+    Ensure background autosave restoration begins only after the interactive
+    startup handoff and that heavy-tab warmup remains unscheduled here.
     Why:
-        Full heavy-tab warmup should complete behind splash so post-reveal tab
-        navigation is not disrupted by background tab-cycling churn.
+    Background restore is the default policy and must not run while the splash
+    is active; the separate heavy-tab warmup remains intentionally suppressed.
     Inputs:
         None.
     Outputs:
@@ -46522,9 +46619,9 @@ def _regression_test_startup_splash_clear_skips_post_reveal_tab_warmup() -> None
         raise AssertionError(
             "Startup splash clear should schedule post-reveal heavy tasks exactly once."
         )
-    if harness.background_restore_calls != 0:
+    if harness.background_restore_calls != 1:
         raise AssertionError(
-            "Startup splash clear must not schedule restore after startup completes."
+            "Startup splash clear should schedule one background restore after reveal."
         )
     if harness.background_warmup_calls != 0:
         raise AssertionError(
@@ -79151,6 +79248,10 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
         _regression_test_background_startup_restore_is_deferred,
     ),
     (
+        "Autosave restore wait owns one callback",
+        _regression_test_autosave_restore_wait_uses_one_callback,
+    ),
+    (
         "Loading footer timer and progress contracts",
         _regression_test_loading_footer_timer_and_progress_contracts,
     ),
@@ -79179,8 +79280,8 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
         _regression_test_startup_rust_preflight_ready_status_prompt,
     ),
     (
-        "Startup splash clear skips post-reveal tab warmup",
-        _regression_test_startup_splash_clear_skips_post_reveal_tab_warmup,
+        "Startup splash clear schedules background restore",
+        _regression_test_startup_splash_clear_schedules_background_restore,
     ),
     (
         "Cycle timeline render failure recovery",
@@ -107646,6 +107747,7 @@ class UnifiedApp(tk.Tk):
         self._startup_restore_post_refresh_done = False
         self._startup_background_restore_started = False
         self._startup_background_restore_after_id = None
+        self._startup_autosave_completion_after_id = None
         self._startup_solubility_refresh_pending = False
         self._startup_rust_preflight_after_id = None
         self._startup_rust_preflight_task_id: Optional[int] = None
@@ -109994,12 +110096,14 @@ class UnifiedApp(tk.Tk):
                 ),
             )
 
-        # Autosave restore must participate in the reveal gate.  The
-        # Restore must begin while the splash is still active.  Treating it as
-        # post-reveal work allowed plot/profile callbacks to select Plot Settings
-        # after Data had already been handed to the user.
-        self._mark_startup_restore_state("pending")
-        self.after(200, self._restore_last_session_async)
+        # Background mode must reveal an interactive Data tab before potentially
+        # long autosave data work starts. Blocking mode retains restore-before-
+        # reveal behavior for users who explicitly select it.
+        if self._startup_autorestore_mode() == STARTUP_AUTORESTORE_MODE_BACKGROUND:
+            self._mark_startup_restore_state("deferred")
+        else:
+            self._mark_startup_restore_state("pending")
+            self.after(200, self._restore_last_session_async)
         self.after(400, self._maybe_warn_gil_reenabled_import)
         try:
             self._startup_loading_poll_after_id = self.after(
@@ -111125,6 +111229,7 @@ class UnifiedApp(tk.Tk):
         self._reveal_main_window_after_startup()
         self._replay_deferred_plot_loading_overlays()
         self._schedule_startup_post_reveal_heavy_tasks()
+        self._start_startup_background_restore()
 
     def _schedule_startup_post_reveal_heavy_tasks(self) -> None:
         """Schedule deferred-heavy startup tasks after splash teardown.
@@ -112837,10 +112942,9 @@ class UnifiedApp(tk.Tk):
             getattr(self, "_startup_rust_preflight_completed", False)
         )
         interactive_tabs_ready = False
-        # Do not reveal the workspace until restore has reached a terminal state.
-        # A deferred state is retained only for backward-compatible settings, not
-        # as permission to expose a partially restored UI.
-        restore_ready = restore_state in {"success", "failed", "skipped"}
+        # A background restore explicitly owns its post-reveal work; it must not
+        # hold the splash gate while the Data tab is already safe to use.
+        restore_ready = restore_state in {"deferred", "success", "failed", "skipped"}
         if restore_ready and not bool(
             getattr(self, "_startup_restore_post_refresh_done", False)
         ):
@@ -113704,26 +113808,41 @@ class UnifiedApp(tk.Tk):
         if bool(getattr(self, "_is_applying_columns", False)) or bool(
             getattr(self, "_profile_restore_pending", None)
         ):
-            self._mark_startup_restore_state("running", path=autosave_path_text)
-            self._update_startup_loading_splash_progress(
-                progress=78.0,
-                message="Applying autosave workspace...",
-                detail=(
-                    "Autosave profile loaded.\n"
-                    "Waiting for column/data restore to finish before startup can continue."
-                ),
-            )
-            try:
-                self.after(
-                    90,
-                    lambda: self._complete_startup_autosave_restore_when_ready(
-                        autosave_path_text, status_text
+            # One scheduled continuation owns the wait. Re-marking `running` on
+            # every poll briefly repainted "Restoring" before "Applying", making
+            # normal large-workbook processing appear to be a restore loop.
+            if getattr(self, "_startup_autosave_completion_after_id", None) is None:
+                current_state = str(
+                    getattr(self, "_startup_restore_state", "") or ""
+                ).strip().lower()
+                if current_state != "running":
+                    self._mark_startup_restore_state("running", path=autosave_path_text)
+                self._update_startup_loading_splash_progress(
+                    progress=78.0,
+                    message="Applying autosave workspace...",
+                    detail=(
+                        "Autosave profile loaded.\n"
+                        "Waiting for column/data restore to finish before startup can continue."
                     ),
                 )
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                self._mark_startup_restore_state("success", path=autosave_path_text)
+
+                def _continue_autosave_restore() -> None:
+                    """Clear the timer owner before checking autosave progress again."""
+                    self._startup_autosave_completion_after_id = None
+                    self._complete_startup_autosave_restore_when_ready(
+                        autosave_path_text, status_text
+                    )
+
+                try:
+                    self._startup_autosave_completion_after_id = self.after(
+                        90, _continue_autosave_restore
+                    )
+                except Exception:
+                    # Best-effort guard; do not let a missing Tk timer stall startup.
+                    self._startup_autosave_completion_after_id = None
+                    self._mark_startup_restore_state("success", path=autosave_path_text)
             return
+        self._startup_autosave_completion_after_id = None
         self._mark_startup_restore_state("success", path=autosave_path_text)
         try:
             self.lbl_status.config(text=status_text)
