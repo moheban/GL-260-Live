@@ -97506,7 +97506,17 @@ def _layout_health_combined_horizontal_whitespace(
             right_edges.append(float(primary_position.x1))
     except Exception:
         pass
-    colorbar_bbox = _layout_health_bbox_in_fig(fig, colorbar_axis, renderer)
+    colorbar_bbox = None
+    if colorbar_axis is not None:
+        try:
+            # Axes window bounds exclude the colorbar's exterior tick and label
+            # column; use its tight bounds so the right whitespace calculation
+            # reaches the visible "External Temperature" label.
+            tight_bbox = colorbar_axis.get_tightbbox(renderer)
+            if tight_bbox is not None:
+                colorbar_bbox = tight_bbox.transformed(fig.transFigure.inverted())
+        except Exception:
+            colorbar_bbox = _layout_health_bbox_in_fig(fig, colorbar_axis, renderer)
     if colorbar_bbox is not None:
         try:
             right_edges.append(float(colorbar_bbox.x1))
@@ -97524,6 +97534,63 @@ def _layout_health_combined_horizontal_whitespace(
         proposed_right = current_right + max(0.0, (1.0 - clearance_frac) - right_edge)
         result["proposed_right"] = min(0.98, max(current_left + 0.12, proposed_right))
     return result
+
+
+def _center_combined_title_to_visual_envelope(fig: Figure) -> None:
+    """Center the Combined axes title over all visible plot-side geometry.
+
+    Purpose:
+        Reposition the axes-bound Combined title against the rendered envelope
+        of the primary, detached axes, and optional temperature colorbar.
+    Why:
+        Matplotlib centers an ``Axes.set_title`` artist over its own axes, which
+        leaves the title visually offset when the Combined plot adds exterior
+        right-side axes or a colorbar.
+    Inputs:
+        fig: Rendered Combined triple-axis figure.
+    Outputs:
+        None.
+    Side Effects:
+        Updates the figure-local title artist's axes-coordinate x position.
+    Exceptions:
+        Missing artists or unavailable renderers leave the title unchanged.
+    """
+    if fig is None:
+        return
+    title_artist = getattr(fig, "_gl260_title_text", None)
+    title_axis = getattr(title_artist, "axes", None)
+    if title_artist is None or title_axis is None:
+        return
+    try:
+        canvas = fig.canvas or FigureCanvasAgg(fig)
+        canvas.draw()
+        renderer = canvas.get_renderer()
+    except Exception:
+        return
+    bounds: List[Bbox] = []
+    for axis in list(getattr(fig, "axes", []) or []):
+        if getattr(axis, "_gl260_legend_only", False):
+            continue
+        role = str(getattr(axis, "_gl260_axis_role", "") or "").strip().lower()
+        is_colorbar = bool(getattr(axis, "_gl260_temperature_colorbar", False))
+        if role not in {"primary", "right", "third"} and not is_colorbar:
+            continue
+        try:
+            tight_bbox = axis.get_tightbbox(renderer)
+            if tight_bbox is not None:
+                bounds.append(tight_bbox.transformed(fig.transFigure.inverted()))
+        except Exception:
+            continue
+    if not bounds:
+        return
+    envelope = Bbox.union(bounds)
+    center_x = float((envelope.x0 + envelope.x1) / 2.0)
+    try:
+        display_x = fig.transFigure.transform((center_x, 0.5))[0]
+        title_x = float(title_axis.transAxes.inverted().transform((display_x, 0.5))[0])
+        title_artist.set_x(title_x)
+    except Exception:
+        pass
 
 
 def _layout_health_record_combined_suggestion(
@@ -102177,6 +102244,7 @@ def _finalize_combined_rendered_layout(fig: Figure, axis: Axes) -> Dict[str, Any
         result["bottom_band"] = packing_result
         if bool(packing_result.get("applied", False)):
             result["applied"] = True
+        _center_combined_title_to_visual_envelope(fig)
         fig.canvas.draw()
         fig._gl260_last_layout_health_result = result  # type: ignore[attr-defined]
     except Exception as exc:
