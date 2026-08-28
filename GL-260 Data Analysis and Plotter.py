@@ -57278,6 +57278,74 @@ def _regression_test_combined_layout_health_autofix_resolves_swapped_axis_collis
             ]
 
 
+def _regression_test_combined_layout_health_reclaims_horizontal_whitespace() -> None:
+    """Validate Combined layout health widens a slack-filled live plot safely.
+
+    Purpose:
+        Reproduce the exterior blank bands visible around a triple-axis plot.
+    Why:
+        Layout Health must reclaim available width without clipping rendered
+        left/right y labels or mutating a persisted profile.
+    Inputs:
+        None; creates an isolated Agg figure with deliberately narrow margins.
+    Outputs:
+        None; raises AssertionError when detection or runtime correction fails.
+    Side Effects:
+        Builds, draws, mutates, and closes one transient Matplotlib figure.
+    Exceptions:
+        Raises AssertionError for missing issue tokens, margin movement, or
+        unsafe rendered label geometry.
+    """
+    fig = Figure(figsize=(16.0, 8.0), dpi=100)
+    FigureCanvasAgg(fig)
+    ax = fig.add_subplot(111)
+    ax._gl260_axis_role = "primary"  # type: ignore[attr-defined]
+    ax.plot([0.0, 1.0], [0.0, 1.0])
+    ax.set_ylabel("Pressure (PSIg)", labelpad=12.0)
+    right = ax.twinx()
+    right._gl260_axis_role = "right"  # type: ignore[attr-defined]
+    right.set_ylabel("First Derivative Moving Average", labelpad=12.0)
+    third = ax.twinx()
+    third._gl260_axis_role = "third"  # type: ignore[attr-defined]
+    third.spines["right"].set_position(("axes", 1.08))
+    third.set_ylabel("External Temperature (°C)", labelpad=12.0)
+    fig._gl260_plot_id = "fig_combined_triple_axis"  # type: ignore[attr-defined]
+    fig._gl260_layout_mode = "display"  # type: ignore[attr-defined]
+    fig.subplots_adjust(left=0.24, right=0.70, bottom=0.16, top=0.90)
+    original = (float(fig.subplotpars.left), float(fig.subplotpars.right))
+    try:
+        result = layout_health_autofix(
+            fig,
+            "fig_combined_triple_axis",
+            "display",
+            {
+                "layout_health_autofix_enabled": True,
+                "layout_health_check_axis_label_conflicts": True,
+                "combined_layout_health_edge_clearance_pts": 10.0,
+            },
+        )
+        detected = set(result.get("detected_issues", []) or [])
+        expected = {"combined_left_whitespace_high", "combined_right_whitespace_high"}
+        if not expected.issubset(detected):
+            raise AssertionError(f"Expected horizontal whitespace issues, got {detected!r}.")
+        if not (
+            float(fig.subplotpars.left) < original[0]
+            and float(fig.subplotpars.right) > original[1]
+        ):
+            raise AssertionError("Combined horizontal whitespace was not reclaimed.")
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        for axis in (ax, right, third):
+            label_bbox = _layout_health_bbox_in_fig(fig, axis.yaxis.get_label(), renderer)
+            if label_bbox is None or label_bbox.x0 < -1e-3 or label_bbox.x1 > 1.001:
+                raise AssertionError("Combined widening clipped a y-axis label.")
+        metrics = result.get("combined_horizontal_whitespace") or {}
+        if metrics.get("proposed_left") is None or metrics.get("proposed_right") is None:
+            raise AssertionError("Horizontal audit did not report proposed margins.")
+    finally:
+        plt.close(fig)
+
+
 def _regression_test_combined_layout_health_detects_primary_left_clipping() -> None:
     """Validate combined layout health catches primary y-label left clipping.
 
@@ -78537,6 +78605,10 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
         _regression_test_combined_authoritative_bottom_margin_not_reclaimed,
     ),
     (
+        "Combined horizontal whitespace reclaim",
+        _regression_test_combined_layout_health_reclaims_horizontal_whitespace,
+    ),
+    (
         "Combined primary y-label left clipping detection",
         _regression_test_combined_layout_health_detects_primary_left_clipping,
     ),
@@ -83817,9 +83889,21 @@ def draw_temperature_background(ax: Axes, visual: TemperatureVisual) -> Any:
         source_temp = source_temp[unique_indices]
         if source_x.size < 2:
             return None
+        # Agg draws this image column-by-column. Limit the display-only field to
+        # roughly two columns per physical canvas pixel so a 120k-row import does
+        # not recreate a 120k-column raster after the traces were decimated.
+        try:
+            axis_width_fraction = max(float(ax.get_position().width), 0.01)
+            display_width_px = max(
+                256,
+                int(float(ax.figure.get_size_inches()[0]) * float(ax.figure.dpi) * axis_width_fraction * 2.0),
+            )
+        except Exception:
+            display_width_px = 2048
+        display_count = min(source_x.size, display_width_px)
         # `imshow` spaces columns uniformly; resampling onto the displayed time
         # range prevents irregular source intervals from collapsing into stripes.
-        display_x = np.linspace(float(x0), float(x1), source_x.size)
+        display_x = np.linspace(float(x0), float(x1), display_count)
         display_temp = np.interp(display_x, source_x, source_temp)
         field = np.broadcast_to(display_temp[np.newaxis, :], (2, display_temp.size))
         image = ax.imshow(
@@ -97351,6 +97435,97 @@ def _layout_health_combined_right_axis_metrics(
     }
 
 
+def _layout_health_combined_horizontal_whitespace(
+    fig: Figure,
+    renderer: Any,
+    axis_metrics: Mapping[str, Mapping[str, Any]],
+    *,
+    edge_clearance_pts: float,
+    colorbar_axis: Optional[Axes] = None,
+) -> Dict[str, Optional[float]]:
+    """Measure reclaimable Combined left and right exterior whitespace.
+
+    Purpose:
+        Convert rendered y-label, tick-label, detached-spine, and colorbar
+        geometry into safe figure-margin suggestions for the Combined plot.
+    Why:
+        Fixed profile margins can leave wide blank bands beside readable labels;
+        only the rendered outer extents reveal how much plotting width is safe
+        to reclaim at the current canvas size.
+    Inputs:
+        fig: Rendered Combined figure.
+        renderer: Active Matplotlib renderer used for artist extents.
+        axis_metrics: Role-keyed label/tick/spine measurements.
+        edge_clearance_pts: Minimum window-frame clearance to preserve.
+        colorbar_axis: Optional managed temperature colorbar axes.
+    Outputs:
+        Mapping with measured whitespace and proposed subplot `left`/`right`
+        values, or `None` values when geometry cannot be measured.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid artists and coordinates are skipped so layout health remains
+        best-effort.
+    """
+    result: Dict[str, Optional[float]] = {
+        "left_whitespace_pts": None,
+        "right_whitespace_pts": None,
+        "proposed_left": None,
+        "proposed_right": None,
+    }
+    if fig is None or renderer is None:
+        return result
+    try:
+        fig_w_pts = max(float(fig.get_size_inches()[0]) * 72.0, 1.0)
+        current_left = float(fig.subplotpars.left)
+        current_right = float(fig.subplotpars.right)
+    except Exception:
+        return result
+    left_edges: List[float] = []
+    right_edges: List[float] = []
+    for metrics in axis_metrics.values():
+        for key in ("label_bbox", "ticks_bbox"):
+            bbox = metrics.get(key)
+            if bbox is None:
+                continue
+            try:
+                left_edges.append(float(bbox.x0))
+                right_edges.append(float(bbox.x1))
+            except Exception:
+                continue
+        try:
+            spine_x = metrics.get("spine_x_fig")
+            if spine_x is not None and math.isfinite(float(spine_x)):
+                right_edges.append(float(spine_x))
+        except Exception:
+            continue
+    try:
+        primary_position = axis_metrics.get("primary", {}).get("axis_pos")
+        if primary_position is not None:
+            left_edges.append(float(primary_position.x0))
+            right_edges.append(float(primary_position.x1))
+    except Exception:
+        pass
+    colorbar_bbox = _layout_health_bbox_in_fig(fig, colorbar_axis, renderer)
+    if colorbar_bbox is not None:
+        try:
+            right_edges.append(float(colorbar_bbox.x1))
+        except Exception:
+            pass
+    clearance_frac = max(0.0, float(edge_clearance_pts)) / fig_w_pts
+    if left_edges:
+        left_edge = min(left_edges)
+        result["left_whitespace_pts"] = max(0.0, left_edge * fig_w_pts)
+        proposed_left = current_left - max(0.0, left_edge - clearance_frac)
+        result["proposed_left"] = max(0.02, min(current_right - 0.12, proposed_left))
+    if right_edges:
+        right_edge = max(right_edges)
+        result["right_whitespace_pts"] = max(0.0, (1.0 - right_edge) * fig_w_pts)
+        proposed_right = current_right + max(0.0, (1.0 - clearance_frac) - right_edge)
+        result["proposed_right"] = min(0.98, max(current_left + 0.12, proposed_right))
+    return result
+
+
 def _layout_health_record_combined_suggestion(
     fig: Figure,
     mode: str,
@@ -98454,6 +98629,9 @@ def layout_health_autofix(
         combined_label_gap_pts = None
         combined_label_axis_gap_pts = None
         combined_right_margin_whitespace_pts = None
+        combined_left_whitespace_pts = None
+        combined_right_whitespace_pts = None
+        combined_horizontal_metrics: Dict[str, Optional[float]] = {}
         bottom_whitespace_pts = None
         bottom_label_band_overlap_pts = None
         snapped_lower_band_gap_pts = None
@@ -98757,6 +98935,31 @@ def layout_health_autofix(
                     and current_right_margin < 0.992
                 ):
                     issues.append("combined_right_margin_whitespace_high")
+            combined_horizontal_metrics = _layout_health_combined_horizontal_whitespace(
+                fig,
+                renderer,
+                combined_axis_metrics,
+                edge_clearance_pts=float(combined_edge_clearance_pts),
+                colorbar_axis=colorbar_axis if isinstance(colorbar_axis, Axes) else None,
+            )
+            combined_left_whitespace_pts = combined_horizontal_metrics.get(
+                "left_whitespace_pts"
+            )
+            combined_right_whitespace_pts = combined_horizontal_metrics.get(
+                "right_whitespace_pts"
+            )
+            if (
+                combined_left_whitespace_pts is not None
+                and combined_left_whitespace_pts
+                > float(combined_edge_clearance_pts) + 0.25
+            ):
+                issues.append("combined_left_whitespace_high")
+            if (
+                combined_right_whitespace_pts is not None
+                and combined_right_whitespace_pts
+                > float(combined_edge_clearance_pts) + 0.25
+            ):
+                issues.append("combined_right_whitespace_high")
         if legend_conflict_checks_enabled and timeline_top_legend_bbox is not None:
             if (
                 timeline_top_legend_bbox.y0 < -0.001
@@ -98811,6 +99014,41 @@ def layout_health_autofix(
         )
 
         adjusted = False
+        if combined_mode and (
+            "combined_left_whitespace_high" in issues
+            or "combined_right_whitespace_high" in issues
+        ):
+            try:
+                current_left = float(fig.subplotpars.left)
+                current_right = float(fig.subplotpars.right)
+                target_left = float(
+                    combined_horizontal_metrics.get("proposed_left") or current_left
+                )
+                target_right = float(
+                    combined_horizontal_metrics.get("proposed_right") or current_right
+                )
+                if "combined_left_whitespace_high" not in issues:
+                    target_left = current_left
+                if "combined_right_whitespace_high" not in issues:
+                    target_right = current_right
+                if target_left < target_right - 0.12 and (
+                    abs(target_left - current_left) > 1e-6
+                    or abs(target_right - current_right) > 1e-6
+                ):
+                    # Preserve rendered outer-label clearance while widening only
+                    # this live figure; profile values change only through Wizard apply.
+                    fig.subplots_adjust(left=target_left, right=target_right)
+                    if layout_mgr is not None:
+                        layout_mgr._baseline_left = float(target_left)
+                        layout_mgr._baseline_right = float(target_right)
+                    _layout_health_record_combined_suggestion(
+                        fig,
+                        mode_norm,
+                        margins={"left": target_left, "right": target_right},
+                    )
+                    adjusted = True
+            except Exception:
+                pass
         if (
             "combined_snapped_lower_band_gap_high" in issues
             and snapped_lower_band_gap_pts is not None
@@ -100023,6 +100261,12 @@ def layout_health_autofix(
     except Exception:
         result["elapsed_ms"] = 0.0
     if combined_mode:
+        result["combined_horizontal_whitespace"] = {
+            "left_pts": combined_left_whitespace_pts,
+            "right_pts": combined_right_whitespace_pts,
+            "proposed_left": combined_horizontal_metrics.get("proposed_left"),
+            "proposed_right": combined_horizontal_metrics.get("proposed_right"),
+        }
         suggestions = getattr(fig, "_gl260_combined_layout_suggestions", None)
         if isinstance(suggestions, Mapping):
             result["suggestions"] = copy.deepcopy(dict(suggestions))
@@ -121603,6 +121847,20 @@ class UnifiedApp(tk.Tk):
                     suggestion_note = (
                         " suggestion=move plot band down via bottom margin"
                     )
+                horizontal_payload = result.get("combined_horizontal_whitespace")
+                if isinstance(horizontal_payload, Mapping):
+                    left_pts = _safe_float(horizontal_payload.get("left_pts"), None)
+                    right_pts = _safe_float(horizontal_payload.get("right_pts"), None)
+                    if left_pts is not None or right_pts is not None:
+                        suggestion_note += (
+                            " horizontal whitespace="
+                            f"left {float(left_pts or 0.0):.1f} pt, "
+                            f"right {float(right_pts or 0.0):.1f} pt"
+                        )
+                    if isinstance(margins_payload, Mapping) and (
+                        "left" in margins_payload or "right" in margins_payload
+                    ):
+                        suggestion_note += " (plot width widened)"
             pass_count = int(result.get("passes", 0))
             lines.append(
                 f"{plot_id_value} ({mode_value}): passes={pass_count} "
@@ -250223,7 +250481,11 @@ class UnifiedApp(tk.Tk):
         """
         build_lock = getattr(self, "_combined_figure_build_lock", None)
         lock_context = build_lock if build_lock is not None else contextlib.nullcontext()
+        build_started = time.perf_counter() if isinstance(packet.perf, dict) else None
         with lock_context:
+            assembly_started = (
+                time.perf_counter() if isinstance(packet.perf, dict) else None
+            )
             fig = self._build_combined_triple_axis_from_state(
                 args=packet.args,
                 fig_size=packet.fig_size,
@@ -250234,13 +250496,34 @@ class UnifiedApp(tk.Tk):
                 config_override=config,
                 workflow_key_override=workflow_key,
             )
+            if assembly_started is not None:
+                stages = packet.perf.setdefault("stages", {})
+                combined_stage = stages.setdefault("combined", {})
+                combined_stage["figure_assembly_ms"] = (
+                    time.perf_counter() - assembly_started
+                ) * 1000.0
             if fig is not None:
+                geometry_started = (
+                    time.perf_counter() if isinstance(packet.perf, dict) else None
+                )
                 axis = _layout_health_axis_for_role(fig, "primary")
                 if axis is not None:
                     fig._gl260_combined_final_layout_signature = (  # type: ignore[attr-defined]
                         _combined_final_layout_geometry_signature(fig, axis)
                     )
+                if geometry_started is not None:
+                    stages = packet.perf.setdefault("stages", {})
+                    combined_stage = stages.setdefault("combined", {})
+                    combined_stage["final_geometry_signature_ms"] = (
+                        time.perf_counter() - geometry_started
+                    ) * 1000.0
             packet.figure = fig
+        if build_started is not None:
+            stages = packet.perf.setdefault("stages", {})
+            combined_stage = stages.setdefault("combined", {})
+            combined_stage["worker_figure_total_ms"] = (
+                time.perf_counter() - build_started
+            ) * 1000.0
         return packet
 
     def _start_combined_render_async(
