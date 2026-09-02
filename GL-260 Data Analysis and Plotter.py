@@ -1308,7 +1308,9 @@ def _install_customtkinter_scaling_safety() -> None:
         None.
     Side Effects:
         Replaces `ctk.ScalingTracker.get_window_dpi_scaling` idempotently and
-        clamps CTk's global widget/window scaling state when available.
+        `update_scaling_callbacks_for_window`, and clamps CTk's global
+        widget/window scaling state when available. Stale callbacks registered
+        for destroyed CTk widgets are removed during DPI changes.
     Exceptions:
         Best-effort guards suppress optional CTk patch failures so startup can
         continue with Tk fallbacks.
@@ -1368,6 +1370,96 @@ def _install_customtkinter_scaling_safety() -> None:
 
         tracker._gl260_original_get_window_dpi_scaling = original_get_window_dpi_scaling
         tracker.get_window_dpi_scaling = classmethod(_safe_get_window_dpi_scaling)
+
+        original_update_scaling_callbacks = tracker.update_scaling_callbacks_for_window
+
+        def _safe_update_scaling_callbacks(cls: Any, window: Any) -> None:
+            """Apply DPI scaling only to live CustomTkinter widget callbacks.
+
+            Purpose:
+                Prevent Windows display/DPI changes from invoking CTk callbacks
+                whose Tk widgets were destroyed during a UI rebuild or teardown.
+            Why:
+                CustomTkinter 5.2.2 retains callbacks briefly in its per-window
+                tracker. Surface dock changes can trigger its DPI poll in that
+                interval, and Tcl then raises ``invalid command name`` for a
+                destroyed dropdown menu.
+            Inputs:
+                cls: CTk `ScalingTracker` class passed by `classmethod`.
+                window: Tk window whose registered CTk widgets are being scaled.
+            Outputs:
+                None.
+            Side Effects:
+                Invokes live CTk scaling callbacks and removes callbacks that
+                target destroyed widgets or raise a destroyed-command Tcl error.
+            Exceptions:
+                Unexpected callback failures propagate so genuine CTk/UI defects
+                remain visible; destroyed-widget failures are contained.
+            """
+            try:
+                callbacks = list(cls.window_widgets_dict.get(window, ()))
+            except Exception:
+                # Retain CTk's behavior if its tracker internals are unavailable.
+                original_update_scaling_callbacks(window)
+                return
+
+            try:
+                window_dpi_scaling = cls.window_dpi_scaling_dict[window]
+                widget_scaling = cls.widget_scaling
+                effective_window_scaling = cls.window_scaling
+                automatic_dpi_disabled = cls.deactivate_automatic_dpi_awareness
+            except Exception:
+                original_update_scaling_callbacks(window)
+                return
+
+            stale_callbacks = []
+            for set_scaling_callback in callbacks:
+                callback_owner = getattr(set_scaling_callback, "__self__", None)
+                try:
+                    # CTk bound scaling methods expose their widget as `__self__`.
+                    # Avoid the Tcl call altogether when that widget is already gone.
+                    if callback_owner is not None and not bool(
+                        callback_owner.winfo_exists()
+                    ):
+                        stale_callbacks.append(set_scaling_callback)
+                        continue
+                except tk.TclError:
+                    stale_callbacks.append(set_scaling_callback)
+                    continue
+                except (AttributeError, TypeError):
+                    # Non-widget callbacks remain CTk's responsibility to handle.
+                    pass
+
+                try:
+                    if automatic_dpi_disabled:
+                        set_scaling_callback(widget_scaling, effective_window_scaling)
+                    else:
+                        set_scaling_callback(
+                            window_dpi_scaling * widget_scaling,
+                            window_dpi_scaling * effective_window_scaling,
+                        )
+                except tk.TclError as error:
+                    if "invalid command name" not in str(error).lower():
+                        raise
+                    # A widget can disappear after the liveness check above.
+                    stale_callbacks.append(set_scaling_callback)
+
+            if stale_callbacks:
+                try:
+                    registered_callbacks = cls.window_widgets_dict.get(window, [])
+                    for stale_callback in stale_callbacks:
+                        while stale_callback in registered_callbacks:
+                            registered_callbacks.remove(stale_callback)
+                except Exception:
+                    # Pruning is preventative; a future callback pass can retry.
+                    pass
+
+        tracker._gl260_original_update_scaling_callbacks = (
+            original_update_scaling_callbacks
+        )
+        tracker.update_scaling_callbacks_for_window = classmethod(
+            _safe_update_scaling_callbacks
+        )
         tracker._gl260_dpi_safety_installed = True
     except Exception:
         # Best-effort guard; ignore failures to avoid interrupting startup.
