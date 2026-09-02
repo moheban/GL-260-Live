@@ -76125,18 +76125,21 @@ def _regression_test_reaction_dashboard_visual_summary_selected_cycle() -> None:
                 "selected_moles": 0.20,
                 "cumulative_moles": 0.20,
                 "uptake_rate_psi_per_x": 4.0,
+                "pressure_slope_psi_per_x": -4.0,
             },
             {
                 "cycle_id": 2,
                 "selected_moles": 0.30,
                 "cumulative_moles": 0.50,
                 "uptake_rate_psi_per_x": 4.0,
+                "pressure_slope_psi_per_x": -4.0,
             },
             {
                 "cycle_id": 3,
                 "selected_moles": 0.25,
                 "cumulative_moles": 0.75,
                 "uptake_rate_psi_per_x": 4.0,
+                "pressure_slope_psi_per_x": -4.0,
             },
         ]
     }
@@ -76176,6 +76179,11 @@ def _regression_test_reaction_dashboard_visual_summary_selected_cycle() -> None:
     ]
     if len(current_rows) != 1 or _safe_float(current_rows[0].get("cycle_id")) != 2.0:
         raise AssertionError("Exactly the selected cycle row should be current.")
+    if (
+        _safe_float(current_rows[0].get("uptake_rate_psi_per_x")) != 4.0
+        or _safe_float(current_rows[0].get("pressure_slope_psi_per_x")) != -4.0
+    ):
+        raise AssertionError("Dashboard cycle rows should retain both pressure-rate values.")
     row_trend_labels = [
         str(row.get("trend") or "") for row in summary.get("cycle_rows", [])
     ]
@@ -183867,6 +183875,8 @@ class UnifiedApp(tk.Tk):
             "cycle",
             "delta_gas",
             "cumulative_gas",
+            "uptake_rate",
+            "pressure_slope",
             "completion",
             "product",
             "trend",
@@ -183879,6 +183889,8 @@ class UnifiedApp(tk.Tk):
             "cycle": "Cycle",
             "delta_gas": "Delta gas mol",
             "cumulative_gas": "Cumulative gas mol",
+            "uptake_rate": "Uptake rate PSI/x",
+            "pressure_slope": "Pressure slope PSI/x",
             "completion": "Completion %",
             "product": "Product g",
             "trend": "Trend",
@@ -183888,7 +183900,11 @@ class UnifiedApp(tk.Tk):
             cycle_tree.heading(col, text=cycle_headings[col])
             cycle_tree.column(
                 col,
-                width=120 if col not in {"trend", "warnings"} else 190,
+                width=(
+                    125
+                    if col in {"uptake_rate", "pressure_slope"}
+                    else 120 if col not in {"trend", "warnings"} else 190
+                ),
                 anchor="w",
             )
         cycle_tree.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 4))
@@ -186790,7 +186806,8 @@ class UnifiedApp(tk.Tk):
 
         Purpose:
             Populate KPI tiles, source/backend context, limiting species, result
-            table, and warnings.
+            table (including fitted uptake-rate and signed-slope columns), and
+            warnings.
         Why:
             Calculation output should be scannable immediately after running.
         Args:
@@ -187025,6 +187042,8 @@ class UnifiedApp(tk.Tk):
                         row.get("cycle_id", ""),
                         _fmt(row.get("gas_delta_mol"), 5),
                         _fmt(row.get("cumulative_gas_mol"), 5),
+                        _fmt(row.get("uptake_rate_psi_per_x"), 4),
+                        _fmt(row.get("pressure_slope_psi_per_x"), 4),
                         _fmt(row.get("completion_pct"), 1),
                         _fmt(row.get("product_mass_g"), 3),
                         row.get("trend", ""),
