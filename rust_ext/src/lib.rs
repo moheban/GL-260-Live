@@ -5577,17 +5577,75 @@ fn cycle_segmentation_core(
     Ok(response.unbind())
 }
 
+/// Fit a signed least-squares pressure slope across an inclusive cycle interval.
+///
+/// The calculation rejects non-finite samples and intervals with no x variation so
+/// Python can represent unavailable uptake trends consistently with its fallback.
+fn pressure_slope_between(
+    x_values: Option<&PyReadonlyArray1<'_, f64>>,
+    pressure_values: Option<&PyReadonlyArray1<'_, f64>>,
+    first_index: usize,
+    second_index: usize,
+) -> Option<f64> {
+    let x_view = x_values?.as_array();
+    let pressure_view = pressure_values?.as_array();
+    let size = x_view.len().min(pressure_view.len());
+    if size < 2 {
+        return None;
+    }
+    let lower = first_index.min(second_index);
+    let upper = first_index.max(second_index).min(size.saturating_sub(1));
+    if lower >= size || upper <= lower {
+        return None;
+    }
+    let mut count = 0usize;
+    let mut sum_x = 0.0_f64;
+    let mut sum_pressure = 0.0_f64;
+    for index in lower..=upper {
+        let x = x_view[index];
+        let pressure = pressure_view[index];
+        if x.is_finite() && pressure.is_finite() {
+            count += 1;
+            sum_x += x;
+            sum_pressure += pressure;
+        }
+    }
+    if count < 2 {
+        return None;
+    }
+    let mean_x = sum_x / count as f64;
+    let mean_pressure = sum_pressure / count as f64;
+    let mut denominator = 0.0_f64;
+    let mut numerator = 0.0_f64;
+    for index in lower..=upper {
+        let x = x_view[index];
+        let pressure = pressure_view[index];
+        if x.is_finite() && pressure.is_finite() {
+            let centered_x = x - mean_x;
+            denominator += centered_x * centered_x;
+            numerator += centered_x * (pressure - mean_pressure);
+        }
+    }
+    if !denominator.is_finite() || denominator <= 0.0 || !numerator.is_finite() {
+        return None;
+    }
+    let slope = numerator / denominator;
+    slope.is_finite().then_some(slope)
+}
+
 #[pyfunction]
-#[pyo3(signature = (cycles, temp_values=None, x_values=None, volume_l=1.0, a_const=1.39, b_const=0.0391, gas_molar_mass=44.0095, x_label="Elapsed Time (days)", compute_vdw=false, default_temp_c=25.0))]
+#[pyo3(signature = (cycles, temp_values=None, x_values=None, pressure_values=None, volume_l=1.0, a_const=1.39, b_const=0.0391, gas_molar_mass=44.0095, x_label="Elapsed Time (days)", compute_vdw=false, default_temp_c=25.0))]
 /// Compute per-cycle gas metrics for overlay tables and exported summaries.
 ///
-/// The function consumes cycle dictionaries from Python and keeps the same field
-/// semantics as the Python backend while supporting free-threaded imports.
+/// The function consumes cycle dictionaries plus x/pressure traces from Python and
+/// keeps the same gas and fitted-slope field semantics as the Python backend while
+/// supporting free-threaded imports.
 fn cycle_metrics_core(
     py: Python<'_>,
     cycles: &Bound<'_, PyList>,
     temp_values: Option<PyReadonlyArray1<'_, f64>>,
     x_values: Option<PyReadonlyArray1<'_, f64>>,
+    pressure_values: Option<PyReadonlyArray1<'_, f64>>,
     volume_l: f64,
     a_const: f64,
     b_const: f64,
@@ -5676,6 +5734,12 @@ fn cycle_metrics_core(
             (Some(start), Some(end)) => Some(end - start),
             _ => None,
         };
+        let pressure_slope = pressure_slope_between(
+            x_values.as_ref(),
+            pressure_values.as_ref(),
+            peak_idx,
+            trough_idx,
+        );
         let use_vdw_basis = n_vdw.is_finite() && n_vdw >= 0.0;
         let selected_moles = if use_vdw_basis {
             Some(n_vdw)
@@ -5708,6 +5772,13 @@ fn cycle_metrics_core(
             transfer_row.set_item("duration_x", value)?;
         } else {
             transfer_row.set_item("duration_x", py.None())?;
+        }
+        if let Some(value) = pressure_slope {
+            transfer_row.set_item("pressure_slope_psi_per_x", value)?;
+            transfer_row.set_item("uptake_rate_psi_per_x", (-value).max(0.0))?;
+        } else {
+            transfer_row.set_item("pressure_slope_psi_per_x", py.None())?;
+            transfer_row.set_item("uptake_rate_psi_per_x", py.None())?;
         }
         transfer_row.set_item("peak_pressure_psi", finite_value_or_nan(peak_pressure))?;
         transfer_row.set_item("trough_pressure_psi", finite_value_or_nan(trough_pressure))?;

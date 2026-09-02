@@ -572,7 +572,8 @@ Compute template-driven reaction gas uptake, linked-step completion, intermediat
 
 ### Reaction Cycle PDF export
 - The report contains every available Cycle row. KPI values and the completion gauge use the current **Latest** or **Cycle N** dashboard focus and label that focus in the report header.
-- Each Cycle table Trend is evaluated from the uptake history available through that cycle. A Latest-cycle slowdown is not copied backward onto earlier rows.
+- Each Cycle table Trend is evaluated from the fitted pressure-trace uptake rate available through that cycle, using every valid sample from the identified peak through trough. A recharge-shortened gas delta therefore does not by itself indicate slowing uptake, and a Latest-cycle slowdown is not copied backward onto earlier rows.
+- The Cycle Report field chooser can optionally include the positive **Uptake Rate (PSI / x)** and signed **Pressure Slope (PSI / x)** columns. Both use the active Cycle Analysis x-axis unit; unavailable fits display `--`.
 - Cycle headers and every table value are centered. Long warning text wraps automatically, and every continuation page repeats the full Cycle table header and shows page numbers.
 - The PDF uses vector text, table rules, KPI panels, and gauge artwork for clean printing and publication use. The table defaults to a 12-point Times-style serif font with a pale blue header and black grid rules; the font family and size (8–18 pt) can be changed for each report.
 - KPI tiles use generous horizontal and vertical spacing. The optional completion gauge progresses from 0% at left to 100% at right and includes a needle at the focused completion value.

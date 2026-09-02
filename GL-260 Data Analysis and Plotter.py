@@ -22600,6 +22600,8 @@ REACTION_DASHBOARD_EXPORT_CYCLE_FIELDS: Tuple[Tuple[str, str], ...] = (
     ("cycle", "Cycle"),
     ("delta_gas", "Delta Gas (mol)"),
     ("cumulative_gas", "Cumulative Gas (mol)"),
+    ("uptake_rate", "Uptake Rate (PSI / x)"),
+    ("pressure_slope", "Pressure Slope (PSI / x)"),
     ("completion", "Completion (%)"),
     ("product", "Product (g)"),
     ("trend", "Trend"),
@@ -35280,6 +35282,7 @@ def _rust_cycle_metrics_core(
     cycles: Sequence[Mapping[str, Any]],
     z_values: Optional[np.ndarray],
     x_values: Optional[np.ndarray],
+    pressure_values: Optional[np.ndarray],
     volume_l: float,
     a_const: float,
     b_const: float,
@@ -35297,6 +35300,7 @@ def _rust_cycle_metrics_core(
         cycles: Cycle segmentation rows with peak/trough indices and pressure deltas.
         z_values: Optional cycle temperature series.
         x_values: Optional x-axis series used for transfer start/end/duration fields.
+        pressure_values: Optional pressure trace used to fit each uptake slope.
         volume_l: Vessel volume in liters.
         a_const: Van der Waals `a` constant.
         b_const: Van der Waals `b` constant.
@@ -35340,6 +35344,9 @@ def _rust_cycle_metrics_core(
             payload_cycles,
             np.asarray(z_values, dtype=float) if z_values is not None else None,
             np.asarray(x_values, dtype=float) if x_values is not None else None,
+            np.asarray(pressure_values, dtype=float)
+            if pressure_values is not None
+            else None,
             float(volume_l),
             float(a_const),
             float(b_const),
@@ -36030,6 +36037,12 @@ def _reaction_dashboard_cycle_metric_series(
                 "cycle_gas_delta_mol": (
                     float(cycle_moles) if cycle_moles is not None else None
                 ),
+                "pressure_slope_psi_per_x": _safe_float(
+                    row.get("pressure_slope_psi_per_x")
+                ),
+                "uptake_rate_psi_per_x": _safe_float(
+                    row.get("uptake_rate_psi_per_x")
+                ),
                 "cumulative_gas_mol": float(cumulative_moles or 0.0),
                 "cumulative_gas_g": (
                     float(cumulative_moles or 0.0) * gas_mw if gas_mw > 0.0 else None
@@ -36123,10 +36136,11 @@ def _reaction_dashboard_species_display(
 def _reaction_dashboard_cycle_trend(
     cycle_series: Sequence[Mapping[str, Any]],
 ) -> Dict[str, str]:
-    """Classify recent per-cycle gas uptake trend for visual status messaging.
+    """Classify recent fitted pressure uptake rates for visual status messaging.
 
     Purpose:
-        Convert cycle-derived gas deltas into a compact reaction-progress trend.
+        Convert fitted pressure-trace uptake rates into a compact reaction-progress
+        trend.
     Why:
         Operators need to know whether gas consumption is slowing, steady, or
         increasing without reading every imported cycle row.
@@ -36139,49 +36153,41 @@ def _reaction_dashboard_cycle_trend(
     Exceptions:
         Invalid rows are skipped and return an insufficient-data status.
     """
-    cumulative_values = [
+    uptake_rates = [
         float(value)
         for value in (
-            _safe_float(row.get("cumulative_gas_mol"))
+            _safe_float(row.get("uptake_rate_psi_per_x"))
             for row in cycle_series
             if isinstance(row, Mapping)
         )
         if value is not None and math.isfinite(value)
     ]
-    if len(cumulative_values) < 3:
+    if len(uptake_rates) < 2:
         return {
             "label": "Insufficient cycle trend",
             "status": "unavailable",
-            "detail": "Need at least three cycle points for trend classification.",
+            "detail": "Need two finite pressure-trace uptake rates for trend classification.",
         }
-    deltas = [
-        max(cumulative_values[idx] - cumulative_values[idx - 1], 0.0)
-        for idx in range(1, len(cumulative_values))
-    ]
-    if len(deltas) < 2:
-        return {
-            "label": "Insufficient cycle trend",
-            "status": "unavailable",
-            "detail": "Need at least two uptake deltas for trend classification.",
-        }
-    return _reaction_dashboard_classify_cycle_delta_pair(deltas[-2], deltas[-1])
+    return _reaction_dashboard_classify_cycle_delta_pair(
+        uptake_rates[-2], uptake_rates[-1]
+    )
 
 
 def _reaction_dashboard_classify_cycle_delta_pair(
-    previous_delta_mol: float,
-    latest_delta_mol: float,
+    previous_uptake_rate: float,
+    latest_uptake_rate: float,
 ) -> Dict[str, str]:
-    """Classify one cycle's uptake change against the preceding cycle.
+    """Classify one fitted uptake-rate change against the preceding cycle.
 
     Purpose:
-        Convert two consecutive non-negative gas-uptake deltas into the shared
+        Convert two consecutive non-negative pressure-trace uptake rates into the shared
         slowing, steady, or increasing trend vocabulary.
     Why:
         Headline and per-cycle trend displays must use identical thresholds without
         copying the ratio logic into separate code paths.
     Args:
-        previous_delta_mol: Prior cycle-to-cycle gas uptake in moles.
-        latest_delta_mol: Current cycle-to-cycle gas uptake in moles.
+        previous_uptake_rate: Prior fitted pressure-drop rate in PSI per x unit.
+        latest_uptake_rate: Current fitted pressure-drop rate in PSI per x unit.
     Returns:
         Dict containing the trend label, status bucket, and comparison detail.
     Side Effects:
@@ -36190,8 +36196,8 @@ def _reaction_dashboard_classify_cycle_delta_pair(
         Values are coerced to finite non-negative floats; invalid inputs produce an
         insufficient-data status instead of raising.
     """
-    previous_value = _safe_float(previous_delta_mol)
-    latest_value = _safe_float(latest_delta_mol)
+    previous_value = _safe_float(previous_uptake_rate)
+    latest_value = _safe_float(latest_uptake_rate)
     if (
         previous_value is None
         or latest_value is None
@@ -36201,7 +36207,10 @@ def _reaction_dashboard_classify_cycle_delta_pair(
         return {
             "label": "Insufficient cycle trend",
             "status": "unavailable",
-            "detail": "Two finite uptake deltas are required for trend classification.",
+            "detail": (
+                "Two finite pressure-trace uptake rates are required for trend "
+                "classification."
+            ),
         }
     previous = max(float(previous_value), 1e-12)
     latest = max(float(latest_value), 0.0)
@@ -36210,29 +36219,96 @@ def _reaction_dashboard_classify_cycle_delta_pair(
         return {
             "label": "Slowing uptake",
             "status": "watch",
-            "detail": f"Latest gas delta is {latest:.4f} mol vs {previous:.4f} mol.",
+            "detail": (
+                f"Latest fitted uptake rate is {latest:.4f} PSI/x vs "
+                f"{previous:.4f} PSI/x."
+            ),
         }
     if ratio >= 1.25:
         return {
             "label": "Increasing uptake",
             "status": "neutral",
-            "detail": f"Latest gas delta is {latest:.4f} mol vs {previous:.4f} mol.",
+            "detail": (
+                f"Latest fitted uptake rate is {latest:.4f} PSI/x vs "
+                f"{previous:.4f} PSI/x."
+            ),
         }
     return {
         "label": "Steady uptake",
         "status": "healthy",
-        "detail": f"Latest gas delta is {latest:.4f} mol vs {previous:.4f} mol.",
+        "detail": f"Latest fitted uptake rate is {latest:.4f} PSI/x vs {previous:.4f} PSI/x.",
     }
+
+
+def _cycle_pressure_trace_slope(
+    x_values: Optional[np.ndarray],
+    pressure_values: Optional[np.ndarray],
+    peak_index: Any,
+    trough_index: Any,
+) -> Optional[float]:
+    """Fit the signed pressure slope across one identified uptake interval.
+
+    Purpose:
+        Derive an operator-facing uptake rate from the complete pressure trace,
+        rather than from the endpoint pressure drop or gas amount alone.
+    Why:
+        A recharge can shorten a valid peak-to-trough drop without indicating that
+        the reaction has slowed; a least-squares trace fit preserves the rate.
+    Args:
+        x_values: Numeric x-axis samples for the active Cycle Analysis trace.
+        pressure_values: Numeric pressure samples aligned with ``x_values``.
+        peak_index: Inclusive index of the detected/selected pressure peak.
+        trough_index: Inclusive index of the paired pressure trough.
+    Returns:
+        Signed fitted pressure slope in PSI per x-axis unit, or ``None`` when the
+        interval has fewer than two finite samples or no usable x variation.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid arrays or indices are treated as unavailable instead of raising.
+    """
+    if x_values is None or pressure_values is None:
+        return None
+    try:
+        x_array = np.asarray(x_values, dtype=float)
+        pressure_array = np.asarray(pressure_values, dtype=float)
+        start_index = int(peak_index)
+        end_index = int(trough_index)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if x_array.ndim != 1 or pressure_array.ndim != 1:
+        return None
+    size = min(x_array.size, pressure_array.size)
+    if size < 2:
+        return None
+    lower = max(0, min(start_index, end_index))
+    upper = min(size - 1, max(start_index, end_index))
+    if upper - lower < 1:
+        return None
+    segment_x = x_array[lower : upper + 1]
+    segment_pressure = pressure_array[lower : upper + 1]
+    finite_mask = np.isfinite(segment_x) & np.isfinite(segment_pressure)
+    if int(np.count_nonzero(finite_mask)) < 2:
+        return None
+    fitted_x = segment_x[finite_mask]
+    fitted_pressure = segment_pressure[finite_mask]
+    centered_x = fitted_x - float(np.mean(fitted_x))
+    denominator = float(np.dot(centered_x, centered_x))
+    if not math.isfinite(denominator) or denominator <= 0.0:
+        return None
+    centered_pressure = fitted_pressure - float(np.mean(fitted_pressure))
+    slope = float(np.dot(centered_x, centered_pressure) / denominator)
+    return slope if math.isfinite(slope) else None
 
 
 def _reaction_dashboard_cycle_row_trends(
     cycle_series: Sequence[Mapping[str, Any]],
 ) -> List[Dict[str, str]]:
-    """Return a trend classification aligned to every Cycle table row.
+    """Return fitted uptake-rate trends aligned to every Cycle table row.
 
     Purpose:
-        Classify each cycle from only the cumulative gas history available through
-        that row.
+        Classify each cycle from only the fitted pressure-trace uptake rates
+        available through that row.
     Why:
         Applying the Latest trend to all rows misrepresents when slowing uptake was
         actually detected; a linear prefix pass preserves row-level chronology.
@@ -36249,30 +36325,31 @@ def _reaction_dashboard_cycle_row_trends(
     unavailable = {
         "label": "Insufficient cycle trend",
         "status": "unavailable",
-        "detail": "Need at least three cycle points for trend classification.",
+        "detail": (
+            "Need two finite pressure-trace uptake rates for trend classification."
+        ),
     }
     trends: List[Dict[str, str]] = []
-    deltas: List[float] = []
-    previous_cumulative: Optional[float] = None
-    # Retain valid cumulative history across malformed rows while aligning one
+    uptake_rates: List[float] = []
+    # Retain valid rate history across malformed rows while aligning one
     # classification to every original table row.
     for row in cycle_series:
-        cumulative = (
-            _safe_float(row.get("cumulative_gas_mol"))
+        uptake_rate = (
+            _safe_float(row.get("uptake_rate_psi_per_x"))
             if isinstance(row, Mapping)
             else None
         )
-        if cumulative is None or not math.isfinite(cumulative):
+        if uptake_rate is None or not math.isfinite(uptake_rate):
             trends.append(dict(unavailable))
             continue
-        if previous_cumulative is not None:
-            deltas.append(max(float(cumulative) - previous_cumulative, 0.0))
-        previous_cumulative = float(cumulative)
-        if len(deltas) < 2:
+        uptake_rates.append(max(float(uptake_rate), 0.0))
+        if len(uptake_rates) < 2:
             trends.append(dict(unavailable))
             continue
         trends.append(
-            _reaction_dashboard_classify_cycle_delta_pair(deltas[-2], deltas[-1])
+            _reaction_dashboard_classify_cycle_delta_pair(
+                uptake_rates[-2], uptake_rates[-1]
+            )
         )
     return trends
 
@@ -36618,6 +36695,8 @@ def _reaction_dashboard_visual_summary(
                 "gas_delta_mol": delta,
                 "cumulative_gas_mol": row.get("cumulative_gas_mol"),
                 "cumulative_gas_g": row.get("cumulative_gas_g"),
+                "uptake_rate_psi_per_x": row.get("uptake_rate_psi_per_x"),
+                "pressure_slope_psi_per_x": row.get("pressure_slope_psi_per_x"),
                 "completion_pct": row.get("completion_pct"),
                 "product_mass_g": row.get("product_mass_g"),
                 "trend": row_trends[row_index].get("label", "--"),
@@ -36881,6 +36960,10 @@ def _build_reaction_dashboard_cycle_export_model(
         "cycle": lambda row: str(row.get("cycle_id") or "--"),
         "delta_gas": lambda row: _fmt(row.get("gas_delta_mol"), 5),
         "cumulative_gas": lambda row: _fmt(row.get("cumulative_gas_mol"), 5),
+        "uptake_rate": lambda row: _fmt(row.get("uptake_rate_psi_per_x"), 4),
+        "pressure_slope": lambda row: _fmt(
+            row.get("pressure_slope_psi_per_x"), 4
+        ),
         "completion": lambda row: _fmt(row.get("completion_pct"), 1),
         "product": lambda row: _fmt(row.get("product_mass_g"), 3),
         "trend": lambda row: str(row.get("trend") or "--"),
@@ -76037,9 +76120,24 @@ def _regression_test_reaction_dashboard_visual_summary_selected_cycle() -> None:
     step_rows = [asdict(step) for step in template.steps]
     cycle_payload = {
         "cycle_transfer": [
-            {"cycle_id": 1, "selected_moles": 0.20, "cumulative_moles": 0.20},
-            {"cycle_id": 2, "selected_moles": 0.30, "cumulative_moles": 0.50},
-            {"cycle_id": 3, "selected_moles": 0.25, "cumulative_moles": 0.75},
+            {
+                "cycle_id": 1,
+                "selected_moles": 0.20,
+                "cumulative_moles": 0.20,
+                "uptake_rate_psi_per_x": 4.0,
+            },
+            {
+                "cycle_id": 2,
+                "selected_moles": 0.30,
+                "cumulative_moles": 0.50,
+                "uptake_rate_psi_per_x": 4.0,
+            },
+            {
+                "cycle_id": 3,
+                "selected_moles": 0.25,
+                "cumulative_moles": 0.75,
+                "uptake_rate_psi_per_x": 4.0,
+            },
         ]
     }
     cycle_series = _reaction_dashboard_cycle_metric_series(
@@ -76083,7 +76181,7 @@ def _regression_test_reaction_dashboard_visual_summary_selected_cycle() -> None:
     ]
     if row_trend_labels != [
         "Insufficient cycle trend",
-        "Insufficient cycle trend",
+        "Steady uptake",
         "Steady uptake",
     ]:
         raise AssertionError(
@@ -76197,6 +76295,8 @@ def _regression_test_reaction_dashboard_cycle_export_model() -> None:
                 "cycle_id": 1,
                 "gas_delta_mol": 0.25,
                 "cumulative_gas_mol": 0.25,
+                "uptake_rate_psi_per_x": 3.5,
+                "pressure_slope_psi_per_x": -3.5,
                 "completion_pct": 25.0,
                 "product_mass_g": 17.00175,
                 "trend": "Steady uptake",
@@ -76206,6 +76306,8 @@ def _regression_test_reaction_dashboard_cycle_export_model() -> None:
                 "cycle_id": 2,
                 "gas_delta_mol": 0.25,
                 "cumulative_gas_mol": 0.5,
+                "uptake_rate_psi_per_x": 3.5,
+                "pressure_slope_psi_per_x": -3.5,
                 "completion_pct": 50.0,
                 "product_mass_g": 34.0035,
                 "trend": "Steady uptake",
@@ -76218,7 +76320,14 @@ def _regression_test_reaction_dashboard_cycle_export_model() -> None:
         template,
         result,
         summary,
-        cycle_fields=["warnings", "cycle", "completion", "obsolete"],
+        cycle_fields=[
+            "warnings",
+            "cycle",
+            "completion",
+            "uptake_rate",
+            "pressure_slope",
+            "obsolete",
+        ],
         kpi_fields=["ph", "completion", "obsolete"],
         run_name="Batch 42",
         focus_label="Cycle 2",
@@ -76228,13 +76337,24 @@ def _regression_test_reaction_dashboard_cycle_export_model() -> None:
         raise AssertionError(
             "Export model construction must not mutate cached results."
         )
-    if model["cycle_field_ids"] != ["cycle", "completion", "warnings"]:
+    if model["cycle_field_ids"] != [
+        "cycle",
+        "uptake_rate",
+        "pressure_slope",
+        "completion",
+        "warnings",
+    ]:
         raise AssertionError(
             "Cycle export fields should follow canonical display order."
         )
     if [row["field_id"] for row in model["kpis"]] != ["completion", "ph"]:
         raise AssertionError("KPI export fields should follow canonical display order.")
-    if model["focus_label"] != "Cycle 2" or model["table_rows"][1][1] != "50.0":
+    if (
+        model["focus_label"] != "Cycle 2"
+        or model["table_rows"][1][1] != "3.5000"
+        or model["table_rows"][1][2] != "-3.5000"
+        or model["table_rows"][1][3] != "50.0"
+    ):
         raise AssertionError(
             "Selected focus and formatted Cycle values should be stable."
         )
@@ -76681,16 +76801,16 @@ def _regression_test_reaction_dashboard_cycle_pdf_rendering() -> None:
 
 
 def _regression_test_reaction_dashboard_visual_trend_status() -> None:
-    """Validate cycle gas deltas classify visual reaction trend.
+    """Validate fitted pressure rates classify visual reaction trend.
 
     Purpose:
         Exercise the display-only trend classifier used by KPI and sparkline
         status messages.
     Why:
         Reaction progress awareness depends on showing whether gas uptake is
-        tapering, steady, or increasing from imported cycle data.
+        tapering, steady, or increasing from fitted Cycle Analysis pressure traces.
     Inputs:
-        None; uses fixed cumulative uptake rows.
+        None; uses fixed fitted uptake-rate rows.
     Outputs:
         None.
     Side Effects:
@@ -76700,35 +76820,34 @@ def _regression_test_reaction_dashboard_visual_trend_status() -> None:
     """
     slowing = _reaction_dashboard_cycle_trend(
         [
-            {"cumulative_gas_mol": 0.20},
-            {"cumulative_gas_mol": 0.50},
-            {"cumulative_gas_mol": 0.60},
+            {"uptake_rate_psi_per_x": 4.0},
+            {"uptake_rate_psi_per_x": 3.0},
+            {"uptake_rate_psi_per_x": 2.0},
         ]
     )
     if slowing.get("label") != "Slowing uptake" or slowing.get("status") != "watch":
         raise AssertionError("Visual trend should flag tapering gas uptake.")
     steady = _reaction_dashboard_cycle_trend(
         [
-            {"cumulative_gas_mol": 0.20},
-            {"cumulative_gas_mol": 0.45},
-            {"cumulative_gas_mol": 0.71},
+            {"uptake_rate_psi_per_x": 4.0},
+            {"uptake_rate_psi_per_x": 4.1},
         ]
     )
     if steady.get("label") != "Steady uptake":
         raise AssertionError("Visual trend should identify steady gas uptake.")
     row_trends = _reaction_dashboard_cycle_row_trends(
         [
-            {"cumulative_gas_mol": 0.10},
-            {"cumulative_gas_mol": 0.30},
-            {"cumulative_gas_mol": 0.50},
-            {"cumulative_gas_mol": 0.62},
-            {"cumulative_gas_mol": 0.74},
+            {"uptake_rate_psi_per_x": 4.0},
+            {"uptake_rate_psi_per_x": 4.0},
+            {"uptake_rate_psi_per_x": 4.0},
+            {"uptake_rate_psi_per_x": 2.0},
+            {"uptake_rate_psi_per_x": 2.0},
         ]
     )
     row_labels = [item.get("label") for item in row_trends]
     if row_labels != [
         "Insufficient cycle trend",
-        "Insufficient cycle trend",
+        "Steady uptake",
         "Steady uptake",
         "Slowing uptake",
         "Steady uptake",
@@ -76736,6 +76855,68 @@ def _regression_test_reaction_dashboard_visual_trend_status() -> None:
         raise AssertionError(
             "Slowing uptake should appear only on the cycle where it is detected."
         )
+    increasing = _reaction_dashboard_cycle_trend(
+        [
+            {"uptake_rate_psi_per_x": 2.0},
+            {"uptake_rate_psi_per_x": 3.0},
+        ]
+    )
+    if increasing.get("label") != "Increasing uptake":
+        raise AssertionError("Visual trend should identify increasing uptake rates.")
+
+    equal_rate_shorter_drop = _reaction_dashboard_cycle_trend(
+        [
+            {"uptake_rate_psi_per_x": 4.0, "cycle_gas_delta_mol": 0.40},
+            {"uptake_rate_psi_per_x": 4.0, "cycle_gas_delta_mol": 0.20},
+        ]
+    )
+    if equal_rate_shorter_drop.get("label") != "Steady uptake":
+        raise AssertionError(
+            "A recharge-shortened gas delta must not misclassify an equal pressure rate."
+        )
+
+    slope = _cycle_pressure_trace_slope(
+        np.asarray([0.0, 1.0, 2.0, 3.0]),
+        np.asarray([16.0, 12.0, 8.0, 4.0]),
+        0,
+        3,
+    )
+    if slope is None or abs(slope + 4.0) > 1e-12:
+        raise AssertionError("Trace slope should fit every peak-to-trough sample.")
+    if _cycle_pressure_trace_slope(
+        np.asarray([1.0, 1.0]), np.asarray([10.0, 6.0]), 0, 1
+    ) is not None:
+        raise AssertionError("Flat x intervals must leave the trace slope unavailable.")
+
+    slope_x = np.asarray([0.0, 1.0, 2.0, 3.0])
+    slope_pressure = np.asarray([16.0, 12.0, 8.0, 4.0])
+    rust_payload = _rust_cycle_metrics_core(
+        cycles=[
+            {
+                "peak_idx": 0,
+                "trough_idx": 3,
+                "peak": 16.0,
+                "trough": 4.0,
+                "delta_P": 12.0,
+            }
+        ],
+        z_values=None,
+        x_values=slope_x,
+        pressure_values=slope_pressure,
+        volume_l=1.0,
+        a_const=1.39,
+        b_const=0.0391,
+        gas_molar_mass=44.0095,
+        x_label="Elapsed Time (minutes)",
+        compute_vdw=False,
+    )
+    if rust_payload is not None:
+        rust_rows = list(rust_payload.get("cycle_transfer") or [])
+        rust_slope = _safe_float(
+            rust_rows[0].get("pressure_slope_psi_per_x") if rust_rows else None
+        )
+        if rust_slope is None or abs(rust_slope + 4.0) > 1e-12:
+            raise AssertionError("Rust and Python pressure-slope paths must agree.")
 
 
 def _regression_test_reaction_dashboard_import_cycle_auto_runs() -> None:
@@ -162080,7 +162261,7 @@ class UnifiedApp(tk.Tk):
         Args:
             segmentation: Cycle segmentation dict from `_compute_cycle_segmentation`.
             xv: X-axis source values.
-            yv: Y-axis source values (retained for call parity).
+            yv: Y-axis pressure values used for fitted uptake-rate calculation.
             z_arr: Optional cycle temperature source values.
             prom: Peak prominence value.
             dist: Peak distance value.
@@ -162135,6 +162316,10 @@ class UnifiedApp(tk.Tk):
             x_all = np.asarray(xv, dtype=float)
         except Exception:
             x_all = None
+        try:
+            pressure_all = np.asarray(yv, dtype=float)
+        except Exception:
+            pressure_all = None
         requested_workers_value, parallel_enabled_value = _resolve_cycle_parallel_controls(
             requested_workers=requested_workers,
             parallel_enabled=parallel_enabled,
@@ -162155,6 +162340,7 @@ class UnifiedApp(tk.Tk):
             cycles=cycles,
             z_values=z_all,
             x_values=x_all,
+            pressure_values=pressure_all,
             volume_l=float(V_L),
             a_const=float(a_c),
             b_const=float(b_c),
@@ -162245,6 +162431,9 @@ class UnifiedApp(tk.Tk):
                     else selected_moles_val * gas_molar_mass
                 )
                 cumulative_co2_mass = cumulative_moles * gas_molar_mass
+                pressure_slope = _cycle_pressure_trace_slope(
+                    x_all, pressure_all, peak_idx, trough_idx
+                )
                 cycle_transfer_rows.append(
                     {
                         "cycle_id": idx,
@@ -162254,6 +162443,12 @@ class UnifiedApp(tk.Tk):
                         "end_x": end_time,
                         "x_label": x_label,
                         "duration_x": duration,
+                        "pressure_slope_psi_per_x": pressure_slope,
+                        "uptake_rate_psi_per_x": (
+                            max(-pressure_slope, 0.0)
+                            if pressure_slope is not None
+                            else None
+                        ),
                         "peak_pressure_psi": peak_pressure,
                         "trough_pressure_psi": trough_pressure,
                         "delta_pressure_psi": delta_psi,
