@@ -110137,6 +110137,9 @@ class UnifiedApp(tk.Tk):
         self._reaction_source_vars: Dict[str, tk.StringVar] = {}
         self._reaction_endpoint_calibration: Dict[str, Any] = {}
         self._reaction_endpoint_selection_mode: Optional[str] = None
+        self._reaction_start_global_index: Optional[int] = None
+        self._reaction_endpoint_global_index: Optional[int] = None
+        self._reaction_anchor_artists: List[Any] = []
         self._reaction_endpoint_status_var = tk.StringVar(
             value="Endpoint calibration: select the endpoint after Cycle Analysis is available."
         )
@@ -159111,6 +159114,32 @@ class UnifiedApp(tk.Tk):
             ),
         )
 
+        reaction_anchor_frame = ttk.Labelframe(manual_frame, text="Reaction Calibration Anchors")
+        reaction_anchor_frame.grid(
+            row=8,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            padx=scale_pad((0, 0)),
+            pady=scale_pad((6, 0)),
+        )
+        for col in range(2):
+            reaction_anchor_frame.grid_columnconfigure(col, weight=1)
+        self._cycle_reaction_start_button = make_button(
+            reaction_anchor_frame,
+            text="Place Reaction Start",
+            command=lambda: self._arm_reaction_anchor_selection("start"),
+            grid_kwargs={"row": 0, "column": 0, "sticky": "nsew", "padx": scale_pad((0, 3))},
+            tooltip="Arm one click to place the red reaction-start circle used by endpoint calibration.",
+        )
+        self._cycle_reaction_endpoint_button = make_button(
+            reaction_anchor_frame,
+            text="Place Reaction Endpoint",
+            command=lambda: self._arm_reaction_anchor_selection("endpoint"),
+            grid_kwargs={"row": 0, "column": 1, "sticky": "nsew", "padx": scale_pad((3, 0))},
+            tooltip="Arm one click to place the red reaction-endpoint circle used by endpoint calibration.",
+        )
+
         advanced_container = ttk.Frame(left)
         advanced_container.grid(row=2, column=0, sticky="ew", pady=(0, scale_len(8)))
         advanced_container.grid_columnconfigure(0, weight=1)
@@ -160774,6 +160803,57 @@ class UnifiedApp(tk.Tk):
 
         self._set_cycle_selection_text("Selection: (choose an analysis range)")
 
+    def _draw_reaction_calibration_anchor_markers(self, *, redraw: bool) -> None:
+        """Draw red reaction-start and endpoint circles on the Cycle Analysis plot.
+
+        Purpose:
+            Make the two anchors used by endpoint calibration visible and distinct
+            from ordinary peak/trough cycle markers.
+        Why:
+            Operators need immediate confirmation that a click was captured and
+            which samples establish the calibrated reaction interval.
+        Inputs:
+            redraw: Requests an idle canvas redraw when True.
+        Returns:
+            None.
+        Side Effects:
+            Replaces transient anchor artists on the Cycle Analysis axes.
+        Exceptions:
+            Unavailable trace/axes state leaves the plot unchanged.
+        """
+        for artist in list(getattr(self, "_reaction_anchor_artists", []) or []):
+            try:
+                artist.remove()
+            except Exception:
+                pass
+        self._reaction_anchor_artists = []
+        try:
+            x_values, y_values, _temperature = self._get_xy()
+            x = np.asarray(x_values, dtype=float)
+            y = np.asarray(y_values, dtype=float)
+            axis = self._cycle_ax
+        except Exception:
+            return
+        for index, label, marker in (
+            (getattr(self, "_reaction_start_global_index", None), "Reaction start", "S"),
+            (getattr(self, "_reaction_endpoint_global_index", None), "Reaction endpoint", "o"),
+        ):
+            if index is None or int(index) < 0 or int(index) >= min(x.size, y.size):
+                continue
+            if not math.isfinite(float(x[int(index)])) or not math.isfinite(float(y[int(index)])):
+                continue
+            artist = axis.scatter(
+                [float(x[int(index)])], [float(y[int(index)])], marker=marker,
+                s=150, facecolors="none", edgecolors="#d32f2f", linewidths=2.4,
+                zorder=_compute_top_overlay_zorder(axis) + 1.0, label=label,
+            )
+            self._reaction_anchor_artists.append(artist)
+        if redraw:
+            try:
+                self._cycle_canvas.draw_idle()
+            except Exception:
+                pass
+
     def _on_cycle_click(self, event):
         """Route Cycle Analysis clicks across exact, snapped, and edit workflows.
 
@@ -160802,13 +160882,14 @@ class UnifiedApp(tk.Tk):
 
             return
 
-        if (
-            getattr(self, "_reaction_endpoint_selection_mode", None) == "armed"
-            and getattr(event, "button", None) == 1
-        ):
+        reaction_anchor_mode = getattr(self, "_reaction_endpoint_selection_mode", None)
+        if reaction_anchor_mode in {"start", "endpoint"} and getattr(event, "button", None) == 1:
             target_idx = self._nearest_index_by_x(event.xdata)
             if target_idx is not None:
-                self._commit_reaction_endpoint_selection(int(target_idx))
+                if reaction_anchor_mode == "start":
+                    self._commit_reaction_start_selection(int(target_idx))
+                else:
+                    self._commit_reaction_endpoint_selection(int(target_idx))
             return
 
         self._remember_cycle_marker_tweak_target(event)
@@ -163805,6 +163886,7 @@ class UnifiedApp(tk.Tk):
             )
 
         self._draw_selected_cycle_marker(redraw=False)
+        self._draw_reaction_calibration_anchor_markers(redraw=False)
 
         cycles = result.get("cycles", [])
 
@@ -187453,6 +187535,16 @@ class UnifiedApp(tk.Tk):
             yield_species_id=template.yield_basis.product_species_id,
             target_reactant_species_id=template.yield_basis.target_reactant_species_id,
         )
+        start_global_index = getattr(self, "_reaction_start_global_index", None)
+        if start_global_index is None:
+            start_global_index = int(trace["sample_indices"][0])
+        start_positions = np.flatnonzero(trace["sample_indices"] == start_global_index)
+        if not start_positions.size:
+            self._reaction_endpoint_status_var.set(
+                "Selected reaction start is outside the active Cycle Analysis range."
+            )
+            return {}
+        start_position = int(start_positions[0])
         positions = np.flatnonzero(trace["sample_indices"] == endpoint_global_index)
         endpoint_position = int(positions[0]) if positions.size else None
         if endpoint_global_index is not None and endpoint_position is None:
@@ -187460,6 +187552,24 @@ class UnifiedApp(tk.Tk):
                 "Selected endpoint is outside the active Cycle Analysis range."
             )
             return {}
+        if endpoint_position is not None and endpoint_position <= start_position:
+            self._reaction_endpoint_status_var.set(
+                "Reaction endpoint must be after the selected reaction start."
+            )
+            return {}
+        if start_position:
+            trace = {
+                **trace,
+                "x": trace["x"][start_position:],
+                "pressure": trace["pressure"][start_position:],
+                "temperature": trace["temperature"][start_position:],
+                "sample_indices": trace["sample_indices"][start_position:],
+            }
+            endpoint_position = (
+                endpoint_position - start_position
+                if endpoint_position is not None
+                else None
+            )
         displacement = self._reaction_dashboard_input_float("endpoint_displacement_l")
         signature = (
             int(trace["sample_indices"][0]), int(trace["sample_indices"][-1]),
@@ -187488,6 +187598,7 @@ class UnifiedApp(tk.Tk):
         calibration["pressure_reference"] = "absolute_psi"
         calibration["selection_method"] = selection_method if endpoint_position is not None else None
         calibration["endpoint_global_index"] = endpoint_global_index
+        calibration["start_global_index"] = int(start_global_index)
         if endpoint_position is not None:
             calibration["endpoint_x"] = float(trace["x"][endpoint_position])
         self._reaction_endpoint_calibration = calibration
@@ -187579,16 +187690,68 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             Missing Cycle Analysis data leaves selection disarmed.
         """
-        if self._reaction_endpoint_trace_inputs() is None:
+        self._arm_reaction_anchor_selection("endpoint")
+
+    def _arm_reaction_anchor_selection(self, anchor_kind: str) -> None:
+        """Arm one Cycle Analysis click for a reaction calibration anchor.
+
+        Purpose:
+            Provide the same explicit click-to-place interaction for reaction start
+            and endpoint anchors as Cycle Analysis uses for exact markers.
+        Why:
+            A visible armed state prevents ordinary marker editing from silently
+            swallowing a reaction-calibration click.
+        Inputs:
+            anchor_kind: ``"start"`` or ``"endpoint"`` anchor identifier.
+        Returns:
+            None.
+        Side Effects:
+            Sets one-shot click state, updates status, and redraws red anchors.
+        Exceptions:
+            Missing Cycle Analysis data leaves selection disarmed.
+        """
+        if anchor_kind not in {"start", "endpoint"} or self._reaction_endpoint_trace_inputs() is None:
             return
-        self._reaction_endpoint_selection_mode = "armed"
+        self._reaction_endpoint_selection_mode = anchor_kind
         self._reaction_endpoint_status_var.set(
-            "Endpoint selection armed: click the completed point on the Cycle Analysis pressure trace."
+            f"Reaction {anchor_kind} selection armed: click the pressure trace."
         )
+        self._draw_reaction_calibration_anchor_markers(redraw=True)
         try:
             self.nb.select(self.tab_cycle)
         except Exception:
             pass
+
+    def _commit_reaction_start_selection(self, target_index: int) -> bool:
+        """Store a manually clicked reaction-start anchor and draw its red marker.
+
+        Purpose:
+            Replace the default active-range start with an operator-confirmed
+            pressure sample before selecting or recalculating an endpoint.
+        Why:
+            Reaction initiation can occur after the active analysis range begins.
+        Inputs:
+            target_index: Original Cycle Analysis pressure-trace sample index.
+        Returns:
+            True when the start belongs to the active range.
+        Side Effects:
+            Updates start-anchor state, redraws markers, and clears armed mode.
+        Exceptions:
+            Out-of-range samples are rejected with an explanatory status message.
+        """
+        trace = self._reaction_endpoint_trace_inputs()
+        if trace is None or not bool(np.any(trace["sample_indices"] == int(target_index))):
+            self._reaction_endpoint_status_var.set("Reaction start must be inside the active Cycle Analysis range.")
+            return False
+        endpoint = getattr(self, "_reaction_endpoint_global_index", None)
+        if endpoint is not None and int(target_index) >= int(endpoint):
+            self._reaction_endpoint_status_var.set("Reaction start must be before the selected reaction endpoint.")
+            return False
+        self._reaction_start_global_index = int(target_index)
+        self._reaction_endpoint_selection_mode = None
+        self._reaction_endpoint_status_var.set("Reaction start selected; now place or confirm the reaction endpoint.")
+        self._draw_reaction_calibration_anchor_markers(redraw=True)
+        return True
 
     def _commit_reaction_endpoint_selection(self, target_index: int) -> bool:
         """Commit a manually clicked Cycle Analysis sample as reaction endpoint.
@@ -187615,6 +187778,8 @@ class UnifiedApp(tk.Tk):
         self._reaction_endpoint_selection_mode = None
         if result.get("effective_headspace_l") is None:
             return False
+        self._reaction_endpoint_global_index = int(target_index)
+        self._draw_reaction_calibration_anchor_markers(redraw=True)
         self._reaction_source_mode_var.set("endpoint_calibrated_trace")
         self._reaction_source_display_var.set(
             self._reaction_source_key_to_label["endpoint_calibrated_trace"]
