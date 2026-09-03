@@ -36,7 +36,7 @@ const RUST_BACKEND_INTERFACE_ID: &str = "gl260_rust_backend";
 const RUST_BACKEND_INTERFACE_VERSION: &str = "4";
 const RUST_BACKEND_MODULE_NAME: &str = env!("CARGO_PKG_NAME");
 const RUST_BACKEND_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
-const RUST_EXPORTED_KERNELS: [&str; 28] = [
+const RUST_EXPORTED_KERNELS: [&str; 29] = [
     "simulate_reaction_state_with_accounting",
     "analyze_bicarbonate_core",
     "carbonate_state_core",
@@ -65,6 +65,7 @@ const RUST_EXPORTED_KERNELS: [&str; 28] = [
     "plot_envelope_indices_core",
     "reaction_solution_charge_core",
     "reaction_dashboard_core",
+    "reaction_endpoint_calibration_core",
 ];
 
 #[derive(Clone, Copy)]
@@ -3639,6 +3640,97 @@ fn reaction_dashboard_core(
 }
 
 #[pyfunction]
+#[pyo3(signature = (x_values, pressure_absolute_psi, temperature_c, expected_gas_mol, endpoint_position, displacement_l=None))]
+/// Calculate confirmed endpoint pressure-trace calibration values.
+///
+/// This native kernel intentionally performs only deterministic exact arithmetic.
+/// Python retains the UI-specific endpoint suggestion policy and routes here only
+/// after it has validated a confirmed endpoint and aligned trace arrays.
+fn reaction_endpoint_calibration_core(
+    py: Python<'_>,
+    x_values: Vec<f64>,
+    pressure_absolute_psi: Vec<f64>,
+    temperature_c: Vec<f64>,
+    expected_gas_mol: f64,
+    endpoint_position: usize,
+    displacement_l: Option<f64>,
+) -> PyResult<Py<PyDict>> {
+    let out = PyDict::new(py);
+    let warnings = PyList::empty(py);
+    let size = x_values
+        .len()
+        .min(pressure_absolute_psi.len())
+        .min(temperature_c.len());
+    if size < 5 || endpoint_position == 0 || endpoint_position >= size || !expected_gas_mol.is_finite() || expected_gas_mol <= 1e-12 {
+        warnings.append("A valid endpoint and positive stoichiometric gas demand are required.")?;
+        out.set_item("effective_headspace_l", py.None())?;
+        out.set_item("gross_vessel_volume_l", py.None())?;
+        out.set_item("conversion_pct", PyList::empty(py))?;
+        out.set_item("consumed_moles", PyList::empty(py))?;
+        out.set_item("corrected_pressure", PyList::empty(py))?;
+        out.set_item("warnings", warnings)?;
+        return Ok(out.unbind());
+    }
+    let mut corrected = Vec::with_capacity(size);
+    for index in 0..size {
+        let pressure = pressure_absolute_psi[index];
+        let temperature_k = temperature_c[index] + 273.15;
+        if !x_values[index].is_finite() || !pressure.is_finite() || !temperature_k.is_finite() || pressure <= 0.0 || temperature_k <= 0.0 {
+            warnings.append("Mapped absolute pressure and temperature must be finite and positive across the active range.")?;
+            out.set_item("effective_headspace_l", py.None())?;
+            out.set_item("gross_vessel_volume_l", py.None())?;
+            out.set_item("conversion_pct", PyList::empty(py))?;
+            out.set_item("consumed_moles", PyList::empty(py))?;
+            out.set_item("corrected_pressure", PyList::empty(py))?;
+            out.set_item("warnings", warnings)?;
+            return Ok(out.unbind());
+        }
+        corrected.push((pressure / 14.6959) / temperature_k);
+    }
+    let denominator = corrected[0] - corrected[endpoint_position];
+    if !denominator.is_finite() || denominator <= 1e-15 {
+        warnings.append("Corrected pressure drop is zero or negative; headspace cannot be calibrated.")?;
+        out.set_item("effective_headspace_l", py.None())?;
+        out.set_item("gross_vessel_volume_l", py.None())?;
+        out.set_item("conversion_pct", PyList::empty(py))?;
+        out.set_item("consumed_moles", PyList::empty(py))?;
+        out.set_item("corrected_pressure", PyList::new(py, corrected)?)?;
+        out.set_item("warnings", warnings)?;
+        return Ok(out.unbind());
+    }
+    let headspace = expected_gas_mol * 0.082057338 / denominator;
+    if !headspace.is_finite() || headspace <= 0.0 {
+        warnings.append("Calculated effective gas headspace is not positive.")?;
+        out.set_item("effective_headspace_l", py.None())?;
+        out.set_item("gross_vessel_volume_l", py.None())?;
+        out.set_item("conversion_pct", PyList::empty(py))?;
+        out.set_item("consumed_moles", PyList::empty(py))?;
+        out.set_item("corrected_pressure", PyList::new(py, corrected)?)?;
+        out.set_item("warnings", warnings)?;
+        return Ok(out.unbind());
+    }
+    let conversion: Vec<f64> = corrected.iter().map(|value| ((corrected[0] - value) / denominator) * 100.0).collect();
+    let consumed: Vec<f64> = conversion.iter().map(|value| (value / 100.0) * expected_gas_mol).collect();
+    if conversion.iter().any(|value| *value > 100.0 + 1e-6) {
+        warnings.append("Pressure-equivalent conversion exceeds 100%; continued uptake or endpoint mismatch is present.")?;
+    }
+    if conversion.iter().any(|value| *value < -1e-6) {
+        warnings.append("Pressure-equivalent conversion is negative before the selected start; inspect the pressure trace.")?;
+    }
+    out.set_item("effective_headspace_l", headspace)?;
+    if let Some(displacement) = displacement_l.filter(|value| value.is_finite() && *value >= 0.0) {
+        out.set_item("gross_vessel_volume_l", headspace + displacement)?;
+    } else {
+        out.set_item("gross_vessel_volume_l", py.None())?;
+    }
+    out.set_item("conversion_pct", PyList::new(py, conversion)?)?;
+    out.set_item("consumed_moles", PyList::new(py, consumed)?)?;
+    out.set_item("corrected_pressure", PyList::new(py, corrected)?)?;
+    out.set_item("warnings", warnings)?;
+    Ok(out.unbind())
+}
+
+#[pyfunction]
 #[pyo3(signature = (timeline_rows))]
 /// Format Final Report timeline rows using the Rust speciation outputs.
 ///
@@ -5928,5 +6020,6 @@ fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
     module.add_function(wrap_pyfunction!(plot_envelope_indices_core, module)?)?;
     module.add_function(wrap_pyfunction!(reaction_solution_charge_core, module)?)?;
     module.add_function(wrap_pyfunction!(reaction_dashboard_core, module)?)?;
+    module.add_function(wrap_pyfunction!(reaction_endpoint_calibration_core, module)?)?;
     Ok(())
 }

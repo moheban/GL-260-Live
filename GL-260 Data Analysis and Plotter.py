@@ -2793,6 +2793,7 @@ RUST_REQUIRED_KERNEL_EXPORTS: Tuple[str, ...] = (
     "plot_envelope_indices_core",
     "reaction_solution_charge_core",
     "reaction_dashboard_core",
+    "reaction_endpoint_calibration_core",
 )
 RUST_MEASURED_PH_CALIBRATION_REQUIRED_PARAMS: Tuple[str, ...] = (
     "model_key",
@@ -22723,11 +22724,18 @@ REACTION_DASHBOARD_CUSTOM_TEMPLATES_KEY = "reaction_dashboard_custom_templates"
 REACTION_DASHBOARD_SELECTED_TEMPLATE_KEY = "reaction_dashboard_selected_template_id"
 REACTION_DASHBOARD_SOURCE_MODES: Tuple[Tuple[str, str], ...] = (
     ("cycle_payload", "Imported Cycle Analysis payload"),
+    ("endpoint_calibrated_trace", "Endpoint-calibrated pressure trace"),
     ("reactor_pressure", "Reactor pressure delta"),
     ("cylinder_loss", "Cylinder mass loss"),
     ("manual", "Manual gas mass / moles"),
 )
 REACTION_DASHBOARD_DEFAULT_SOURCE_MODE = "cycle_payload"
+REACTION_ENDPOINT_CALIBRATION_MEDIAN_WINDOW = 5
+REACTION_ENDPOINT_CALIBRATION_MIN_SAMPLES = 5
+REACTION_ENDPOINT_CALIBRATION_MIN_STABLE_MINUTES = 15.0
+REACTION_ENDPOINT_CALIBRATION_SLOPE_FRACTION = 0.05
+REACTION_ENDPOINT_CALIBRATION_R_L_ATM_MOL_K = 0.082057338
+REACTION_ENDPOINT_CALIBRATION_PSI_PER_ATM = 14.6959
 REACTION_DASHBOARD_PLOT_KEY = "fig_reaction_dashboard_tab"
 REACTION_DASHBOARD_PLOT_ID = "fig_reaction_dashboard"
 REACTION_DASHBOARD_STATUS_COLORS: Dict[str, str] = {
@@ -36128,6 +36136,336 @@ def _run_reaction_dashboard_core(
         )
     else:
         result["gas_required_mol"] = None
+    return result
+
+
+def _reaction_dashboard_expected_gas_demand(
+    species_rows: Sequence[Mapping[str, Any]],
+    step_rows: Sequence[Mapping[str, Any]],
+    *,
+    gas_species_id: str,
+    yield_species_id: str,
+    target_reactant_species_id: Optional[str],
+) -> Dict[str, Any]:
+    """Resolve stoichiometric gas demand with gas treated as unconstrained.
+
+    Purpose:
+        Determine the gas moles consumed when the charged non-gas materials reach
+        their template-defined limiting extent.
+    Why:
+        Endpoint calibration needs a charge-derived gas requirement, rather than
+        the volume-dependent gas uptake imported from Cycle Analysis.
+    Inputs:
+        species_rows: Normalized template species inventory rows.
+        step_rows: Ordered linked reaction steps.
+        gas_species_id: Reactant gas species identifier.
+        yield_species_id: Template yield species identifier.
+        target_reactant_species_id: Optional completion-basis species identifier.
+    Returns:
+        Mapping with expected gas demand, backend provenance, and warnings.
+    Side Effects:
+        May invoke the Rust reaction kernel through the existing safe wrapper.
+    Exceptions:
+        Invalid reaction definitions return a warning-bearing unavailable result.
+    """
+    gas_id = str(gas_species_id or "").strip()
+    if not gas_id:
+        return {"expected_gas_mol": None, "backend": "python", "warnings": [
+            "Template does not define a reactant gas species."
+        ]}
+    # A deliberately generous inventory removes gas as a limiter while retaining
+    # the existing ordered linked-step material-balance semantics.
+    saturation_moles = 1.0e9
+    core = _run_reaction_dashboard_core(
+        species_rows,
+        step_rows,
+        gas_uptake_mol=saturation_moles,
+        gas_species_id=gas_id,
+        yield_species_id=yield_species_id,
+        target_reactant_species_id=target_reactant_species_id,
+        actual_yield_mass_g=None,
+    )
+    initial = _safe_float(
+        (core.get("initial_inventory_mol") or {}).get(gas_id)
+        if isinstance(core.get("initial_inventory_mol"), Mapping)
+        else None
+    )
+    ending = _safe_float(
+        (core.get("final_inventory_mol") or {}).get(gas_id)
+        if isinstance(core.get("final_inventory_mol"), Mapping)
+        else None
+    )
+    expected = None
+    if initial is not None and ending is not None:
+        candidate = float(initial) - float(ending)
+        if math.isfinite(candidate) and candidate > 1e-12:
+            expected = candidate
+    warnings = list(core.get("warnings") or [])
+    if expected is None:
+        warnings.append(
+            "Stoichiometric gas demand is unavailable; confirm charged reactants "
+            "and a gas-consuming template step."
+        )
+    return {
+        "expected_gas_mol": expected,
+        "backend": str(core.get("backend") or "python"),
+        "warnings": warnings,
+    }
+
+
+def _reaction_endpoint_hours_per_x_unit(x_label: object) -> Optional[float]:
+    """Return elapsed hours represented by one active x-axis unit.
+
+    Purpose:
+        Normalize endpoint-stability detection to elapsed hours.
+    Why:
+        The conservative endpoint duration must mean the same thing for minute,
+        hour, day, and second traces.
+    Inputs:
+        x_label: Active Cycle Analysis x-axis label.
+    Returns:
+        Hours per x-axis unit, or None when the label is not time-like.
+    Side Effects:
+        None.
+    Exceptions:
+        Unrecognized labels return None.
+    """
+    label = str(x_label or "").strip().lower()
+    for token, factor in (
+        ("second", 1.0 / 3600.0), (" sec", 1.0 / 3600.0),
+        ("minute", 1.0 / 60.0), (" min", 1.0 / 60.0),
+        ("hour", 1.0), (" hr", 1.0), ("day", 24.0),
+    ):
+        if token in label:
+            return factor
+    return None
+
+
+def _python_reaction_endpoint_calibration_core(
+    x_values: Sequence[float],
+    pressure_absolute_psi: Sequence[float],
+    temperature_c: Sequence[float],
+    *,
+    x_label: object,
+    expected_gas_mol: Optional[float],
+    endpoint_position: Optional[int],
+    displacement_l: Optional[float],
+) -> Dict[str, Any]:
+    """Calculate endpoint-calibrated headspace and pressure-equivalent progress.
+
+    Purpose:
+        Perform the temperature-corrected ideal-gas calibration on the active
+        pressure-trace range without depending on a preconfigured vessel volume.
+    Why:
+        Operators can determine consumption from a verified stoichiometric endpoint
+        when the pressure-active headspace is unknown.
+    Inputs:
+        x_values: Monotonic elapsed-time samples for the active analysis range.
+        pressure_absolute_psi: Absolute pressure samples aligned with x_values.
+        temperature_c: Mapped gas-temperature samples aligned with x_values.
+        x_label: Axis label used to recognize elapsed-time units.
+        expected_gas_mol: Stoichiometric gas demand at the confirmed endpoint.
+        endpoint_position: Zero-based selected endpoint within these arrays.
+        displacement_l: Optional liquid and internals displacement at endpoint.
+    Returns:
+        Calibration mapping with suggested endpoint, headspace, trace series, and
+        warnings; unavailable quantities are represented by None.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid trace data is reported through warnings instead of raising.
+    """
+    unavailable = {
+        "backend": "python", "expected_gas_mol": expected_gas_mol,
+        "suggested_endpoint_position": None, "effective_headspace_l": None,
+        "gross_vessel_volume_l": None, "endpoint_position": endpoint_position,
+        "conversion_pct": [], "consumed_moles": [], "corrected_pressure": [],
+        "warnings": [],
+    }
+    try:
+        x = np.asarray(x_values, dtype=float)
+        pressure = np.asarray(pressure_absolute_psi, dtype=float)
+        temp_k = np.asarray(temperature_c, dtype=float) + 273.15
+    except (TypeError, ValueError):
+        unavailable["warnings"].append("Pressure, temperature, or time trace is invalid.")
+        return unavailable
+    size = min(x.size, pressure.size, temp_k.size)
+    if size < REACTION_ENDPOINT_CALIBRATION_MIN_SAMPLES:
+        unavailable["warnings"].append("At least five aligned pressure and temperature samples are required.")
+        return unavailable
+    x, pressure, temp_k = x[:size], pressure[:size], temp_k[:size]
+    valid = np.isfinite(x) & np.isfinite(pressure) & np.isfinite(temp_k) & (pressure > 0.0) & (temp_k > 0.0)
+    if not bool(np.all(valid)):
+        unavailable["warnings"].append("Mapped absolute pressure and temperature must be finite and positive across the active range.")
+        return unavailable
+    hours_per_x = _reaction_endpoint_hours_per_x_unit(x_label)
+    if hours_per_x is None:
+        unavailable["warnings"].append("Endpoint suggestion requires a recognized elapsed-time x-axis.")
+        return unavailable
+    x_hours = (x - float(x[0])) * hours_per_x
+    if not bool(np.all(np.diff(x_hours) > 0.0)):
+        unavailable["warnings"].append("Endpoint calibration requires a strictly increasing time trace.")
+        return unavailable
+    corrected = (pressure / REACTION_ENDPOINT_CALIBRATION_PSI_PER_ATM) / temp_k
+    padded = np.pad(corrected, (2, 2), mode="edge")
+    smoothed = np.median(np.lib.stride_tricks.sliding_window_view(padded, 5), axis=1)
+    slopes = np.gradient(smoothed, x_hours)
+    finite_slopes = slopes[np.isfinite(slopes)]
+    if finite_slopes.size < REACTION_ENDPOINT_CALIBRATION_MIN_SAMPLES:
+        unavailable["warnings"].append("Corrected pressure slope is unavailable for this trace.")
+        return unavailable
+    median_slope = float(np.median(finite_slopes))
+    mad = float(np.median(np.abs(finite_slopes - median_slope)))
+    peak_rate = float(np.max(np.abs(finite_slopes)))
+    threshold = max(3.0 * mad, REACTION_ENDPOINT_CALIBRATION_SLOPE_FRACTION * peak_rate)
+    stable = np.abs(slopes) <= threshold
+    suggested = None
+    for position in range(size - REACTION_ENDPOINT_CALIBRATION_MIN_SAMPLES + 1):
+        duration_ok = (x_hours[-1] - x_hours[position]) >= REACTION_ENDPOINT_CALIBRATION_MIN_STABLE_MINUTES / 60.0
+        if duration_ok and bool(np.all(stable[position:])):
+            suggested = position
+            break
+    unavailable["suggested_endpoint_position"] = suggested
+    if endpoint_position is None:
+        unavailable["warnings"].append("Confirm the suggested endpoint or select an endpoint on the Cycle Analysis plot.")
+        return unavailable
+    try:
+        endpoint = int(endpoint_position)
+    except (TypeError, ValueError):
+        unavailable["warnings"].append("Selected endpoint is invalid.")
+        return unavailable
+    expected = _safe_float(expected_gas_mol)
+    if endpoint <= 0 or endpoint >= size or expected is None or expected <= 1e-12:
+        unavailable["warnings"].append("A valid endpoint and positive stoichiometric gas demand are required.")
+        return unavailable
+    denominator = float(corrected[0] - corrected[endpoint])
+    if not math.isfinite(denominator) or denominator <= 1e-15:
+        unavailable["warnings"].append("Corrected pressure drop is zero or negative; headspace cannot be calibrated.")
+        return unavailable
+    headspace = float(expected) * REACTION_ENDPOINT_CALIBRATION_R_L_ATM_MOL_K / denominator
+    if not math.isfinite(headspace) or headspace <= 0.0:
+        unavailable["warnings"].append("Calculated effective gas headspace is not positive.")
+        return unavailable
+    conversion = ((corrected[0] - corrected) / denominator) * 100.0
+    consumed = (conversion / 100.0) * float(expected)
+    displacement = _safe_float(displacement_l)
+    gross = headspace + displacement if displacement is not None and displacement >= 0.0 else None
+    warnings = list(unavailable["warnings"])
+    if bool(np.any(conversion > 100.0 + 1e-6)):
+        warnings.append("Pressure-equivalent conversion exceeds 100%; continued uptake or endpoint mismatch is present.")
+    if bool(np.any(conversion < -1e-6)):
+        warnings.append("Pressure-equivalent conversion is negative before the selected start; inspect the pressure trace.")
+    return {
+        "backend": "python", "expected_gas_mol": float(expected),
+        "suggested_endpoint_position": suggested, "endpoint_position": endpoint,
+        "effective_headspace_l": headspace, "gross_vessel_volume_l": gross,
+        "conversion_pct": conversion.tolist(), "consumed_moles": consumed.tolist(),
+        "corrected_pressure": corrected.tolist(), "slope_threshold": threshold,
+        "warnings": warnings,
+    }
+
+
+def _rust_reaction_endpoint_calibration_core(
+    x_values: Sequence[float],
+    pressure_absolute_psi: Sequence[float],
+    temperature_c: Sequence[float],
+    *,
+    expected_gas_mol: Optional[float],
+    endpoint_position: Optional[int],
+    displacement_l: Optional[float],
+) -> Optional[Dict[str, Any]]:
+    """Attempt the native exact endpoint-calibration calculation.
+
+    Purpose:
+        Use the Rust extension for aligned corrected-pressure, headspace, and
+        consumption-vector math after Python has validated/suggested an endpoint.
+    Why:
+        Long trace calculations should use native acceleration when available
+        without making endpoint calibration dependent on a rebuilt extension.
+    Inputs:
+        Mirrors the exact-calibration subset of the Python fallback inputs.
+    Returns:
+        Sanitized native result mapping, or None when unavailable or unhealthy.
+    Side Effects:
+        May record native-kernel health failures through shared backend routing.
+    Exceptions:
+        Native invocation failures are converted to None for Python fallback.
+    """
+    if endpoint_position is None or expected_gas_mol is None:
+        return None
+    backend = _load_rust_backend()
+    resolver = getattr(backend, "reaction_endpoint_calibration_core", None) if backend else None
+    if not callable(resolver):
+        return None
+    payload: Any = _run_rust_kernel_with_timeout(
+        "reaction_endpoint_calibration_core",
+        lambda: resolver(
+            list(x_values), list(pressure_absolute_psi), list(temperature_c),
+            float(expected_gas_mol), int(endpoint_position), displacement_l,
+        ),
+    )
+    required = {"effective_headspace_l", "conversion_pct", "consumed_moles", "warnings"}
+    if not isinstance(payload, Mapping) or not required.issubset(payload):
+        _mark_rust_kernel_session_unhealthy(
+            "reaction_endpoint_calibration_core",
+            reason="invalid_payload",
+            details="missing endpoint calibration keys",
+        )
+        return None
+    result = dict(payload)
+    result["backend"] = "rust"
+    result["warnings"] = list(payload.get("warnings") or [])
+    return result
+
+
+def _run_reaction_endpoint_calibration_core(
+    x_values: Sequence[float],
+    pressure_absolute_psi: Sequence[float],
+    temperature_c: Sequence[float],
+    *,
+    x_label: object,
+    expected_gas_mol: Optional[float],
+    endpoint_position: Optional[int],
+    displacement_l: Optional[float],
+) -> Dict[str, Any]:
+    """Run endpoint calibration with Python suggestion and Rust exact fallback.
+
+    Purpose:
+        Preserve one complete result contract across automatic suggestion, native
+        exact math, and pure-Python execution.
+    Why:
+        The native kernel intentionally handles only confirmed endpoint arithmetic,
+        while Python owns the UI-facing conservative suggestion policy.
+    Inputs:
+        Mirrors `_python_reaction_endpoint_calibration_core`.
+    Returns:
+        Complete calibration mapping with backend provenance.
+    Side Effects:
+        May probe or mark the Rust endpoint-calibration kernel unhealthy.
+    Exceptions:
+        Python validation failures return warning-bearing result mappings.
+    """
+    result = _python_reaction_endpoint_calibration_core(
+        x_values, pressure_absolute_psi, temperature_c,
+        x_label=x_label, expected_gas_mol=expected_gas_mol,
+        endpoint_position=endpoint_position, displacement_l=displacement_l,
+    )
+    if result.get("effective_headspace_l") is None:
+        return result
+    rust_result = _rust_reaction_endpoint_calibration_core(
+        x_values, pressure_absolute_psi, temperature_c,
+        expected_gas_mol=expected_gas_mol, endpoint_position=endpoint_position,
+        displacement_l=displacement_l,
+    )
+    if rust_result is None:
+        return result
+    for key in (
+        "effective_headspace_l", "gross_vessel_volume_l", "conversion_pct",
+        "consumed_moles", "corrected_pressure", "warnings",
+    ):
+        if key in rust_result:
+            result[key] = rust_result[key]
+    result["backend"] = "rust"
     return result
 
 
@@ -77360,6 +77698,107 @@ def _regression_test_reaction_dashboard_import_cycle_auto_runs() -> None:
         raise AssertionError("Import should auto-run the dashboard once.")
 
 
+def _regression_test_reaction_endpoint_calibration_core() -> None:
+    """Validate temperature-corrected endpoint headspace and conversion math.
+
+    Purpose:
+        Exercise the volume-independent calibration kernel with synthetic known
+        headspace and both isothermal and temperature-varying pressure traces.
+    Why:
+        A regression must prove the endpoint formula rather than only rendering
+        dashboard controls around it.
+    Inputs:
+        None; constructs deterministic absolute-pressure traces.
+    Outputs:
+        None; raises AssertionError on numerical or guard-path regressions.
+    Side Effects:
+        None.
+    Exceptions:
+        Raises AssertionError when calibration behavior changes unexpectedly.
+    """
+    expected_mol = 2.0
+    expected_headspace_l = 10.0
+    x = np.arange(0.0, 31.0, 5.0)
+    temperatures = np.asarray([25.0, 28.0, 31.0, 30.0, 29.0, 27.0, 25.0])
+    endpoint_q = 2.0 / (temperatures[-1] + 273.15)
+    start_q = endpoint_q + (
+        expected_mol * REACTION_ENDPOINT_CALIBRATION_R_L_ATM_MOL_K
+        / expected_headspace_l
+    )
+    corrected = np.linspace(start_q, endpoint_q, x.size)
+    pressure = corrected * (temperatures + 273.15) * REACTION_ENDPOINT_CALIBRATION_PSI_PER_ATM
+    result = _run_reaction_endpoint_calibration_core(
+        x, pressure, temperatures,
+        x_label="Elapsed Time (minutes)", expected_gas_mol=expected_mol,
+        endpoint_position=x.size - 1, displacement_l=1.25,
+    )
+    if abs(float(result.get("effective_headspace_l") or 0.0) - expected_headspace_l) > 1e-9:
+        raise AssertionError("Endpoint calibration did not recover known effective headspace.")
+    if abs(float(result.get("gross_vessel_volume_l") or 0.0) - 11.25) > 1e-9:
+        raise AssertionError("Gross vessel volume did not include endpoint displacement.")
+    conversion = list(result.get("conversion_pct") or [])
+    if len(conversion) != x.size or abs(float(conversion[-1]) - 100.0) > 1e-9:
+        raise AssertionError("Endpoint conversion must end at exactly 100 percent.")
+    invalid = _python_reaction_endpoint_calibration_core(
+        x, pressure, np.asarray([25.0, np.nan, 31.0, 30.0, 29.0, 27.0, 25.0]),
+        x_label="Elapsed Time (minutes)", expected_gas_mol=expected_mol,
+        endpoint_position=x.size - 1, displacement_l=None,
+    )
+    if invalid.get("effective_headspace_l") is not None:
+        raise AssertionError("Missing mapped temperature must block endpoint calibration.")
+
+
+def _regression_test_reaction_endpoint_gas_demand_and_cycle_clone() -> None:
+    """Validate stoichiometric gas demand and dashboard-only cycle replacement.
+
+    Purpose:
+        Confirm endpoint calibration derives demand from charged materials and
+        never mutates the original Cycle Analysis transfer payload.
+    Why:
+        The feature replaces Reaction Dashboard uptake only, preserving source
+        measurements for Cycle Analysis review and export.
+    Inputs:
+        None; uses one simple gas-consuming reaction and compact payload harness.
+    Outputs:
+        None; raises AssertionError when provenance boundaries regress.
+    Side Effects:
+        Mutates only local harness state.
+    Exceptions:
+        Raises AssertionError for incorrect demand or payload mutation.
+    """
+    species = [
+        {"species_id": "feed", "initial_moles": 2.0, "molar_mass_g_mol": 10.0},
+        {"species_id": "gas", "initial_moles": 0.0, "molar_mass_g_mol": 20.0},
+        {"species_id": "product", "initial_moles": 0.0, "molar_mass_g_mol": 30.0},
+    ]
+    steps = [{"step_id": "main", "stoichiometry": {"feed": -1.0, "gas": -1.0, "product": 1.0}}]
+    demand = _reaction_dashboard_expected_gas_demand(
+        species, steps, gas_species_id="gas", yield_species_id="product",
+        target_reactant_species_id="feed",
+    )
+    if abs(float(demand.get("expected_gas_mol") or 0.0) - 2.0) > 1e-9:
+        raise AssertionError("Stoichiometric endpoint demand should ignore gas as a limiter.")
+
+    class _Harness:
+        """Minimal holder for dashboard-only calibrated cycle payload tests."""
+
+        _reaction_dashboard_calibrated_cycle_payload = UnifiedApp._reaction_dashboard_calibrated_cycle_payload
+
+    harness = _Harness()
+    harness._cycle_last_transfer_payload = {
+        "cycle_transfer": [{"peak_index": 0, "trough_index": 2, "selected_moles": 99.0}]
+    }
+    harness._reaction_endpoint_calibration = {
+        "sample_indices": [0, 1, 2], "consumed_moles": [0.0, 0.5, 1.0],
+        "expected_gas_mol": 2.0,
+    }
+    cloned = harness._reaction_dashboard_calibrated_cycle_payload()
+    if cloned is None or float(cloned["cycle_transfer"][0]["selected_moles"]) != 1.0:
+        raise AssertionError("Calibrated dashboard cycle delta was not rebuilt from trace consumption.")
+    if harness._cycle_last_transfer_payload["cycle_transfer"][0]["selected_moles"] != 99.0:
+        raise AssertionError("Endpoint calibration must not mutate Cycle Analysis source payload.")
+
+
 def _regression_test_reaction_solution_charge_core() -> None:
     """Validate sodium/methanol/water charge-basis calculations.
 
@@ -79150,6 +79589,14 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
     (
         "Reaction Dashboard import cycle auto-runs",
         _regression_test_reaction_dashboard_import_cycle_auto_runs,
+    ),
+    (
+        "Reaction Dashboard endpoint calibration core",
+        _regression_test_reaction_endpoint_calibration_core,
+    ),
+    (
+        "Reaction Dashboard endpoint demand and source preservation",
+        _regression_test_reaction_endpoint_gas_demand_and_cycle_clone,
     ),
     (
         "Reaction solution charge basis",
@@ -109688,6 +110135,11 @@ class UnifiedApp(tk.Tk):
         self._reaction_equation_var = tk.StringVar(value="")
         self._reaction_input_vars: Dict[str, tk.StringVar] = {}
         self._reaction_source_vars: Dict[str, tk.StringVar] = {}
+        self._reaction_endpoint_calibration: Dict[str, Any] = {}
+        self._reaction_endpoint_selection_mode: Optional[str] = None
+        self._reaction_endpoint_status_var = tk.StringVar(
+            value="Endpoint calibration: select the endpoint after Cycle Analysis is available."
+        )
         self._reaction_kpi_vars: Dict[str, tk.StringVar] = {}
         self._reaction_input_widgets_by_field: Dict[str, tk.Widget] = {}
         self._reaction_input_labels_by_field: Dict[str, tk.Widget] = {}
@@ -160350,6 +160802,15 @@ class UnifiedApp(tk.Tk):
 
             return
 
+        if (
+            getattr(self, "_reaction_endpoint_selection_mode", None) == "armed"
+            and getattr(event, "button", None) == 1
+        ):
+            target_idx = self._nearest_index_by_x(event.xdata)
+            if target_idx is not None:
+                self._commit_reaction_endpoint_selection(int(target_idx))
+            return
+
         self._remember_cycle_marker_tweak_target(event)
 
         btn = getattr(event, "button", None)
@@ -183720,6 +184181,7 @@ class UnifiedApp(tk.Tk):
             "forecast": dict(summary.get("forecast") or {}),
             "source_mode": str(result.get("source_mode") or ""),
             "core_backend": str(core.get("backend") or ""),
+            "endpoint_calibration": dict(result.get("endpoint_calibration") or {}),
             "warnings": [str(item) for item in list(result.get("warnings") or [])],
         }
 
@@ -184185,6 +184647,7 @@ class UnifiedApp(tk.Tk):
             "reactor_temperature_c": tk.StringVar(value="25.0"),
             "cylinder_start_mass_g": tk.StringVar(value=""),
             "cylinder_end_mass_g": tk.StringVar(value=""),
+            "endpoint_displacement_l": tk.StringVar(value=""),
         }
         source_specs = (
             (
@@ -184222,6 +184685,11 @@ class UnifiedApp(tk.Tk):
                 "Cylinder end mass (g)",
                 "Cylinder mass after gas charge.",
             ),
+            (
+                "endpoint_displacement_l",
+                "Endpoint liquid + internals displacement (L)",
+                "Optional physical displacement used only to estimate gross vessel volume after headspace calibration.",
+            ),
         )
         for idx, (key, label, tip) in enumerate(source_specs):
             row_idx = idx // 3
@@ -184255,6 +184723,32 @@ class UnifiedApp(tk.Tk):
             text="Open Plot in New Tab",
             command=self._open_reaction_dashboard_plot_in_new_tab,
         ).grid(row=0, column=2, sticky="w")
+
+        endpoint_box = ttk.Labelframe(source_box, text="Endpoint Calibration (absolute pressure trace)")
+        endpoint_box.grid(row=3, column=0, columnspan=5, sticky="ew", padx=8, pady=(4, 6))
+        endpoint_box.grid_columnconfigure(3, weight=1)
+        _ui_button(
+            endpoint_box,
+            text="Suggest Endpoint",
+            command=self._suggest_reaction_endpoint_calibration,
+        ).grid(row=0, column=0, sticky="w", padx=(6, 3), pady=5)
+        _ui_button(
+            endpoint_box,
+            text="Select Endpoint on Cycle Analysis Plot",
+            command=self._arm_reaction_endpoint_selection,
+        ).grid(row=0, column=1, sticky="w", padx=3, pady=5)
+        _ui_button(
+            endpoint_box,
+            text="Use Suggested Endpoint",
+            command=self._confirm_suggested_reaction_endpoint,
+        ).grid(row=0, column=2, sticky="w", padx=3, pady=5)
+        ttk.Label(
+            endpoint_box,
+            textvariable=self._reaction_endpoint_status_var,
+            wraplength=840,
+            justify="left",
+            style="Sol.Help.TLabel",
+        ).grid(row=1, column=0, columnspan=4, sticky="ew", padx=6, pady=(0, 5))
 
         result_box = ttk.LabelFrame(
             inner, text="4. Live Reaction Summary"
@@ -186856,6 +187350,330 @@ class UnifiedApp(tk.Tk):
         self._reaction_cycle_focus_var.set("Latest")
         self._run_reaction_dashboard()
 
+    def _reaction_endpoint_trace_inputs(self) -> Optional[Dict[str, Any]]:
+        """Collect the active Cycle Analysis trace required for endpoint calibration.
+
+        Purpose:
+            Extract aligned active-range time, absolute-pressure, and temperature
+            samples without mutating Cycle Analysis state.
+        Why:
+            Endpoint calibration must use the operator's current trace/range and
+            refuse incomplete temperature mapping instead of inventing values.
+        Inputs:
+            None.
+        Returns:
+            Trace mapping with arrays, original sample indices, and x-axis label,
+            or None when Cycle Analysis is not ready.
+        Side Effects:
+            None.
+        Exceptions:
+            Invalid UI/array state returns None and updates the status text.
+        """
+        if not self._cycle_ready():
+            self._reaction_endpoint_status_var.set(
+                "Endpoint calibration requires a completed Cycle Analysis run."
+            )
+            return None
+        x_values, pressure_values, temperature_values = self._get_xy()
+        if temperature_values is None:
+            self._reaction_endpoint_status_var.set(
+                "Map a gas-temperature trace before endpoint calibration; no constant-temperature fallback is used."
+            )
+            return None
+        try:
+            mask = np.asarray(self._current_mask(), dtype=bool)
+            x = np.asarray(x_values, dtype=float)
+            pressure = np.asarray(pressure_values, dtype=float)
+            temperature = np.asarray(temperature_values, dtype=float)
+        except (TypeError, ValueError):
+            self._reaction_endpoint_status_var.set(
+                "The active Cycle Analysis trace could not be read for calibration."
+            )
+            return None
+        size = min(x.size, pressure.size, temperature.size, mask.size)
+        selected_indices = np.flatnonzero(mask[:size])
+        if selected_indices.size < REACTION_ENDPOINT_CALIBRATION_MIN_SAMPLES:
+            self._reaction_endpoint_status_var.set(
+                "Select at least five active pressure/temperature samples before calibration."
+            )
+            return None
+        x_label = str(globals().get("selected_columns", {}).get("x", ""))
+        return {
+            "x": x[selected_indices],
+            "pressure": pressure[selected_indices],
+            "temperature": temperature[selected_indices],
+            "sample_indices": selected_indices,
+            "x_label": x_label,
+        }
+
+    def _refresh_reaction_endpoint_calibration(
+        self,
+        *,
+        endpoint_global_index: Optional[int],
+        selection_method: Optional[str],
+    ) -> Dict[str, Any]:
+        """Calculate or preview endpoint calibration from current dashboard inputs.
+
+        Purpose:
+            Route trace extraction, stoichiometric demand, cached numeric analysis,
+            and audit metadata through one endpoint-calibration entry point.
+        Why:
+            Manual and suggested endpoints must produce the same calibrated result
+            and invalidate whenever their trace or charged-material basis changes.
+        Inputs:
+            endpoint_global_index: Original trace index selected by the operator,
+                or None to generate only an unconfirmed suggestion.
+            selection_method: ``"manual"`` or ``"suggested"`` when confirming.
+        Returns:
+            Calibration mapping containing values or actionable warnings.
+        Side Effects:
+            Updates the in-memory cached calibration and status label.
+        Exceptions:
+            Invalid reaction input is converted to a warning-bearing result.
+        """
+        trace = self._reaction_endpoint_trace_inputs()
+        if trace is None:
+            return {}
+        try:
+            template = self._reaction_active_template()
+            species_rows, _charge_basis = self._reaction_dashboard_species_rows_with_inputs(template)
+            raw_steps = self._reaction_dashboard_steps_from_editor()
+            step_rows, _deferred = self._reaction_dashboard_step_rows_for_available_inputs(
+                template, raw_steps
+            )
+        except Exception as exc:
+            self._reaction_endpoint_status_var.set(
+                f"Endpoint calibration cannot resolve the reaction charge: {exc}"
+            )
+            return {}
+        demand = _reaction_dashboard_expected_gas_demand(
+            species_rows,
+            step_rows,
+            gas_species_id=template.gas_species_id,
+            yield_species_id=template.yield_basis.product_species_id,
+            target_reactant_species_id=template.yield_basis.target_reactant_species_id,
+        )
+        positions = np.flatnonzero(trace["sample_indices"] == endpoint_global_index)
+        endpoint_position = int(positions[0]) if positions.size else None
+        if endpoint_global_index is not None and endpoint_position is None:
+            self._reaction_endpoint_status_var.set(
+                "Selected endpoint is outside the active Cycle Analysis range."
+            )
+            return {}
+        displacement = self._reaction_dashboard_input_float("endpoint_displacement_l")
+        signature = (
+            int(trace["sample_indices"][0]), int(trace["sample_indices"][-1]),
+            int(trace["sample_indices"].size), float(trace["x"][0]), float(trace["x"][-1]),
+            float(np.sum(trace["pressure"])), float(np.sum(trace["temperature"])),
+            endpoint_position, _safe_float(demand.get("expected_gas_mol")), displacement,
+        )
+        cached = getattr(self, "_reaction_endpoint_calibration", {})
+        if cached.get("cache_signature") == signature:
+            calibration = dict(cached)
+        else:
+            calibration = _run_reaction_endpoint_calibration_core(
+                trace["x"], trace["pressure"], trace["temperature"],
+                x_label=trace["x_label"],
+                expected_gas_mol=_safe_float(demand.get("expected_gas_mol")),
+                endpoint_position=endpoint_position,
+                displacement_l=displacement,
+            )
+            calibration["cache_signature"] = signature
+        calibration["backend"] = calibration.get("backend", "python")
+        calibration["gas_demand_backend"] = demand.get("backend", "python")
+        calibration["warnings"] = list(demand.get("warnings") or []) + list(calibration.get("warnings") or [])
+        calibration["sample_indices"] = [int(value) for value in trace["sample_indices"]]
+        calibration["x_values"] = [float(value) for value in trace["x"]]
+        calibration["x_label"] = trace["x_label"]
+        calibration["pressure_reference"] = "absolute_psi"
+        calibration["selection_method"] = selection_method if endpoint_position is not None else None
+        calibration["endpoint_global_index"] = endpoint_global_index
+        if endpoint_position is not None:
+            calibration["endpoint_x"] = float(trace["x"][endpoint_position])
+        self._reaction_endpoint_calibration = calibration
+        suggested = calibration.get("suggested_endpoint_position")
+        if endpoint_position is not None and calibration.get("effective_headspace_l") is not None:
+            self._reaction_endpoint_status_var.set(
+                f"{selection_method.title() if selection_method else 'Confirmed'} endpoint at x={calibration.get('endpoint_x'):.4g}; "
+                f"effective gas headspace {calibration.get('effective_headspace_l'):.4g} L."
+            )
+        elif suggested is not None:
+            suggested_x = trace["x"][int(suggested)]
+            self._reaction_endpoint_status_var.set(
+                f"Conservative endpoint suggestion at x={suggested_x:.4g}. Confirm it or select a point on Cycle Analysis."
+            )
+        else:
+            self._reaction_endpoint_status_var.set(
+                "No conservative endpoint was found; select a completed point manually on Cycle Analysis."
+            )
+        return calibration
+
+    def _suggest_reaction_endpoint_calibration(self) -> None:
+        """Generate an unconfirmed conservative endpoint suggestion.
+
+        Purpose:
+            Analyze the current trace without treating an automatic candidate as
+            chemical completion.
+        Why:
+            Operators retain final authority over endpoint selection.
+        Inputs:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Stores a preview calibration and updates the endpoint status label.
+        Exceptions:
+            Trace/input failures are surfaced by the shared refresh helper.
+        """
+        self._refresh_reaction_endpoint_calibration(
+            endpoint_global_index=None, selection_method=None
+        )
+
+    def _confirm_suggested_reaction_endpoint(self) -> None:
+        """Confirm the current suggested endpoint as the calibration anchor.
+
+        Purpose:
+            Convert the preview-only automatic candidate into an auditable run
+            endpoint after an explicit operator action.
+        Why:
+            Near-zero slope is evidence of completion, not proof by itself.
+        Inputs:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Updates the cached calibration and reruns the dashboard when valid.
+        Exceptions:
+            Missing suggestions leave the current calibration unchanged.
+        """
+        calibration = getattr(self, "_reaction_endpoint_calibration", {})
+        suggested = calibration.get("suggested_endpoint_position") if isinstance(calibration, Mapping) else None
+        indices = calibration.get("sample_indices") if isinstance(calibration, Mapping) else None
+        if suggested is None or not isinstance(indices, Sequence) or int(suggested) >= len(indices):
+            self._reaction_endpoint_status_var.set("Generate a valid endpoint suggestion before confirming it.")
+            return
+        result = self._refresh_reaction_endpoint_calibration(
+            endpoint_global_index=int(indices[int(suggested)]), selection_method="suggested"
+        )
+        if result.get("effective_headspace_l") is not None:
+            self._reaction_source_mode_var.set("endpoint_calibrated_trace")
+            self._reaction_source_display_var.set(
+                self._reaction_source_key_to_label["endpoint_calibrated_trace"]
+            )
+            self._run_reaction_dashboard()
+
+    def _arm_reaction_endpoint_selection(self) -> None:
+        """Arm a one-shot manual endpoint selection on the Cycle Analysis plot.
+
+        Purpose:
+            Let an operator place a completion endpoint on the exact measured
+            pressure sample rather than infer it from a dashboard text field.
+        Why:
+            Completion often needs process context beyond automatic slope logic.
+        Inputs:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Switches to Cycle Analysis and arms the next unmodified left-click.
+        Exceptions:
+            Missing Cycle Analysis data leaves selection disarmed.
+        """
+        if self._reaction_endpoint_trace_inputs() is None:
+            return
+        self._reaction_endpoint_selection_mode = "armed"
+        self._reaction_endpoint_status_var.set(
+            "Endpoint selection armed: click the completed point on the Cycle Analysis pressure trace."
+        )
+        try:
+            self.nb.select(self.tab_cycle)
+        except Exception:
+            pass
+
+    def _commit_reaction_endpoint_selection(self, target_index: int) -> bool:
+        """Commit a manually clicked Cycle Analysis sample as reaction endpoint.
+
+        Purpose:
+            Validate the clicked sample against the active range and calculate the
+            calibrated pressure-trace result from that exact anchor.
+        Why:
+            The selection must not modify cycle peaks/troughs or Cycle Analysis
+            source data while it establishes Reaction Dashboard provenance.
+        Inputs:
+            target_index: Original pressure-trace sample index from the plot click.
+        Returns:
+            True when a complete calibration was created, otherwise False.
+        Side Effects:
+            Clears the armed selection, changes dashboard source mode, and reruns
+            the dashboard after a successful calibration.
+        Exceptions:
+            Invalid clicks return False with an explanatory status message.
+        """
+        result = self._refresh_reaction_endpoint_calibration(
+            endpoint_global_index=int(target_index), selection_method="manual"
+        )
+        self._reaction_endpoint_selection_mode = None
+        if result.get("effective_headspace_l") is None:
+            return False
+        self._reaction_source_mode_var.set("endpoint_calibrated_trace")
+        self._reaction_source_display_var.set(
+            self._reaction_source_key_to_label["endpoint_calibrated_trace"]
+        )
+        self._run_reaction_dashboard()
+        return True
+
+    def _reaction_dashboard_calibrated_cycle_payload(self) -> Optional[Dict[str, Any]]:
+        """Return a dashboard-only Cycle Analysis payload with calibrated moles.
+
+        Purpose:
+            Translate the confirmed endpoint calibration onto existing cycle
+            boundaries while retaining the original Cycle Analysis payload intact.
+        Why:
+            Reaction Dashboard progress must use volume-independent calibration,
+            whereas Cycle Analysis remains an unmodified measurement record.
+        Inputs:
+            None.
+        Returns:
+            Cloned payload with calibrated cycle rows, or None when unavailable.
+        Side Effects:
+            None.
+        Exceptions:
+            Missing index mappings return None without modifying source payload.
+        """
+        payload = getattr(self, "_cycle_last_transfer_payload", None)
+        calibration = getattr(self, "_reaction_endpoint_calibration", {})
+        if not isinstance(payload, Mapping) or not isinstance(calibration, Mapping):
+            return None
+        indices = calibration.get("sample_indices")
+        consumed = calibration.get("consumed_moles")
+        expected = _safe_float(calibration.get("expected_gas_mol"))
+        if not isinstance(indices, Sequence) or not isinstance(consumed, Sequence) or expected is None:
+            return None
+        consumed_by_index = {
+            int(index): _safe_float(value) for index, value in zip(indices, consumed, strict=False)
+        }
+        cloned = dict(payload)
+        rows: List[Dict[str, Any]] = []
+        for raw_row in list(payload.get("cycle_transfer") or []):
+            row = dict(raw_row)
+            peak = _safe_float(row.get("peak_index"))
+            trough = _safe_float(row.get("trough_index"))
+            start = consumed_by_index.get(int(peak)) if peak is not None else None
+            end = consumed_by_index.get(int(trough)) if trough is not None else None
+            if start is not None and end is not None:
+                row["selected_moles"] = max(float(end) - float(start), 0.0)
+                row["moles_ideal"] = row["selected_moles"]
+                row["moles_vdw"] = None
+                row["moles_basis"] = "endpoint_calibrated"
+                row["cumulative_moles"] = max(float(end), 0.0)
+                row["cumulative_co2_moles"] = row["cumulative_moles"]
+            rows.append(row)
+        cloned["cycle_transfer"] = rows
+        cloned["total_moles_ideal"] = float(expected)
+        cloned["total_moles_vdw"] = None
+        cloned["endpoint_calibration"] = dict(calibration)
+        return cloned
+
     def _reaction_dashboard_species_rows_with_inputs(
         self, template: ReactionTemplate
     ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
@@ -187093,6 +187911,24 @@ class UnifiedApp(tk.Tk):
             if moles is None:
                 return 0.0, ["Cycle payload does not include total gas moles."]
             return max(float(moles), 0.0), warnings
+        if source_mode == "endpoint_calibrated_trace":
+            calibration = getattr(self, "_reaction_endpoint_calibration", {})
+            expected = _safe_float(
+                calibration.get("expected_gas_mol")
+                if isinstance(calibration, Mapping)
+                else None
+            )
+            headspace = _safe_float(
+                calibration.get("effective_headspace_l")
+                if isinstance(calibration, Mapping)
+                else None
+            )
+            if expected is None or headspace is None:
+                return 0.0, [
+                    "Confirm an endpoint calibration with a valid temperature trace "
+                    "before using endpoint-calibrated pressure uptake."
+                ]
+            return max(float(expected), 0.0), list(calibration.get("warnings") or [])
         if source_mode == "reactor_pressure":
             delta_psi = self._reaction_dashboard_input_float("reactor_delta_p_psi")
             volume_l = self._reaction_dashboard_input_float(
@@ -187202,11 +188038,14 @@ class UnifiedApp(tk.Tk):
                 liquid_volume_l=liquid_volume,
                 product_moles=_safe_float(core.get("yield_species_moles")),
             )
+            cycle_payload = getattr(self, "_cycle_last_transfer_payload", None)
+            if self._reaction_source_mode_var.get() == "endpoint_calibrated_trace":
+                cycle_payload = self._reaction_dashboard_calibrated_cycle_payload()
             cycle_series = _reaction_dashboard_cycle_metric_series(
                 template,
                 species_rows,
                 step_rows,
-                getattr(self, "_cycle_last_transfer_payload", None),
+                cycle_payload,
                 actual_yield_mass_g=actual_mass,
                 ph_enabled=bool(self._reaction_ph_enabled_var.get()),
                 liquid_volume_l=liquid_volume,
@@ -187222,8 +188061,14 @@ class UnifiedApp(tk.Tk):
                 "core": core,
                 "equilibrium": equilibrium,
                 "cycle_series": cycle_series
-                if self._reaction_source_mode_var.get() == "cycle_payload"
+                if self._reaction_source_mode_var.get()
+                in {"cycle_payload", "endpoint_calibrated_trace"}
                 else [],
+                "endpoint_calibration": dict(
+                    getattr(self, "_reaction_endpoint_calibration", {})
+                )
+                if self._reaction_source_mode_var.get() == "endpoint_calibrated_trace"
+                else {},
                 "charge_basis": charge_basis or {},
                 "limiting_reagent_override_species_id": limiting_override_id,
                 "limiting_reagent_override": limiting_override or {},
@@ -187297,6 +188142,11 @@ class UnifiedApp(tk.Tk):
             if isinstance(result.get("charge_basis"), Mapping)
             else {}
         )
+        endpoint_calibration = (
+            result.get("endpoint_calibration")
+            if isinstance(result.get("endpoint_calibration"), Mapping)
+            else {}
+        )
         template = self._reaction_active_template()
         deferred_steps = [
             dict(item)
@@ -187365,6 +188215,26 @@ class UnifiedApp(tk.Tk):
                 "notes": "; ".join(equilibrium.get("warnings") or []),
             },
         ]
+        if endpoint_calibration:
+            rows.extend(
+                [
+                    {
+                        "metric": "Effective gas headspace",
+                        "value": _fmt(endpoint_calibration.get("effective_headspace_l"), 4),
+                        "notes": "L; confirmed endpoint calibration",
+                    },
+                    {
+                        "metric": "Estimated gross vessel volume",
+                        "value": _fmt(endpoint_calibration.get("gross_vessel_volume_l"), 4),
+                        "notes": "L; includes endpoint liquid + internals displacement when supplied",
+                    },
+                    {
+                        "metric": "Pressure-equivalent conversion",
+                        "value": "100.0",
+                        "notes": "Endpoint-normalized P/T progress; >100% remains visible as a warning.",
+                    },
+                ]
+            )
         limiting_override = (
             result.get("limiting_reagent_override")
             if isinstance(result.get("limiting_reagent_override"), Mapping)
