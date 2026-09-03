@@ -187515,7 +187515,7 @@ class UnifiedApp(tk.Tk):
             samples without mutating Cycle Analysis state.
         Why:
             Endpoint calibration must use the operator's current trace/range and
-            refuse incomplete temperature mapping instead of inventing values.
+            refuse a missing temperature mapping instead of inventing values.
         Inputs:
             None.
         Returns:
@@ -187562,6 +187562,49 @@ class UnifiedApp(tk.Tk):
             "sample_indices": selected_indices,
             "x_label": x_label,
         }
+
+    def _reaction_calibration_start_index(
+        self,
+        active_sample_indices: Sequence[int],
+        endpoint_global_index: int | None,
+    ) -> int | None:
+        """Return the first active Cycle Analysis peak for calibration baseline.
+
+        Purpose:
+            Align endpoint calibration with the first pressure-charge peak rather
+            than an earlier low-pressure sample before the reaction begins.
+        Why:
+            The first peak marker is the operator's established reaction-start
+            convention and supplies the physical P/T baseline for headspace math.
+        Inputs:
+            active_sample_indices: Original indices included in Cycle Analysis.
+            endpoint_global_index: Optional selected endpoint; starts at or after
+                it are not eligible.
+        Returns:
+            The first eligible peak index, explicit red start marker, or active
+            range start when no peak has been placed.
+        Side Effects:
+            None.
+        Exceptions:
+            Invalid marker state is ignored in favor of safe fallbacks.
+        """
+        active = {int(value) for value in active_sample_indices}
+        try:
+            peaks = sorted(int(value) for value in self._effective_peaks())
+        except Exception:
+            peaks = []
+        for peak_index in peaks:
+            if peak_index not in active:
+                continue
+            if endpoint_global_index is None or peak_index < int(endpoint_global_index):
+                return peak_index
+        explicit_start = getattr(self, "_reaction_start_global_index", None)
+        if explicit_start is not None and int(explicit_start) in active:
+            if endpoint_global_index is None or int(explicit_start) < int(
+                endpoint_global_index
+            ):
+                return int(explicit_start)
+        return min(active) if active else None
 
     def _refresh_reaction_endpoint_calibration(
         self,
@@ -187610,16 +187653,6 @@ class UnifiedApp(tk.Tk):
             yield_species_id=template.yield_basis.product_species_id,
             target_reactant_species_id=template.yield_basis.target_reactant_species_id,
         )
-        start_global_index = getattr(self, "_reaction_start_global_index", None)
-        if start_global_index is None:
-            start_global_index = int(trace["sample_indices"][0])
-        start_positions = np.flatnonzero(trace["sample_indices"] == start_global_index)
-        if not start_positions.size:
-            self._reaction_endpoint_status_var.set(
-                "Selected reaction start is outside the active Cycle Analysis range."
-            )
-            return {}
-        start_position = int(start_positions[0])
         positions = np.flatnonzero(trace["sample_indices"] == endpoint_global_index)
         endpoint_position = int(positions[0]) if positions.size else None
         if endpoint_global_index is not None and endpoint_position is None:
@@ -187627,6 +187660,26 @@ class UnifiedApp(tk.Tk):
                 "Selected endpoint is outside the active Cycle Analysis range."
             )
             return {}
+        start_global_index = self._reaction_calibration_start_index(
+            trace["sample_indices"], endpoint_global_index
+        )
+        if start_global_index is None:
+            self._reaction_endpoint_status_var.set(
+                "No valid reaction-start peak is available in the active Cycle Analysis range."
+            )
+            return {}
+        if getattr(self, "_reaction_start_global_index", None) != start_global_index:
+            # Keep the visible red start anchor aligned with the peak-derived
+            # baseline that is actually supplied to the calibration kernel.
+            self._reaction_start_global_index = int(start_global_index)
+            self._draw_reaction_calibration_anchor_markers(redraw=True)
+        start_positions = np.flatnonzero(trace["sample_indices"] == start_global_index)
+        if not start_positions.size:
+            self._reaction_endpoint_status_var.set(
+                "Selected reaction start is outside the active Cycle Analysis range."
+            )
+            return {}
+        start_position = int(start_positions[0])
         if endpoint_position is not None and endpoint_position <= start_position:
             self._reaction_endpoint_status_var.set(
                 "Reaction endpoint must be after the selected reaction start."
@@ -187656,6 +187709,51 @@ class UnifiedApp(tk.Tk):
                 "temperature": trace["temperature"][:endpoint_slice],
                 "sample_indices": trace["sample_indices"][:endpoint_slice],
             }
+        interval_warnings: List[str] = []
+        temperature_kelvin = trace["temperature"] + 273.15
+        usable_samples = (
+            np.isfinite(trace["x"])
+            & np.isfinite(trace["pressure"])
+            & np.isfinite(temperature_kelvin)
+            & (trace["pressure"] > 0.0)
+            & (temperature_kelvin > 0.0)
+        )
+        if endpoint_position is not None and not bool(
+            usable_samples[0] and usable_samples[-1]
+        ):
+            warning = (
+                "The selected reaction start and endpoint must each have finite, "
+                "positive absolute pressure and mapped temperature values."
+            )
+            self._reaction_endpoint_status_var.set(warning)
+            return {"warnings": [warning]}
+        unusable_count = int((~usable_samples).sum())
+        if unusable_count:
+            # Discard only unusable interior rows; no pressure or temperature is
+            # fabricated, while valid anchors retain their original sample ids.
+            trace = {
+                **trace,
+                "x": trace["x"][usable_samples],
+                "pressure": trace["pressure"][usable_samples],
+                "temperature": trace["temperature"][usable_samples],
+                "sample_indices": trace["sample_indices"][usable_samples],
+            }
+            endpoint_position = (
+                int(trace["sample_indices"].size - 1)
+                if endpoint_position is not None
+                else None
+            )
+            interval_warnings.append(
+                f"Excluded {unusable_count} unusable interior pressure/temperature "
+                "sample(s) from endpoint calibration."
+            )
+        if trace["sample_indices"].size < REACTION_ENDPOINT_CALIBRATION_MIN_SAMPLES:
+            warning = (
+                "Endpoint calibration requires at least five usable pressure and "
+                "temperature samples between the selected anchors."
+            )
+            self._reaction_endpoint_status_var.set(warning)
+            return {"warnings": interval_warnings + [warning]}
         displacement = self._reaction_dashboard_input_float("endpoint_displacement_l")
         signature = (
             int(trace["sample_indices"][0]), int(trace["sample_indices"][-1]),
@@ -187677,7 +187775,17 @@ class UnifiedApp(tk.Tk):
             calibration["cache_signature"] = signature
         calibration["backend"] = calibration.get("backend", "python")
         calibration["gas_demand_backend"] = demand.get("backend", "python")
-        calibration["warnings"] = list(demand.get("warnings") or []) + list(calibration.get("warnings") or [])
+        calibration["warnings"] = list(
+            dict.fromkeys(
+                str(item)
+                for item in (
+                    list(demand.get("warnings") or [])
+                    + interval_warnings
+                    + list(calibration.get("warnings") or [])
+                )
+                if str(item)
+            )
+        )
         calibration["sample_indices"] = [int(value) for value in trace["sample_indices"]]
         calibration["x_values"] = [float(value) for value in trace["x"]]
         calibration["x_label"] = trace["x_label"]
@@ -187685,6 +187793,9 @@ class UnifiedApp(tk.Tk):
         calibration["selection_method"] = selection_method if endpoint_position is not None else None
         calibration["endpoint_global_index"] = endpoint_global_index
         calibration["start_global_index"] = int(start_global_index)
+        calibration["calibration_start_global_index"] = int(
+            trace["sample_indices"][0]
+        )
         if endpoint_position is not None:
             calibration["endpoint_x"] = float(trace["x"][endpoint_position])
         self._reaction_endpoint_calibration = calibration
