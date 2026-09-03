@@ -89492,11 +89492,21 @@ if os.path.exists(SETTINGS_FILE):
         MAX_COMBINED_FONT_SIZE,
     )
     settings["combined_cycle_legend_fontsize"] = initial_combined_cycle_legend_fontsize
-    initial_combined_font_family = (
-        settings.get("combined_font_family", DEFAULT_COMBINED_FONT_FAMILY) or ""
-    )
     initial_font_family = (settings.get("font_family", "") or "").strip()
     settings["font_family"] = initial_font_family
+    stored_combined_font_family = (
+        settings.get("combined_font_family", DEFAULT_COMBINED_FONT_FAMILY) or ""
+    ).strip()
+    if (
+        initial_font_family
+        and stored_combined_font_family == DEFAULT_COMBINED_FONT_FAMILY
+    ):
+        # A legacy default is not a user-specific Combined override; inherit the
+        # global selection so an existing XITS Math preference is honored.
+        initial_combined_font_family = initial_font_family
+        settings["combined_font_family"] = initial_combined_font_family
+    else:
+        initial_combined_font_family = stored_combined_font_family
 
     initial_combined_legend_wrap = bool(settings.get("combined_legend_wrap", False))
     initial_combined_legend_rows = settings.get("combined_legend_rows", 2)
@@ -103417,6 +103427,8 @@ def build_combined_triple_axis_figure(
     Args:
         min_time/max_time/etc.: Numeric axis limits and tick settings in data
             units; tick spacing values are floats.
+        title_text/suptitle_text: Display titles; Unicode scientific indices are
+            rendered through XITS Math layout when the font pair is available.
         legend_anchor/cycle_legend_anchor: (x, y) tuple in normalized figure or
             axes fraction coordinates (0-1 with small tolerance).
         cycle_legend_anchor_space: "figure" or "axes" to interpret the anchor.
@@ -104645,7 +104657,12 @@ def build_combined_triple_axis_figure(
         labelpad=primary_settings["labelpad"],
         **font_kwargs,
     )
-    title_display = _text_safe(title_text)
+    raw_title_display = _text_safe(title_text)
+    title_display = _render_plot_title_scientific_indices(raw_title_display)
+    xits_text_font = _scientific_title_text_font()
+    title_font_family = (
+        xits_text_font if xits_text_font and title_display != raw_title_display else family_value
+    )
 
     axis_for_role: Dict[str, Axes] = {"primary": ax}
     show_derivative_zero_line = False
@@ -104901,7 +104918,13 @@ def build_combined_triple_axis_figure(
         # Best-effort guard; ignore failures to avoid interrupting the workflow.
         pass
 
-    suptitle_display = _text_safe(suptitle_text)
+    raw_suptitle_display = _text_safe(suptitle_text)
+    suptitle_display = _render_plot_title_scientific_indices(raw_suptitle_display)
+    suptitle_font_family = (
+        xits_text_font
+        if xits_text_font and suptitle_display != raw_suptitle_display
+        else family_value
+    )
     main_center_x = fig.subplotpars.left + (
         (fig.subplotpars.right - fig.subplotpars.left) / 2.0
     )
@@ -104915,14 +104938,14 @@ def build_combined_triple_axis_figure(
     suptitle_artist = fig.suptitle(
         suptitle_display,
         fontsize=suptitle_fontsize_value,
-        fontfamily=family_value if family_value else None,
+        fontfamily=suptitle_font_family if suptitle_font_family else None,
         x=main_center_x,
     )
     title_artist = ax.set_title(
         title_display,
         fontsize=title_fontsize_value,
         pad=title_pad_value,
-        fontfamily=family_value if family_value else None,
+        fontfamily=title_font_family if title_font_family else None,
     )
     try:
         fig._gl260_title_text = title_artist  # type: ignore[attr-defined]
@@ -152681,11 +152704,39 @@ class UnifiedApp(tk.Tk):
 
         # Closure captures _open_font_family_dialog state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _open_font_family_dialog.
         def _apply_selection() -> None:
-            """Apply selection.
-            Used to apply selection changes to live state."""
+            """Apply the global font choice and compatible Combined fallback.
+
+            Purpose:
+                Save the global plot/table font and synchronize the Combined
+                Triple-Axis font when it retains the legacy default value.
+            Why:
+                A stale ``STIXGeneral`` Combined override shadowed global XITS
+                Math selections and produced missing-glyph warnings.
+            Inputs:
+                None; reads the dialog's ``selected_var`` Tk variable.
+            Outputs:
+                None.
+            Side Effects:
+                Updates settings, compatible Combined UI state, Matplotlib rcParams,
+                and settings storage.
+            Exceptions:
+                Persistence and preview refresh failures are ignored after the
+                in-memory selection is applied."""
             selection = (selected_var.get() or "").strip()
             selected_family = "" if selection == "(Default)" else selection
+            previous_global_family = (settings.get("font_family") or "").strip()
+            combined_family = (settings.get("combined_font_family") or "").strip()
             settings["font_family"] = selected_family
+            if combined_family in {
+                "",
+                DEFAULT_COMBINED_FONT_FAMILY,
+                previous_global_family,
+            }:
+                settings["combined_font_family"] = selected_family
+                combined_font_var = getattr(self, "combined_font_family", None)
+                combined_font_setter = getattr(combined_font_var, "set", None)
+                if callable(combined_font_setter):
+                    combined_font_setter(selected_family)
             _apply_default_plot_fonts(selected_family)
             try:
                 _save_settings_to_disk()
