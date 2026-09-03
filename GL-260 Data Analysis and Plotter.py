@@ -2463,6 +2463,8 @@ _NAOH_PITZER_MODULE = _naoh_pitzer_module
 
 _PREFERRED_PLOT_FONT = "STIXGeneral"
 _FONT_FALLBACKS = ("DejaVu Serif", "DejaVu Sans", "Segoe UI Symbol")
+_SCIENTIFIC_TITLE_TEXT_FONT = "XITS"
+_SCIENTIFIC_TITLE_MATH_FONT = "XITS Math"
 # Include every Unicode digit/sign used for chemical and isotope indices.  This
 # keeps the preferred font selection from choosing a face that can render CO₂
 # but replaces an isotope such as ¹³C₆ with missing-glyph boxes.
@@ -6720,6 +6722,61 @@ def _font_supports_required_glyphs(font_name: str) -> bool:
 
 
 @lru_cache(maxsize=1)
+def _scientific_title_text_font() -> str:
+    """Return the installed XITS text face for scientific plot titles.
+
+    Purpose:
+        Resolve the text companion to XITS Math once for index-aware titles.
+    Why:
+        Keeping ordinary title text in the XITS family aligns it with the XITS
+        Math fragments that render isotope and chemical indices.
+    Inputs:
+        None.
+    Outputs:
+        str: ``"XITS"`` when installed, otherwise an empty string.
+    Side Effects:
+        Caches the installed-font lookup result.
+    Exceptions:
+        None; unavailable fonts return an empty string.
+    """
+    return _SCIENTIFIC_TITLE_TEXT_FONT if _get_font_path(_SCIENTIFIC_TITLE_TEXT_FONT) else ""
+
+
+def _configure_scientific_mathtext_fonts() -> None:
+    """Configure XITS Math for MathText-generated scientific indices.
+
+    Purpose:
+        Make Matplotlib build superscript and subscript fragments from the XITS
+        Math face instead of relying on a selected title font's Unicode glyphs.
+    Why:
+        Unicode index glyph coverage varies by text font, whereas MathText lays
+        out ordinary digits reliably with the XITS Math font's math tables.
+    Inputs:
+        None.
+    Outputs:
+        None.
+    Side Effects:
+        Updates Matplotlib ``mathtext.*`` rcParams only when both XITS and XITS
+        Math are installed.
+    Exceptions:
+        Font discovery or rcParam updates fail safely without changing the
+        application's active plot settings.
+    """
+    if not _scientific_title_text_font() or not _get_font_path(
+        _SCIENTIFIC_TITLE_MATH_FONT
+    ):
+        return
+    try:
+        plt.rcParams["mathtext.fontset"] = "custom"
+        plt.rcParams["mathtext.rm"] = _SCIENTIFIC_TITLE_MATH_FONT
+        plt.rcParams["mathtext.it"] = f"{_SCIENTIFIC_TITLE_MATH_FONT}:italic"
+        plt.rcParams["mathtext.bf"] = f"{_SCIENTIFIC_TITLE_MATH_FONT}:bold"
+    except Exception:
+        # MathText configuration is optional; regular font fallbacks remain valid.
+        pass
+
+
+@lru_cache(maxsize=1)
 def _preferred_plot_font_stack() -> Tuple[str, ...]:
     """Perform preferred plot font stack.
     Used to keep the workflow logic localized and testable."""
@@ -6736,8 +6793,24 @@ def _preferred_plot_font_stack() -> Tuple[str, ...]:
 
 
 def _apply_default_plot_fonts(font_family: Optional[str] = None) -> None:
-    """Apply default plot fonts.
-    Used to apply default plot fonts changes to live state."""
+    """Apply plot and scientific-index fonts to Matplotlib defaults.
+
+    Purpose:
+        Set the selected/default plot family and activate XITS Math for generated
+        superscript/subscript title fragments when the font pair is installed.
+    Why:
+        Plot text respects the user's family selection, while Unicode scientific
+        indices need a stable mathematical layout across title fonts.
+    Inputs:
+        font_family: Optional user-selected Matplotlib font family name.
+    Outputs:
+        None.
+    Side Effects:
+        Updates Matplotlib font and MathText rcParams for future figures.
+    Exceptions:
+        None; unavailable optional fonts fall back to the existing font stack.
+    """
+    _configure_scientific_mathtext_fonts()
     stack = list(_preferred_plot_font_stack())
     family_value = (font_family or "").strip()
     if family_value:
@@ -6891,6 +6964,56 @@ def _debug_title_font_resolution_once() -> None:
         print(f"[TitleSize] font size resolution check failed: {exc}")
 
 
+_PLOT_TITLE_SUBSCRIPT_TRANSLATION = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
+_PLOT_TITLE_SUPERSCRIPT_TRANSLATION = str.maketrans(
+    "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻", "0123456789+-"
+)
+_PLOT_TITLE_SUBSCRIPT_RE = re.compile(r"[₀₁₂₃₄₅₆₇₈₉]+")
+_PLOT_TITLE_SUPERSCRIPT_RE = re.compile(r"[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]+")
+
+
+def _render_plot_title_scientific_indices(value: Any) -> str:
+    """Convert Unicode scientific indices in a plot title to reliable mathtext.
+
+    Purpose:
+        Render Unicode superscripts/subscripts consistently in plot titles across
+        user-selected font families.
+    Why:
+        A title font can contain superscript glyphs while lacking a subscript
+        glyph (for example, U+2086), causing a formula such as ``¹³C₆`` to lose
+        its final character in the Combined Triple-Axis display.
+    Inputs:
+        value: Title or suptitle text; non-string values are converted with
+            ``str``.
+    Outputs:
+        str: Original text, or mathtext fragments for contiguous Unicode index
+        groups. Existing explicit mathtext is preserved unchanged.
+    Side Effects:
+        None.
+    Exceptions:
+        None.
+    """
+    text_value = "" if value is None else str(value)
+    if not text_value or "$" in text_value:
+        return text_value
+    if not any(
+        character in "₀₁₂₃₄₅₆₇₈₉⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻" for character in text_value
+    ):
+        return text_value
+    subscript_safe_text = _PLOT_TITLE_SUBSCRIPT_RE.sub(
+        lambda match: (
+            f"$_{{{match.group(0).translate(_PLOT_TITLE_SUBSCRIPT_TRANSLATION)}}}$"
+        ),
+        text_value,
+    )
+    return _PLOT_TITLE_SUPERSCRIPT_RE.sub(
+        lambda match: (
+            f"$^{{{match.group(0).translate(_PLOT_TITLE_SUPERSCRIPT_TRANSLATION)}}}$"
+        ),
+        subscript_safe_text,
+    )
+
+
 def _center_titles_to_axes_union(
     fig: Figure,
     axes: Sequence[Optional[Axes]],
@@ -7012,18 +7135,33 @@ def _center_titles_to_axes_union(
 
     title_text = (title or "").strip()
     suptitle_text = (suptitle or "").strip()
+    # Store raw text for UI/settings round-trips, but use font-independent index
+    # fragments for the title artists themselves.
+    rendered_title_text = _render_plot_title_scientific_indices(title_text)
+    rendered_suptitle_text = _render_plot_title_scientific_indices(suptitle_text)
+    xits_text_font = _scientific_title_text_font()
+    # Pair normal XITS text with XITS Math index fragments whenever a title needs
+    # scientific typography; ordinary titles retain the user's selected font.
+    title_font_family = (
+        xits_text_font if xits_text_font and rendered_title_text != title_text else font_family
+    )
+    suptitle_font_family = (
+        xits_text_font
+        if xits_text_font and rendered_suptitle_text != suptitle_text
+        else font_family
+    )
 
     title_artist = None
-    if title_text:
+    if rendered_title_text:
         if primary_axis is not None:
             title_kwargs: Dict[str, Any] = {
                 "fontsize": title_fs_value,
                 "pad": float(title_pad_pts or 0.0),
             }
-            if font_family:
-                title_kwargs["fontfamily"] = font_family
+            if title_font_family:
+                title_kwargs["fontfamily"] = title_font_family
             try:
-                title_artist = primary_axis.set_title(title_text, **title_kwargs)
+                title_artist = primary_axis.set_title(rendered_title_text, **title_kwargs)
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 title_artist = None
@@ -7034,12 +7172,14 @@ def _center_titles_to_axes_union(
                 "va": "top",
                 "fontsize": title_fs_value,
             }
-            if font_family:
-                title_kwargs_fallback["fontfamily"] = font_family
-            title_artist = fig.text(0.5, 0.98, title_text, **title_kwargs_fallback)
+            if title_font_family:
+                title_kwargs_fallback["fontfamily"] = title_font_family
+            title_artist = fig.text(
+                0.5, 0.98, rendered_title_text, **title_kwargs_fallback
+            )
 
     suptitle_artist = None
-    if suptitle_text:
+    if rendered_suptitle_text:
         if suptitle_y is None:
             y_suptitle = 0.98
         else:
@@ -7050,9 +7190,9 @@ def _center_titles_to_axes_union(
             "x": center_x,
             "y": y_suptitle,
         }
-        if font_family:
-            suptitle_kwargs["fontfamily"] = font_family
-        suptitle_artist = fig.suptitle(suptitle_text, **suptitle_kwargs)
+        if suptitle_font_family:
+            suptitle_kwargs["fontfamily"] = suptitle_font_family
+        suptitle_artist = fig.suptitle(rendered_suptitle_text, **suptitle_kwargs)
 
     fig._gl260_title_text = title_artist
     fig._gl260_suptitle_text = suptitle_artist
