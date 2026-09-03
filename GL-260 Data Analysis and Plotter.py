@@ -160835,7 +160835,7 @@ class UnifiedApp(tk.Tk):
         except Exception:
             return
         for index, label, marker in (
-            (getattr(self, "_reaction_start_global_index", None), "Reaction start", "S"),
+            (getattr(self, "_reaction_start_global_index", None), "Reaction start", "s"),
             (getattr(self, "_reaction_endpoint_global_index", None), "Reaction endpoint", "o"),
         ):
             if index is None or int(index) < 0 or int(index) >= min(x.size, y.size):
@@ -187710,7 +187710,7 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             Missing Cycle Analysis data leaves selection disarmed.
         """
-        if anchor_kind not in {"start", "endpoint"} or self._reaction_endpoint_trace_inputs() is None:
+        if anchor_kind not in {"start", "endpoint"} or not self._cycle_ready():
             return
         self._reaction_endpoint_selection_mode = anchor_kind
         self._reaction_endpoint_status_var.set(
@@ -187739,8 +187739,11 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             Out-of-range samples are rejected with an explanatory status message.
         """
-        trace = self._reaction_endpoint_trace_inputs()
-        if trace is None or not bool(np.any(trace["sample_indices"] == int(target_index))):
+        try:
+            mask = np.asarray(self._current_mask(), dtype=bool)
+        except Exception:
+            mask = np.asarray([], dtype=bool)
+        if target_index < 0 or target_index >= mask.size or not bool(mask[target_index]):
             self._reaction_endpoint_status_var.set("Reaction start must be inside the active Cycle Analysis range.")
             return False
         endpoint = getattr(self, "_reaction_endpoint_global_index", None)
@@ -187772,14 +187775,14 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             Invalid clicks return False with an explanatory status message.
         """
+        self._reaction_endpoint_global_index = int(target_index)
+        self._reaction_endpoint_selection_mode = None
+        self._draw_reaction_calibration_anchor_markers(redraw=True)
         result = self._refresh_reaction_endpoint_calibration(
             endpoint_global_index=int(target_index), selection_method="manual"
         )
-        self._reaction_endpoint_selection_mode = None
         if result.get("effective_headspace_l") is None:
             return False
-        self._reaction_endpoint_global_index = int(target_index)
-        self._draw_reaction_calibration_anchor_markers(redraw=True)
         self._reaction_source_mode_var.set("endpoint_calibrated_trace")
         self._reaction_source_display_var.set(
             self._reaction_source_key_to_label["endpoint_calibrated_trace"]
