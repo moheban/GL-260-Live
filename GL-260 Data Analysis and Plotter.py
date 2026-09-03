@@ -2463,7 +2463,10 @@ _NAOH_PITZER_MODULE = _naoh_pitzer_module
 
 _PREFERRED_PLOT_FONT = "STIXGeneral"
 _FONT_FALLBACKS = ("DejaVu Serif", "DejaVu Sans", "Segoe UI Symbol")
-_REQUIRED_FONT_GLYPHS = "\u2080\u2081\u2082\u2083\u2084\u2085\u2086\u2087\u2088\u2089\u00b9\u00b2\u00b3\u207b"
+# Include every Unicode digit/sign used for chemical and isotope indices.  This
+# keeps the preferred font selection from choosing a face that can render CO₂
+# but replaces an isotope such as ¹³C₆ with missing-glyph boxes.
+_REQUIRED_FONT_GLYPHS = "\u2080\u2081\u2082\u2083\u2084\u2085\u2086\u2087\u2088\u2089\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079\u207a\u207b"
 CYCLE_TIMELINE_EXPORT_DEFAULT_TITLE = "Cycle Speciation Timeline"
 
 DEFAULT_TAB_ORDER_KEYS = (
@@ -37113,22 +37116,28 @@ def _build_reaction_dashboard_cycle_export_model(
 
 
 _REACTION_DASHBOARD_PDF_SUBSCRIPT_DIGITS = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
+_REACTION_DASHBOARD_PDF_SUPERSCRIPT_CHARACTERS = str.maketrans(
+    "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻", "0123456789+-"
+)
 
 
 def _reaction_dashboard_pdf_formula_text(value: Any) -> str:
-    """Return PDF-safe text with chemical Unicode subscripts preserved.
+    """Return PDF-safe text with chemical Unicode indices preserved.
 
     Purpose:
-        Convert contiguous Unicode subscript digits into Matplotlib math-text
-        fragments while leaving surrounding report text unchanged.
+        Convert contiguous Unicode subscript and superscript characters into
+        Matplotlib math-text fragments while leaving surrounding report text
+        unchanged.
     Why:
         Several otherwise suitable publication fonts lack U+2080–U+2089 glyphs,
-        which can emit warnings or replace chemical formula subscripts with question
-        marks during PDF export.
+        and some lack superscript isotope glyphs such as U+00B9–U+00B3. Converting
+        both forms prevents PDF export from replacing formulas such as ``¹³C₆``
+        with missing-glyph boxes.
     Args:
         value: Any report value that can be converted to display text.
     Returns:
-        String containing vector-safe ``$_{digits}$`` fragments where required.
+        String containing vector-safe ``$_{digits}$`` and ``$^{digits}$``
+        fragments where required.
     Side Effects:
         None.
     Exceptions:
@@ -37136,15 +37145,24 @@ def _reaction_dashboard_pdf_formula_text(value: Any) -> str:
         escaped before math-text fragments are inserted.
     """
     text_value = str(value)
-    if not any(character in "₀₁₂₃₄₅₆₇₈₉" for character in text_value):
+    if not any(
+        character in "₀₁₂₃₄₅₆₇₈₉⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻" for character in text_value
+    ):
         return text_value
     escaped_text = text_value.replace("$", r"\$")
-    return re.sub(
+    subscript_safe_text = re.sub(
         r"[₀₁₂₃₄₅₆₇₈₉]+",
         lambda match: (
             f"$_{{{match.group(0).translate(_REACTION_DASHBOARD_PDF_SUBSCRIPT_DIGITS)}}}$"
         ),
         escaped_text,
+    )
+    return re.sub(
+        r"[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]+",
+        lambda match: (
+            f"$^{{{match.group(0).translate(_REACTION_DASHBOARD_PDF_SUPERSCRIPT_CHARACTERS)}}}$"
+        ),
+        subscript_safe_text,
     )
 
 
@@ -37757,11 +37775,15 @@ def _write_reaction_dashboard_cycle_pdf(
             # subscripts use searchable plain digits in metadata only.
             metadata["Title"] = str(
                 model.get("title") or "Reaction Cycle Report"
-            ).translate(_REACTION_DASHBOARD_PDF_SUBSCRIPT_DIGITS)
+            ).translate(_REACTION_DASHBOARD_PDF_SUBSCRIPT_DIGITS).translate(
+                _REACTION_DASHBOARD_PDF_SUPERSCRIPT_CHARACTERS
+            )
             metadata["Author"] = "GL-260 Data Analysis and Plotter"
             metadata["Subject"] = (
                 f"Reaction Cycle report for {model.get('reaction_name', '--')}"
-            ).translate(_REACTION_DASHBOARD_PDF_SUBSCRIPT_DIGITS)
+            ).translate(_REACTION_DASHBOARD_PDF_SUBSCRIPT_DIGITS).translate(
+                _REACTION_DASHBOARD_PDF_SUPERSCRIPT_CHARACTERS
+            )
             metadata["Keywords"] = "GL-260, reaction dashboard, cycle table"
             generated_at = model.get("generated_at")
             if isinstance(generated_at, datetime):
