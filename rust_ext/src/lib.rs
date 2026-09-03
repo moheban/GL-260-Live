@@ -3676,7 +3676,7 @@ fn reaction_endpoint_calibration_core(
         let pressure = pressure_absolute_psi[index];
         let temperature_k = temperature_c[index] + 273.15;
         if !x_values[index].is_finite() || !pressure.is_finite() || !temperature_k.is_finite() || pressure <= 0.0 || temperature_k <= 0.0 {
-            warnings.append("Mapped absolute pressure and temperature must be finite and positive across the active range.")?;
+            warnings.append("Mapped absolute pressure and temperature must be finite and positive within the selected reaction-start to endpoint interval.")?;
             out.set_item("effective_headspace_l", py.None())?;
             out.set_item("gross_vessel_volume_l", py.None())?;
             out.set_item("conversion_pct", PyList::empty(py))?;

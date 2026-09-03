@@ -22734,6 +22734,7 @@ REACTION_ENDPOINT_CALIBRATION_MEDIAN_WINDOW = 5
 REACTION_ENDPOINT_CALIBRATION_MIN_SAMPLES = 5
 REACTION_ENDPOINT_CALIBRATION_MIN_STABLE_MINUTES = 15.0
 REACTION_ENDPOINT_CALIBRATION_SLOPE_FRACTION = 0.05
+REACTION_ENDPOINT_CALIBRATION_SETTINGS_KEY = "reaction_endpoint_calibration"
 REACTION_ENDPOINT_CALIBRATION_R_L_ATM_MOL_K = 0.082057338
 REACTION_ENDPOINT_CALIBRATION_PSI_PER_ATM = 14.6959
 REACTION_DASHBOARD_PLOT_KEY = "fig_reaction_dashboard_tab"
@@ -36296,7 +36297,10 @@ def _python_reaction_endpoint_calibration_core(
     x, pressure, temp_k = x[:size], pressure[:size], temp_k[:size]
     valid = np.isfinite(x) & np.isfinite(pressure) & np.isfinite(temp_k) & (pressure > 0.0) & (temp_k > 0.0)
     if not bool(np.all(valid)):
-        unavailable["warnings"].append("Mapped absolute pressure and temperature must be finite and positive across the active range.")
+        unavailable["warnings"].append(
+            "Mapped absolute pressure and temperature must be finite and positive "
+            "within the selected reaction-start to endpoint interval."
+        )
         return unavailable
     hours_per_x = _reaction_endpoint_hours_per_x_unit(x_label)
     if hours_per_x is None:
@@ -36307,8 +36311,15 @@ def _python_reaction_endpoint_calibration_core(
         unavailable["warnings"].append("Endpoint calibration requires a strictly increasing time trace.")
         return unavailable
     corrected = (pressure / REACTION_ENDPOINT_CALIBRATION_PSI_PER_ATM) / temp_k
-    padded = np.pad(corrected, (2, 2), mode="edge")
-    smoothed = np.median(np.lib.stride_tricks.sliding_window_view(padded, 5), axis=1)
+    endpoint_settings = settings.get(REACTION_ENDPOINT_CALIBRATION_SETTINGS_KEY, {})
+    endpoint_settings = endpoint_settings if isinstance(endpoint_settings, Mapping) else {}
+    median_window = int(_safe_float(endpoint_settings.get("median_window"), REACTION_ENDPOINT_CALIBRATION_MEDIAN_WINDOW) or REACTION_ENDPOINT_CALIBRATION_MEDIAN_WINDOW)
+    median_window = max(3, median_window if median_window % 2 else median_window + 1)
+    stable_minutes = max(0.0, _safe_float(endpoint_settings.get("min_stable_minutes"), REACTION_ENDPOINT_CALIBRATION_MIN_STABLE_MINUTES) or 0.0)
+    slope_fraction = max(0.0, _safe_float(endpoint_settings.get("slope_fraction"), REACTION_ENDPOINT_CALIBRATION_SLOPE_FRACTION) or 0.0)
+    pad_width = median_window // 2
+    padded = np.pad(corrected, (pad_width, pad_width), mode="edge")
+    smoothed = np.median(np.lib.stride_tricks.sliding_window_view(padded, median_window), axis=1)
     slopes = np.gradient(smoothed, x_hours)
     finite_slopes = slopes[np.isfinite(slopes)]
     if finite_slopes.size < REACTION_ENDPOINT_CALIBRATION_MIN_SAMPLES:
@@ -36317,11 +36328,11 @@ def _python_reaction_endpoint_calibration_core(
     median_slope = float(np.median(finite_slopes))
     mad = float(np.median(np.abs(finite_slopes - median_slope)))
     peak_rate = float(np.max(np.abs(finite_slopes)))
-    threshold = max(3.0 * mad, REACTION_ENDPOINT_CALIBRATION_SLOPE_FRACTION * peak_rate)
+    threshold = max(3.0 * mad, slope_fraction * peak_rate)
     stable = np.abs(slopes) <= threshold
     suggested = None
     for position in range(size - REACTION_ENDPOINT_CALIBRATION_MIN_SAMPLES + 1):
-        duration_ok = (x_hours[-1] - x_hours[position]) >= REACTION_ENDPOINT_CALIBRATION_MIN_STABLE_MINUTES / 60.0
+        duration_ok = (x_hours[-1] - x_hours[position]) >= stable_minutes / 60.0
         if duration_ok and bool(np.all(stable[position:])):
             suggested = position
             break
@@ -117474,7 +117485,7 @@ class UnifiedApp(tk.Tk):
             Uses best-effort guards for tab selection/focus so dialog reopen does
             not break the main UI loop.
         """
-        valid_tabs = {"logging", "performance", "runtime"}
+        valid_tabs = {"logging", "performance", "runtime", "reaction"}
         if isinstance(initial_tab, str) and initial_tab in valid_tabs:
             target_tab = initial_tab
         else:
@@ -117612,18 +117623,77 @@ class UnifiedApp(tk.Tk):
         logging_tab, logging_body = _build_scroll_host(notebook)
         perf_tab, perf_body = _build_scroll_host(notebook)
         runtime_tab, runtime_body = _build_scroll_host(notebook)
+        reaction_tab, reaction_body = _build_scroll_host(notebook)
         notebook.add(logging_tab, text="Logging & Debug")
         notebook.add(perf_tab, text="Performance Diagnostics")
         notebook.add(runtime_tab, text="Runtime / Advanced")
+        notebook.add(reaction_tab, text="Reaction Calibration")
         self._developer_tools_tab_ids = {
             "logging": str(logging_tab),
             "performance": str(perf_tab),
             "runtime": str(runtime_tab),
+            "reaction": str(reaction_tab),
         }
 
         self._build_developer_tools_logging_tab(logging_body)
         self._build_developer_tools_performance_tab(perf_body)
         self._build_developer_tools_runtime_tab(runtime_body)
+        reaction_body.columnconfigure(1, weight=1)
+        ttk.Label(
+            reaction_body,
+            text="Endpoint suggestion controls apply to new Reaction Dashboard suggestions.",
+            wraplength=760,
+            justify="left",
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 6))
+        endpoint_settings = settings.get(REACTION_ENDPOINT_CALIBRATION_SETTINGS_KEY, {})
+        endpoint_settings = endpoint_settings if isinstance(endpoint_settings, Mapping) else {}
+        endpoint_vars = {
+            "median_window": tk.StringVar(value=str(endpoint_settings.get("median_window", REACTION_ENDPOINT_CALIBRATION_MEDIAN_WINDOW))),
+            "min_stable_minutes": tk.StringVar(value=str(endpoint_settings.get("min_stable_minutes", REACTION_ENDPOINT_CALIBRATION_MIN_STABLE_MINUTES))),
+            "slope_fraction": tk.StringVar(value=str(endpoint_settings.get("slope_fraction", REACTION_ENDPOINT_CALIBRATION_SLOPE_FRACTION))),
+        }
+        for row, (key, label) in enumerate((
+            ("median_window", "Median smoothing window (odd samples)"),
+            ("min_stable_minutes", "Minimum stable tail (minutes)"),
+            ("slope_fraction", "Peak-slope fraction (0–1)"),
+        ), start=1):
+            ttk.Label(reaction_body, text=label).grid(row=row, column=0, sticky="w", padx=8, pady=4)
+            _ui_entry(reaction_body, textvariable=endpoint_vars[key], width=18).grid(row=row, column=1, sticky="w", padx=8, pady=4)
+
+        def _save_endpoint_suggestion_settings() -> None:
+            """Validate and persist developer endpoint-suggestion controls.
+
+            Purpose:
+                Save conservative endpoint detection controls without requiring a
+                restart or modifying existing reaction runs.
+            Why:
+                Different trace sampling and noise levels require auditable tuning.
+            Inputs:
+                None.
+            Returns:
+                None.
+            Side Effects:
+                Updates settings and writes the settings file.
+            Exceptions:
+                Invalid values show a validation dialog and leave settings intact.
+            """
+            try:
+                median_window = int(endpoint_vars["median_window"].get())
+                stable_minutes = float(endpoint_vars["min_stable_minutes"].get())
+                slope_fraction = float(endpoint_vars["slope_fraction"].get())
+                if median_window < 3 or median_window % 2 == 0 or stable_minutes < 0 or not 0 <= slope_fraction <= 1:
+                    raise ValueError
+            except (TypeError, ValueError):
+                messagebox.showerror("Reaction Calibration", "Use an odd window of at least 3, non-negative minutes, and a slope fraction from 0 to 1.", parent=dialog)
+                return
+            settings[REACTION_ENDPOINT_CALIBRATION_SETTINGS_KEY] = {
+                "median_window": median_window,
+                "min_stable_minutes": stable_minutes,
+                "slope_fraction": slope_fraction,
+            }
+            _save_settings_to_disk()
+
+        _ui_button(reaction_body, text="Save Endpoint Suggestion Settings", command=_save_endpoint_suggestion_settings).grid(row=4, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 4))
 
         def _on_tab_changed(_event: Any = None) -> None:
             """Track active Developer Tools tab and refresh performance text.
@@ -184824,6 +184894,11 @@ class UnifiedApp(tk.Tk):
             text="Use Suggested Endpoint",
             command=self._confirm_suggested_reaction_endpoint,
         ).grid(row=0, column=2, sticky="w", padx=3, pady=5)
+        _ui_button(
+            endpoint_box,
+            text="Run Active Calibration",
+            command=self._run_active_reaction_endpoint_calibration,
+        ).grid(row=0, column=3, sticky="w", padx=(3, 6), pady=5)
         ttk.Label(
             endpoint_box,
             textvariable=self._reaction_endpoint_status_var,
@@ -187570,6 +187645,17 @@ class UnifiedApp(tk.Tk):
                 if endpoint_position is not None
                 else None
             )
+        if endpoint_position is not None:
+            # Calibration is defined solely by the confirmed start→endpoint
+            # interval; post-endpoint samples must not invalidate that result.
+            endpoint_slice = endpoint_position + 1
+            trace = {
+                **trace,
+                "x": trace["x"][:endpoint_slice],
+                "pressure": trace["pressure"][:endpoint_slice],
+                "temperature": trace["temperature"][:endpoint_slice],
+                "sample_indices": trace["sample_indices"][:endpoint_slice],
+            }
         displacement = self._reaction_dashboard_input_float("endpoint_displacement_l")
         signature = (
             int(trace["sample_indices"][0]), int(trace["sample_indices"][-1]),
@@ -187782,6 +187868,11 @@ class UnifiedApp(tk.Tk):
             endpoint_global_index=int(target_index), selection_method="manual"
         )
         if result.get("effective_headspace_l") is None:
+            detail = "; ".join(str(item) for item in result.get("warnings", []) if str(item))
+            self._reaction_endpoint_status_var.set(
+                "Reaction endpoint marker was placed, but calibration is waiting on: "
+                + (detail or "valid temperature and charged-material inputs.")
+            )
             return False
         self._reaction_source_mode_var.set("endpoint_calibrated_trace")
         self._reaction_source_display_var.set(
@@ -187789,6 +187880,50 @@ class UnifiedApp(tk.Tk):
         )
         self._run_reaction_dashboard()
         return True
+
+    def _run_active_reaction_endpoint_calibration(self) -> None:
+        """Run calibration from the currently placed reaction start and endpoint.
+
+        Purpose:
+            Provide an explicit dashboard action to recompute headspace after an
+            operator changes anchors, temperatures, charge inputs, or developer
+            suggestion settings.
+        Why:
+            Marker placement should remain lightweight, while calibration should
+            be repeatable on demand and visibly switch its uptake source on success.
+        Inputs:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Refreshes endpoint calibration; on success selects the calibrated
+            pressure source and reruns Reaction Dashboard.
+        Exceptions:
+            Missing anchors or invalid calibration inputs update the status label.
+        """
+        endpoint_index = getattr(self, "_reaction_endpoint_global_index", None)
+        if endpoint_index is None:
+            self._reaction_endpoint_status_var.set(
+                "Place a Reaction Endpoint marker before running active calibration."
+            )
+            return
+        result = self._refresh_reaction_endpoint_calibration(
+            endpoint_global_index=int(endpoint_index), selection_method="manual"
+        )
+        if result.get("effective_headspace_l") is None:
+            detail = "; ".join(
+                str(item) for item in result.get("warnings", []) if str(item)
+            )
+            self._reaction_endpoint_status_var.set(
+                "Active calibration could not run: "
+                + (detail or "review the selected anchor interval and mapped temperature trace.")
+            )
+            return
+        self._reaction_source_mode_var.set("endpoint_calibrated_trace")
+        self._reaction_source_display_var.set(
+            self._reaction_source_key_to_label["endpoint_calibrated_trace"]
+        )
+        self._run_reaction_dashboard()
 
     def _reaction_dashboard_calibrated_cycle_payload(self) -> Optional[Dict[str, Any]]:
         """Return a dashboard-only Cycle Analysis payload with calibrated moles.
