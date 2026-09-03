@@ -5633,6 +5633,34 @@ fn pressure_slope_between(
     slope.is_finite().then_some(slope)
 }
 
+/// Convert a fitted PSI-per-x slope to the importer's PSI-per-hour convention.
+///
+/// Cycle Analysis permits any elapsed-time calculated column on the x-axis.  This
+/// maps its unit to hours so Rust transfer rows match the Python fallback and the
+/// standardized first-derivative column; unknown x axes remain unavailable.
+fn pressure_slope_per_hour(slope_psi_per_x: Option<f64>, x_label: &str) -> Option<f64> {
+    let slope = slope_psi_per_x?;
+    if !slope.is_finite() {
+        return None;
+    }
+    let normalized_label = x_label.trim().to_ascii_lowercase();
+    let hours_per_x_unit = if normalized_label.contains("second")
+        || normalized_label.contains(" sec")
+    {
+        1.0 / 3600.0
+    } else if normalized_label.contains("minute") || normalized_label.contains(" min") {
+        1.0 / 60.0
+    } else if normalized_label.contains("hour") || normalized_label.contains(" hr") {
+        1.0
+    } else if normalized_label.contains("day") {
+        24.0
+    } else {
+        return None;
+    };
+    let per_hour = slope / hours_per_x_unit;
+    per_hour.is_finite().then_some(per_hour)
+}
+
 #[pyfunction]
 #[pyo3(signature = (cycles, temp_values=None, x_values=None, pressure_values=None, volume_l=1.0, a_const=1.39, b_const=0.0391, gas_molar_mass=44.0095, x_label="Elapsed Time (days)", compute_vdw=false, default_temp_c=25.0))]
 /// Compute per-cycle gas metrics for overlay tables and exported summaries.
@@ -5740,6 +5768,7 @@ fn cycle_metrics_core(
             peak_idx,
             trough_idx,
         );
+        let pressure_slope_hour = pressure_slope_per_hour(pressure_slope, x_label);
         let use_vdw_basis = n_vdw.is_finite() && n_vdw >= 0.0;
         let selected_moles = if use_vdw_basis {
             Some(n_vdw)
@@ -5779,6 +5808,13 @@ fn cycle_metrics_core(
         } else {
             transfer_row.set_item("pressure_slope_psi_per_x", py.None())?;
             transfer_row.set_item("uptake_rate_psi_per_x", py.None())?;
+        }
+        if let Some(value) = pressure_slope_hour {
+            transfer_row.set_item("pressure_slope_psi_per_hour", value)?;
+            transfer_row.set_item("uptake_rate_psi_per_hour", (-value).max(0.0))?;
+        } else {
+            transfer_row.set_item("pressure_slope_psi_per_hour", py.None())?;
+            transfer_row.set_item("uptake_rate_psi_per_hour", py.None())?;
         }
         transfer_row.set_item("peak_pressure_psi", finite_value_or_nan(peak_pressure))?;
         transfer_row.set_item("trough_pressure_psi", finite_value_or_nan(trough_pressure))?;

@@ -22596,17 +22596,66 @@ REACTION_DASHBOARD_STATUS_COLORS: Dict[str, str] = {
     "unavailable": "#7f8c8d",
 }
 REACTION_DASHBOARD_EXPORT_SETTINGS_KEY = "reaction_dashboard_cycle_pdf_export"
+REACTION_DASHBOARD_CYCLE_TABLE_SETTINGS_KEY = "reaction_dashboard_cycle_table_columns"
+REACTION_DASHBOARD_CYCLE_TABLE_FIELDS: Tuple[Tuple[str, str], ...] = (
+    ("cycle", "Cycle"),
+    ("delta_gas", "Delta gas mol"),
+    ("cumulative_gas", "Cumulative gas mol"),
+    ("uptake_rate", "Uptake rate PSI/hour"),
+    ("pressure_slope", "Pressure slope PSI/hour"),
+    ("completion", "Completion %"),
+    ("product", "Product g"),
+    ("trend", "Trend"),
+    ("warnings", "Warnings"),
+)
 REACTION_DASHBOARD_EXPORT_CYCLE_FIELDS: Tuple[Tuple[str, str], ...] = (
     ("cycle", "Cycle"),
     ("delta_gas", "Delta Gas (mol)"),
     ("cumulative_gas", "Cumulative Gas (mol)"),
-    ("uptake_rate", "Uptake Rate (PSI / x)"),
-    ("pressure_slope", "Pressure Slope (PSI / x)"),
+    ("uptake_rate", "Uptake Rate (PSI/hour)"),
+    ("pressure_slope", "Pressure Slope (PSI/hour)"),
     ("completion", "Completion (%)"),
     ("product", "Product (g)"),
     ("trend", "Trend"),
     ("warnings", "Warnings"),
 )
+
+
+def _normalize_reaction_dashboard_cycle_table_columns(
+    payload: object,
+) -> List[str]:
+    """Return valid visible columns for the live Reaction Dashboard cycle table.
+
+    Purpose:
+        Sanitize a persisted column selection before applying it to the Treeview.
+    Why:
+        Dashboard field sets can change between releases, while operators need their
+        saved table layout to restore without hiding the table or raising errors.
+    Args:
+        payload: Candidate iterable of column identifiers from application settings.
+    Returns:
+        Ordered visible column identifiers, always retaining the Cycle identifier.
+    Side Effects:
+        None.
+    Exceptions:
+        Malformed, empty, or stale selections fall back to all supported columns.
+    """
+    valid_columns = [
+        field_id for field_id, _label in REACTION_DASHBOARD_CYCLE_TABLE_FIELDS
+    ]
+    if not isinstance(payload, Sequence) or isinstance(payload, (str, bytes)):
+        return valid_columns
+    requested = {str(column_id) for column_id in payload}
+    visible_columns = [
+        column_id for column_id in valid_columns if column_id in requested
+    ]
+    if not visible_columns:
+        return valid_columns
+    if "cycle" not in visible_columns:
+        visible_columns.insert(0, "cycle")
+    if len(visible_columns) == 1:
+        return valid_columns
+    return visible_columns
 REACTION_DASHBOARD_EXPORT_KPI_FIELDS: Tuple[Tuple[str, str], ...] = (
     ("gas_uptake", "Gas Uptake"),
     ("completion", "Completion"),
@@ -35386,7 +35435,15 @@ def _rust_cycle_metrics_core(
     for row in transfer_raw:
         if isinstance(row, Mapping):
             cycle_transfer.append(dict(row))
-    if not per_cycle:
+    if not per_cycle or len(cycle_transfer) != len(per_cycle):
+        return None
+    # Treat an older extension without normalized-rate fields as incompatible so
+    # callers use the complete Python payload instead of showing stale PSI/x data.
+    if any(
+        "pressure_slope_psi_per_hour" not in row
+        or "uptake_rate_psi_per_hour" not in row
+        for row in cycle_transfer
+    ):
         return None
     return {
         "per_cycle": per_cycle,
@@ -36037,11 +36094,11 @@ def _reaction_dashboard_cycle_metric_series(
                 "cycle_gas_delta_mol": (
                     float(cycle_moles) if cycle_moles is not None else None
                 ),
-                "pressure_slope_psi_per_x": _safe_float(
-                    row.get("pressure_slope_psi_per_x")
+                "pressure_slope_psi_per_hour": _safe_float(
+                    row.get("pressure_slope_psi_per_hour")
                 ),
-                "uptake_rate_psi_per_x": _safe_float(
-                    row.get("uptake_rate_psi_per_x")
+                "uptake_rate_psi_per_hour": _safe_float(
+                    row.get("uptake_rate_psi_per_hour")
                 ),
                 "cumulative_gas_mol": float(cumulative_moles or 0.0),
                 "cumulative_gas_g": (
@@ -36156,7 +36213,7 @@ def _reaction_dashboard_cycle_trend(
     uptake_rates = [
         float(value)
         for value in (
-            _safe_float(row.get("uptake_rate_psi_per_x"))
+            _safe_float(row.get("uptake_rate_psi_per_hour"))
             for row in cycle_series
             if isinstance(row, Mapping)
         )
@@ -36220,8 +36277,8 @@ def _reaction_dashboard_classify_cycle_delta_pair(
             "label": "Slowing uptake",
             "status": "watch",
             "detail": (
-                f"Latest fitted uptake rate is {latest:.4f} PSI/x vs "
-                f"{previous:.4f} PSI/x."
+                f"Latest fitted uptake rate is {latest:.4f} PSI/hour vs "
+                f"{previous:.4f} PSI/hour."
             ),
         }
     if ratio >= 1.25:
@@ -36229,14 +36286,17 @@ def _reaction_dashboard_classify_cycle_delta_pair(
             "label": "Increasing uptake",
             "status": "neutral",
             "detail": (
-                f"Latest fitted uptake rate is {latest:.4f} PSI/x vs "
-                f"{previous:.4f} PSI/x."
+                f"Latest fitted uptake rate is {latest:.4f} PSI/hour vs "
+                f"{previous:.4f} PSI/hour."
             ),
         }
     return {
         "label": "Steady uptake",
         "status": "healthy",
-        "detail": f"Latest fitted uptake rate is {latest:.4f} PSI/x vs {previous:.4f} PSI/x.",
+        "detail": (
+            f"Latest fitted uptake rate is {latest:.4f} PSI/hour vs "
+            f"{previous:.4f} PSI/hour."
+        ),
     }
 
 
@@ -36301,6 +36361,54 @@ def _cycle_pressure_trace_slope(
     return slope if math.isfinite(slope) else None
 
 
+def _pressure_slope_psi_per_hour(
+    slope_psi_per_x: float | None, x_label: object
+) -> float | None:
+    """Convert a fitted pressure slope to the standardized PSI-per-hour basis.
+
+    Purpose:
+        Align cycle uptake metrics with the importer's calculated pressure-derivative
+        column, whose units are PSI/hour.
+    Why:
+        Cycle Analysis may use elapsed days, hours, minutes, or seconds as its x-axis;
+        exposing PSI/x would otherwise make rates incomparable across selections.
+    Args:
+        slope_psi_per_x: Signed fitted pressure slope in PSI per active x-axis unit.
+        x_label: Selected x-axis column label used to identify its elapsed-time unit.
+    Returns:
+        Signed slope in PSI/hour, or ``None`` when the slope is non-finite or the
+        active x-axis is not a recognized elapsed-time column.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid values are treated as unavailable rather than raising.
+    """
+    slope = _safe_float(slope_psi_per_x)
+    if slope is None or not math.isfinite(slope):
+        return None
+    normalized_label = str(x_label or "").strip().lower()
+    hours_per_x_unit = next(
+        (
+            factor
+            for token, factor in (
+                ("second", 1.0 / 3600.0),
+                (" sec", 1.0 / 3600.0),
+                ("minute", 1.0 / 60.0),
+                (" min", 1.0 / 60.0),
+                ("hour", 1.0),
+                (" hr", 1.0),
+                ("day", 24.0),
+            )
+            if token in normalized_label
+        ),
+        None,
+    )
+    if hours_per_x_unit is None:
+        return None
+    per_hour = slope / hours_per_x_unit
+    return per_hour if math.isfinite(per_hour) else None
+
+
 def _reaction_dashboard_cycle_row_trends(
     cycle_series: Sequence[Mapping[str, Any]],
 ) -> List[Dict[str, str]]:
@@ -36335,7 +36443,7 @@ def _reaction_dashboard_cycle_row_trends(
     # classification to every original table row.
     for row in cycle_series:
         uptake_rate = (
-            _safe_float(row.get("uptake_rate_psi_per_x"))
+            _safe_float(row.get("uptake_rate_psi_per_hour"))
             if isinstance(row, Mapping)
             else None
         )
@@ -36695,8 +36803,8 @@ def _reaction_dashboard_visual_summary(
                 "gas_delta_mol": delta,
                 "cumulative_gas_mol": row.get("cumulative_gas_mol"),
                 "cumulative_gas_g": row.get("cumulative_gas_g"),
-                "uptake_rate_psi_per_x": row.get("uptake_rate_psi_per_x"),
-                "pressure_slope_psi_per_x": row.get("pressure_slope_psi_per_x"),
+                "uptake_rate_psi_per_hour": row.get("uptake_rate_psi_per_hour"),
+                "pressure_slope_psi_per_hour": row.get("pressure_slope_psi_per_hour"),
                 "completion_pct": row.get("completion_pct"),
                 "product_mass_g": row.get("product_mass_g"),
                 "trend": row_trends[row_index].get("label", "--"),
@@ -36960,9 +37068,9 @@ def _build_reaction_dashboard_cycle_export_model(
         "cycle": lambda row: str(row.get("cycle_id") or "--"),
         "delta_gas": lambda row: _fmt(row.get("gas_delta_mol"), 5),
         "cumulative_gas": lambda row: _fmt(row.get("cumulative_gas_mol"), 5),
-        "uptake_rate": lambda row: _fmt(row.get("uptake_rate_psi_per_x"), 4),
+        "uptake_rate": lambda row: _fmt(row.get("uptake_rate_psi_per_hour"), 4),
         "pressure_slope": lambda row: _fmt(
-            row.get("pressure_slope_psi_per_x"), 4
+            row.get("pressure_slope_psi_per_hour"), 4
         ),
         "completion": lambda row: _fmt(row.get("completion_pct"), 1),
         "product": lambda row: _fmt(row.get("product_mass_g"), 3),
@@ -76124,22 +76232,22 @@ def _regression_test_reaction_dashboard_visual_summary_selected_cycle() -> None:
                 "cycle_id": 1,
                 "selected_moles": 0.20,
                 "cumulative_moles": 0.20,
-                "uptake_rate_psi_per_x": 4.0,
-                "pressure_slope_psi_per_x": -4.0,
+                "uptake_rate_psi_per_hour": 4.0,
+                "pressure_slope_psi_per_hour": -4.0,
             },
             {
                 "cycle_id": 2,
                 "selected_moles": 0.30,
                 "cumulative_moles": 0.50,
-                "uptake_rate_psi_per_x": 4.0,
-                "pressure_slope_psi_per_x": -4.0,
+                "uptake_rate_psi_per_hour": 4.0,
+                "pressure_slope_psi_per_hour": -4.0,
             },
             {
                 "cycle_id": 3,
                 "selected_moles": 0.25,
                 "cumulative_moles": 0.75,
-                "uptake_rate_psi_per_x": 4.0,
-                "pressure_slope_psi_per_x": -4.0,
+                "uptake_rate_psi_per_hour": 4.0,
+                "pressure_slope_psi_per_hour": -4.0,
             },
         ]
     }
@@ -76180,8 +76288,8 @@ def _regression_test_reaction_dashboard_visual_summary_selected_cycle() -> None:
     if len(current_rows) != 1 or _safe_float(current_rows[0].get("cycle_id")) != 2.0:
         raise AssertionError("Exactly the selected cycle row should be current.")
     if (
-        _safe_float(current_rows[0].get("uptake_rate_psi_per_x")) != 4.0
-        or _safe_float(current_rows[0].get("pressure_slope_psi_per_x")) != -4.0
+        _safe_float(current_rows[0].get("uptake_rate_psi_per_hour")) != 4.0
+        or _safe_float(current_rows[0].get("pressure_slope_psi_per_hour")) != -4.0
     ):
         raise AssertionError("Dashboard cycle rows should retain both pressure-rate values.")
     row_trend_labels = [
@@ -76303,8 +76411,8 @@ def _regression_test_reaction_dashboard_cycle_export_model() -> None:
                 "cycle_id": 1,
                 "gas_delta_mol": 0.25,
                 "cumulative_gas_mol": 0.25,
-                "uptake_rate_psi_per_x": 3.5,
-                "pressure_slope_psi_per_x": -3.5,
+                "uptake_rate_psi_per_hour": 3.5,
+                "pressure_slope_psi_per_hour": -3.5,
                 "completion_pct": 25.0,
                 "product_mass_g": 17.00175,
                 "trend": "Steady uptake",
@@ -76314,8 +76422,8 @@ def _regression_test_reaction_dashboard_cycle_export_model() -> None:
                 "cycle_id": 2,
                 "gas_delta_mol": 0.25,
                 "cumulative_gas_mol": 0.5,
-                "uptake_rate_psi_per_x": 3.5,
-                "pressure_slope_psi_per_x": -3.5,
+                "uptake_rate_psi_per_hour": 3.5,
+                "pressure_slope_psi_per_hour": -3.5,
                 "completion_pct": 50.0,
                 "product_mass_g": 34.0035,
                 "trend": "Steady uptake",
@@ -76826,30 +76934,43 @@ def _regression_test_reaction_dashboard_visual_trend_status() -> None:
     Exceptions:
         Raises AssertionError when trend labels/status buckets regress.
     """
+    visible_columns = _normalize_reaction_dashboard_cycle_table_columns(
+        ["uptake_rate", "pressure_slope", "retired_column"]
+    )
+    if visible_columns != ["cycle", "uptake_rate", "pressure_slope"]:
+        raise AssertionError(
+            "Live cycle-table column choices should retain valid fields."
+        )
+    if _normalize_reaction_dashboard_cycle_table_columns(["retired_column"]) != [
+        field_id for field_id, _label in REACTION_DASHBOARD_CYCLE_TABLE_FIELDS
+    ]:
+        raise AssertionError(
+            "An empty live cycle-table choice should restore all columns."
+        )
     slowing = _reaction_dashboard_cycle_trend(
         [
-            {"uptake_rate_psi_per_x": 4.0},
-            {"uptake_rate_psi_per_x": 3.0},
-            {"uptake_rate_psi_per_x": 2.0},
+            {"uptake_rate_psi_per_hour": 4.0},
+            {"uptake_rate_psi_per_hour": 3.0},
+            {"uptake_rate_psi_per_hour": 2.0},
         ]
     )
     if slowing.get("label") != "Slowing uptake" or slowing.get("status") != "watch":
         raise AssertionError("Visual trend should flag tapering gas uptake.")
     steady = _reaction_dashboard_cycle_trend(
         [
-            {"uptake_rate_psi_per_x": 4.0},
-            {"uptake_rate_psi_per_x": 4.1},
+            {"uptake_rate_psi_per_hour": 4.0},
+            {"uptake_rate_psi_per_hour": 4.1},
         ]
     )
     if steady.get("label") != "Steady uptake":
         raise AssertionError("Visual trend should identify steady gas uptake.")
     row_trends = _reaction_dashboard_cycle_row_trends(
         [
-            {"uptake_rate_psi_per_x": 4.0},
-            {"uptake_rate_psi_per_x": 4.0},
-            {"uptake_rate_psi_per_x": 4.0},
-            {"uptake_rate_psi_per_x": 2.0},
-            {"uptake_rate_psi_per_x": 2.0},
+            {"uptake_rate_psi_per_hour": 4.0},
+            {"uptake_rate_psi_per_hour": 4.0},
+            {"uptake_rate_psi_per_hour": 4.0},
+            {"uptake_rate_psi_per_hour": 2.0},
+            {"uptake_rate_psi_per_hour": 2.0},
         ]
     )
     row_labels = [item.get("label") for item in row_trends]
@@ -76865,8 +76986,8 @@ def _regression_test_reaction_dashboard_visual_trend_status() -> None:
         )
     increasing = _reaction_dashboard_cycle_trend(
         [
-            {"uptake_rate_psi_per_x": 2.0},
-            {"uptake_rate_psi_per_x": 3.0},
+            {"uptake_rate_psi_per_hour": 2.0},
+            {"uptake_rate_psi_per_hour": 3.0},
         ]
     )
     if increasing.get("label") != "Increasing uptake":
@@ -76874,8 +76995,8 @@ def _regression_test_reaction_dashboard_visual_trend_status() -> None:
 
     equal_rate_shorter_drop = _reaction_dashboard_cycle_trend(
         [
-            {"uptake_rate_psi_per_x": 4.0, "cycle_gas_delta_mol": 0.40},
-            {"uptake_rate_psi_per_x": 4.0, "cycle_gas_delta_mol": 0.20},
+            {"uptake_rate_psi_per_hour": 4.0, "cycle_gas_delta_mol": 0.40},
+            {"uptake_rate_psi_per_hour": 4.0, "cycle_gas_delta_mol": 0.20},
         ]
     )
     if equal_rate_shorter_drop.get("label") != "Steady uptake":
@@ -76891,6 +77012,12 @@ def _regression_test_reaction_dashboard_visual_trend_status() -> None:
     )
     if slope is None or abs(slope + 4.0) > 1e-12:
         raise AssertionError("Trace slope should fit every peak-to-trough sample.")
+    if _pressure_slope_psi_per_hour(slope, "Elapsed Time (minutes)") != -240.0:
+        raise AssertionError(
+            "Minute-axis pressure slopes should normalize to PSI/hour."
+        )
+    if _pressure_slope_psi_per_hour(slope, "Cycle") is not None:
+        raise AssertionError("Non-time x axes must not report a PSI/hour slope.")
     if _cycle_pressure_trace_slope(
         np.asarray([1.0, 1.0]), np.asarray([10.0, 6.0]), 0, 1
     ) is not None:
@@ -76925,6 +77052,11 @@ def _regression_test_reaction_dashboard_visual_trend_status() -> None:
         )
         if rust_slope is None or abs(rust_slope + 4.0) > 1e-12:
             raise AssertionError("Rust and Python pressure-slope paths must agree.")
+        rust_slope_per_hour = _safe_float(
+            rust_rows[0].get("pressure_slope_psi_per_hour") if rust_rows else None
+        )
+        if rust_slope_per_hour is None or abs(rust_slope_per_hour + 240.0) > 1e-12:
+            raise AssertionError("Rust and Python PSI/hour slope paths must agree.")
 
 
 def _regression_test_reaction_dashboard_import_cycle_auto_runs() -> None:
@@ -162442,6 +162574,11 @@ class UnifiedApp(tk.Tk):
                 pressure_slope = _cycle_pressure_trace_slope(
                     x_all, pressure_all, peak_idx, trough_idx
                 )
+                # Normalize the fitted x-axis slope once so dashboard and export rows
+                # share the importer-calculated derivative's PSI/hour basis.
+                pressure_slope_per_hour = _pressure_slope_psi_per_hour(
+                    pressure_slope, x_label
+                )
                 cycle_transfer_rows.append(
                     {
                         "cycle_id": idx,
@@ -162455,6 +162592,12 @@ class UnifiedApp(tk.Tk):
                         "uptake_rate_psi_per_x": (
                             max(-pressure_slope, 0.0)
                             if pressure_slope is not None
+                            else None
+                        ),
+                        "pressure_slope_psi_per_hour": pressure_slope_per_hour,
+                        "uptake_rate_psi_per_hour": (
+                            max(-pressure_slope_per_hour, 0.0)
+                            if pressure_slope_per_hour is not None
                             else None
                         ),
                         "peak_pressure_psi": peak_pressure,
@@ -183075,6 +183218,129 @@ class UnifiedApp(tk.Tk):
             raise RuntimeError("No Reaction Dashboard templates are available.")
         return template
 
+    def _apply_reaction_cycle_table_columns(self) -> None:
+        """Apply the persisted visible-column selection to the live cycle table.
+
+        Purpose:
+            Configure the Treeview display columns without recreating rows or losing
+            the current Reaction Dashboard calculation.
+        Why:
+            Operators need a compact table tailored to the measurements they are
+            monitoring while retaining the Cycle identifier for row orientation.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Changes the visible columns on the live cycle Treeview.
+        Exceptions:
+            Missing widgets or invalid Tk state are safely ignored during startup.
+        """
+        cycle_tree = getattr(self, "_reaction_cycle_tree", None)
+        if cycle_tree is None:
+            return
+        visible_columns = _normalize_reaction_dashboard_cycle_table_columns(
+            settings.get(REACTION_DASHBOARD_CYCLE_TABLE_SETTINGS_KEY)
+        )
+        try:
+            cycle_tree.configure(displaycolumns=visible_columns)
+        except Exception:
+            return
+
+    def _open_reaction_cycle_column_chooser(self) -> None:
+        """Open the show/hide chooser for the live Reaction Dashboard cycle table.
+
+        Purpose:
+            Let operators adjust visible cycle metrics without changing calculations,
+            imports, or the PDF report configuration.
+        Why:
+            The live table must support different monitoring workflows while keeping
+            a persistent, recoverable table layout across application sessions.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Opens a modal dialog and saves the selected visible columns to settings.
+        Exceptions:
+            Missing Tk state prevents opening the dialog without changing the table.
+        """
+        cycle_tree = getattr(self, "_reaction_cycle_tree", None)
+        if cycle_tree is None:
+            return
+        visible_columns = set(
+            _normalize_reaction_dashboard_cycle_table_columns(
+                settings.get(REACTION_DASHBOARD_CYCLE_TABLE_SETTINGS_KEY)
+            )
+        )
+        dialog = tk.Toplevel(self)
+        dialog.title("Live Cycle Table Columns")
+        dialog.transient(self)
+        dialog.resizable(False, False)
+        body = ttk.Frame(dialog, padding=12)
+        body.grid(row=0, column=0, sticky="nsew")
+        ttk.Label(
+            body,
+            text="Show the columns needed in the live Reaction Dashboard cycle table.",
+            wraplength=410,
+            justify="left",
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        variables: Dict[str, tk.BooleanVar] = {}
+        for field_index, (field_id, label) in enumerate(
+            REACTION_DASHBOARD_CYCLE_TABLE_FIELDS, start=1
+        ):
+            is_cycle = field_id == "cycle"
+            variable = tk.BooleanVar(value=is_cycle or field_id in visible_columns)
+            variables[field_id] = variable
+            checkbox = _ui_checkbutton(body, text=label, variable=variable)
+            checkbox.grid(
+                row=1 + (field_index - 1) // 2,
+                column=(field_index - 1) % 2,
+                sticky="w",
+                padx=(0, 14),
+                pady=2,
+            )
+            if is_cycle:
+                checkbox.configure(state="disabled")
+
+        def _save_visible_columns() -> None:
+            """Persist and apply the dialog's currently selected table columns.
+
+            Purpose:
+                Convert checkbox state into the validated display-column setting.
+            Why:
+                Treeview values remain intact when columns are hidden, allowing an
+                operator to restore fields immediately without recalculating.
+            Args:
+                None.
+            Returns:
+                None.
+            Side Effects:
+                Updates application settings, changes Treeview display columns, and
+                closes the chooser dialog.
+            Exceptions:
+                Invalid widget state falls back to the normalized default selection.
+            """
+            selected = [
+                field_id
+                for field_id, _label in REACTION_DASHBOARD_CYCLE_TABLE_FIELDS
+                if bool(variables[field_id].get())
+            ]
+            settings[REACTION_DASHBOARD_CYCLE_TABLE_SETTINGS_KEY] = (
+                _normalize_reaction_dashboard_cycle_table_columns(selected)
+            )
+            self._apply_reaction_cycle_table_columns()
+            dialog.destroy()
+
+        action_row = 1 + math.ceil(len(REACTION_DASHBOARD_CYCLE_TABLE_FIELDS) / 2)
+        _ui_button(body, text="Apply", command=_save_visible_columns).grid(
+            row=action_row, column=0, sticky="w", pady=(10, 0)
+        )
+        _ui_button(body, text="Cancel", command=dialog.destroy).grid(
+            row=action_row, column=1, sticky="e", pady=(10, 0)
+        )
+        dialog.grab_set()
+
     def _refresh_reaction_limiting_reagent_selector(
         self, template: ReactionTemplate
     ) -> None:
@@ -183867,35 +184133,22 @@ class UnifiedApp(tk.Tk):
         )
         _ui_button(
             cycle_controls,
+            text="Columns…",
+            command=self._open_reaction_cycle_column_chooser,
+        ).grid(row=0, column=3, sticky="e", padx=(10, 0))
+        _ui_button(
+            cycle_controls,
             text="Export Cycle Report PDF",
             command=self._open_reaction_cycle_pdf_export_options,
-        ).grid(row=0, column=3, sticky="e", padx=(10, 0))
+        ).grid(row=0, column=4, sticky="e", padx=(10, 0))
 
-        cycle_columns = (
-            "cycle",
-            "delta_gas",
-            "cumulative_gas",
-            "uptake_rate",
-            "pressure_slope",
-            "completion",
-            "product",
-            "trend",
-            "warnings",
+        cycle_columns = tuple(
+            field_id for field_id, _label in REACTION_DASHBOARD_CYCLE_TABLE_FIELDS
         )
         cycle_tree = ttk.Treeview(
             result_box, columns=cycle_columns, show="headings", height=7
         )
-        cycle_headings = {
-            "cycle": "Cycle",
-            "delta_gas": "Delta gas mol",
-            "cumulative_gas": "Cumulative gas mol",
-            "uptake_rate": "Uptake rate PSI/x",
-            "pressure_slope": "Pressure slope PSI/x",
-            "completion": "Completion %",
-            "product": "Product g",
-            "trend": "Trend",
-            "warnings": "Warnings",
-        }
+        cycle_headings = dict(REACTION_DASHBOARD_CYCLE_TABLE_FIELDS)
         for col in cycle_columns:
             cycle_tree.heading(col, text=cycle_headings[col])
             cycle_tree.column(
@@ -183914,6 +184167,7 @@ class UnifiedApp(tk.Tk):
         cycle_tree.tag_configure("blocked", background="#ffebee")
         cycle_tree.tag_configure("warning", background="#fff3e0")
         self._reaction_cycle_tree = cycle_tree
+        self._apply_reaction_cycle_table_columns()
 
         result_columns = ("metric", "value", "notes")
         result_tree = ttk.Treeview(
@@ -187042,8 +187296,8 @@ class UnifiedApp(tk.Tk):
                         row.get("cycle_id", ""),
                         _fmt(row.get("gas_delta_mol"), 5),
                         _fmt(row.get("cumulative_gas_mol"), 5),
-                        _fmt(row.get("uptake_rate_psi_per_x"), 4),
-                        _fmt(row.get("pressure_slope_psi_per_x"), 4),
+                        _fmt(row.get("uptake_rate_psi_per_hour"), 4),
+                        _fmt(row.get("pressure_slope_psi_per_hour"), 4),
                         _fmt(row.get("completion_pct"), 1),
                         _fmt(row.get("product_mass_g"), 3),
                         row.get("trend", ""),
