@@ -1,9 +1,22 @@
-# GL-260 Data Analysis and Plotter (v4.17.0)
+# GL-260 Data Analysis and Plotter (v4.18.0)
 
 ## Overview
 GL-260 Data Analysis and Plotter is a desktop Tkinter + Matplotlib application for GL-260 pressure/temperature analysis, cycle detection and moles calculations, advanced speciation workflows, compare/ledger review, and final report generation.
 
-Latest workflow highlights in `v4.17.0`:
+Current application: `v4.18.0`. Documentation refreshed September 8, 2026. The following summarizes the current implementation, including changes since the previous README; it does not assign new release versions.
+
+Latest workflow highlights:
+
+- Added endpoint-calibrated pressure uptake to Reaction Dashboard, with visible start/end anchors in Cycle Analysis, explicit endpoint confirmation, effective gas-headspace estimation, and Rust/Python calculation paths.
+- Expanded Reaction Dashboard into a reaction-agnostic workspace with named runs, guided reaction-definition creation, limiting-reagent designation, live cycle-column selection, and completion forecasts.
+- Added Reaction Cycle PDF reports with configurable typography, repeated table headers, per-cycle trends, and optional full Combined Triple Axis plot pages. Live pressure slope and uptake-rate columns use PSI/hour.
+- Improved Combined plot exclusions, temperature colorbars, configurable cycle legends, and measured layout correction across display, preview, and export.
+- Improved background sheet loading, startup restore, refresh progress, preview interaction, and dock/DPI-change resilience.
+- Added Unicode scientific superscript/subscript rendering for plots and PDFs, with XITS text/math font handling and corrected global/Combined font precedence.
+- `v4.18.0`: Added array-native Rust pressure-derivative and interactive plot-envelope kernels, retaining guarded Python fallback when compatible native functions are unavailable.
+
+Previously documented highlights:
+
 - `v4.17.0`: Added opt-in temperature Background and Line Color visualization modes for core and Combined pressure plots. The legacy detached temperature axis remains the default, selected by `temperature_visualization: "axis"`.
 - `v4.17.0`: Added configurable temperature-source selection, shared colorbars, and Layout Health registration for colorbar inset axes, temperature images, and LineCollections.
 - Current working tree: Constrained Analysis corrected pH from Rust/Python anchor calibration and guarded ML residual correction to non-increasing cumulative-cycle behavior, preventing learned anchors/history from creating unrealistic upward pH reversals after additional CO2 dosing.
@@ -28,8 +41,8 @@ Latest workflow highlights in `v4.17.0`:
 - `v4.15.0`: Preserved startup performance hardening, bounded caching, and heavy-tab optimization baseline.
 
 The canonical application version is defined in `GL-260 Data Analysis and Plotter.py` as:
-- `# Version: v4.17.0`
-- `APP_VERSION = "v4.17.0"`
+- `# Version: v4.18.0`
+- `APP_VERSION = "v4.18.0"`
 
 ## Codex Context Continuity Workflow
 Use the context updater in two modes to avoid post-compaction restart churn:
@@ -461,28 +474,49 @@ Primary tabs and purpose:
 - Supports add/edit/remove workflows for common annotation types.
 - Annotation state is normalized for persistence and export parity.
 - Placement and z-order controls are exposed for readability on dense plots.
+- Scientific Unicode superscripts and subscripts in plot text are handled by the shared plot/PDF rendering path. XITS text/math font handling supports scientific titles when the fonts are available; global font changes also account for inherited Combined font settings.
 
 ### Combined Triple-Axis Plot Technical Documentation
 - Combined view aligns pressure, temperature, and derivative-oriented channels with cycle context.
 - Axis assignment and legend behavior are configurable.
 - Refresh policy can run in single-pass, adaptive, or two-pass modes via runtime settings.
+- Exclusion ranges can be staged before applying them. Compressed axis breaks retain source elapsed-time labels, with per-segment ticks and collision handling shared with previews/exports.
+- Temperature can use a detached axis, a colored background, or a colored pressure line. Source and color-scheme controls feed managed colorbars that participate in Layout Health checks.
+- Cycle legends support selected calculated rows, Reaction Dashboard values, custom entries, and a snapped layout option.
+- Final layout verification measures lower-band collisions, axis-break labels, detached-axis/colorbar spacing, and excess whitespace after the figure reaches its display or export size.
 
 ### Interactive Cycle Analysis - Scientific and Operational Guide
 - Automatic cycle detection uses configurable peak/trough thresholds.
 - Manual marker correction supports post-detection cleanup.
+- Exact peak/trough placement includes a one-shot canvas selection mode; marker tweak controls prioritize the explicitly selected marker.
+- Reaction Calibration Anchors expose separate reaction-start and endpoint markers for the dashboard's calibrated uptake workflow.
 - Cycle summaries include ideal-gas moles and optional Van der Waals paths when SciPy is present.
 - Results feed Reaction Dashboard imports, cycle summaries, compare workflows, ledger outputs, and report artifacts.
 
 ### Reaction Dashboard
 - Template-driven reaction definitions cover species, stoichiometric steps, gas species, required fields, yield basis, optional equilibrium rows, KPI labels, and default plots.
 - Built-in templates are read-only; duplicate a template to create an editable custom copy.
+- Guided reaction-definition creation supports a starting material, reactant gas, product, and stoichiometric amounts. Named runs retain reaction workspace inputs, and a manual limiting-reagent designation is available alongside automatic calculation.
 - The starter template covers sodium methoxide / CO carbonylation to methyl formate followed by hydrolysis to sodium formate.
 - The dashboard uses a numbered visual workflow with an interactive equation; clicking a species jumps to its related inputs or species row.
 - Sodium methoxide availability is calculated from sodium metal added to methanol, methanol charge, and water ppm by mass. Generated NaOH from sodium/water reaction is added to explicit NaOH for hydrolysis.
 - Required operator inputs are marked and include tooltips on both labels and fields.
-- Uptake source modes include imported Cycle Analysis payload, reactor pressure delta, cylinder mass loss, and manual gas mass/moles.
+- Uptake source modes include imported Cycle Analysis payload, endpoint-calibrated pressure trace, reactor pressure delta, cylinder mass loss, and manual gas mass/moles.
+- The live summary includes completion and cycle/time forecasts. **Live Cycle Table Columns** controls which cycle metrics are shown; pressure slope is signed, while uptake rate expresses pressure loss in PSI/hour. These rates use fitted pressure-trace slopes and require a recognized time axis.
 - Optional ChemPy pH/equilibrium mode is per-template and per-run; pH failures are reported without blocking uptake, completion, and yield output.
 - **Open Plot in New Tab** registers the dashboard plot with the same generated plot-tab toolbar, refresh, export, layout, Plot Settings, Data Trace Settings, and Plot Elements behavior as other generated plots.
+
+#### Endpoint-calibrated pressure uptake
+
+1. Run Cycle Analysis with the intended active range, an absolute-pressure trace, and a mapped gas-temperature trace. Calibration requires at least five active samples and does not substitute a constant temperature when the mapping is missing.
+2. Supply the reaction inputs needed to calculate positive stoichiometric gas demand. Calibration uses the first eligible active Cycle Analysis peak as its baseline. If no eligible peak exists, it falls back to the explicit reaction-start marker, then the active-range start.
+3. Select an endpoint on the Cycle Analysis plot, or choose **Suggest Endpoint** and explicitly accept it with **Use Suggested Endpoint**. An automatic suggestion is a preview until confirmed.
+4. Inspect the visible start/endpoint anchors. Use **Run Active Calibration** to calculate from the currently placed anchors and refresh the dashboard with calibrated uptake.
+5. Review calibration status and warnings. The calculation normalizes absolute pressure by temperature, uses the confirmed endpoint as the stoichiometric completion reference, and reports effective gas headspace. Gross vessel volume is available when liquid/internals displacement is supplied.
+
+Validation is scoped to the selected start-to-endpoint interval. Unusable interior pressure/temperature samples are excluded with a warning rather than filled with invented values; invalid anchors or a non-positive corrected pressure drop prevent calibration. This is an endpoint-based estimate, so endpoint selection and the reaction's gas-demand basis directly determine the result.
+
+Developer Tools includes a **Reaction Calibration** tab for endpoint-suggestion controls. The calibrated dashboard cycle payload preserves the original Cycle Analysis calculation data.
 
 ### Advanced Solubility and Equilibrium Engine
 - Includes planning, analysis, and reprocessing pathways.
@@ -503,6 +537,7 @@ Primary tabs and purpose:
 - Assembles selected plots, summaries, and generated tables into report outputs.
 - Uses output sizing and DPI policies from settings.
 - PDF merge/export routes through available compatibility backend (`pypdf` or `PyPDF2`).
+- Reaction Cycle PDF export adds configurable typography, KPI tiles, a completion gauge, repeated cycle-table headers, and chronological uptake trends. It can include a Combined Triple Axis snapshot and an optional full plot page, with export progress feedback and final layout verification.
 
 ### Preferences and Configuration System
 - Settings persist in `settings.json`.
@@ -517,11 +552,22 @@ Developer tools include:
 - concurrency controls
 - free-threading diagnostics and dependency audits
 - Rust backend status/setup entry points
+- Reaction Calibration endpoint-suggestion controls and elapsed-days tick precision
+- Combined SVG reduction controls that preserve extrema and cycle-marker anchors
 - measured-pH uptake calibration kernel path: `measured_ph_uptake_calibration_core` with fail-closed Python fallback semantics
 
 Performance notes:
 - Large datasets and high-resolution exports can be CPU/memory intensive.
 - Validate free-threaded and Rust acceleration behavior in your local environment before relying on them for production workflows.
+- Sheet loading/stitching and core/Combined figure assembly use background task paths, with Tk-owned completion handling. Startup restore and Rust readiness participate in splash completion, while inactive analysis refreshes can be deferred.
+- The Rust source includes array-native pressure derivatives and interactive envelope selection. Availability depends on the installed extension exposing compatible kernels; Python fallback remains available. The recorded v4.18.0 native rebuild was blocked by Windows build-script execution policy, so source support alone does not establish that a local binary contains these kernels.
+
+#### General Plotter updates
+
+- Legend-location changes and grid-row controls refresh the plot, with layout correction shared across display and export.
+- CSV import handles more flexible input layouts.
+- **Ctrl+Shift+C** inserts the Celsius symbol in supported text fields.
+- General Plotter settings integrate with the active profile so saved choices survive reopening the workspace.
 
 ### Troubleshooting and FAQ
 Installer-first issues:
@@ -573,6 +619,47 @@ Free-threaded env:
 Apache-2.0. See `LICENSE`.
 
 ## Part II - Changelog / Ledger
+
+### Current Implementation Changes Since the Previous README
+
+This entry groups changes present in the current `v4.18.0` application and recorded repository checkpoints. Historical release entries below are retained; the grouped changes are not assigned an inferred release number.
+
+#### Reaction workspace, calibration, and reporting
+
+- Expanded the reaction-agnostic workspace with named runs, guided custom definitions, neutral material labels, limiting-reagent designation, and cycle/time completion forecasts.
+- Added exact Cycle Analysis peak/trough placement and visible reaction-start/endpoint anchors.
+- Added endpoint-calibrated absolute-pressure uptake with mapped temperature, explicit suggestion confirmation, an active-calibration action, and Developer Tools controls.
+- Aligned the default calibration baseline to the first active cycle peak, scoped validation to the selected interval, and added recovery for unusable interior samples while retaining anchor validation.
+- Added Rust/Python endpoint calculation paths for pressure-equivalent conversion, consumed moles, and effective headspace; supplied displacement enables a gross-volume estimate.
+- Added selectable live cycle-table columns and fitted pressure slope/uptake-rate values in PSI/hour, including slope-based report trends.
+- Added Reaction Cycle PDF layout and typography controls, repeated headers, KPI/gauge presentation, Combined plot inclusion, and progress feedback.
+
+#### Combined plotting, layout, and text
+
+- Added staged exclusion selection with source-time labels on compressed axes and aligned display/preview/export behavior.
+- Repaired temperature colorbar visibility, layering, label clearance, and reflow; added shared color-scheme controls and display-scale background rendering.
+- Added configurable calculated, dashboard-backed, and custom cycle-legend entries with snapped placement.
+- Unified final rendered-geometry checks across live display, previews, saved plots, and Cycle Report plot exports, including bottom-band packing and horizontal whitespace reclamation.
+- Restored preview dragging and ready-state sizing, improved refresh scheduling and figure reuse, and moved figure assembly off the Tk event thread.
+- Added shared scientific Unicode index rendering and corrected inherited Combined font precedence, including XITS text/math handling.
+
+#### Runtime, General Plotter, and native acceleration
+
+- Improved asynchronous sheet loading, column-apply feedback, autosave restore polling, startup completion gates, and granular splash status.
+- Added stale CustomTkinter DPI-callback cleanup for display/dock changes.
+- Updated installer provisioning and Windows Rust build handling, including interpreter-based pip invocation and a user-local Cargo build-cache path.
+- Repaired General Plotter legend/grid controls, layout/export behavior, flexible CSV import, Celsius insertion, and active-profile persistence.
+- `v4.18.0`: Added array-native Rust derivative and interactive envelope kernels with compatibility checks and Python fallback. Native rebuild validation remained blocked by the recorded Windows build-script execution restriction.
+
+### v4.17.0 Temperature Visualization
+
+- Added opt-in temperature Background and Line Color modes while retaining the detached temperature axis as the default.
+- Added configurable temperature sources, shared colorbars, and Layout Health registration for temperature artists.
+
+### v4.15.15 Corrected pH and Marker Selection
+
+- Enforced non-increasing corrected pH across Rust/Python anchor calibration and guarded ML correction to prevent upward reversals during cumulative CO2 dosing.
+- Made Cycle Analysis tweak buttons honor the clicked peak/trough selection, with a visible selection ring and hover-nearest fallback.
 
 ### v4.15.14 Layout Health and Main Legend Controls
 - Main combined legends now use no-wrap auto-fit behavior: labels remain unwrapped when one row fits, and bounded fallback rows are used only when the measured legend would clip.
