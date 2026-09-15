@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="manual-source-sha256" content="af07007e40b7dcd4e2bc432c2a6d5ed08d99456eaa6989e3e227c28c52dd10a8">
+  <meta name="manual-source-sha256" content="378f7bdb056125a613f9e518f7007ff26e7491e5dac79f2cfc3220b6885ece84">
   <title>GL-260 User Manual</title>
   <style>
     :root {
@@ -266,7 +266,7 @@
     <aside class="sidebar card" aria-label="Manual navigation">
       <div class="side-head">
         <h1>GL-260 User Manual</h1>
-        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>af07007e40b7dcd4</code></div>
+        <div class="meta">Canonical HTML built from <code>docs/user-manual.md</code><br>Source SHA-256: <code>378f7bdb056125a6</code></div>
       </div>
       <div class="side-tools">
         <label for="toc-filter">Filter sections</label>
@@ -338,9 +338,11 @@
 </li>
 <li><a href="#combined-triple-axis-plot-workflow">Combined Triple-Axis Plot Workflow</a><ul>
 <li><a href="#purpose_6">Purpose</a></li>
+<li><a href="#temperature-only-setup">Temperature-only setup</a></li>
 <li><a href="#preconditions_6">Preconditions</a></li>
 <li><a href="#inputs_6">Inputs</a></li>
 <li><a href="#step-by-step-actions_6">Step-by-step actions</a></li>
+<li><a href="#temperature-only-example">Temperature-only example</a></li>
 <li><a href="#expected-outputs_6">Expected outputs</a></li>
 <li><a href="#common-errors-and-recovery_6">Common errors and recovery</a></li>
 <li><a href="#related-exportsartifacts_6">Related exports/artifacts</a></li>
@@ -381,6 +383,7 @@
 <li><a href="#preconditions_10">Preconditions</a></li>
 <li><a href="#inputs_10">Inputs</a></li>
 <li><a href="#step-by-step-actions_10">Step-by-step actions</a></li>
+<li><a href="#reaction-cycle-pdf-export">Reaction Cycle PDF export</a></li>
 <li><a href="#template-manager-usage">Template manager usage</a></li>
 <li><a href="#sodium-methoxide-co-starter-template">Sodium methoxide / CO starter template</a></li>
 <li><a href="#phequilibrium-behavior">pH/equilibrium behavior</a></li>
@@ -757,7 +760,7 @@
 <p><a id="column-mapping-and-apply-workflow"></a></p>
 <h2 id="column-mapping-and-apply-workflow">Column Mapping and Apply Workflow<a class="headerlink" href="#column-mapping-and-apply-workflow" title="Permanent link">&para;</a></h2>
 <h3 id="purpose_4">Purpose<a class="headerlink" href="#purpose_4" title="Permanent link">&para;</a></h3>
-<p>Map source columns to pressure/temperature/derivative traces and commit mappings for analysis.</p>
+<p>Map source columns to plotted pressure, temperature, or derivative traces and commit mappings for plotting or analysis.</p>
 <h3 id="preconditions_4">Preconditions<a class="headerlink" href="#preconditions_4" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Dataset loaded and active sheet selected.</li>
@@ -772,7 +775,8 @@
 <h3 id="step-by-step-actions_4">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_4" title="Permanent link">&para;</a></h3>
 <ol>
 <li>Open <strong>Columns</strong> tab.</li>
-<li>Map required fields (pressure and other required core traces).</li>
+<li>Map the elapsed-time X column and any trace groups needed for the plot. Pressure is only required for pressure/core and Cycle Analysis workflows.</li>
+<li>In Multiple Sheets mode, choose <strong>Stitched elapsed-time unit</strong> on the Columns tab. Select <strong>hours</strong> to rebuild the stitched X series in hours; days, minutes, and seconds remain available.</li>
 <li>Map optional channels (additional temperature or derivative traces).</li>
 <li>Validate units and naming conventions for selected columns.</li>
 <li>Click <strong>Apply Column Selection</strong>.</li>
@@ -856,7 +860,15 @@
 <p><a id="combined-triple-axis-plot-workflow"></a></p>
 <h2 id="combined-triple-axis-plot-workflow">Combined Triple-Axis Plot Workflow<a class="headerlink" href="#combined-triple-axis-plot-workflow" title="Permanent link">&para;</a></h2>
 <h3 id="purpose_6">Purpose<a class="headerlink" href="#purpose_6" title="Permanent link">&para;</a></h3>
-<p>Build and tune the combined figure that overlays pressure, temperature, and derivative-oriented traces with cycle context.</p>
+<p>Build and tune a combined figure with one, two, or three Y axes against a shared X column. Temperature-only logs do not require pressure or derivative data. Pressure plots retain their optional cycle context.</p>
+<h3 id="temperature-only-setup">Temperature-only setup<a class="headerlink" href="#temperature-only-setup" title="Permanent link">&para;</a></h3>
+<ol>
+<li>On <strong>Columns</strong>, choose the elapsed-time column. It is the only required mapping for this workflow.</li>
+<li>Add both temperature columns under either temperature trace group, or map one internal and one external temperature group.</li>
+<li>In <strong>Combined Triple-Axis Settings</strong>, select the temperature group that contains the traces for <strong>Inner Left Y Axis Dataset</strong>, then choose <strong>None</strong> for both right axes.</li>
+<li>Click <strong>Apply Column Selection</strong>, then generate the Combined plot. If a selected group has no numeric samples aligned with elapsed time, the app reports that before rendering; choose the populated temperature group or correct the mapping.</li>
+</ol>
+<p>The optional <strong>Primary Plot Trace</strong> is used as the cycle-pressure input only when pressure analysis is needed. CSV Import still names pressure channels as reactor/manifold pressure because that identifies the logged signal; it does not make a pressure channel required for a Combined plot.</p>
 <h3 id="preconditions_6">Preconditions<a class="headerlink" href="#preconditions_6" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Data and columns are ready.</li>
@@ -870,7 +882,7 @@
 </ul>
 <h3 id="step-by-step-actions_6">Step-by-step actions<a class="headerlink" href="#step-by-step-actions_6" title="Permanent link">&para;</a></h3>
 <ol>
-<li>Select desired datasets for primary/right/third axis roles.</li>
+<li>Select desired dataset groups for the left, inner-right, and outer-right axes. Either right axis can be set to <strong>None</strong>; the left axis must select a group.</li>
 <li>Enable or disable temperature and derivative axes as needed.</li>
 <li>Configure derivative axis offset and axis label overrides.</li>
 <li>Set combined legend behavior and cycle legend reference axis/corner.</li>
@@ -880,9 +892,18 @@
 <li>Adjust layout margin profiles for display and export parity.</li>
 <li>Rebuild and verify that cycle overlays and legends remain stable.</li>
 </ol>
+<h3 id="temperature-only-example">Temperature-only example<a class="headerlink" href="#temperature-only-example" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Load the sheet containing your synthesis step and choose its elapsed-time column as <strong>X</strong>.</li>
+<li>On the Columns tab, select both temperature columns in the temperature (<strong>Z</strong>) trace group and apply the column selection. Pressure (<strong>y1</strong>) and derivative (<strong>y2</strong>) can remain unselected.</li>
+<li>In Combined settings, select <strong>Z</strong> for the left Y axis and <strong>None</strong> for both right Y axes.</li>
+<li>Use temperature range/tick settings for this axis, and set individual trace labels and styles as usual.</li>
+<li>Select <strong>Combined</strong> alone in plot generation, then generate the plot. Preview and export use the same assignments; exports retain full-resolution data.</li>
+</ol>
+<p>The existing y1/y3 and Z/Z2 companion groups still share their selected axis unless you explicitly assign the companion to another axis. A group selected more than once is drawn only on its first assigned axis. Explicit <strong>None</strong> selections stay disabled. Existing temperature/derivative enable switches still control optional right axes; the left group always renders. Time values are used as selected, without additional alignment or stitching.</p>
 <h3 id="expected-outputs_6">Expected outputs<a class="headerlink" href="#expected-outputs_6" title="Permanent link">&para;</a></h3>
 <ul>
-<li>A single combined plot with aligned x-axis context and readable multi-axis overlays.</li>
+<li>A single combined plot with aligned X values, one to three Y axes, and a separate legend entry for each selected trace.</li>
 </ul>
 <h3 id="common-errors-and-recovery_6">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_6" title="Permanent link">&para;</a></h3>
 <ul>
@@ -974,7 +995,9 @@
    - add marker<br>
    - remove marker<br>
    - undo/redo marker changes<br>
-   - click an existing peak/trough marker to select it before using marker nudge controls</li>
+   - click an existing peak/trough marker to select it before using marker nudge controls<br>
+   - click <strong>Place Exact Peak</strong> or <strong>Place Exact Trough</strong>, then click the pressure trace to declare the nearest valid sample exactly as a marker; the one-shot mode exits after placement and is useful when a trace is still rising or falling<br>
+   - use <code>Shift + Left-click</code> for a snapped peak or <code>Shift + Right-click</code> for a snapped trough when local-extremum snapping is desired</li>
 <li>Tune smoothing and snap/refine settings.</li>
 <li>Re-run analysis and compare summary changes.</li>
 <li>Validate cycle summary metrics and conversion/moles outputs.</li>
@@ -993,6 +1016,8 @@
 <li>Recovery: adjust smoothing window and detection thresholds; verify selected trace.</li>
 <li>Error: manual edit snaps to incorrect point.</li>
 <li>Recovery: increase/decrease manual snap radius and retry.</li>
+<li>Error: a cycle boundary must be marked before the trace reverses direction.</li>
+<li>Recovery: click <strong>Place Exact Peak</strong> or <strong>Place Exact Trough</strong>, then click the intended sample; exact placement does not require an extremum. Press Escape to cancel the armed mode.</li>
 <li>Error: cycle summary missing conversion fields.</li>
 <li>Recovery: confirm required conversion inputs/columns are mapped.</li>
 </ul>
@@ -1100,9 +1125,31 @@
 <li>Enable pH/equilibrium mode only when the active template has equilibrium rows and the run needs pH output.</li>
 <li>Click <strong>Run Reaction Dashboard</strong>.</li>
 <li>Review <strong>4. Results</strong> for KPI tiles, charge-basis diagnostics, backend status, warnings, step extents, limiting species, final inventory, theoretical yield, actual yield, and completion.</li>
+<li>Click <strong>Export Cycle Report PDF</strong> beside the Cycle focus controls to create a publication-quality Cycle report.</li>
+<li>Select the calculated Cycle columns and dashboard KPI fields to include. <strong>Cycle</strong> remains mandatory; at least one additional Cycle field is required.</li>
+<li>Choose whether to include the completion gauge, a compact <strong>Combined Triple Axis</strong> plot snapshot, and/or the full Combined Triple Axis export as the final PDF page. The snapshot requires an already-generated Combined Triple Axis plot and does not rerun plot or reaction calculations; the full page uses the established 11 x 8.5-inch Combined Triple Axis export renderer.</li>
+<li>Select portrait or landscape orientation, choose the table font family/size, and configure automatic row heights plus the padding above and below cell text, then click <strong>Export PDF</strong>.</li>
+<li>When a landscape layout needs multiple pages, review the landscape/portrait page estimates and optionally switch the current export to portrait.</li>
+<li>Follow the export progress splash. It closes automatically after showing the saved path and page count; no confirmation click is required.</li>
 <li>Click <strong>Open Plot in New Tab</strong> to send the dashboard plot to the generated plot-tab pipeline.</li>
 <li>Use the generated plot tab controls for refresh, export, Plot Settings, Data Trace Settings, Plot Elements, and Plot Preview.</li>
 </ol>
+<h3 id="reaction-cycle-pdf-export">Reaction Cycle PDF export<a class="headerlink" href="#reaction-cycle-pdf-export" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The report contains every available Cycle row. KPI values and the completion gauge use the current <strong>Latest</strong> or <strong>Cycle N</strong> dashboard focus and label that focus in the report header.</li>
+<li>Each Cycle table Trend is evaluated from the fitted pressure-trace uptake rate available through that cycle, using every valid sample from the identified peak through trough. A recharge-shortened gas delta therefore does not by itself indicate slowing uptake, and a Latest-cycle slowdown is not copied backward onto earlier rows.</li>
+<li>The Cycle Report field chooser can optionally include the positive <strong>Uptake Rate (PSI / x)</strong> and signed <strong>Pressure Slope (PSI / x)</strong> columns. Both use the active Cycle Analysis x-axis unit; unavailable fits display <code>--</code>.</li>
+<li>The live Reaction Dashboard cycle table always shows both rate columns before export, using the same cached Cycle Analysis values as the Cycle Report.</li>
+<li>Cycle headers and every table value are centered. Long warning text wraps automatically, and every continuation page repeats the full Cycle table header and shows page numbers.</li>
+<li>The PDF uses vector text, table rules, KPI panels, and gauge artwork for clean printing and publication use. The table defaults to a 12-point Times-style serif font with a pale blue header and black grid rules; the font family and size (8–18 pt) can be changed for each report.</li>
+<li>KPI tiles use generous horizontal and vertical spacing. The optional completion gauge progresses from 0% at left to 100% at right and includes a needle at the focused completion value.</li>
+<li>Automatic row height is enabled by default. Each row follows its wrapped line count and uses 6 points of padding above and 6 points below the text; padding is adjustable from 0–24 points per side.</li>
+<li>The optional Combined Triple Axis snapshot is a compact first-page overview of the active cached plot, intended to show uptake-over-time context at a glance. When the gauge or snapshot is included, the visual stack uses the upper-right header whitespace and the snapshot does not reserve additional depth above the Cycle table.</li>
+<li>The optional full Combined Triple Axis page reuses the normal vector PDF export plot at 11 x 8.5 inches and appends it after all Cycle report pages. It can be selected independently of the compact snapshot. This appended page uses complete prepared traces instead of preview-decimated arrays, disables vector-path simplification, and uses at least 1200 DPI for any rasterized plot content.</li>
+<li>The selected serif face uses a glyph-safe fallback for chemical Unicode subscripts, preventing missing-character warnings and preserving formula notation in the PDF.</li>
+<li>First-use defaults include the key gas, completion, product, trend, forecast, yield, limiting-reagent, and pH fields; Warnings and diagnostic/backend fields remain available but start cleared.</li>
+<li>Field selections, gauge/snapshot/full-plot visibility, page orientation, font family, font size, automatic row height, row padding, and the last export folder are remembered for the next export. Obsolete saved field identifiers are ignored safely.</li>
+</ul>
 <h3 id="template-manager-usage">Template manager usage<a class="headerlink" href="#template-manager-usage" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Built-in templates are immutable. They provide stable defaults and can be restored by selecting the built-in row again.</li>
@@ -1144,6 +1191,7 @@
 <li>Completion percent based on the template yield basis.</li>
 <li>Optional pH/equilibrium summary.</li>
 <li>Generated Reaction Dashboard plot tab with existing plot-toolbar/export behavior.</li>
+<li>Publication-quality Reaction Cycle PDF with selectable columns, calculated KPI fields, and optional completion gauge.</li>
 </ul>
 <h3 id="common-errors-and-recovery_10">Common errors and recovery<a class="headerlink" href="#common-errors-and-recovery_10" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1155,11 +1203,14 @@
 <li>Recovery: confirm <code>chempy</code> is installed and verify the template equilibrium equations and initial concentration rows.</li>
 <li>Error: yield is missing.</li>
 <li>Recovery: provide molar mass for the yield species and ensure the linked stoichiometry produces that species.</li>
+<li>Error: Cycle report export says no Cycle rows are available.</li>
+<li>Recovery: run Cycle Analysis, import its payload into Reaction Dashboard, and run the dashboard before exporting.</li>
 </ul>
 <h3 id="related-exportsartifacts_10">Related exports/artifacts<a class="headerlink" href="#related-exportsartifacts_10" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Generated Reaction Dashboard plot tab.</li>
 <li>Plot exports from the generated tab pipeline.</li>
+<li>Reaction Cycle Report PDF.</li>
 <li>Persisted custom templates in application settings.</li>
 <li>Cycle Analysis payloads used as gas-uptake source input.</li>
 </ul>

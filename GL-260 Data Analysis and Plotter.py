@@ -21743,7 +21743,7 @@ class CombinedDisplayFingerprint:
         invalidation when data, point budget, or exclusions change.
     Inputs:
         Constructed from a data fingerprint, point budget, normalized
-        exclusion ranges, and cycle revision.
+        exclusion ranges, cycle revision, selected axis keys, and active groups.
     Outputs:
         Hashable cache key.
     Side Effects:
@@ -21756,6 +21756,8 @@ class CombinedDisplayFingerprint:
     target_points: int
     exclusion_ranges: Tuple[Tuple[float, float], ...]
     cycle_revision: int
+    axis_keys: Tuple[str, ...] = ()
+    active_roles: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -49354,8 +49356,8 @@ def _regression_test_combined_outer_axis_none_selection_controls_zero_line() -> 
     Purpose:
         Exercise the UI-side combined-axis helpers without creating Tk widgets.
     Why:
-        The outer-right None option must be isolated to that selector and must
-        force the derivative zero-line toggle off/disabled immediately.
+        Both right selectors must offer None, and the zero-line control follows
+        derivative data wherever it is assigned.
     Inputs:
         None.
     Outputs:
@@ -49510,6 +49512,8 @@ def _regression_test_combined_outer_axis_none_selection_controls_zero_line() -> 
                 self.disabled = False
 
     harness = object.__new__(UnifiedApp)
+    # Temperature-source widgets are outside this axis-selector unit harness.
+    harness._refresh_temperature_source_choices = lambda: None
     harness._series_label_map = {}
     harness.combined_y_left_key = _Var("bad-left")
     harness.combined_y_right_key = _Var("bad-right")
@@ -49531,8 +49535,8 @@ def _regression_test_combined_outer_axis_none_selection_controls_zero_line() -> 
         UnifiedApp._refresh_combined_axis_choices(harness)
         if "None" in harness._combined_left_combo.values:
             raise AssertionError("Left combined selector must not include None.")
-        if "None" in harness._combined_right_combo.values:
-            raise AssertionError("Inner-right combined selector must not include None.")
+        if "None" not in harness._combined_right_combo.values:
+            raise AssertionError("Inner-right combined selector should include None.")
         if "None" not in harness._combined_third_combo.values:
             raise AssertionError("Outer-right combined selector should include None.")
         if harness.combined_y_left_key.get() != "y1":
@@ -49561,6 +49565,12 @@ def _regression_test_combined_outer_axis_none_selection_controls_zero_line() -> 
             raise AssertionError("Selecting None should persist the none sentinel.")
         if settings.get("combined_include_zero_line") is not False:
             raise AssertionError("Selecting None should persist y=0 line as false.")
+        UnifiedApp._on_combined_axis_change(harness, "right", "y2")
+        if harness._combined_include_zero_line_checkbutton.disabled:
+            raise AssertionError("Derivative on inner-right must enable its zero-line control.")
+        UnifiedApp._on_combined_axis_change(harness, "right", "None")
+        if harness.combined_y_right_key.get() != "none":
+            raise AssertionError("Inner-right None must survive settings normalization.")
     finally:
         globals()["_save_settings_to_disk"] = save_settings_func
         if previous_zero is None:
@@ -73076,8 +73086,8 @@ def _regression_test_trace_group_entries_from_context_preserve_legacy_fallback()
     }
     entries = _trace_group_entries_from_context(grouped, "y1")
     expected_labels = [
-        "Primary Y (Reactor, PSI) 1: Reactor A",
-        "Primary Y (Reactor, PSI) 2: Reactor B",
+        "Primary Plot Trace 1: Reactor A",
+        "Primary Plot Trace 2: Reactor B",
     ]
     if [entry.get("label") for entry in entries] != expected_labels:
         raise AssertionError("Grouped context should expose every selected trace.")
@@ -75075,8 +75085,238 @@ def _regression_test_data_trace_keys_include_grouped_columns_before_render() -> 
         "y1_2",
         plot_id="fig_combined_triple_axis",
     )
-    if label != "Primary Y (Reactor, PSI) 2: Reactor Pressure 2 (PSI)":
+    if label != "Primary Plot Trace 2: Reactor Pressure 2 (PSI)":
         raise AssertionError("Data Trace label should include role and ordinal.")
+
+
+def _regression_test_combined_temperature_only_groups() -> None:
+    """Exercise grouped temperature-only preparation and all physical axis slots.
+
+    Purpose/Why: Guard the missing-pressure workflow through real preparation and
+    Matplotlib rendering, including grouped traces, scales, disabled axes, and export.
+    Inputs: None; uses deterministic in-memory temperature and pressure samples.
+    Returns: None. Side Effects: Creates and closes transient Agg figures.
+    Exceptions: AssertionError signals a routing, validation, or range regression.
+    """
+    x_values = np.linspace(0.0, 2.0, 41)
+    first = 20.0 + 10.0 * x_values
+    second = 50.0 + 5.0 * x_values
+    second[12:15] = np.nan
+    series = {key: None for key in ("y1", "y2", "y3", "z", "z2")}
+    series.update(x=pd.Series(x_values), z=pd.Series(first))
+    data_ctx = {
+        "series": series,
+        "series_np": {
+            key: None if value is None else np.asarray(value)
+            for key, value in series.items()
+        },
+        "selected_columns": {"x": "Elapsed time (h)", "z": "Temperature (C)"},
+        "trace_groups": {
+            "z": [
+                {
+                    "series": first,
+                    "label": "Probe A",
+                    "label_is_custom": True,
+                    "series_key": "z",
+                    "column": "Probe A",
+                },
+                {
+                    "series": second,
+                    "label": "Probe B",
+                    "label_is_custom": True,
+                    "series_key": "z_2",
+                    "column": "Probe B",
+                },
+            ]
+        },
+    }
+    args = (
+        0.0,
+        2.0,
+        0.0,
+        100.0,
+        10.0,
+        70.0,
+        -5.0,
+        5.0,
+        True,
+        True,
+        True,
+        True,
+        "Temperature",
+        "",
+        1.0,
+        0.5,
+        10.0,
+        5.0,
+        10.0,
+        5.0,
+        1.0,
+        0.5,
+        True,
+        True,
+    )
+    harness = object.__new__(UnifiedApp)
+    harness.df = pd.DataFrame({"time": x_values, "Probe A": first, "Probe B": second})
+    harness.multi_sheet_enabled = False
+    harness.selected_sheets = []
+    harness.sheet_dfs = {}
+    snapshot = {
+        "args": args,
+        "combined_axis_keys": ("z", "none", "none"),
+        "axis_auto_range": {
+            "time": False,
+            "pressure": False,
+            "temperature": True,
+            "derivative": False,
+        },
+        "axis_pad_pct": 5.0,
+    }
+    effective, active, pressure = UnifiedApp._prepare_combined_axis_data(
+        harness, data_ctx, snapshot
+    )
+    assert not pressure and "y1" not in active
+    assert effective[4] < np.nanmin(first) and effective[5] > np.nanmax(second)
+    assert _combined_active_data_error(data_ctx, "z", "none", "none") is None
+    assert _combined_active_data_error(data_ctx, "y1", "none", "none") is not None
+    invalid = dict(data_ctx, trace_groups={"z": [{"series": np.full(41, np.nan)}]})
+    assert _combined_active_data_error(invalid, "z", "none", "none") is not None
+    # A y3 placeholder can remain from a prior pressure mapping. It is a
+    # legacy companion of y1, so it must not reject two valid y1 group traces.
+    primary_temp_ctx = dict(
+        data_ctx,
+        series={
+            "x": pd.Series(x_values),
+            "y1": pd.Series(first),
+            "y2": None,
+            "y3": pd.Series(np.full(x_values.size, np.nan)),
+            "z": None,
+            "z2": None,
+        },
+        trace_groups={
+            "y1": [
+                {"series": first, "label": "Temperature A"},
+                {"series": second, "label": "Temperature B"},
+            ]
+        },
+    )
+    assert (
+        _combined_active_data_error(primary_temp_ctx, "y1", "none", "none")
+        is None
+    )
+    ctx = RenderContext(
+        data_ctx=data_ctx,
+        cycle_ctx={},
+        overlay_ctx={},
+        gates_ctx={
+            "show_main_legend": True,
+            "show_cycle_markers": True,
+            "show_cycle_legend": True,
+        },
+        style_ctx={
+            "temperature_visualization_settings": {"temperature_visualization": "axis"}
+        },
+        layout_ctx={},
+        plot_elements_ctx={},
+    )
+    for mode in ("display", "export"):
+        fig = build_combined_triple_axis_figure(
+            *effective,
+            1.12,
+            left_dataset_key="z",
+            right_dataset_key="none",
+            third_dataset_key="none",
+            include_zero_line=False,
+            render_ctx=ctx,
+            mode=mode,
+        )
+        try:
+            assert len(fig.axes) == 1, (
+                "Temperature-only render must have exactly one axis."
+            )
+            ax = fig.axes[0]
+            assert ax.get_ylim() == (effective[4], effective[5])
+            assert len(ax.lines) == 2
+            np.testing.assert_array_equal(ax.lines[0].get_xdata(), x_values)
+            np.testing.assert_array_equal(ax.lines[1].get_ydata(), second)
+            labels = [
+                text.get_text() for legend in fig.legends for text in legend.get_texts()
+            ]
+            assert "Probe A" in labels and "Probe B" in labels
+        finally:
+            plt.close(fig)
+    harness._combined_plot_state = {}
+    harness._combined_layout_state = None
+    harness._combined_layout_dirty = True
+    harness._dbg = lambda *args, **kwargs: None
+    harness._get_column_trace_legend_labels = lambda: {}
+    harness._perf_time = lambda *args: contextlib.nullcontext()
+    harness._plot_elements_signature = lambda *args: ()
+    harness._annotation_renderer = AnnotationRenderer()
+    reuse_config = {
+        "base_args": tuple(effective),
+        "left_key": "z",
+        "right_key": "none",
+        "third_key": "none",
+        "include_zero_line": False,
+        "show_main_legend": True,
+        "show_cycle_markers": False,
+        "show_cycle_legend": False,
+        "deriv_offset": 1.12,
+        "font_family_value": "DejaVu Sans",
+        "label_font_value": 12,
+        "tick_font_value": 10,
+        "legend_font_value": 10,
+        "legend_alignment_value": "center",
+        "legend_rows_value": 1,
+    }
+    reuse_ctx = replace(ctx, gates_ctx={"show_main_legend": True})
+    first_fig = second_fig = None
+    try:
+        first_fig = harness._update_combined_triple_axis_display(
+            reuse_config,
+            tuple(effective),
+            (11.0, 8.5),
+            None,
+            render_ctx=reuse_ctx,
+        )
+        second_fig = harness._update_combined_triple_axis_display(
+            reuse_config,
+            tuple(effective),
+            (11.0, 8.5),
+            None,
+            render_ctx=reuse_ctx,
+        )
+        assert first_fig is second_fig, (
+            "Warm refresh discarded the rebuilt figure cache."
+        )
+        assert len(second_fig.axes) == 1
+        assert second_fig.axes[0].get_ylim() == (effective[4], effective[5])
+    finally:
+        for figure in (first_fig, second_fig):
+            if figure is not None:
+                plt.close(figure)
+    for keys in (("y1", "z", "y2"), ("z", "y1", "y2"), ("z", "none", "y1")):
+        meta = {
+            key: {
+                "series": first,
+                "selected": True,
+                "axis_type": _combined_axis_semantic_from_key(key),
+            }
+            for key in ("y1", "y2", "y3", "z", "z2")
+        }
+        bindings = _resolve_combined_right_axis_bindings(
+            meta,
+            left_key=keys[0],
+            right_key=keys[1],
+            third_key=keys[2],
+            temp_axis_active=True,
+            deriv_axis_active=True,
+        )
+        for position, key in zip(("left", "right", "third"), keys, strict=True):
+            assert (bindings[position] is None) == (key == "none")
+            if key != "none":
+                assert bindings[position]["key"] == key
 
 
 def _regression_test_combined_legend_contains_grouped_reactor_traces() -> None:
@@ -75878,8 +76118,8 @@ def _regression_test_cycle_primary_y_selector_choices_and_selection() -> None:
 
         choices = UnifiedApp._cycle_primary_y_trace_choices(harness)
         if [choice["display"] for choice in choices] != [
-            "Primary Y (Reactor, PSI) 1: Reactor A",
-            "Primary Y (Reactor, PSI) 2: Reactor B",
+            "Primary Plot Trace 1: Reactor A",
+            "Primary Plot Trace 2: Reactor B",
         ]:
             raise AssertionError("Cycle selector should use grouped Primary Y labels.")
 
@@ -79545,6 +79785,10 @@ def _regression_test_large_dataset_envelope_handoff() -> None:
 
 
 REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
+    (
+        "Combined temperature-only grouped axes",
+        _regression_test_combined_temperature_only_groups,
+    ),
     (
         "Large dataset Rust envelope handoff",
         _regression_test_large_dataset_envelope_handoff,
@@ -94966,8 +95210,8 @@ def _trace_group_display_label(
     if int(group_size) <= 1:
         return column_label or role_key.upper()
     role_labels = {
-        "y1": "Primary Y (Reactor, PSI)",
-        "y3": "Primary Y (Manifold, PSI)",
+        "y1": "Primary Plot Trace",
+        "y3": "Additional Pressure Trace",
         "y2": "Secondary Y (Derivative)",
         "z": "Temperature Trace (Internal)",
         "z2": "Temperature Trace 2 (External)",
@@ -102498,6 +102742,41 @@ class PlotLayoutManager:
                 pass
 
 
+def _combined_axis_group_keys(
+    left_key: str, right_key: str, third_key: str
+) -> Dict[str, Tuple[str, ...]]:
+    """Assign dataset groups to positions without duplicating traces.
+
+    Purpose/Why: Share routing across preparation, full builds, and refreshes while
+    retaining legacy y1/y3 and z/z2 companion traces unless explicitly placed.
+    Inputs: Canonical left/right/third dataset keys; right slots accept ``none``.
+    Returns: Position-to-group tuples, with empty tuples for disabled positions.
+    Side Effects: None. Invalid keys are ignored; duplicate keys use the first slot.
+    """
+    requested = dict(
+        zip(("left", "right", "third"), (left_key, right_key, third_key), strict=True)
+    )
+    companions = {"y1": "y3", "y3": "y1", "z": "z2", "z2": "z"}
+    valid = {"y1", "y3", "y2", "z", "z2"}
+    assigned: Set[str] = set()
+    result: Dict[str, Tuple[str, ...]] = {}
+    for position, key in requested.items():
+        keys = []
+        if key in valid and key not in assigned:
+            keys.append(key)
+            companion = companions.get(key)
+            # Explicit placement takes precedence over legacy companion grouping.
+            if (
+                companion
+                and companion not in requested.values()
+                and companion not in assigned
+            ):
+                keys.append(companion)
+        assigned.update(keys)
+        result[position] = tuple(keys)
+    return result
+
+
 def _resolve_combined_right_axis_bindings(
     dataset_meta: Mapping[str, Mapping[str, Any]],
     *,
@@ -102505,163 +102784,117 @@ def _resolve_combined_right_axis_bindings(
     third_key: str,
     temp_axis_active: bool,
     deriv_axis_active: bool,
+    left_key: str = "y1",
 ) -> Dict[str, Any]:
-    """Resolve Combined right-axis role bindings for inner/outer axis positions.
+    """Resolve selected groups into physical Combined axis bindings.
 
-    Purpose:
-        Determine which dataset role (temperature/derivative) is assigned to the
-        inner-right and outer-right axis positions.
-    Why:
-        Combined settings must honor user swaps between inner-right and outer-right
-        datasets while preserving axis-type guardrails and availability checks.
-    Inputs:
-        dataset_meta: Per-dataset metadata keyed by dataset id (`y1`, `y2`, `z`, etc.).
-        right_key: Requested dataset key for the inner-right axis.
-        third_key: Requested dataset key for the outer-right axis.
-        temp_axis_active: Whether temperature axis rendering is enabled/available.
-        deriv_axis_active: Whether derivative axis rendering is enabled/available.
-    Outputs:
-        Dict containing resolved right/third axis role assignments and positions.
-    Side Effects:
-        None.
-    Exceptions:
-        Invalid keys or unavailable datasets fall back to available role defaults
-        unless the outer-right axis is explicitly disabled with `"none"`.
+    Purpose/Why: Keep display, preview, and reuse consistent without replacing an
+    explicit disabled or unavailable selection with a different dataset.
+    Inputs: Dataset metadata, canonical slot keys, and legacy semantic visibility
+    flags for optional axes. The left axis is always eligible regardless of flags.
+    Returns: Binding payloads, group keys, and semantic positions for active axes.
+    Side Effects: None. Missing/unavailable metadata produces an empty binding.
     """
-    third_axis_disabled = str(third_key or "").strip().lower() == "none"
-
-    def _is_available(key: str) -> bool:
-        """Check whether a dataset can populate a combined right-side axis.
-
-        Purpose:
-            Recognize both legacy single-series data and Columns-tab grouped
-            trace entries when assigning temperature or derivative axes.
-        Why:
-            Grouped traces are the authoritative representation for multi-column
-            selections, so ignoring them can remove valid detached axes in a
-            full preview/export rebuild.
-        Inputs:
-            key: Dataset role key such as ``"y2"``, ``"z"``, or ``"z2"``.
-        Outputs:
-            True when the selected dataset has a direct series or at least one
-            valid grouped trace entry; otherwise False.
-        Side Effects:
-            None.
-        Exceptions:
-            Malformed metadata is treated as unavailable.
-        """
-        meta = dataset_meta.get(key) or {}
-        if not meta.get("selected"):
-            return False
-        if meta.get("series") is not None:
-            return True
-        entries = meta.get("entries")
-        return bool(
-            isinstance(entries, Sequence)
-            and not isinstance(entries, (str, bytes))
-            and any(
+    groups = _combined_axis_group_keys(left_key, right_key, third_key)
+    result: Dict[str, Any] = {"group_keys": groups}
+    for position, keys in groups.items():
+        assignment = None
+        if keys:
+            key = keys[0]
+            meta = dataset_meta.get(key) or {}
+            entries = meta.get("entries") or ()
+            available = any(
                 isinstance(entry, Mapping) and entry.get("series") is not None
                 for entry in entries
+            ) or (meta.get("series") is not None and bool(meta.get("selected")))
+            role = str(meta.get("axis_type", "primary"))
+            enabled = position == "left" or (
+                (role != "temperature" or temp_axis_active)
+                and (role != "derivative" or deriv_axis_active)
             )
+            if available and enabled:
+                assignment = {"role": role, "key": key, "meta": meta, "keys": keys}
+                result.setdefault(role + "_position", position)
+        result[position] = assignment
+        result[position + "_role"] = assignment["role"] if assignment else None
+    result.setdefault("temperature_position", None)
+    result.setdefault("derivative_position", None)
+    return result
+
+
+def _combined_active_data_error(
+    data_ctx: Mapping[str, Any],
+    left_key: str,
+    right_key: str,
+    third_key: str,
+    *,
+    enable_temp: bool = True,
+    enable_deriv: bool = True,
+) -> Optional[str]:
+    """Validate only the data required by the requested Combined axes.
+
+    Purpose/Why: Temperature-only figures must not require a pressure column, and
+    errors must identify an explicitly selected empty group without letting an
+    optional legacy companion block an otherwise usable plot.
+    Inputs: Prepared context, canonical slot keys, and optional-axis visibility.
+    Returns: A user-facing error string, or None for valid aligned finite samples.
+    Side Effects: None. Invalid numeric values/shapes are reported, never raised.
+    """
+    # Validation uses full source samples, never pixel-decimated display arrays.
+    data_ctx = {
+        key: value
+        for key, value in data_ctx.items()
+        if not key.startswith("combined_display")
+    }
+    series = data_ctx.get("series_np") or data_ctx.get("series") or {}
+    try:
+        x_values = np.asarray(series.get("x"), dtype=float)
+        if x_values.ndim != 1 or not np.isfinite(x_values).any():
+            return "Select an X column containing finite time values."
+    except (TypeError, ValueError):
+        return "Select a numeric X column on the Columns tab."
+    groups = _combined_axis_group_keys(left_key, right_key, third_key)
+    if not groups["left"]:
+        return "Select a dataset group for the left Y axis."
+    for position, keys in groups.items():
+        if not keys:
+            continue
+        role = _combined_axis_semantic_from_key(keys[0])
+        if position != "left" and (
+            (role == "temperature" and not enable_temp)
+            or (role == "derivative" and not enable_deriv)
+        ):
+            continue
+        entries = _trace_group_entries_from_context(
+            data_ctx, keys[0], fallback_series=series.get(keys[0])
         )
-
-    temp_keys_available = [key for key in ("z", "z2") if _is_available(key)]
-    temperature_available = bool(temp_axis_active and temp_keys_available)
-    derivative_available = bool(deriv_axis_active and _is_available("y2"))
-
-    def _requested_assignment(key: str) -> Optional[Tuple[str, str]]:
-        """Translate one requested dataset key to a valid right-axis role assignment."""
-        meta = dataset_meta.get(key) or {}
-        axis_role = str(meta.get("axis_type", "primary")).strip().lower()
-        if axis_role == "temperature":
-            if not temperature_available:
-                return None
-            if key in temp_keys_available:
-                return ("temperature", key)
-            return ("temperature", temp_keys_available[0])
-        if axis_role == "derivative":
-            if not derivative_available:
-                return None
-            return ("derivative", "y2")
-        return None
-
-    requested_by_position = {
-        "right": _requested_assignment(right_key),
-        "third": None if third_axis_disabled else _requested_assignment(third_key),
-    }
-    assigned_by_position: Dict[str, Optional[Tuple[str, str]]] = {
-        "right": None,
-        "third": None,
-    }
-    used_roles: Set[str] = set()
-
-    # First pass: honor explicit position requests when valid and non-duplicated.
-    for position in ("right", "third"):
-        requested = requested_by_position[position]
-        if requested is None:
-            continue
-        role_name, dataset_key = requested
-        if role_name in used_roles:
-            continue
-        assigned_by_position[position] = (role_name, dataset_key)
-        used_roles.add(role_name)
-
-    preferred_temp_key = None
-    # Keep the originally requested temperature trace (z vs z2) when possible.
-    for candidate in (right_key, third_key):
-        if candidate in temp_keys_available:
-            preferred_temp_key = candidate
-            break
-    if preferred_temp_key is None and temp_keys_available:
-        preferred_temp_key = temp_keys_available[0]
-
-    fallback_roles: List[Tuple[str, str]] = []
-    if temperature_available and preferred_temp_key is not None:
-        fallback_roles.append(("temperature", preferred_temp_key))
-    if derivative_available:
-        fallback_roles.append(("derivative", "y2"))
-
-    # Second pass: fill any empty axis position from the remaining available roles.
-    for position in ("right", "third"):
-        if position == "third" and third_axis_disabled:
-            continue
-        if assigned_by_position[position] is not None:
-            continue
-        for role_name, dataset_key in fallback_roles:
-            if role_name in used_roles:
-                continue
-            assigned_by_position[position] = (role_name, dataset_key)
-            used_roles.add(role_name)
-            break
-
-    def _assignment_payload(
-        assignment: Optional[Tuple[str, str]],
-    ) -> Optional[Dict[str, Any]]:
-        """Normalize one resolved assignment into metadata used by render paths."""
-        if assignment is None:
-            return None
-        role_name, dataset_key = assignment
-        meta = dataset_meta.get(dataset_key)
-        if not isinstance(meta, Mapping):
-            return None
-        return {"role": role_name, "key": dataset_key, "meta": meta}
-
-    right_payload = _assignment_payload(assigned_by_position["right"])
-    third_payload = _assignment_payload(assigned_by_position["third"])
-    role_positions: Dict[str, str] = {}
-    if right_payload is not None:
-        role_positions[str(right_payload["role"])] = "right"
-    if third_payload is not None:
-        role_positions[str(third_payload["role"])] = "third"
-
-    return {
-        "right": right_payload,
-        "third": third_payload,
-        "right_role": right_payload["role"] if right_payload is not None else None,
-        "third_role": third_payload["role"] if third_payload is not None else None,
-        "temperature_position": role_positions.get("temperature"),
-        "derivative_position": role_positions.get("derivative"),
-    }
+        if not entries:
+            return (
+                f"Select data for the {position} Y axis group ({keys[0].upper()}) "
+                "on the Columns tab."
+            )
+        # Companions preserve legacy y1/y3 and z/z2 overlay behavior, but only
+        # the dataset explicitly assigned to this axis is a plot prerequisite.
+        # An empty unassigned companion must never reject a valid grouped trace.
+        for entry in entries:
+            try:
+                values = np.asarray(entry.get("series"), dtype=float)
+                usable = values.shape == x_values.shape and any(
+                    np.any(
+                        np.isfinite(values[start : start + 250_000])
+                        & np.isfinite(x_values[start : start + 250_000])
+                    )
+                    for start in range(0, x_values.size, 250_000)
+                )
+            except (TypeError, ValueError):
+                usable = False
+            if not usable:
+                label = entry.get("label") or entry.get("column") or keys[0].upper()
+                return (
+                    f"The {position} Y trace '{label}' has no finite samples "
+                    "aligned with X."
+                )
+    return None
 
 
 def _normalize_combined_exclusion_ranges(value: Any) -> list[tuple[float, float]]:
@@ -103876,7 +104109,7 @@ def build_combined_triple_axis_figure(
     """Build the combined triple-axis figure for display/export workflows.
 
     Purpose:
-        Assemble the combined triple-axis plot with legends, overlays, and layout
+        Assemble one to three selected Y axes with legends, overlays, and layout
         rules that keep the interactive display and export pipeline aligned.
     Why:
         The combined plot is the authoritative multi-axis view; rebuilding it in
@@ -103893,6 +104126,8 @@ def build_combined_triple_axis_figure(
         colorbar_detached_pad_pts: Optional colorbar gap from the outer combined
             y-axis, in points; used only for a right-side temperature colorbar.
         elapsed_tick_decimals: Fixed decimal places for elapsed-days x tick labels.
+        left_dataset_key/right_dataset_key/third_dataset_key: Dataset group keys;
+            either right key may be "none". Left data controls left limits/ticks.
         mode: "display" or "export" to control layout solving behavior.
         fig_size: Optional (width, height) in inches for display rendering.
         render_ctx: Optional RenderContext payload for prepared data/overlays.
@@ -104390,6 +104625,9 @@ def build_combined_triple_axis_figure(
     }
 
     temperature_settings = style_ctx.get("temperature_visualization_settings") or settings
+    if str(left_dataset_key).lower() in {"z", "z2"}:
+        temperature_settings = dict(temperature_settings)
+        temperature_settings["temperature_visualization"] = "axis"
     temperature_render_mode, temperature_visual = _resolve_temperature_visual_for_series(
         temperature_settings,
         x,
@@ -104417,12 +104655,16 @@ def build_combined_triple_axis_figure(
     valid_dataset_keys: Set[str] = set(dataset_meta.keys())
 
     def _is_available(meta: Mapping[str, Any]) -> bool:
-        """Check whether it is available.
-        Used to gate conditional behavior in the workflow."""
-        entries = meta.get("entries")
-        if isinstance(entries, Sequence) and not isinstance(entries, (str, bytes)):
-            return bool(entries)
-        return bool(meta.get("series") is not None and meta.get("selected"))
+        """Check direct or grouped selected data without imposing a legacy column.
+
+        Purpose/Why: Columns groups can be populated without a role-level series.
+        Inputs: Dataset metadata. Returns: Whether any trace can render.
+        Side Effects/Exceptions: None; empty entries are unavailable.
+        """
+        return any(
+            isinstance(entry, Mapping) and entry.get("series") is not None
+            for entry in (meta.get("entries") or ())
+        ) or bool(meta.get("series") is not None and meta.get("selected"))
 
     temp_axis_active = temperature_render_mode == "axis" and bool(enable_temp_axis) and (
         _is_available(dataset_meta["z"]) or _is_available(dataset_meta["z2"])
@@ -104458,16 +104700,24 @@ def build_combined_triple_axis_figure(
         return candidate if candidate in valid_dataset_keys else default_key
 
     left_key = _resolve_dataset_key(left_dataset_key, "y1")
-    right_key = _resolve_dataset_key(right_dataset_key, "z")
+    right_key = _resolve_dataset_key(right_dataset_key, "z", allow_none=True)
     third_key = _resolve_dataset_key(third_dataset_key, "y2", allow_none=True)
 
-    def _axis_settings(meta: Mapping[str, Any]) -> Dict[str, Any]:
-        """Perform axis settings.
-        Used to keep the workflow logic localized and testable."""
+    def _axis_settings(meta: Mapping[str, Any], position: str) -> Dict[str, Any]:
+        """Resolve limits, ticks, and labels for a selected group and slot.
+
+        Purpose/Why: Data semantics control manual settings; independently ranged
+        slots prevent one temperature group from setting another group's scale.
+        Inputs: Dataset metadata and physical slot (left/right/third).
+        Returns: Axis settings dictionary. Side Effects: None.
+        Exceptions: Missing per-slot ranges use semantic manual/default bounds.
+        """
         axis_kind = meta.get("axis_type", "primary")
         if axis_kind == "temperature":
             return {
-                "ylim": (twin_y_min, twin_y_max),
+                "ylim": (data_ctx.get("combined_axis_ranges") or {}).get(
+                    position, (twin_y_min, twin_y_max)
+                ),
                 "auto": auto_temp_ticks,
                 "maj": twin_maj_tick,
                 "min": twin_min_tick,
@@ -104476,7 +104726,9 @@ def build_combined_triple_axis_figure(
             }
         if axis_kind == "derivative":
             return {
-                "ylim": (deriv_y_min, deriv_y_max),
+                "ylim": (data_ctx.get("combined_axis_ranges") or {}).get(
+                    position, (deriv_y_min, deriv_y_max)
+                ),
                 "auto": auto_deriv_ticks,
                 "maj": deriv_maj_tick,
                 "min": deriv_min_tick,
@@ -104484,7 +104736,9 @@ def build_combined_triple_axis_figure(
                 "labelpad": deriv_labelpad,
             }
         return {
-            "ylim": (min_y, max_y),
+            "ylim": (data_ctx.get("combined_axis_ranges") or {}).get(
+                position, (min_y, max_y)
+            ),
             "auto": auto_y_ticks,
             "maj": ymaj_tick,
             "min": ymin_tick,
@@ -104512,16 +104766,7 @@ def build_combined_triple_axis_figure(
             Missing or malformed metadata resolves to False.
         """
         axis_kind = meta.get("axis_type", "primary")
-        entries = meta.get("entries")
-        has_renderable_data = meta.get("series") is not None or bool(
-            isinstance(entries, Sequence)
-            and not isinstance(entries, (str, bytes))
-            and any(
-                isinstance(entry, Mapping) and entry.get("series") is not None
-                for entry in entries
-            )
-        )
-        if not has_renderable_data or not meta.get("selected"):
+        if not _is_available(meta):
             return False
         if axis_kind == "temperature":
             return temp_axis_active
@@ -104682,6 +104927,7 @@ def build_combined_triple_axis_figure(
     primary_meta = dataset_meta.get(left_key, dataset_meta["y1"])
     right_axis_bindings = _resolve_combined_right_axis_bindings(
         dataset_meta,
+        left_key=left_key,
         right_key=right_key,
         third_key=third_key,
         temp_axis_active=temp_axis_active,
@@ -104689,10 +104935,6 @@ def build_combined_triple_axis_figure(
     )
     right_axis_assignment = right_axis_bindings.get("right")
     third_axis_assignment = right_axis_bindings.get("third")
-    right_role = right_axis_bindings.get("right_role")
-    third_role = right_axis_bindings.get("third_role")
-    temp_axis_position = right_axis_bindings.get("temperature_position")
-    deriv_axis_position = right_axis_bindings.get("derivative_position")
 
     def _axis_role_layer_zorder(
         series_keys: Sequence[str], role_bias: float, fallback: float
@@ -104729,19 +104971,14 @@ def build_combined_triple_axis_figure(
         base_value = max(z_values) if z_values else float(fallback)
         return float(base_value + role_bias)
 
-    right_axis_series_keys: Tuple[str, ...] = ()
-    third_axis_series_keys: Tuple[str, ...] = ()
-    if right_role == "temperature":
-        right_axis_series_keys = ("z", "z2")
-    elif right_role == "derivative":
-        right_axis_series_keys = ("y2",)
-    if third_role == "temperature":
-        third_axis_series_keys = ("z", "z2")
-    elif third_role == "derivative":
-        third_axis_series_keys = ("y2",)
+    axis_group_keys = right_axis_bindings["group_keys"]
+    right_axis_series_keys = axis_group_keys["right"]
+    third_axis_series_keys = axis_group_keys["third"]
 
     axis_layer_zorders = {
-        "left": _axis_role_layer_zorder(("y1", "y3"), role_bias=0.01, fallback=0.0),
+        "left": _axis_role_layer_zorder(
+            axis_group_keys["left"], role_bias=0.01, fallback=0.0
+        ),
         "right": _axis_role_layer_zorder(
             right_axis_series_keys, role_bias=0.02, fallback=0.0
         ),
@@ -105059,10 +105296,12 @@ def build_combined_triple_axis_figure(
             legends.append(legend)
         return legends[-1] if legends else None
 
-    primary_settings = _axis_settings(dataset_meta["y1"])
+    primary_settings = _axis_settings(primary_meta, "left")
+    ax._gl260_axis_semantic = primary_meta["axis_type"]
+    ax._gl260_axis_dataset_key = left_key
 
-    # Iterate over ("y1", "y3") to apply the per-item logic.
-    for key in ("y1", "y3"):
+    # Route groups, including their legacy companions, to the selected slot.
+    for key in axis_group_keys["left"]:
         artist = _plot_dataset(ax, dataset_meta[key], axis_role="left")
         if artist is not None:
             handles.extend(_iter_artist_handles(artist))
@@ -105122,9 +105361,8 @@ def build_combined_triple_axis_figure(
         xits_text_font if xits_text_font and title_display != raw_title_display else family_value
     )
 
-    axis_for_role: Dict[str, Axes] = {"primary": ax}
     show_derivative_zero_line = False
-    derivative_zero_axis: Optional[Axes] = None
+    derivative_zero_axis: Optional[Axes] = ax if left_key == "y2" else None
 
     right_axis_role = None
     right_axis_meta = None
@@ -105152,7 +105390,7 @@ def build_combined_triple_axis_figure(
         _position_extra_axis(ax_temp, 1.0)
         ax_temp.tick_params(axis="x", which="both", bottom=False, labelbottom=False)
 
-        right_settings = _axis_settings(right_axis_meta)
+        right_settings = _axis_settings(right_axis_meta, "right")
 
         ax_temp.set_ylim(*right_settings["ylim"])
         right_kwargs = {
@@ -105180,8 +105418,6 @@ def build_combined_triple_axis_figure(
         ax_temp.set_zorder(axis_layer_zorders["right"])
         ax_temp.patch.set_visible(False)
         ax_temp.set_facecolor("none")
-        if right_axis_role in {"temperature", "derivative"}:
-            axis_for_role[str(right_axis_role)] = ax_temp
         if right_settings["label_key"] == "derivative":
             derivative_zero_axis = ax_temp
 
@@ -105199,7 +105435,7 @@ def build_combined_triple_axis_figure(
         _position_extra_axis(ax_deriv, deriv_spine_offset)
         ax_deriv.tick_params(axis="x", which="both", bottom=False, labelbottom=False)
 
-        third_settings = _axis_settings(third_axis_meta)
+        third_settings = _axis_settings(third_axis_meta, "third")
 
         ax_deriv.set_ylim(*third_settings["ylim"])
         third_kwargs = {
@@ -105227,8 +105463,6 @@ def build_combined_triple_axis_figure(
         ax_deriv.set_zorder(axis_layer_zorders["third"])
         ax_deriv.patch.set_visible(False)
         ax_deriv.set_facecolor("none")
-        if third_axis_role in {"temperature", "derivative"}:
-            axis_for_role[str(third_axis_role)] = ax_deriv
         if third_settings["label_key"] == "derivative":
             derivative_zero_axis = ax_deriv
 
@@ -105236,37 +105470,55 @@ def build_combined_triple_axis_figure(
         include_zero_line and derivative_zero_axis is not None
     )
 
-    # Overlay axis carries only cycle markers and must render above all data axes.
-    ax_overlay = ax.twinx()
-    try:
-        ax_overlay._gl260_axis_role = "overlay"
-        ax_overlay._gl260_legend_only = True
-    except Exception:
-        # Best-effort guard; ignore failures to avoid interrupting the workflow.
-        pass
-    ax_overlay.set_zorder(axis_layer_zorders["overlay"])
-    ax_overlay.set_ylim(*ax.get_ylim())
-    ax_overlay.set_autoscaley_on(False)
-    ax_overlay.patch.set_visible(False)
-    ax_overlay.set_facecolor("none")
-    ax_overlay.set_frame_on(False)
-    ax_overlay.tick_params(
-        axis="both",
-        which="both",
-        left=False,
-        right=False,
-        bottom=False,
-        top=False,
-        labelleft=False,
-        labelright=False,
-        labelbottom=False,
-        labeltop=False,
+    pressure_axis = next(
+        (
+            target
+            for position, target in (("left", ax), ("right", ax_temp), ("third", ax_deriv))
+            if target is not None
+            and "y1" in axis_group_keys[position]
+            and _is_available(dataset_meta["y1"])
+        ),
+        None,
     )
-    # Hide all overlay spines so only marker artists render on this axis.
-    for spine in ax_overlay.spines.values():
-        spine.set_visible(False)
-    ax_overlay.yaxis.set_visible(False)
-    ax_overlay.xaxis.set_visible(False)
+    if pressure_axis is None:
+        show_cycle_markers_on_core_plots = False
+        show_cycle_legend_on_core_plots = False
+        include_moles_in_core_plot_legend = False
+    if (
+        pressure_axis is not None
+        and (show_cycle_markers_on_core_plots or show_cycle_legend_on_core_plots)
+    ) or show_derivative_zero_line:
+        # Overlay axis carries only cycle markers and must render above all data axes.
+        ax_overlay = (pressure_axis or ax).twinx()
+        try:
+            ax_overlay._gl260_axis_role = "overlay"
+            ax_overlay._gl260_legend_only = True
+        except Exception:
+            # Best-effort guard; ignore failures to avoid interrupting the workflow.
+            pass
+        ax_overlay.set_zorder(axis_layer_zorders["overlay"])
+        ax_overlay.set_ylim(*(pressure_axis or ax).get_ylim())
+        ax_overlay.set_autoscaley_on(False)
+        ax_overlay.patch.set_visible(False)
+        ax_overlay.set_facecolor("none")
+        ax_overlay.set_frame_on(False)
+        ax_overlay.tick_params(
+            axis="both",
+            which="both",
+            left=False,
+            right=False,
+            bottom=False,
+            top=False,
+            labelleft=False,
+            labelright=False,
+            labelbottom=False,
+            labeltop=False,
+        )
+        # Hide all overlay spines so only marker artists render on this axis.
+        for spine in ax_overlay.spines.values():
+            spine.set_visible(False)
+        ax_overlay.yaxis.set_visible(False)
+        ax_overlay.xaxis.set_visible(False)
     _ensure_combined_derivative_zero_line(
         fig,
         ax_overlay,
@@ -105310,27 +105562,13 @@ def build_combined_triple_axis_figure(
         _axis_zorder_text(ax_overlay),
     )
 
-    temp_axis = axis_for_role.get("temperature")
-    if temp_axis is not None:
-        # Iterate over ("z", "z2") to apply the per-item logic.
-        for key in ("z", "z2"):
-            artist = _plot_dataset(
-                temp_axis,
-                dataset_meta[key],
-                axis_role=str(temp_axis_position or "right"),
-            )
+    for position, target_axis in (("right", ax_temp), ("third", ax_deriv)):
+        if target_axis is None:
+            continue
+        for key in axis_group_keys[position]:
+            artist = _plot_dataset(target_axis, dataset_meta[key], axis_role=position)
             if artist is not None:
                 handles.extend(_iter_artist_handles(artist))
-
-    deriv_axis = axis_for_role.get("derivative")
-    if deriv_axis is not None:
-        artist = _plot_dataset(
-            deriv_axis,
-            dataset_meta["y2"],
-            axis_role=str(deriv_axis_position or "third"),
-        )
-        if artist is not None:
-            handles.extend(_iter_artist_handles(artist))
 
     if auto_time_ticks:
         ax.xaxis.set_major_locator(AutoLocator())
@@ -105366,7 +105604,9 @@ def build_combined_triple_axis_figure(
         axis="both", which="major", labelcolor="black", labelsize=tick_fontsize
     )
     _apply_tick_font(ax)
-    combined_peak_artist, combined_trough_artist = _draw_cycle_markers(ax_overlay)
+    combined_peak_artist, combined_trough_artist = (
+        _draw_cycle_markers(ax_overlay) if ax_overlay is not None else (None, None)
+    )
     try:
         fig._gl260_cycle_marker_artists = {  # type: ignore[attr-defined]
             "peak": combined_peak_artist,
@@ -105600,7 +105840,10 @@ def build_combined_triple_axis_figure(
         left_pad_pct=left_pad_value,
         right_pad_pct=right_pad_value,
         export_pad_pts=export_pad_pts,
-        margins_authoritative=True,
+        # Reduced-axis plots can fit their actual artists when no profile bounds
+        # were supplied; explicit profile margins retain their existing authority.
+        margins_authoritative=bool(baseline_margins)
+        or (ax_temp is not None and ax_deriv is not None),
         legend_gap_pts=legend_label_gap_pts,
         xlabel_tick_gap_pts=xlabel_tick_gap_pts,
         legend_margin_pts=legend_bottom_margin_pts,
@@ -133670,9 +133913,8 @@ class UnifiedApp(tk.Tk):
         """
         if not plot_id:
             return
-        if (
-            plot_id == "fig_combined_triple_axis"
-            and not self._validate_temperature_axis_range(show_error=True)
+        if plot_id == "fig_combined_triple_axis" and not self._validate_temperature_axis_range(
+            show_error=True, combined_only=True
         ):
             return
         if isinstance(reason, str) and "data trace settings" in reason.lower():
@@ -152435,14 +152677,14 @@ class UnifiedApp(tk.Tk):
         """Return safe combined-axis keys for left, inner-right, and outer-right.
 
         Purpose:
-            Apply role-specific defaults and preserve the optional outer-axis
-            `"none"` sentinel.
+            Apply role-specific defaults and preserve explicit `"none"` selections
+            for both optional right axes.
         Why:
-            Left and inner-right axes must always resolve to real datasets, while
-            the detached outer-right axis can be intentionally disabled.
+            The left axis requires a dataset; either right axis can be explicitly
+            disabled without a fallback silently re-enabling it.
         Args:
             left: Requested inner-left dataset key or label.
-            right: Requested inner-right dataset key or label.
+            right: Requested inner-right dataset key, label, or `"none"`.
             third: Requested outer-right dataset key, label, blank, or `"none"`.
         Returns:
             Tuple of canonical keys `(left, right, third)`.
@@ -152461,7 +152703,7 @@ class UnifiedApp(tk.Tk):
         resolved: List[str] = []
         # Iterate over indexed elements from requested to apply the per-item logic.
         for idx, req in enumerate(requested):
-            if idx == 2 and (req == "none" or req is None):
+            if (idx > 0 and req == "none") or (idx == 2 and req is None):
                 resolved.append("none")
             elif req in valid:
                 resolved.append(req)
@@ -152489,8 +152731,8 @@ class UnifiedApp(tk.Tk):
         label_map = getattr(self, "_series_label_map", {}) or {}
         fallback_labels = {
             "none": "None",
-            "y1": "Primary Y (Reactor, PSI)",
-            "y3": "Primary Y (Manifold, PSI)",
+            "y1": "Primary Plot Trace",
+            "y3": "Additional Pressure Trace",
             "y2": "Secondary Y (Derivative)",
             "z": "Temperature Trace (Internal)",
             "z2": "Temperature Trace 2 (External)",
@@ -152590,10 +152832,9 @@ class UnifiedApp(tk.Tk):
 
         Purpose:
             Provide the selectable dataset key list, optionally including the
-            outer-right `"none"` sentinel.
+            optional right-axis `"none"` sentinel.
         Why:
-            Only the outer-right selector should expose None; left and inner-right
-            must remain bound to real datasets.
+            Both right selectors expose None; the left selector remains required.
         Args:
             include_none: Include `"none"` at the end of the returned key list.
         Returns:
@@ -152614,7 +152855,7 @@ class UnifiedApp(tk.Tk):
 
         Purpose:
             Rebuild selector display labels for current data labels and apply the
-            outer-right-only None option.
+            None option for both right axes.
         Why:
             Data imports can change labels, and the selector UI must stay aligned
             with persisted canonical keys.
@@ -152645,12 +152886,12 @@ class UnifiedApp(tk.Tk):
         self._combined_axis_display_map = {
             display: key for key, display in display_map.items()
         }
-        for combo in (
-            getattr(self, "_combined_left_combo", None),
-            getattr(self, "_combined_right_combo", None),
-        ):
-            if combo is not None:
-                combo["values"] = axis_values
+        left_combo = getattr(self, "_combined_left_combo", None)
+        if left_combo is not None:
+            left_combo["values"] = axis_values
+        right_combo = getattr(self, "_combined_right_combo", None)
+        if right_combo is not None:
+            right_combo["values"] = third_values
         third_combo = getattr(self, "_combined_third_combo", None)
         if third_combo is not None:
             third_combo["values"] = third_values
@@ -152701,11 +152942,10 @@ class UnifiedApp(tk.Tk):
         """Synchronize the combined derivative zero-line control with axis state.
 
         Purpose:
-            Disable and clear the y=0 line option when the outer-right combined
-            axis is explicitly set to None.
+            Disable and clear the y=0 line option when no axis selects derivative data.
         Why:
-            The zero-line option belongs to the detached derivative axis workflow;
-            when that axis is disabled, leaving the option enabled is misleading
+            The zero-line option follows derivative data in any axis position;
+            when that data is disabled, leaving the option enabled is misleading
             and can leak stale state into render/export configuration.
         Args:
             persist: Save the forced-off setting to disk when True.
@@ -152718,9 +152958,14 @@ class UnifiedApp(tk.Tk):
             Widget and settings-save failures are suppressed to keep UI sync
             best-effort during startup and partial test harnesses.
         """
-        third_key = self._normalize_combined_axis_key(self.combined_y_third_key.get())
-        third_axis_disabled = third_key == "none"
-        if third_axis_disabled:
+        axis_keys = tuple(
+            self._normalize_combined_axis_key(
+                getattr(self, name).get() if getattr(self, name, None) is not None else None
+            )
+            for name in ("combined_y_left_key", "combined_y_right_key", "combined_y_third_key")
+        )
+        derivative_disabled = "y2" not in axis_keys
+        if derivative_disabled:
             try:
                 self.combined_include_zero_line.set(False)
             except Exception:
@@ -152731,20 +152976,18 @@ class UnifiedApp(tk.Tk):
         widget = getattr(self, "_combined_include_zero_line_checkbutton", None)
         if widget is not None:
             try:
-                if third_axis_disabled:
+                if derivative_disabled:
                     widget.state(["disabled"])
                 else:
                     widget.state(["!disabled"])
             except Exception:
                 try:
-                    widget.configure(
-                        state="disabled" if third_axis_disabled else "normal"
-                    )
+                    widget.configure(state="disabled" if derivative_disabled else "normal")
                 except Exception:
                     # Best-effort guard; ignore unsupported widget APIs.
                     pass
 
-        if persist and third_axis_disabled:
+        if persist and derivative_disabled:
             try:
                 _save_settings_to_disk()
             except Exception:
@@ -157862,6 +158105,13 @@ class UnifiedApp(tk.Tk):
             row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(2, 4)
         )
         self._sync_combined_zero_line_control()
+        ttk.Label(
+            lf_combined_axis,
+            text="For temperature vs time, select temperature on the left "
+            "and None on both right axes. "
+            "Select multiple traces per group on the Columns tab.",
+            wraplength=560,
+        ).grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=(2, 6))
 
     def _build_plot_peak_section(self, parent, pad: dict[str, int]) -> None:
         """Build the Peak & Trough Detection card content.
@@ -218127,55 +218377,29 @@ class UnifiedApp(tk.Tk):
         return fig
 
     def _final_report_combined_preflight(self) -> Tuple[bool, str]:
-        """Perform final report combined preflight.
-        Used to keep the workflow logic localized and testable."""
+        """Check selected Combined groups before report export.
+
+        Purpose/Why: Permit temperature-only exports without pressure prerequisites.
+        Inputs: None; reads current columns, axis selectors, and prepared data.
+        Returns: (ready, error message). Side Effects: Reuses prepared-data caches.
+        Exceptions: Preparation failures return a user-facing error instead of raising.
+        """
         if self.df is None:
             return False, "Load data before generating the combined plot section."
-        if not self.columns:
-            return False, "Select columns on the Columns tab before generating the report."
         try:
-            _, data_ctx = self._resolve_prepared_data_context(apply_globals=True)
-        except Exception:
-            data_ctx = {}
-        series_map = data_ctx.get("series") or {}
-        selected_columns = data_ctx.get("selected_columns") or globals().get(
-            "selected_columns", {}
-        )
-        x_values = series_map.get("x", globals().get("x"))
-        y1_values = series_map.get("y1", globals().get("y1"))
-        missing_basic = []
-        if x_values is None:
-            missing_basic.append("X-axis")
-        if y1_values is None:
-            missing_basic.append("Primary Y")
-        if missing_basic:
-            return (
-                False,
-                "Combined plot requires the following selections: "
-                + ", ".join(missing_basic)
-                + ".",
+            _, data_ctx = self._resolve_prepared_data_context(apply_globals=False)
+            keys = self._sanitize_combined_axis_keys(
+                self.combined_y_left_key.get(),
+                self.combined_y_right_key.get(),
+                self.combined_y_third_key.get(),
             )
-        required_series = {
-            "y1": series_map.get("y1", globals().get("y1")),
-            "y3": series_map.get("y3", globals().get("y3")),
-            "y2": series_map.get("y2", globals().get("y2")),
-            "z": series_map.get("z", globals().get("z")),
-            "z2": series_map.get("z2", globals().get("z2")),
-        }
-        missing_required = [
-            self._combined_dataset_label(key)
-            # Iterate to apply the per-item logic.
-            for key, series in required_series.items()
-            if series is None and _is_selected(selected_columns.get(key, key))
-        ]
-        if missing_required:
-            return (
-                False,
-                "Combined plot requires the following datasets: "
-                + ", ".join(missing_required)
-                + ".",
+            args = self._collect_plot_args()
+            error = _combined_active_data_error(
+                data_ctx, *keys, enable_temp=bool(args[22]), enable_deriv=bool(args[23])
             )
-        return True, ""
+        except Exception as exc:
+            return False, f"Combined data preparation failed: {exc}"
+        return error is None, error or ""
 
     def _final_report_columns_ready(self) -> Tuple[bool, str]:
         """Perform final report columns ready.
@@ -242429,14 +242653,15 @@ class UnifiedApp(tk.Tk):
                 "absolute timestamp reference."
             ),
             "y1": (
-                "Primary reactor pressure trace. The first selected trace remains "
-                "the compatibility value for calculations and legacy settings."
+                "Optional primary plotted trace. When it contains reactor pressure, "
+                "its first selected trace also supplies Cycle Analysis and legacy "
+                "calculation workflows."
             ),
             "y3": (
                 "Optional manifold pressure trace. Add it when manifold pressure "
                 "should appear alongside reactor pressure."
             ),
-            "y2": ("Optional derivative trace plotted on the secondary pressure axis."),
+            "y2": ("Optional derivative trace plotted on any selected Combined axis."),
             "z": (
                 "Optional internal temperature trace used by plots and workflows "
                 "that can source temperature from Columns mappings."
@@ -242768,7 +242993,24 @@ class UnifiedApp(tk.Tk):
                 pass
 
         def _mark_trace_groups_changed(reason: str) -> None:
-            """Persist trace group editor state and mark Columns dirty."""
+            """Persist edited trace groups and synchronize selector values.
+
+            Purpose:
+                Keep grouped Columns selections and their primary selectors in
+                one normalized state after an add, remove, or reorder action.
+            Why:
+                A temperature-only plot can legitimately have no primary plot
+                trace, so an empty group must display as ``None`` for every role.
+            Inputs:
+                reason: User-facing dirty-state reason for the pending change.
+            Returns:
+                None.
+            Side Effects:
+                Updates grouped mappings, Tk selector variables, calculation
+                choices, and the Columns dirty indicator.
+            Exceptions:
+                Delegated UI synchronization handles unavailable widgets safely.
+            """
             self._set_column_trace_groups(
                 trace_groups,
                 calculation_trace=settings.get("calculation_trace"),
@@ -242777,7 +243019,7 @@ class UnifiedApp(tk.Tk):
                 values = trace_groups.get(role_key, [])
                 var = self.columns_vars.get(role_key)
                 if isinstance(var, tk.StringVar):
-                    fallback_value = "None" if role_key != "y1" else ""
+                    fallback_value = "None"
                     var.set(values[0] if values else fallback_value)
             self._refresh_calculation_trace_choices_for_columns_ui(
                 calculation_trace_var,
@@ -242851,7 +243093,7 @@ class UnifiedApp(tk.Tk):
                 row=current_row, column=0, sticky="w", padx=6, pady=6
             )
 
-            optional_keys = {"y2", "y3", "z", "z2", "dt"}
+            optional_keys = {"y1", "y2", "y3", "z", "z2", "dt"}
             choices = cols_with_none if key in optional_keys else cols
             default_val = self.columns.get(
                 key,
@@ -242875,7 +243117,24 @@ class UnifiedApp(tk.Tk):
             self.columns_vars[key] = var
 
             def _on_combo(k=key) -> None:
-                """Mirror one selector value and mark the column state as dirty."""
+                """Commit a selected column while keeping its trace group in sync.
+
+                Purpose:
+                    Store one scalar mapping or the first entry of a plotted
+                    trace group after the user changes its combobox.
+                Why:
+                    The optional primary plot trace must clear cleanly when a
+                    temperature-only Combined plot has no pressure data.
+                Inputs:
+                    k: Bound logical column role key.
+                Returns:
+                    None.
+                Side Effects:
+                    Updates column/group state, refreshes the trace list, and
+                    marks the Columns tab as requiring Apply.
+                Exceptions:
+                    Empty optional values remove every trace in that role.
+                """
                 if k in trace_role_keys:
                     value = self._normalize_column_choice(self.columns_vars[k].get())
                     values = trace_groups.setdefault(k, [])
@@ -242884,7 +243143,7 @@ class UnifiedApp(tk.Tk):
                             values[0] = value
                         else:
                             values.append(value)
-                    elif k != "y1":
+                    else:
                         values.clear()
                     _refresh_trace_listbox(k)
                     _mark_trace_groups_changed("trace group changed")
@@ -243365,7 +243624,7 @@ class UnifiedApp(tk.Tk):
         labels = self._column_variable_label_map()
         trace_groups = self._get_column_trace_groups()
         trace_role_keys = set(self._column_trace_role_keys())
-        optional_keys = {"y2", "y3", "z", "z2", "dt"}
+        optional_keys = {"y1", "y2", "y3", "z", "z2", "dt"}
         tooltip_map = self._column_role_tooltip_map()
 
         calculation_trace_var = tk.StringVar()
@@ -244098,22 +244357,22 @@ class UnifiedApp(tk.Tk):
         required_body = self._create_columns_card(
             f,
             "Required Mappings",
-            subtitle="Choose the required X-axis and primary reactor pressure trace.",
+            subtitle="Choose the elapsed-time X-axis used by the plots you create.",
         )
         optional_body = self._create_columns_card(
             f,
             "Optional Mappings",
             subtitle=(
-                "Choose optional timestamp, manifold, derivative, and temperature "
-                "primary traces. Use Multi-Trace Groups to add extra plotted traces."
+                "Choose plotted trace groups for pressure, derivative, or temperature. "
+                "Use Multi-Trace Groups to add extra traces to a group."
             ),
         )
         trace_body = self._create_columns_card(
             f,
             "Multi-Trace Groups",
             subtitle=(
-                "Manage additional plotted traces. The first selected trace remains "
-                "the primary compatibility trace for each role."
+                "Manage grouped plotted traces. The first selected Primary Plot Trace "
+                "remains the compatibility trace for pressure calculations."
             ),
         )
         styling_body = self._create_columns_card(
@@ -244127,8 +244386,8 @@ class UnifiedApp(tk.Tk):
             f,
             "Calculation Trace & Actions",
             subtitle=(
-                "Select which pressure trace drives calculations, then apply the "
-                "current mappings."
+                "Select a pressure trace for calculations when one is mapped, then "
+                "apply the current mappings."
             ),
         )
 
@@ -244158,22 +244417,23 @@ class UnifiedApp(tk.Tk):
             self.columns_vars[key] = var
 
             def _on_combo(k=key) -> None:
-                """Mirror one selector value and mark Columns dirty.
+                """Commit one Columns selector while preserving grouped mappings.
 
                 Purpose:
-                    Commit primary selector changes to runtime column state.
+                    Synchronize a selected source column with its scalar or
+                    grouped trace role.
                 Why:
-                    Trace roles store their primary value as the first grouped
-                    trace while scalar roles write directly to `self.columns`.
+                    Every Y role, including the optional primary plot trace,
+                    can be cleared for a temperature-only Combined plot.
                 Inputs:
-                    k: Bound logical column role key.
-                Outputs:
+                    k: Logical column role key bound by the selector callback.
+                Returns:
                     None.
                 Side Effects:
-                    Mutates column/group state, refreshes listboxes, and marks
-                    Columns as needing apply.
+                    Mutates column/group state, refreshes trace listboxes, and
+                    marks the Columns tab as requiring Apply.
                 Exceptions:
-                    Empty optional trace selections clear their role group.
+                    Empty optional trace selections remove their group entries.
                 """
                 if k in trace_role_keys:
                     value = self._normalize_column_choice(self.columns_vars[k].get())
@@ -244183,7 +244443,7 @@ class UnifiedApp(tk.Tk):
                             values[0] = value
                         else:
                             values.append(value)
-                    elif k != "y1":
+                    else:
                         values.clear()
                     _refresh_trace_listbox(k)
                     _mark_trace_groups_changed("trace group changed")
@@ -244194,8 +244454,8 @@ class UnifiedApp(tk.Tk):
                     allow_during_apply=True,
                 )
 
-            target_body = required_body if key in {"x", "y1"} else optional_body
-            target_section = "required" if key in {"x", "y1"} else "optional"
+            target_body = required_body if key == "x" else optional_body
+            target_section = "required" if key == "x" else "optional"
             _place_selector_row(
                 target_body,
                 section_rows[target_section],
@@ -244264,6 +244524,76 @@ class UnifiedApp(tk.Tk):
                     field_vars=style_vars,
                 )
                 section_rows["style"] += 1
+
+        if self.multi_sheet_enabled:
+            stitched_unit_var = tk.StringVar(value=self._elapsed_unit_label())
+            self._columns_stitched_elapsed_unit_var = stitched_unit_var
+
+            def _change_stitched_elapsed_unit() -> None:
+                """Apply a Columns-tab stitched elapsed-time unit selection.
+
+                Purpose:
+                    Rebuild the shared stitched elapsed series in the selected
+                    unit after the user changes the Columns-tab control.
+                Why:
+                    Multi-sheet plotting must let users select hours alongside
+                    days without leaving the mapping workflow.
+                Inputs:
+                    None; reads the selected value from `stitched_unit_var`.
+                Returns:
+                    None.
+                Side Effects:
+                    Updates elapsed-unit settings, may rebuild the stitched
+                    dataframe, refreshes Columns controls, and marks mappings
+                    as needing Apply.
+                Exceptions:
+                    Rebuild failures preserve the selected unit and leave the
+                    existing data available for user correction.
+                """
+                new_unit = _normalize_elapsed_time_unit(stitched_unit_var.get())
+                if new_unit == self._elapsed_unit_label():
+                    return
+                settings["elapsed_time_unit"] = new_unit
+                self._elapsed_time_unit = new_unit
+                try:
+                    _save_settings_to_disk()
+                except Exception:
+                    # The in-memory selection remains usable if persistence fails.
+                    pass
+                dt_column = str((self.columns or {}).get("dt") or "").strip()
+                if (
+                    self.file_path
+                    and self.selected_sheets
+                    and dt_column
+                    and dt_column != "None"
+                ):
+                    try:
+                        self._build_stitched_dataframe(self.selected_sheets, dt_column)
+                    except Exception:
+                        return
+                self._mark_columns_dirty(
+                    reason="stitched elapsed-time unit changed",
+                    allow_during_apply=True,
+                )
+                self._refresh_columns_ui()
+
+            unit_row = section_rows["required"]
+            unit_label = ttk.Label(required_body, text="Stitched elapsed-time unit")
+            unit_label.grid(row=unit_row, column=0, sticky="w", padx=6, pady=6)
+            unit_combo = _make_combo(
+                required_body,
+                variable=stitched_unit_var,
+                values=ELAPSED_TIME_UNITS,
+                on_select=_change_stitched_elapsed_unit,
+            )
+            unit_combo.grid(row=unit_row, column=1, sticky="ew", padx=6, pady=6)
+            unit_tip = (
+                "Choose the units for the stitched elapsed-time X series. "
+                "Select hours to plot elapsed time in hours across sheets."
+            )
+            self._attach_tooltip(unit_label, unit_tip)
+            self._attach_tooltip(unit_combo, unit_tip)
+            section_rows["required"] += 1
 
         actions_body.grid_columnconfigure(1, weight=1)
         calc_tip = (
@@ -244340,13 +244670,29 @@ class UnifiedApp(tk.Tk):
         self._request_columns_scroll_refresh()
 
     def _column_variable_label_map(self) -> Dict[str, str]:
-        """Map value.
-        Used by column variable label workflows to map value."""
+        """Return the user-facing labels for Columns-tab mapping roles.
+
+        Purpose:
+            Describe each persisted column role without requiring a pressure
+            mapping for plot-only temperature workflows.
+        Why:
+            The legacy `y1` identifier is still needed for cycle compatibility,
+            but its UI label must not imply that every Combined plot needs
+            reactor-pressure data.
+        Inputs:
+            None.
+        Returns:
+            Mapping from internal column role keys to user-facing labels.
+        Side Effects:
+            None.
+        Exceptions:
+            None.
+        """
         return {
             "x": f"X-Axis (Elapsed Time, {self._elapsed_unit_label()}) [Required]",
             "dt": "Date & Time (for multi-sheet stitching)",
-            "y1": "Primary Y (Reactor, PSI) [Required]",
-            "y3": "Primary Y (Manifold, PSI) [Optional]",
+            "y1": "Primary Plot Trace [Optional]",
+            "y3": "Additional Pressure Trace [Optional]",
             "y2": "Secondary Y (Derivative) [Optional]",
             "z": "Temperature Trace (Internal) [Optional]",
             "z2": "Temperature Trace 2 (External) [Optional]",
@@ -250357,7 +250703,9 @@ class UnifiedApp(tk.Tk):
         }
         return _sanitize_axis_auto_range_settings(flags)
 
-    def _validate_temperature_axis_range(self, *, show_error: bool = True) -> bool:
+    def _validate_temperature_axis_range(
+        self, *, show_error: bool = True, combined_only: bool = False
+    ) -> bool:
         """Validate the effective manual temperature range before rendering.
 
         Purpose:
@@ -250367,6 +250715,7 @@ class UnifiedApp(tk.Tk):
             to data-derived limits when the user's manual values are invalid.
         Inputs:
             show_error: Display a modal validation message when validation fails.
+            combined_only: Skip unused temperature settings for Combined plots.
         Outputs:
             True when auto-range is enabled or the manual range is valid.
         Side Effects:
@@ -250374,6 +250723,17 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             Tk/value conversion errors are converted to a False result.
         """
+        if combined_only:
+            keys = (
+                self.combined_y_left_key.get(),
+                self.combined_y_right_key.get(),
+                self.combined_y_third_key.get(),
+            )
+            visual_mode = _normalize_temperature_visualization_settings(settings)[
+                "temperature_visualization"
+            ]
+            if not any(key in {"z", "z2"} for key in keys) and visual_mode == "axis":
+                return True
         try:
             if bool(self.axis_auto_temp.get()):
                 return True
@@ -251127,6 +251487,24 @@ class UnifiedApp(tk.Tk):
             # Preview and export must share the same display-only transform.
             data_ctx["combined_exclusion_ranges"] = self._combined_exclusion_ranges()
 
+        combined_args = None
+        pressure_active = True
+        if plot_kind_value in {"fig_combined", "combined"}:
+            combined_args, _active_roles, pressure_active = self._prepare_combined_axis_data(
+                data_ctx,
+                {
+                    "args": self._collect_plot_args(),
+                    "combined_axis_keys": self._sanitize_combined_axis_keys(
+                        self.combined_y_left_key.get(),
+                        self.combined_y_right_key.get(),
+                        self.combined_y_third_key.get(),
+                    ),
+                    "axis_auto_range": self._get_axis_auto_range_flags(),
+                    "axis_pad_pct": float(self.axis_pad_pct.get()),
+                    "style_ctx": {"temperature_visualization_settings": settings},
+                },
+            )
+
         gates_ctx = {
             "show_cycle_markers": bool(
                 self.show_cycle_markers_on_core.get()
@@ -251150,6 +251528,14 @@ class UnifiedApp(tk.Tk):
             ),
         }
 
+        if not pressure_active:
+            for gate in (
+                "show_cycle_markers",
+                "show_cycle_legend",
+                "include_moles",
+                "show_all_cycle_trace_legends",
+            ):
+                gates_ctx[gate] = False
         cycle_ctx: Dict[str, Any] = {}
         overlay_ctx: Dict[str, Any] = {}
         cycle_needed = True
@@ -251244,7 +251630,7 @@ class UnifiedApp(tk.Tk):
             plot_elements_ctx=plot_elements_ctx,
         )
 
-        args = self._collect_plot_args()
+        args = tuple(combined_args) if combined_args is not None else self._collect_plot_args()
         args = self._override_plot_args_gates(args, gates_ctx)
         args = self._override_plot_args_title(args)
 
@@ -251423,6 +251809,14 @@ class UnifiedApp(tk.Tk):
                 )
             ),
             "combined_request_generation": request_generation,
+            "combined_axis_keys": tuple(
+                self._safe_get_var(getattr(self, name, None), str) or default
+                for name, default in (
+                    ("combined_y_left_key", "y1"),
+                    ("combined_y_right_key", "z"),
+                    ("combined_y_third_key", "y2"),
+                )
+            ),
             "axis_auto_range": dict(auto_range_flags),
             "axis_pad_pct": float(self.axis_pad_pct.get()),
             "file_path": file_path,
@@ -251464,9 +251858,7 @@ class UnifiedApp(tk.Tk):
             "distance": max(1, int(self.pk_distance.get()))
             if hasattr(self, "pk_distance")
             else 1,
-            "width": max(1, int(self.pk_width.get()))
-            if hasattr(self, "pk_width")
-            else 1,
+            "width": max(1, int(self.pk_width.get())) if hasattr(self, "pk_width") else 1,
             "min_cycle_drop": float(self.min_cycle_drop.get())
             if hasattr(self, "min_cycle_drop")
             else 0.0,
@@ -251493,12 +251885,8 @@ class UnifiedApp(tk.Tk):
                 "font_family": settings.get("font_family"),
                 "core_legend_fontsize": settings.get("core_legend_fontsize"),
                 "core_cycle_legend_fontsize": settings.get("core_cycle_legend_fontsize"),
-                "include_zero_line": bool(
-                    settings.get("combined_include_zero_line", True)
-                ),
-                "core_plot_render_profiles": copy.deepcopy(
-                    _get_core_plot_render_profiles()
-                ),
+                "include_zero_line": bool(settings.get("combined_include_zero_line", True)),
+                "core_plot_render_profiles": copy.deepcopy(_get_core_plot_render_profiles()),
                 "temperature_visualization_settings": copy.deepcopy(
                     temperature_visual_settings
                 ),
@@ -252057,6 +252445,155 @@ class UnifiedApp(tk.Tk):
         window.bind("<Destroy>", _clear_window_reference, add="+")
         _refresh_list()
 
+    def _prepare_combined_axis_data(
+        self, data_ctx: Dict[str, Any], snapshot: Mapping[str, Any]
+    ) -> Tuple[List[Any], Set[str], bool]:
+        """Validate active groups and resolve ranges for every Combined entry path.
+
+        Purpose/Why: Worker previews and synchronous exports must share selected
+        data prerequisites, automatic ranges, and pressure-cycle eligibility.
+        Inputs: Prepared data context and a Tk-free settings/argument snapshot.
+        Returns: Effective plot args, active group keys, and pressure availability.
+        Side Effects: Stores per-slot automatic ranges in the supplied render context.
+        Exceptions: Raises ValueError with actionable guidance for invalid data.
+        """
+        effective_args = list(snapshot.get("args") or ())
+        if len(effective_args) < 24:
+            raise ValueError(
+                "Combined plot settings are incomplete; apply Plot Settings first."
+            )
+        axis_keys = tuple(snapshot.get("combined_axis_keys") or ("y1", "z", "y2"))
+        axis_groups = _combined_axis_group_keys(*axis_keys)
+        active_roles = set()
+        for position, keys in axis_groups.items():
+            if not keys:
+                continue
+            semantic = _combined_axis_semantic_from_key(keys[0])
+            if (
+                position != "left"
+                and len(effective_args) >= 24
+                and (
+                    (semantic == "temperature" and not effective_args[22])
+                    or (semantic == "derivative" and not effective_args[23])
+                )
+            ):
+                continue
+            active_roles.update(keys)
+        error = _combined_active_data_error(
+            data_ctx,
+            *axis_keys,
+            enable_temp=bool(effective_args[22]) if len(effective_args) >= 24 else True,
+            enable_deriv=bool(effective_args[23]) if len(effective_args) >= 24 else True,
+        )
+        if error:
+            raise ValueError(error)
+        pressure_active = "y1" in active_roles and (
+            (data_ctx.get("series_np") or data_ctx.get("series") or {}).get("y1")
+            is not None
+            or bool((data_ctx.get("trace_groups") or {}).get("y1"))
+        )
+        auto_range_flags = _sanitize_axis_auto_range_settings(
+            snapshot.get("axis_auto_range")
+        )
+        if len(effective_args) >= 8 and any(auto_range_flags.values()):
+            fallback_ranges = {
+                "x_min": effective_args[0],
+                "x_max": effective_args[1],
+                "y_min": effective_args[2],
+                "y_max": effective_args[3],
+                "twin_y_min": effective_args[4],
+                "twin_y_max": effective_args[5],
+                "deriv_y_min": effective_args[6],
+                "deriv_y_max": effective_args[7],
+            }
+            resolved_ranges = self._compute_axis_ranges_for_snapshot(
+                data_ctx.get("selected_columns") or snapshot.get("effective_columns") or {},
+                float(snapshot.get("axis_pad_pct", 0.0) or 0.0),
+                fallback_ranges,
+                series_map={
+                    key: (data_ctx.get("series") or data_ctx.get("series_np") or {}).get(
+                        key
+                    )
+                    if key == "x" or key in active_roles
+                    else None
+                    for key in ("x", "y1", "y2", "y3", "z", "z2")
+                },
+                trace_groups={
+                    key: value
+                    for key, value in (data_ctx.get("trace_groups") or {}).items()
+                    if key in active_roles
+                },
+                auto_flags=auto_range_flags,
+                temperature_source="auto"
+                if axis_keys[0] in {"z", "z2"}
+                else (
+                    (snapshot.get("style_ctx") or {}).get(
+                        "temperature_visualization_settings"
+                    )
+                    or {}
+                ).get("temperature_source", "auto"),
+            )
+            if isinstance(resolved_ranges, Mapping):
+                for index, name in enumerate(
+                    (
+                        "x_min",
+                        "x_max",
+                        "y_min",
+                        "y_max",
+                        "twin_y_min",
+                        "twin_y_max",
+                        "deriv_y_min",
+                        "deriv_y_max",
+                    )
+                ):
+                    effective_args[index] = resolved_ranges.get(name, effective_args[index])
+        # Separate axes of the same semantic family need independent automatic
+        # extents; the legacy manual settings remain shared by semantic family.
+        slot_ranges = {}
+        semantic_positions: Dict[str, List[str]] = {}
+        for position, keys in axis_groups.items():
+            if keys and keys[0] in active_roles:
+                semantic = _combined_axis_semantic_from_key(keys[0])
+                semantic_positions.setdefault(semantic, []).append(position)
+        range_fields = {
+            "primary": ("pressure", "y_min", "y_max"),
+            "temperature": ("temperature", "twin_y_min", "twin_y_max"),
+            "derivative": ("derivative", "deriv_y_min", "deriv_y_max"),
+        }
+        for semantic, positions in semantic_positions.items():
+            flag, lower, upper = range_fields[semantic]
+            if len(positions) < 2 or not auto_range_flags.get(flag):
+                continue
+            for position in positions:
+                keys = axis_groups[position]
+                ranges = self._compute_axis_ranges_for_snapshot(
+                    data_ctx.get("selected_columns") or {},
+                    float(snapshot.get("axis_pad_pct", 0.0) or 0.0),
+                    fallback_ranges,
+                    series_map={
+                        key: (
+                            data_ctx.get("series") or data_ctx.get("series_np") or {}
+                        ).get(key)
+                        if key in keys
+                        else None
+                        for key in ("x", "y1", "y2", "y3", "z", "z2")
+                    },
+                    trace_groups={
+                        key: value
+                        for key, value in (data_ctx.get("trace_groups") or {}).items()
+                        if key in keys
+                    },
+                    auto_flags={
+                        key: key == flag
+                        for key in ("time", "pressure", "temperature", "derivative")
+                    },
+                    temperature_source="auto",
+                )
+                if ranges is not None:
+                    slot_ranges[position] = (ranges[lower], ranges[upper])
+        data_ctx["combined_axis_ranges"] = slot_ranges
+        return effective_args, active_roles, bool(pressure_active)
+
     def _compute_combined_plot_data(self, snapshot: Dict[str, Any]) -> RenderPacket:
         """Compute Combined plot data for worker-side figure assembly.
 
@@ -252088,44 +252625,20 @@ class UnifiedApp(tk.Tk):
             apply_globals=False, perf=perf_run, snapshot=snapshot
         )
         data_ctx = dict(data_ctx or {})
-        effective_args = list(snapshot.get("args") or ())
-        auto_range_flags = _sanitize_axis_auto_range_settings(
-            snapshot.get("axis_auto_range")
+        axis_keys = tuple(snapshot.get("combined_axis_keys") or ("y1", "z", "y2"))
+        effective_args, active_roles, pressure_active = self._prepare_combined_axis_data(
+            data_ctx, snapshot
         )
-        if len(effective_args) >= 8 and bool(auto_range_flags.get("temperature")):
-            fallback_ranges = {
-                "x_min": effective_args[0],
-                "x_max": effective_args[1],
-                "y_min": effective_args[2],
-                "y_max": effective_args[3],
-                "twin_y_min": effective_args[4],
-                "twin_y_max": effective_args[5],
-                "deriv_y_min": effective_args[6],
-                "deriv_y_max": effective_args[7],
-            }
-            resolved_ranges = self._compute_axis_ranges_for_snapshot(
-                data_ctx.get("selected_columns")
-                or snapshot.get("effective_columns")
-                or {},
-                float(snapshot.get("axis_pad_pct", 0.0) or 0.0),
-                fallback_ranges,
-                series_map=data_ctx.get("series") or {},
-                trace_groups=data_ctx.get("trace_groups") or {},
-                auto_flags=auto_range_flags,
-                temperature_source=(
-                    (snapshot.get("style_ctx") or {}).get(
-                        "temperature_visualization_settings"
-                    )
-                    or {}
-                ).get("temperature_source", "auto"),
-            )
-            if isinstance(resolved_ranges, Mapping):
-                effective_args[4] = resolved_ranges.get(
-                    "twin_y_min", effective_args[4]
-                )
-                effective_args[5] = resolved_ranges.get(
-                    "twin_y_max", effective_args[5]
-                )
+        visual_settings = _normalize_temperature_visualization_settings(
+            (snapshot.get("style_ctx") or {}).get("temperature_visualization_settings") or {}
+        )
+        render_roles = set(active_roles)
+        if visual_settings["temperature_visualization"] != "axis" and axis_keys[0] not in {
+            "z",
+            "z2",
+        }:
+            # Background/line-color modes still need their temperature source.
+            render_roles.update(("z", "z2"))
         decimation_start = time.perf_counter() if perf_run is not None else None
         series_map = data_ctx.get("series") or {}
         series_np = data_ctx.get("series_np") or {}
@@ -252151,6 +252664,8 @@ class UnifiedApp(tk.Tk):
             target_points=display_target_points,
             exclusion_ranges=exclusion_ranges,
             cycle_revision=int(snapshot.get("manual_revision", 0) or 0),
+            axis_keys=axis_keys,
+            active_roles=tuple(sorted(render_roles)),
         )
         display_packet = self._render_cache.get_combined_display(display_fingerprint)
         display_cache_status = "hit" if display_packet is not None else "miss"
@@ -252162,6 +252677,8 @@ class UnifiedApp(tk.Tk):
             # Flatten every grouped trace into the shared decimation pass so all
             # traces retain identical x indices and preserve gaps consistently.
             for role in ("y1", "y2", "y3", "z", "z2"):
+                if role not in render_roles:
+                    continue
                 raw_entries = (
                     trace_groups_np.get(role)
                     if isinstance(trace_groups_np, Mapping)
@@ -252195,6 +252712,7 @@ class UnifiedApp(tk.Tk):
             decimation_series = {
                 key: series_np.get(key, series_map.get(key))
                 for key in ("y1", "y2", "y3", "z", "z2")
+                if key in render_roles
             }
             decimation_series.update(grouped_series)
             display_x, display_series = self._combined_preview_decimate(
@@ -252263,7 +252781,7 @@ class UnifiedApp(tk.Tk):
         # display transform and must never change analysis or source data.
         data_ctx["combined_exclusion_ranges"] = list(exclusion_ranges)
 
-        if snapshot.get("cycle_overlays_enabled"):
+        if pressure_active and snapshot.get("cycle_overlays_enabled"):
             cycle_ctx, overlay_ctx = self._resolve_cycle_context(
                 data_ctx, data_fingerprint, perf=perf_run, snapshot=snapshot
             )
@@ -252281,7 +252799,15 @@ class UnifiedApp(tk.Tk):
                 stages["cycle"] = {"ms": 0.0, "cache": "skipped"}
 
         overlay_ctx = dict(overlay_ctx or {})
-        gates_ctx = snapshot.get("gates_ctx") or {}
+        gates_ctx = dict(snapshot.get("gates_ctx") or {})
+        if not pressure_active:
+            for gate in (
+                "show_cycle_markers",
+                "show_cycle_legend",
+                "include_moles",
+                "show_all_cycle_trace_legends",
+            ):
+                gates_ctx[gate] = False
         if gates_ctx.get("show_cycle_markers") or (
             gates_ctx.get("show_cycle_legend")
             and gates_ctx.get("show_all_cycle_trace_legends")
@@ -253376,10 +253902,15 @@ class UnifiedApp(tk.Tk):
         if (
             not self.columns
             or self.columns.get("x") in (None, "None")
-            or self.columns.get("y1") in (None, "None")
+            or (
+                (selections["fig1"] or selections["fig2"])
+                and self.columns.get("y1") in (None, "None")
+            )
         ):
             messagebox.showerror(
-                "Missing Columns", "Select at least X and y1 on the Columns tab."
+                "Missing Columns",
+                "Select X; Figure 1 and Figure 2 also require y1. "
+                "For temperature-only data, select Combined alone.",
             )
             return
 
@@ -253702,7 +254233,7 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
-        if not self._validate_temperature_axis_range(show_error=True):
+        if not self._validate_temperature_axis_range(show_error=True, combined_only=True):
             return
 
         if self.df is None:
@@ -253714,13 +254245,20 @@ class UnifiedApp(tk.Tk):
         if (
             not self.columns
             or self.columns.get("x") in (None, "None")
-            or self.columns.get("y1") in (None, "None")
         ):
 
             messagebox.showerror(
-                "Missing Columns", "Select at least X and y1 on the Columns tab."
+                "Missing Columns", "Select X and the desired Y groups on the Columns tab."
             )
 
+            return
+
+        # Validate source samples on the UI thread before creating a placeholder
+        # tab or scheduling work. This turns a selected empty temperature group
+        # into a direct Columns-tab correction instead of a worker traceback.
+        ready, error = self._final_report_combined_preflight()
+        if not ready:
+            messagebox.showerror("Combined Data Unavailable", error)
             return
 
         # Create placeholder tab so the loading overlay is visible immediately.
@@ -253775,8 +254313,8 @@ class UnifiedApp(tk.Tk):
 
         Side Effects:
             Updates settings flags for cycle overlay toggles and may force the
-            combined derivative zero-line setting off when the outer-right axis
-            is disabled.
+            combined derivative zero-line setting off when no axis selects
+            derivative data.
 
         Exceptions:
             Returns None on invalid inputs; errors are handled by callers.
@@ -253905,7 +254443,7 @@ class UnifiedApp(tk.Tk):
         show_cycle_legend = bool(args[-2])
         include_moles_core = bool(args[-1])
         include_zero_line = bool(self.combined_include_zero_line.get())
-        if third_key == "none":
+        if "y2" not in (left_key, right_key, third_key):
             include_zero_line = False
         settings["show_cycle_markers_on_core_plots"] = bool(show_cycle_markers)
         settings["show_cycle_legend_on_core_plots"] = bool(show_cycle_legend)
@@ -253953,6 +254491,12 @@ class UnifiedApp(tk.Tk):
         layout_profile = _get_layout_profile("fig_combined_triple_axis")
         layout_section = _layout_profile_section(layout_profile, mode)
         profile_margins = layout_section.get("margins")
+        if (
+            right_key == "none" or third_key == "none"
+        ) and profile_margins == _default_layout_margins("fig_combined_triple_axis", mode):
+            # Default triple-axis margins reserve space for absent right axes.
+            # Let the solver fit active artists; retain all custom profile bounds.
+            profile_margins = None
         profile_labelpads = layout_section.get("axis_labelpads", {})
         profile_legend_anchor = layout_section.get("legend_anchor")
         profile_cycle_anchor = layout_section.get("cycle_legend_anchor")
@@ -254930,6 +255474,9 @@ class UnifiedApp(tk.Tk):
                 "elements_sig": None,
                 "trace_filter_sig": None,
             }
+            # Subsequent refresh bookkeeping must update the newly built state,
+            # otherwise the old dictionary discards its figure and signatures.
+            state = self._combined_plot_state
             self._combined_layout_state = None
             self._combined_layout_dirty = True
             overlay_rebuild_applied = force_overlay_rebuild
@@ -255153,22 +255700,38 @@ class UnifiedApp(tk.Tk):
             return candidate if candidate in valid_dataset_keys else default_key
 
         left_key = _resolve_dataset_key(config.get("left_key"), "y1")
-        right_key = _resolve_dataset_key(config.get("right_key"), "z")
+        right_key = _resolve_dataset_key(config.get("right_key"), "z", allow_none=True)
         third_key = _resolve_dataset_key(
             config.get("third_key"), "y2", allow_none=True
         )
 
         def _is_available(meta: Mapping[str, Any]) -> bool:
-            """Check whether it is available.
-            Used to gate conditional behavior in the workflow."""
-            return bool(meta.get("series") is not None and meta.get("selected"))
+            """Check direct or grouped selected data without imposing a legacy column.
 
-        def _axis_settings(meta: Mapping[str, Any]) -> Dict[str, Any]:
-            """Resolve axis limits/ticks/label metadata for one combined-axis dataset."""
+            Purpose/Why: Columns groups can be populated without a role-level series.
+            Inputs: Dataset metadata. Returns: Whether any trace can render.
+            Side Effects/Exceptions: None; empty entries are unavailable.
+            """
+            return any(
+                isinstance(entry, Mapping) and entry.get("series") is not None
+                for entry in (meta.get("entries") or ())
+            ) or bool(meta.get("series") is not None and meta.get("selected"))
+
+        def _axis_settings(meta: Mapping[str, Any], position: str) -> Dict[str, Any]:
+            """Resolve limits, ticks, and labels for a selected group and slot.
+
+            Purpose/Why: Data semantics control manual settings; independently ranged
+            slots prevent one temperature group from setting another group's scale.
+            Inputs: Dataset metadata and physical slot (left/right/third).
+            Returns: Axis settings dictionary. Side Effects: None.
+            Exceptions: Missing per-slot ranges use semantic manual/default bounds.
+            """
             axis_kind = meta.get("axis_type", "primary")
             if axis_kind == "temperature":
                 return {
-                    "ylim": (twin_y_min, twin_y_max),
+                    "ylim": (data_ctx.get("combined_axis_ranges") or {}).get(
+                        position, (twin_y_min, twin_y_max)
+                    ),
                     "auto": auto_temp_ticks,
                     "maj": twin_maj_tick,
                     "min": twin_min_tick,
@@ -255177,7 +255740,9 @@ class UnifiedApp(tk.Tk):
                 }
             if axis_kind == "derivative":
                 return {
-                    "ylim": (deriv_y_min, deriv_y_max),
+                    "ylim": (data_ctx.get("combined_axis_ranges") or {}).get(
+                        position, (deriv_y_min, deriv_y_max)
+                    ),
                     "auto": auto_deriv_ticks,
                     "maj": deriv_maj_tick,
                     "min": deriv_min_tick,
@@ -255185,7 +255750,9 @@ class UnifiedApp(tk.Tk):
                     "labelpad": deriv_labelpad,
                 }
             return {
-                "ylim": (min_y, max_y),
+                "ylim": (data_ctx.get("combined_axis_ranges") or {}).get(
+                    position, (min_y, max_y)
+                ),
                 "auto": auto_y_ticks,
                 "maj": ymaj_tick,
                 "min": ymin_tick,
@@ -255219,16 +255786,7 @@ class UnifiedApp(tk.Tk):
                 None; missing keys are treated as inactive defaults.
             """
             axis_kind = meta.get("axis_type", "primary")
-            entries = meta.get("entries")
-            has_renderable_data = meta.get("series") is not None or bool(
-                isinstance(entries, Sequence)
-                and not isinstance(entries, (str, bytes))
-                and any(
-                    isinstance(entry, Mapping) and entry.get("series") is not None
-                    for entry in entries
-                )
-            )
-            if not has_renderable_data or not meta.get("selected"):
+            if not _is_available(meta):
                 return False
             if axis_kind == "temperature":
                 return temp_axis_active
@@ -255238,6 +255796,7 @@ class UnifiedApp(tk.Tk):
 
         right_axis_bindings = _resolve_combined_right_axis_bindings(
             dataset_meta,
+            left_key=left_key,
             right_key=right_key,
             third_key=third_key,
             temp_axis_active=temp_axis_active,
@@ -255292,19 +255851,14 @@ class UnifiedApp(tk.Tk):
             base_value = max(z_values) if z_values else float(fallback)
             return float(base_value + role_bias)
 
-        right_axis_series_keys: Tuple[str, ...] = ()
-        third_axis_series_keys: Tuple[str, ...] = ()
-        if right_role == "temperature":
-            right_axis_series_keys = ("z", "z2")
-        elif right_role == "derivative":
-            right_axis_series_keys = ("y2",)
-        if third_role == "temperature":
-            third_axis_series_keys = ("z", "z2")
-        elif third_role == "derivative":
-            third_axis_series_keys = ("y2",)
+        axis_group_keys = right_axis_bindings["group_keys"]
+        right_axis_series_keys = axis_group_keys["right"]
+        third_axis_series_keys = axis_group_keys["third"]
 
         axis_layer_zorders = {
-            "left": _axis_role_layer_zorder(("y1", "y3"), role_bias=0.01, fallback=0.0),
+            "left": _axis_role_layer_zorder(
+                axis_group_keys["left"], role_bias=0.01, fallback=0.0
+            ),
             "right": _axis_role_layer_zorder(
                 right_axis_series_keys, role_bias=0.02, fallback=0.0
             ),
@@ -255393,23 +255947,28 @@ class UnifiedApp(tk.Tk):
             MAX_COMBINED_FONT_SIZE,
         )
 
+        primary_settings = _axis_settings(primary_meta, "left")
         if ax is not None:
             ax.set_xlim(min_time, max_time)
-            ax.set_ylim(min_y, max_y)
+            ax.set_ylim(*primary_settings["ylim"])
             ax.set_zorder(axis_layer_zorders["left"])
             # Combined reuse can preserve older axis patches, so force the primary
             # patch transparent each refresh to avoid cross-axis occlusion.
             ax.patch.set_visible(False)
             ax.set_facecolor("none")
             ax.set_ylabel(
-                _label_or_default("primary", primary_meta.get("label", "")),
-                labelpad=primary_labelpad,
+                _label_or_default(primary_settings["label_key"], primary_meta.get("label", "")),
+                labelpad=primary_settings["labelpad"],
                 fontsize=label_fontsize,
                 fontfamily=family_value if family_value else None,
             )
         if ax_overlay is not None:
             # Keep the overlay axis aligned with pressure axis limits on reuse.
-            ax_overlay.set_ylim(min_y, max_y)
+            pressure_position = next(
+                (position for position, keys in axis_group_keys.items() if "y1" in keys),
+                "left",
+            )
+            ax_overlay.set_ylim(*_axis_settings(dataset_meta["y1"], pressure_position)["ylim"])
             ax_overlay.set_zorder(axis_layer_zorders["overlay"])
             ax_overlay.set_autoscaley_on(False)
             ax_overlay.patch.set_visible(False)
@@ -255452,7 +256011,7 @@ class UnifiedApp(tk.Tk):
         if isinstance(right_axis_assignment, Mapping):
             right_axis_meta = right_axis_assignment.get("meta")
         right_axis_settings = (
-            _axis_settings(right_axis_meta)
+            _axis_settings(right_axis_meta, "right")
             if isinstance(right_axis_meta, Mapping)
             else None
         )
@@ -255492,7 +256051,7 @@ class UnifiedApp(tk.Tk):
         if isinstance(third_axis_assignment, Mapping):
             third_axis_meta = third_axis_assignment.get("meta")
         third_axis_settings = (
-            _axis_settings(third_axis_meta)
+            _axis_settings(third_axis_meta, "third")
             if isinstance(third_axis_meta, Mapping)
             else None
         )
@@ -255528,7 +256087,7 @@ class UnifiedApp(tk.Tk):
                     axis="y", labelcolor="black", labelsize=tick_fontsize
                 )
 
-        derivative_zero_axis = None
+        derivative_zero_axis = ax if left_key == "y2" else None
         if (
             isinstance(right_axis_settings, Mapping)
             and right_axis_visible
@@ -255591,7 +256150,9 @@ class UnifiedApp(tk.Tk):
                     (),
                     config.get("elapsed_tick_decimals"),
                 )
-            _apply_axis_ticks(ax, auto_y_ticks, ymaj_tick, ymin_tick)
+            _apply_axis_ticks(
+                ax, primary_settings["auto"], primary_settings["maj"], primary_settings["min"]
+            )
             ax.tick_params(
                 axis="both", which="major", labelcolor="black", labelsize=tick_fontsize
             )
@@ -256319,26 +256880,19 @@ class UnifiedApp(tk.Tk):
                 left_pad_pct=config.get("left_padding_pct", 0.0),
                 right_pad_pct=config.get("right_padding_pct", 0.0),
                 export_pad_pts=config.get("export_pad_pts", 0.0),
-                margins_authoritative=True,
-                legend_gap_pts=config.get(
-                    "legend_gap_value", DEFAULT_COMBINED_LEGEND_GAP_PTS
-                ),
+                margins_authoritative=bool(config.get("baseline_margins"))
+                or (ax_temp is not None and ax_deriv is not None),
+                legend_gap_pts=config.get("legend_gap_value", DEFAULT_COMBINED_LEGEND_GAP_PTS),
                 xlabel_tick_gap_pts=config.get(
                     "xlabel_tick_gap_value", DEFAULT_COMBINED_XLABEL_TICK_GAP_PTS
                 ),
                 legend_margin_pts=config.get(
                     "legend_margin_value", DEFAULT_COMBINED_LEGEND_MARGIN_PTS
                 ),
-                title_pad_pts=config.get(
-                    "title_pad_pts", DEFAULT_COMBINED_TITLE_PAD_PTS
-                ),
-                suptitle_pad_pts=config.get(
-                    "suptitle_pad_pts", DEFAULT_COMBINED_SUPTITLE_PAD_PTS
-                ),
+                title_pad_pts=config.get("title_pad_pts", DEFAULT_COMBINED_TITLE_PAD_PTS),
+                suptitle_pad_pts=config.get("suptitle_pad_pts", DEFAULT_COMBINED_SUPTITLE_PAD_PTS),
                 suptitle_y=config.get("suptitle_y_value", DEFAULT_COMBINED_SUPTITLE_Y),
-                top_margin_pct=config.get(
-                    "top_margin_pct", DEFAULT_COMBINED_TOP_MARGIN_PCT
-                ),
+                top_margin_pct=config.get("top_margin_pct", DEFAULT_COMBINED_TOP_MARGIN_PCT),
                 legend_anchor=config.get("legend_anchor"),
                 legend_anchor_y=config.get("legend_anchor_y"),
                 xlabel_pad_pts=config.get("xlabel_pad_value") or 0.0,
@@ -256527,7 +257081,8 @@ class UnifiedApp(tk.Tk):
         Side Effects:
             May update combined plot state, settings snapshots, and log debug/perf.
         Exceptions:
-            Errors are caught to avoid breaking UI flows.
+            Invalid selected data raises ValueError to the caller's UI error
+            handler. Optional layout/style failures remain best-effort.
         """
 
         try:
@@ -256585,14 +257140,10 @@ class UnifiedApp(tk.Tk):
             _debug_build_end(None)
             return None
 
-        if render_ctx is None:
+        if render_ctx is None and _is_selected((self.columns or {}).get("y1")):
             try:
-                ignore_min_drop = bool(
-                    getattr(self, "_cycle_last_ignore_min_drop", True)
-                )
-                self._refresh_final_report_cycle_snapshot(
-                    ignore_min_drop=ignore_min_drop
-                )
+                ignore_min_drop = bool(getattr(self, "_cycle_last_ignore_min_drop", True))
+                self._refresh_final_report_cycle_snapshot(ignore_min_drop=ignore_min_drop)
                 self._prime_core_cycle_overlay_globals()
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
@@ -256613,14 +257164,10 @@ class UnifiedApp(tk.Tk):
             _debug_build_end(None)
             return None
 
-        if render_ctx is None:
+        if render_ctx is None and _is_selected((self.columns or {}).get("y1")):
             try:
-                ignore_min_drop = bool(
-                    getattr(self, "_cycle_last_ignore_min_drop", True)
-                )
-                self._refresh_final_report_cycle_snapshot(
-                    ignore_min_drop=ignore_min_drop
-                )
+                ignore_min_drop = bool(getattr(self, "_cycle_last_ignore_min_drop", True))
+                self._refresh_final_report_cycle_snapshot(ignore_min_drop=ignore_min_drop)
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
@@ -256631,36 +257178,6 @@ class UnifiedApp(tk.Tk):
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
                 pass
 
-        series_map = data_ctx.get("series") or {}
-        required_series = {
-            "y1": series_map.get("y1", globals().get("y1")),
-            "y3": series_map.get("y3", globals().get("y3")),
-            "y2": series_map.get("y2", globals().get("y2")),
-            "z": series_map.get("z", globals().get("z")),
-            "z2": series_map.get("z2", globals().get("z2")),
-        }
-        selected_columns = data_ctx.get("selected_columns") or globals().get(
-            "selected_columns", {}
-        )
-        missing_required = [
-            self._combined_dataset_label(key)
-            # Iterate to apply the per-item logic.
-            for key, series in required_series.items()
-            if series is None and _is_selected(selected_columns.get(key, key))
-        ]
-        if missing_required:
-            try:
-                messagebox.showerror(
-                    "Missing Columns",
-                    "The combined triple-axis plot requires the following datasets: "
-                    + ", ".join(missing_required),
-                )
-            except Exception:
-                # Best-effort guard; ignore failures to avoid interrupting the workflow.
-                pass
-            _debug_build_end(None)
-            return None
-
         config = (
             copy.deepcopy(dict(config_override))
             if isinstance(config_override, Mapping)
@@ -256669,6 +257186,18 @@ class UnifiedApp(tk.Tk):
         if config is None:
             _debug_build_end(None)
             return None
+        if render_ctx is not None:
+            error = _combined_active_data_error(
+                data_ctx,
+                config.get("left_key", "y1"),
+                config.get("right_key", "z"),
+                config.get("third_key", "y2"),
+                enable_temp=bool(args[22]),
+                enable_deriv=bool(args[23]),
+            )
+            if error:
+                # Worker callers report this on Tk through their task error callback.
+                raise ValueError(error)
         if config_override is not None:
             # Worker range calculation can update the first 24 axis arguments
             # after Tk-owned configuration was captured on the UI thread.
@@ -256676,6 +257205,33 @@ class UnifiedApp(tk.Tk):
         config["temperature_visualization_settings"] = copy.deepcopy(
             style_ctx.get("temperature_visualization_settings") or settings
         )
+        assigned_groups = _combined_axis_group_keys(
+            config.get("left_key", "y1"),
+            config.get("right_key", "z"),
+            config.get("third_key", "y2"),
+        )
+        pressure_selected = any("y1" in keys for keys in assigned_groups.values())
+        pressure_available = (data_ctx.get("series_np") or data_ctx.get("series") or {}).get(
+            "y1"
+        ) is not None or bool((data_ctx.get("trace_groups") or {}).get("y1"))
+        if render_ctx is not None and not (pressure_selected and pressure_available):
+            # Compare/export callers can supply cached overlays from another view.
+            # Remove only the render copy so analysis results remain intact.
+            clean_gates = dict(render_ctx.gates_ctx)
+            for gate in (
+                "show_cycle_markers",
+                "show_cycle_legend",
+                "include_moles",
+                "show_all_cycle_trace_legends",
+            ):
+                clean_gates[gate] = False
+            render_ctx = replace(
+                render_ctx, gates_ctx=clean_gates, overlay_ctx={}, cycle_ctx={}
+            )
+            for gate in ("show_cycle_markers", "show_cycle_legend", "include_moles_core"):
+                config[gate] = False
+            cycle_overlay = None
+            structure_cycle_overlay = None
         config["calculated_trace_extensions"] = (
             self._combined_calculated_trace_extension_hook(
                 workflow_key=(

@@ -229,7 +229,7 @@ Load source datasets and establish the active sheet/data context for downstream 
 ## Column Mapping and Apply Workflow
 
 ### Purpose
-Map source columns to pressure/temperature/derivative traces and commit mappings for analysis.
+Map source columns to plotted pressure, temperature, or derivative traces and commit mappings for plotting or analysis.
 
 ### Preconditions
 - Dataset loaded and active sheet selected.
@@ -242,12 +242,13 @@ Map source columns to pressure/temperature/derivative traces and commit mappings
 
 ### Step-by-step actions
 1. Open **Columns** tab.
-2. Map required fields (pressure and other required core traces).
-3. Map optional channels (additional temperature or derivative traces).
-4. Validate units and naming conventions for selected columns.
-5. Click **Apply Column Selection**.
-6. Wait for completion status (background apply paths may take noticeable time).
-7. Confirm downstream tabs now recognize selected data series.
+2. Map the elapsed-time X column and any trace groups needed for the plot. Pressure is only required for pressure/core and Cycle Analysis workflows.
+3. In Multiple Sheets mode, choose **Stitched elapsed-time unit** on the Columns tab. Select **hours** to rebuild the stitched X series in hours; days, minutes, and seconds remain available.
+4. Map optional channels (additional temperature or derivative traces).
+5. Validate units and naming conventions for selected columns.
+6. Click **Apply Column Selection**.
+7. Wait for completion status (background apply paths may take noticeable time).
+8. Confirm downstream tabs now recognize selected data series.
 
 ### Expected outputs
 - Canonical column mappings persist into runtime state.
@@ -324,7 +325,15 @@ Control how plot figures render, including ranges, legends, fonts, cycle overlay
 ## Combined Triple-Axis Plot Workflow
 
 ### Purpose
-Build and tune the combined figure that overlays pressure, temperature, and derivative-oriented traces with cycle context.
+Build and tune a combined figure with one, two, or three Y axes against a shared X column. Temperature-only logs do not require pressure or derivative data. Pressure plots retain their optional cycle context.
+
+### Temperature-only setup
+1. On **Columns**, choose the elapsed-time column. It is the only required mapping for this workflow.
+2. Add both temperature columns under either temperature trace group, or map one internal and one external temperature group.
+3. In **Combined Triple-Axis Settings**, select the temperature group that contains the traces for **Inner Left Y Axis Dataset**, then choose **None** for both right axes.
+4. Click **Apply Column Selection**, then generate the Combined plot. If a selected group has no numeric samples aligned with elapsed time, the app reports that before rendering; choose the populated temperature group or correct the mapping.
+
+The optional **Primary Plot Trace** is used as the cycle-pressure input only when pressure analysis is needed. CSV Import still names pressure channels as reactor/manifold pressure because that identifies the logged signal; it does not make a pressure channel required for a Combined plot.
 
 ### Preconditions
 - Data and columns are ready.
@@ -336,7 +345,7 @@ Build and tune the combined figure that overlays pressure, temperature, and deri
 - Axis assignment toggles and right/third-axis options.
 
 ### Step-by-step actions
-1. Select desired datasets for primary/right/third axis roles.
+1. Select desired dataset groups for the left, inner-right, and outer-right axes. Either right axis can be set to **None**; the left axis must select a group.
 2. Enable or disable temperature and derivative axes as needed.
 3. Configure derivative axis offset and axis label overrides.
 4. Set combined legend behavior and cycle legend reference axis/corner.
@@ -346,8 +355,17 @@ Build and tune the combined figure that overlays pressure, temperature, and deri
 8. Adjust layout margin profiles for display and export parity.
 9. Rebuild and verify that cycle overlays and legends remain stable.
 
+### Temperature-only example
+1. Load the sheet containing your synthesis step and choose its elapsed-time column as **X**.
+2. On the Columns tab, select both temperature columns in the temperature (**Z**) trace group and apply the column selection. Pressure (**y1**) and derivative (**y2**) can remain unselected.
+3. In Combined settings, select **Z** for the left Y axis and **None** for both right Y axes.
+4. Use temperature range/tick settings for this axis, and set individual trace labels and styles as usual.
+5. Select **Combined** alone in plot generation, then generate the plot. Preview and export use the same assignments; exports retain full-resolution data.
+
+The existing y1/y3 and Z/Z2 companion groups still share their selected axis unless you explicitly assign the companion to another axis. A group selected more than once is drawn only on its first assigned axis. Explicit **None** selections stay disabled. Existing temperature/derivative enable switches still control optional right axes; the left group always renders. Time values are used as selected, without additional alignment or stitching.
+
 ### Expected outputs
-- A single combined plot with aligned x-axis context and readable multi-axis overlays.
+- A single combined plot with aligned X values, one to three Y axes, and a separate legend entry for each selected trace.
 
 ### Common errors and recovery
 - Error: right/third axis not visible.

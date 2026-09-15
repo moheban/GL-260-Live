@@ -477,7 +477,7 @@ Primary tabs and purpose:
 - Scientific Unicode superscripts and subscripts in plot text are handled by the shared plot/PDF rendering path. XITS text/math font handling supports scientific titles when the fonts are available; global font changes also account for inherited Combined font settings.
 
 ### Combined Triple-Axis Plot Technical Documentation
-- Combined view aligns pressure, temperature, and derivative-oriented channels with cycle context.
+- Combined view aligns one, two, or three selected Y-axis groups with a shared X column. It supports temperature-only plots without a pressure mapping; pressure channels add cycle context when present.
 - Axis assignment and legend behavior are configurable.
 - Refresh policy can run in single-pass, adaptive, or two-pass modes via runtime settings.
 - Exclusion ranges can be staged before applying them. Compressed axis breaks retain source elapsed-time labels, with per-segment ticks and collision handling shared with previews/exports.
