@@ -36,7 +36,7 @@ const RUST_BACKEND_INTERFACE_ID: &str = "gl260_rust_backend";
 const RUST_BACKEND_INTERFACE_VERSION: &str = "4";
 const RUST_BACKEND_MODULE_NAME: &str = env!("CARGO_PKG_NAME");
 const RUST_BACKEND_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
-const RUST_EXPORTED_KERNELS: [&str; 29] = [
+const RUST_EXPORTED_KERNELS: [&str; 30] = [
     "simulate_reaction_state_with_accounting",
     "analyze_bicarbonate_core",
     "carbonate_state_core",
@@ -66,6 +66,7 @@ const RUST_EXPORTED_KERNELS: [&str; 29] = [
     "reaction_solution_charge_core",
     "reaction_dashboard_core",
     "reaction_endpoint_calibration_core",
+    "carbonate_endpoint_forecast_core",
 ];
 
 #[derive(Clone, Copy)]
@@ -5965,6 +5966,85 @@ fn cycle_metrics_core(
     Ok(response.unbind())
 }
 
+#[pyfunction]
+#[pyo3(signature = (cycle_sizes_g, current_co2_g, target_co2_g, manual_cycle_size_g=None))]
+/// Aggregate carbonate dosing history into a robust endpoint cycle forecast.
+///
+/// Purpose: computes median and interquartile cycle sizes plus remaining and
+/// confidence-bounded cycle counts for sodium-carbonate operator guidance.
+/// Why: keeping the scalar aggregation native avoids repeated Python sorting on
+/// large saved run histories while preserving an equivalent Python fallback.
+/// Inputs: positive CO2 cycle masses and current/target cumulative CO2 grams.
+/// Output: a mapping consumed by the Advanced Speciation Carbonate Mode hub.
+/// Side effects: none. Errors: invalid values are ignored; no usable size returns
+/// an `insufficient_history` status.
+fn carbonate_endpoint_forecast_core(
+    py: Python<'_>,
+    mut cycle_sizes_g: Vec<f64>,
+    current_co2_g: f64,
+    target_co2_g: f64,
+    manual_cycle_size_g: Option<f64>,
+) -> PyResult<Py<PyDict>> {
+    cycle_sizes_g.retain(|value| value.is_finite() && *value > 0.0);
+    cycle_sizes_g.sort_by(|left, right| left.partial_cmp(right).unwrap_or(Ordering::Equal));
+    let remaining = (target_co2_g - current_co2_g.max(0.0)).max(0.0);
+    let history_count = cycle_sizes_g.len();
+    let source = if history_count > 0 {
+        "compatible carbonate history"
+    } else {
+        "manual cycle size"
+    };
+    let median = if history_count > 0 {
+        let middle = history_count / 2;
+        if history_count % 2 == 0 {
+            (cycle_sizes_g[middle - 1] + cycle_sizes_g[middle]) / 2.0
+        } else {
+            cycle_sizes_g[middle]
+        }
+    } else {
+        manual_cycle_size_g
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .unwrap_or(0.0)
+    };
+    let out = PyDict::new(py);
+    out.set_item("remaining_co2_g", remaining)?;
+    out.set_item("estimated_total_co2_g", target_co2_g)?;
+    out.set_item("cycle_size_source", source)?;
+    out.set_item("history_cycle_count", history_count)?;
+    if median <= 0.0 {
+        out.set_item("status", "insufficient_history")?;
+        return Ok(out.unbind());
+    }
+    let low = if history_count > 0 {
+        cycle_sizes_g[((history_count - 1) as f64 * 0.25) as usize]
+    } else {
+        median
+    };
+    let high = if history_count > 0 {
+        cycle_sizes_g[((history_count - 1) as f64 * 0.75) as usize]
+    } else {
+        median
+    };
+    let cycles = remaining / median;
+    out.set_item(
+        "status",
+        if remaining <= 1e-9 {
+            "target_reached"
+        } else {
+            "forecast"
+        },
+    )?;
+    out.set_item("cycle_size_median_g", median)?;
+    out.set_item("cycle_size_low_g", low)?;
+    out.set_item("cycle_size_high_g", high)?;
+    out.set_item("estimated_cycles", cycles)?;
+    out.set_item("estimated_full_cycles", cycles.floor() as usize)?;
+    out.set_item("estimated_partial_cycle_fraction", cycles - cycles.floor())?;
+    out.set_item("cycle_confidence_low", remaining / high.max(1e-12))?;
+    out.set_item("cycle_confidence_high", remaining / low.max(1e-12))?;
+    Ok(out.unbind())
+}
+
 #[pymodule(gil_used = false)]
 fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(rust_backend_manifest, module)?)?;
@@ -6021,5 +6101,6 @@ fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
     module.add_function(wrap_pyfunction!(reaction_solution_charge_core, module)?)?;
     module.add_function(wrap_pyfunction!(reaction_dashboard_core, module)?)?;
     module.add_function(wrap_pyfunction!(reaction_endpoint_calibration_core, module)?)?;
+    module.add_function(wrap_pyfunction!(carbonate_endpoint_forecast_core, module)?)?;
     Ok(())
 }

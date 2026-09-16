@@ -666,6 +666,12 @@ Compute template-driven reaction gas uptake, linked-step completion, intermediat
 <a id="advanced-speciation-and-equilibrium-workflows"></a>
 ## Advanced Speciation and Equilibrium Workflows
 
+### Carbonate Mode monitoring hub (v4.19.0)
+
+In the Analysis workflow, enable **Sodium carbonate endpoint monitoring** when producing sodium carbonate from NaOH and CO₂. Enter a target pH within **10.50–12.40** and optionally a manual CO₂ cycle size. The hub uses the current Cycle Analysis payload plus compatible saved carbonate runs (same model, NaOH basis within 25%, and temperature within 8 °C) to report remaining CO₂, full/partial cycles, and a cycle-size confidence range. Measured-pH anchors are identified as recalibration evidence in the forecast.
+
+The displayed stop threshold is a conservative **stop and verify** prompt above the entered target because CO₂ dosing lowers pH. It is decision support only: it does not operate equipment, replace a validated plant endpoint procedure, or guarantee product composition. Review the current pH and carbonate/bicarbonate trajectory before ending a batch.
+
 ### Purpose
 Perform chemistry-driven analyses including cycle-to-speciation projections, planning guidance, and equilibrium summaries.
 

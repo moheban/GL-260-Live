@@ -1,5 +1,5 @@
 ﻿# GL-260 Data Analysis and Plotter
-# Version: v4.18.0
+# Version: v4.19.0
 # Date: 2026-08-27
 
 import os
@@ -17103,7 +17103,7 @@ class AnnotationsPanel:
 
 EXPORT_DPI = 1200
 
-APP_VERSION = "v4.18.0"
+APP_VERSION = "v4.19.0"
 
 ANALYSIS_ANCHOR_LEARNING_ENABLED_SETTINGS_KEY = "analysis_anchor_learning_enabled"
 ANALYSIS_TERMINAL_PH_RANGE_LOW_SETTINGS_KEY = "analysis_terminal_ph_range_low"
@@ -19707,6 +19707,12 @@ ANALYSIS_CONSISTENCY_LOW_PH_WARNING_TEXT = (
     "Simulated pH dropped below 8.0 while NaOH remains; verify CO2 totals."
 )
 SOL_ANALYSIS_LAST_RESULT_SETTINGS_KEY = "sol_analysis_last_result_v2"
+CARBONATE_MODE_HISTORY_SETTINGS_KEY = "carbonate_mode_history_v1"
+CARBONATE_MODE_HISTORY_LIMIT = 48
+CARBONATE_MODE_PH_LOW = 10.50
+CARBONATE_MODE_PH_HIGH = 12.40
+CARBONATE_MODE_DEFAULT_TARGET_PH = 11.45
+CARBONATE_MODE_DEFAULT_GUARD_PH = 0.10
 SOL_ANALYSIS_PROFILE_LAST_RESULT_PAYLOAD_KEY = "analysis_last_result"
 ANALYSIS_DASHBOARD_LAYOUT_SCHEMA_VERSION = 4
 ANALYSIS_DASHBOARD_TILE_ORDER_LEGACY_V1: Tuple[str, ...] = (
@@ -28912,6 +28918,93 @@ def _solubility_newton_system_solve(
 
 SPEC_MODE_FIXED_PCO2 = "fixed_pCO2"
 SPEC_MODE_CLOSED = "closed_carbon"
+
+
+def _python_carbonate_endpoint_forecast_core(
+    cycle_sizes_g: Sequence[Any],
+    *,
+    current_co2_g: float,
+    target_co2_g: float,
+    manual_cycle_size_g: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Estimate carbonate endpoint dosing from observed cycle-size history.
+
+    Purpose: Convert compatible cycle CO2 additions into an auditable remaining-gas
+    and cycle-count forecast for the sodium-carbonate monitoring workflow.
+    Why: Carbonate endpoints are sensitive to cycle size, so a robust median and
+    spread are safer operator guidance than a single fixed-cycle assumption.
+    Inputs: Cycle masses in grams, current/target cumulative CO2 grams, and an
+    optional positive manual cycle-size fallback in grams.
+    Outputs: Mapping containing remaining gas, full/partial cycles, distribution,
+    and low/high cycle-count confidence bounds.
+    Side Effects: None.
+    Exceptions: Invalid observations are ignored; unavailable history returns a
+    manual fallback or an explicit unavailable status rather than raising.
+    """
+    values = sorted(
+        value for value in (_safe_float(item) for item in cycle_sizes_g or ())
+        if value is not None and math.isfinite(value) and value > 0.0
+    )
+    remaining_g = max(float(target_co2_g) - max(float(current_co2_g), 0.0), 0.0)
+    if values:
+        middle = len(values) // 2
+        median_g = values[middle] if len(values) % 2 else (values[middle - 1] + values[middle]) / 2.0
+        q_low = values[max(0, int((len(values) - 1) * 0.25))]
+        q_high = values[min(len(values) - 1, int((len(values) - 1) * 0.75))]
+        source = "compatible carbonate history"
+    else:
+        median_g = _safe_float(manual_cycle_size_g)
+        q_low = q_high = median_g
+        source = "manual cycle size" if median_g and median_g > 0.0 else "unavailable"
+    if median_g is None or not math.isfinite(median_g) or median_g <= 0.0:
+        return {"status": "insufficient_history", "remaining_co2_g": remaining_g, "cycle_size_source": source}
+    estimated_cycles = remaining_g / median_g
+    return {
+        "status": "target_reached" if remaining_g <= 1e-9 else "forecast",
+        "remaining_co2_g": remaining_g,
+        "estimated_total_co2_g": float(target_co2_g),
+        "cycle_size_source": source,
+        "history_cycle_count": len(values),
+        "cycle_size_median_g": median_g,
+        "cycle_size_low_g": q_low,
+        "cycle_size_high_g": q_high,
+        "estimated_cycles": estimated_cycles,
+        "estimated_full_cycles": int(math.floor(estimated_cycles)),
+        "estimated_partial_cycle_fraction": estimated_cycles - math.floor(estimated_cycles),
+        "cycle_confidence_low": remaining_g / max(q_high or median_g, 1e-12),
+        "cycle_confidence_high": remaining_g / max(q_low or median_g, 1e-12),
+    }
+
+
+def _carbonate_endpoint_forecast_core(
+    cycle_sizes_g: Sequence[Any], *, current_co2_g: float, target_co2_g: float,
+    manual_cycle_size_g: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Run the native carbonate forecast when healthy, else preserve Python guidance.
+
+    Purpose: provide one safe Rust/Python boundary for endpoint aggregation.
+    Why: the monitoring hub must remain usable when an extension is absent,
+    incompatible, or unhealthy.
+    Inputs/Outputs: mirror `_python_carbonate_endpoint_forecast_core`.
+    Side Effects: records a native-kernel health failure only for malformed calls.
+    Exceptions: Rust failures are contained and return the Python result.
+    """
+    fallback = _python_carbonate_endpoint_forecast_core(
+        cycle_sizes_g, current_co2_g=current_co2_g, target_co2_g=target_co2_g,
+        manual_cycle_size_g=manual_cycle_size_g,
+    )
+    backend = _load_rust_backend()
+    resolver = getattr(backend, "carbonate_endpoint_forecast_core", None) if backend else None
+    if not callable(resolver):
+        return fallback
+    payload = _run_rust_kernel_with_timeout(
+        "carbonate_endpoint_forecast_core",
+        lambda: resolver([float(value) for value in cycle_sizes_g if _safe_float(value) is not None], float(current_co2_g), float(target_co2_g), _safe_float(manual_cycle_size_g)),
+    )
+    if not isinstance(payload, Mapping) or not str(payload.get("status") or "").strip():
+        _mark_rust_kernel_session_unhealthy("carbonate_endpoint_forecast_core", reason="invalid_payload", details="missing forecast status")
+        return fallback
+    return dict(payload)
 
 
 def _normalize_speciation_mode(mode: Optional[str]) -> str:
@@ -190706,6 +190799,35 @@ class UnifiedApp(tk.Tk):
             justify="left",
         )
         run_semantics_caption.grid(row=2, column=0, sticky="w", padx=8, pady=(0, 4))
+        carbonate_card = _add_workflow_tile_card(
+            analysis_input_layout, title="Carbonate Mode Monitoring Hub"
+        )
+        carbonate_card.grid_columnconfigure(3, weight=1)
+        self._carbonate_mode_enabled_var = self._create_persistent_solubility_bool(
+            "carbonate_mode_enabled", False
+        )
+        self._carbonate_target_ph_var = self._create_persistent_solubility_var(
+            "carbonate_target_ph", str(CARBONATE_MODE_DEFAULT_TARGET_PH)
+        )
+        self._carbonate_cycle_size_var = self._create_persistent_solubility_var(
+            "carbonate_manual_cycle_size_g", ""
+        )
+        _ui_checkbutton(
+            carbonate_card,
+            text="Enable sodium carbonate endpoint monitoring",
+            variable=self._carbonate_mode_enabled_var,
+        ).grid(row=0, column=0, columnspan=4, sticky="w", padx=8, pady=(4, 2))
+        ttk.Label(carbonate_card, text="Target pH (10.50–12.40)").grid(row=1, column=0, sticky="w", padx=8, pady=2)
+        ttk.Entry(carbonate_card, textvariable=self._carbonate_target_ph_var, width=10).grid(row=1, column=1, sticky="w", pady=2)
+        ttk.Label(carbonate_card, text="Manual cycle CO₂ g (fallback)").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=2)
+        ttk.Entry(carbonate_card, textvariable=self._carbonate_cycle_size_var, width=10).grid(row=1, column=3, sticky="w", pady=2)
+        self._carbonate_mode_summary_var = tk.StringVar(
+            value="Enable Carbonate Mode to forecast remaining CO₂ and cycles from compatible saved runs."
+        )
+        ttk.Label(
+            carbonate_card, textvariable=self._carbonate_mode_summary_var,
+            style="Sol.Help.TLabel", wraplength=700, justify="left",
+        ).grid(row=2, column=0, columnspan=4, sticky="w", padx=8, pady=(2, 4))
         _register_wrap_widgets(
             analysis_input_layout,
             [
@@ -193978,6 +194100,64 @@ class UnifiedApp(tk.Tk):
                 "ph": latest_corrected_ph,
                 "label": marker_label,
             }
+        if bool(form_snapshot.get("carbonate_mode_enabled", False)):
+            target_ph = _safe_float(form_snapshot.get("carbonate_target_ph"))
+            naoh_mass_g = _safe_float(form_snapshot.get("reaction_naoh_mass"))
+            current_g = _safe_float(primary_total_g, 0.0) or 0.0
+            if target_ph is None or naoh_mass_g is None or naoh_mass_g <= 0.0:
+                runtime_payload["carbonate_forecast"] = {
+                    "status": "insufficient_inputs",
+                    "message": "Carbonate Mode needs a valid NaOH basis and target pH.",
+                }
+            else:
+                history_rows = list(settings.get(CARBONATE_MODE_HISTORY_SETTINGS_KEY) or [])
+                active_model = str(form_snapshot.get("model_key") or "")
+                compatible_sizes = []
+                excluded = 0
+                for history_row in history_rows:
+                    if not isinstance(history_row, Mapping):
+                        continue
+                    same_model = str(history_row.get("model_key") or "") == active_model
+                    prior_naoh = _safe_float(history_row.get("naoh_mass_g"))
+                    prior_temp = _safe_float(history_row.get("temperature_c"))
+                    temp = _safe_float(form_snapshot.get("temperature_c"))
+                    compatible = same_model and prior_naoh and abs(prior_naoh - naoh_mass_g) / naoh_mass_g <= 0.25
+                    compatible = compatible and (temp is None or prior_temp is None or abs(prior_temp - temp) <= 8.0)
+                    if compatible:
+                        compatible_sizes.extend(history_row.get("cycle_sizes_g") or [])
+                    else:
+                        excluded += 1
+                current_sizes = [
+                    _safe_float(row.get("co2_increment_g") or row.get("selected_mass_g") or row.get("co2_mass_g"))
+                    for row in timeline
+                    if isinstance(row, Mapping)
+                ]
+                compatible_sizes.extend(value for value in current_sizes if value)
+                # One CO2 mole per NaOH mole is the carbonate stoichiometric planning basis.
+                target_g = naoh_mass_g / SOL_MW_NAOH * SOL_MW_CO2
+                forecast = _carbonate_endpoint_forecast_core(
+                    compatible_sizes,
+                    current_co2_g=current_g,
+                    target_co2_g=target_g,
+                    manual_cycle_size_g=_safe_float(form_snapshot.get("carbonate_manual_cycle_size_g")),
+                )
+                forecast.update({
+                    "target_ph": target_ph,
+                    "guard_ph": min(CARBONATE_MODE_PH_HIGH, target_ph + CARBONATE_MODE_DEFAULT_GUARD_PH),
+                    "history_runs_excluded": excluded,
+                    "history_source": "measured-pH recalibrated" if measured_anchor else "equilibrium model",
+                    "current_ph": primary_ph,
+                    "message": "Stop and verify pH at the guard threshold; do not use this decision-support forecast for automatic control.",
+                })
+                for timeline_row in timeline:
+                    # Keep endpoint metadata on shared rows so existing tables, plots, and exports can render it without a parallel dataset.
+                    timeline_row["carbonate_target_ph"] = target_ph
+                    timeline_row["carbonate_guard_ph"] = forecast["guard_ph"]
+                    timeline_row["carbonate_estimated_total_co2_g"] = forecast.get("estimated_total_co2_g")
+                    timeline_row["carbonate_remaining_co2_g"] = forecast.get("remaining_co2_g")
+                    timeline_row["carbonate_estimated_cycles"] = forecast.get("estimated_cycles")
+                    timeline_row["carbonate_forecast_status"] = forecast.get("status")
+                runtime_payload["carbonate_forecast"] = forecast
         if runtime_cache_key and isinstance(payload_cache, OrderedDict):
             try:
                 payload_cache[runtime_cache_key] = copy.deepcopy(runtime_payload)
@@ -194119,6 +194299,41 @@ class UnifiedApp(tk.Tk):
             self._analysis_planning_final_co2_g_var.set(
                 str(result_map.get("analysis_planning_final_co2_g_text") or "--")
             )
+        carbonate_forecast = result_map.get("carbonate_forecast")
+        carbonate_summary_var = getattr(self, "_carbonate_mode_summary_var", None)
+        if carbonate_summary_var is not None:
+            if isinstance(carbonate_forecast, Mapping):
+                status = str(carbonate_forecast.get("status") or "unavailable")
+                if status == "forecast":
+                    carbonate_summary_var.set(
+                        "Carbonate endpoint | remaining CO₂ "
+                        f"{float(carbonate_forecast.get('remaining_co2_g') or 0.0):.1f} g | "
+                        f"{float(carbonate_forecast.get('estimated_cycles') or 0.0):.2f} cycles "
+                        f"({carbonate_forecast.get('cycle_size_source')}); stop/verify near pH "
+                        f"{float(carbonate_forecast.get('guard_ph') or 0.0):.2f}."
+                    )
+                else:
+                    carbonate_summary_var.set(str(carbonate_forecast.get("message") or "Carbonate endpoint forecast is unavailable; supply cycle history or a manual cycle size."))
+                if status in {"forecast", "target_reached"}:
+                    timeline_rows = result_map.get("timeline") or []
+                    cycle_sizes = [
+                        _safe_float(row.get("co2_increment_g") or row.get("selected_mass_g") or row.get("co2_mass_g"))
+                        for row in timeline_rows if isinstance(row, Mapping)
+                    ]
+                    cycle_sizes = [value for value in cycle_sizes if value and value > 0.0]
+                    if cycle_sizes:
+                        form_data = getattr(self, "_sol_last_form_data", {}) or {}
+                        record = {
+                            "model_key": str(form_data.get("model_key") or ""),
+                            "naoh_mass_g": _safe_float(form_data.get("reaction_naoh_mass")),
+                            "temperature_c": _safe_float(form_data.get("temperature_c")),
+                            "cycle_sizes_g": cycle_sizes,
+                        }
+                        history = list(self.settings.get(CARBONATE_MODE_HISTORY_SETTINGS_KEY) or [])
+                        if not history or history[-1] != record:
+                            history.append(record)
+                            self.settings[CARBONATE_MODE_HISTORY_SETTINGS_KEY] = history[-CARBONATE_MODE_HISTORY_LIMIT:]
+                            self._schedule_save_settings()
         forensic_summary = result_map.get("analysis_forensic_summary")
         self._apply_analysis_forensic_summary(
             forensic_summary if isinstance(forensic_summary, Mapping) else {}
@@ -210999,6 +211214,20 @@ class UnifiedApp(tk.Tk):
         measured_ph_value: Optional[float] = None
         measured_ph_anchors: List[Dict[str, Any]] = []
         measured_ph_anchor_enabled = True
+        carbonate_mode_enabled = bool(
+            getattr(self, "_carbonate_mode_enabled_var", tk.BooleanVar(value=False)).get()
+        )
+        carbonate_target_ph = _safe_float(
+            getattr(self, "_carbonate_target_ph_var", tk.StringVar()).get()
+        )
+        carbonate_manual_cycle_size_g = _safe_float(
+            getattr(self, "_carbonate_cycle_size_var", tk.StringVar()).get()
+        )
+        if carbonate_mode_enabled and (
+            carbonate_target_ph is None
+            or not CARBONATE_MODE_PH_LOW <= carbonate_target_ph <= CARBONATE_MODE_PH_HIGH
+        ):
+            raise ValueError("Carbonate Mode target pH must be between 10.50 and 12.40.")
 
         diag_dried_ph: Optional[float] = None
         diag_slurry_ph: Optional[float] = None
@@ -211480,6 +211709,9 @@ class UnifiedApp(tk.Tk):
             "reaction_final_ph": reaction_final_ph,
             "reaction_slurry_ph": reaction_slurry_ph,
             "reaction_target_ph": reaction_target_ph,
+            "carbonate_mode_enabled": carbonate_mode_enabled,
+            "carbonate_target_ph": carbonate_target_ph,
+            "carbonate_manual_cycle_size_g": carbonate_manual_cycle_size_g,
             "measured_ph_cycle_index": measured_ph_cycle_index,
             "measured_ph_value": measured_ph_value,
             "measured_ph_anchors": measured_ph_anchors,
