@@ -68,6 +68,7 @@ const RUST_EXPORTED_KERNELS: [&str; 31] = [
     "reaction_endpoint_calibration_core",
     "carbonate_endpoint_forecast_core",
     "carbonate_pressure_drop_inventory_core",
+    "carbonate_charge_pressure_setpoint_core",
 ];
 
 #[derive(Clone, Copy)]
@@ -6115,6 +6116,59 @@ fn carbonate_pressure_drop_inventory_core(py: Python<'_>, high_psig: f64, delta_
     Ok(out.unbind())
 }
 
+#[pyfunction]
+#[pyo3(signature = (target_dose_mol, trough_psig, maximum_charge_psig, headspace_volume_l, temperature_c))]
+/// Invert the carbonate headspace inventory to calculate a partial-dose charge pressure.
+///
+/// Purpose: report an operator-settable pressure rather than a fractional cycle.
+/// Inputs: requested CO2 moles, pressure bounds (psig), headspace liters, and deg C.
+/// Output: a pressure/inventory payload using the same VDW gas-root convention as full cycles.
+/// Side effects: none. Errors: rejects invalid or unreachable pressure-dose requests.
+fn carbonate_charge_pressure_setpoint_core(py: Python<'_>, target_dose_mol: f64, trough_psig: f64, maximum_charge_psig: f64, headspace_volume_l: f64, temperature_c: f64) -> PyResult<Py<PyDict>> {
+    if !target_dose_mol.is_finite() || !trough_psig.is_finite() || !maximum_charge_psig.is_finite() || !headspace_volume_l.is_finite() || !temperature_c.is_finite() || target_dose_mol < 0.0 || trough_psig < 0.0 || maximum_charge_psig < trough_psig || headspace_volume_l <= 0.0 || temperature_c + 273.15 <= 0.0 {
+        return Err(PyRuntimeError::new_err("Invalid carbonate partial-charge inputs."));
+    }
+    let psi_per_atm = 14.696_f64;
+    let temp_k = temperature_c + 273.15;
+    let inventory = |psig: f64| -> (f64, &'static str) {
+        let psia = psig + psi_per_atm;
+        match carbonate_vdw_inventory_moles(psia / psi_per_atm, headspace_volume_l, temp_k) {
+            Some(value) if value.is_finite() => (value, "co2_vdw_absolute_inventory"),
+            _ => (psia / psi_per_atm * headspace_volume_l / (CYCLE_GAS_CONSTANT * temp_k), "ideal_gas_fallback_vdw_unavailable"),
+        }
+    };
+    let (trough_inventory, trough_source) = inventory(trough_psig);
+    let (maximum_inventory, maximum_source) = inventory(maximum_charge_psig);
+    if target_dose_mol > maximum_inventory - trough_inventory + 1e-10 {
+        return Err(PyRuntimeError::new_err("Requested partial CO2 dose exceeds the configured charge-pressure range."));
+    }
+    let charge_inventory = trough_inventory + target_dose_mol.max(0.0);
+    let charge_pressure_atm = if trough_source == "co2_vdw_absolute_inventory" && maximum_source == "co2_vdw_absolute_inventory" {
+        // Direct inversion avoids repeatedly nesting the gas-root solver for one endpoint.
+        let free_volume = headspace_volume_l - charge_inventory * 0.0427_f64;
+        if free_volume <= 0.0 { return Err(PyRuntimeError::new_err("Requested partial CO2 dose exceeds the physical headspace volume.")); }
+        charge_inventory * CYCLE_GAS_CONSTANT * temp_k / free_volume - 3.592_f64 * (charge_inventory / headspace_volume_l).powi(2)
+    } else {
+        charge_inventory * CYCLE_GAS_CONSTANT * temp_k / headspace_volume_l
+    };
+    let charge_psig = charge_pressure_atm * psi_per_atm - psi_per_atm;
+    if charge_psig < trough_psig - 1e-8 || charge_psig > maximum_charge_psig + 1e-8 {
+        return Err(PyRuntimeError::new_err("Calculated partial charge pressure is outside the configured range."));
+    }
+    let out = PyDict::new(py);
+    out.set_item("status", "ok")?;
+    out.set_item("calculation_source", if trough_source == "co2_vdw_absolute_inventory" && maximum_source == "co2_vdw_absolute_inventory" { "co2_vdw_absolute_inventory" } else { "ideal_gas_fallback_vdw_unavailable" })?;
+    out.set_item("trough_pressure_psig", trough_psig)?;
+    out.set_item("charge_pressure_psig", charge_psig)?;
+    out.set_item("charge_pressure_psia", charge_psig + psi_per_atm)?;
+    out.set_item("charge_delta_psi", charge_psig - trough_psig)?;
+    out.set_item("trough_inventory_mol", trough_inventory)?;
+    out.set_item("charge_inventory_mol", charge_inventory)?;
+    out.set_item("dose_mol", (charge_inventory - trough_inventory).max(0.0))?;
+    out.set_item("dose_g", (charge_inventory - trough_inventory).max(0.0) * SOL_MW_CO2)?;
+    Ok(out.unbind())
+}
+
 #[pymodule(gil_used = false)]
 fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(rust_backend_manifest, module)?)?;
@@ -6173,5 +6227,6 @@ fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
     module.add_function(wrap_pyfunction!(reaction_endpoint_calibration_core, module)?)?;
     module.add_function(wrap_pyfunction!(carbonate_endpoint_forecast_core, module)?)?;
     module.add_function(wrap_pyfunction!(carbonate_pressure_drop_inventory_core, module)?)?;
+    module.add_function(wrap_pyfunction!(carbonate_charge_pressure_setpoint_core, module)?)?;
     Ok(())
 }

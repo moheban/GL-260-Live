@@ -26843,7 +26843,11 @@ def solubility_simulate_cycle_timeline(
             except Exception as exc:
                 entry_warnings.append(f"Ledger update failed: {exc}")
                 ledger_state = None
-        if pressure_controlled:
+        if pressure_controlled or naoh_pitzer_analysis:
+            # The Pitzer model owns pH whenever it is selected for Analysis as
+            # well as Planning.  The generic fixed-pCO2 solve below represents
+            # headspace equilibrium, not the cumulative NaOH-to-carbonate
+            # reaction ledger, and can falsely acidify a carbonate-rich batch.
             ph_aqueous_value, model_species, model_source, model_warning = (
                 _predict_planning_ph_for_model(
                     ph_model,
@@ -27165,7 +27169,7 @@ def solubility_simulate_cycle_timeline(
             buffer_moles = max(co2_added_moles, co2_added_moles - co2_unconsumed_moles)
         solution_ph_value: Optional[float] = None
         speciation_ph_value: Optional[float] = None
-        if pressure_controlled:
+        if pressure_controlled or naoh_pitzer_analysis:
             solution_ph_value = ph_aqueous_value
             if (
                 solution_ph_value is None
@@ -28188,8 +28192,30 @@ class NaohCo2PitzerHmwModel(PitzerLiteModel):
         cumulative_co2_moles: float,
         cycle_index: int,
     ) -> Tuple[Optional[float], Optional[Dict[str, float]]]:
-        """Predict planning pH.
-        Used to compute planning pH for planning workflows."""
+        """Predict Planning pH from cumulative NaOH--CO2 reaction inventory.
+
+        Purpose:
+            Evaluate the selected Pitzer model for one cumulative Planning or
+            Analysis CO2 state using its native Rust equilibrium kernel.
+        Why:
+            The selected NaOH--CO2 Pitzer model must retain ownership of its
+            pH result; generic Planning ledger guidance must not replace it.
+        Inputs:
+            planning_context: Mapping containing NaOH mass, liquid/water basis,
+                temperature, and optional gas-control values.
+            cumulative_co2_moles: Total charged CO2 in moles through this cycle.
+            cycle_index: One-based cycle position, retained for model protocol
+                compatibility.
+        Outputs:
+            Tuple of pH and optional Pitzer species molalities; unavailable
+            inputs or solver failures return ``(None, None)``.
+        Side Effects:
+            Invokes the Rust Pitzer kernel directly whenever the backend and
+            compact parameter payload are available.
+        Exceptions:
+            Native backend unavailability or malformed native payloads use the
+            canonical Python solver as the explicit resilience fallback.
+        """
         if _NAOH_PITZER_MODULE is None or self._pitzer_params is None:
             return None, None
         water_ml = self._water_ml_from_context(planning_context)
@@ -28224,31 +28250,10 @@ class NaohCo2PitzerHmwModel(PitzerLiteModel):
         na_total_m = (cfg.naoh_g / SOL_MW_NAOH) / kgw
         ct_m = cumulative_co2_moles / kgw
         compact_params = _compact_pitzer_params_for_rust(self._pitzer_params)
-        use_rust = False
         rust_mode = _current_rust_backend_mode()
-        if compact_params is not None:
-            if rust_mode == "auto":
-                benchmark = _synthetic_pitzer_solve_total_carbon_core_payload(
-                    compact_params
-                )
-                use_rust = _resolve_rust_kernel_auto_policy(
-                    "pitzer_solve_total_carbon_core",
-                    rust_runner=lambda: _rust_pitzer_solve_total_carbon_core(
-                        benchmark["total_carbon_m"],
-                        benchmark["total_sodium_m"],
-                        benchmark["pitzer_params"],
-                        max_iter=int(benchmark["max_iter"]),
-                    ),
-                    python_runner=lambda: _python_pitzer_solve_total_carbon_core(
-                        total_carbon_m=benchmark["total_carbon_m"],
-                        total_sodium_m=benchmark["total_sodium_m"],
-                        pitzer_params=self._pitzer_params,
-                        max_iter=int(benchmark["max_iter"]),
-                    ),
-                    parity_checker=_rust_pitzer_solve_total_carbon_core_parity,
-                )
-            elif rust_mode != "python":
-                use_rust = True
+        # Pitzer is a model-selection decision, not a performance preference.
+        # A persisted auto-policy decision must not bypass selected native chemistry.
+        use_rust = compact_params is not None and rust_mode != "python"
         if use_rust and compact_params is not None:
             rust_payload = _rust_pitzer_solve_total_carbon_core(
                 ct_m,
@@ -28257,13 +28262,15 @@ class NaohCo2PitzerHmwModel(PitzerLiteModel):
                 max_iter=60,
             )
             if isinstance(rust_payload, Mapping):
-                species = {
-                    "m_OH": float(rust_payload.get("m_OH", 0.0)),
-                    "m_HCO3": float(rust_payload.get("m_HCO3", 0.0)),
-                    "m_CO3": float(rust_payload.get("m_CO3", 0.0)),
-                    "m_CO2": float(rust_payload.get("m_CO2", 0.0)),
-                }
-                return float(rust_payload.get("ph", float("nan"))), species
+                native_ph = _safe_float(rust_payload.get("ph"))
+                if native_ph is not None and math.isfinite(native_ph):
+                    species = {
+                        "m_OH": float(rust_payload.get("m_OH", 0.0)),
+                        "m_HCO3": float(rust_payload.get("m_HCO3", 0.0)),
+                        "m_CO3": float(rust_payload.get("m_CO3", 0.0)),
+                        "m_CO2": float(rust_payload.get("m_CO2", 0.0)),
+                    }
+                    return float(native_ph), species
         python_payload = _python_pitzer_solve_total_carbon_core(
             total_carbon_m=ct_m,
             total_sodium_m=na_total_m,
@@ -29056,6 +29063,135 @@ def _carbonate_pressure_drop_inventory_core(**kwargs: Any) -> Dict[str, Any]:
         _mark_rust_kernel_session_unhealthy("carbonate_pressure_drop_inventory_core", reason="invalid_payload", details="missing pressure dose")
         return fallback
     return dict(payload)
+
+
+def _python_carbonate_charge_pressure_setpoint_core(
+    *,
+    target_dose_mol: float,
+    trough_psig: float,
+    maximum_charge_psig: float,
+    headspace_volume_l: float,
+    temperature_c: float,
+) -> Dict[str, Any]:
+    """Solve the charge pressure that supplies one partial carbonate CO2 dose.
+
+    Purpose: invert the real-gas headspace inventory calculation for a requested
+    CO2 dose above the configured trough pressure.
+    Why: an operator can set a physical charge pressure more reliably than
+    executing a fractional pressure-drop cycle.
+    Inputs: target dose (mol), trough and maximum charge pressures (psig),
+    headspace volume (L), and temperature (deg C).
+    Outputs: mapping with the calculated charge pressure and delivered inventory.
+    Side Effects: none.
+    Exceptions: invalid or unreachable dosing requests raise ``ValueError``.
+    """
+    backend = _load_rust_backend()
+    resolver = (
+        getattr(backend, "carbonate_charge_pressure_setpoint_core", None)
+        if backend
+        else None
+    )
+    if callable(resolver):
+        native_payload = _run_rust_kernel_with_timeout(
+            "carbonate_charge_pressure_setpoint_core",
+            lambda: resolver(
+                target_dose_mol=target_dose_mol,
+                trough_psig=trough_psig,
+                maximum_charge_psig=maximum_charge_psig,
+                headspace_volume_l=headspace_volume_l,
+                temperature_c=temperature_c,
+            ),
+        )
+        native_pressure = (
+            _safe_float(native_payload.get("charge_pressure_psig"))
+            if isinstance(native_payload, Mapping)
+            else None
+        )
+        if native_pressure is not None and math.isfinite(native_pressure):
+            return dict(native_payload)
+        _mark_rust_kernel_session_unhealthy(
+            "carbonate_charge_pressure_setpoint_core",
+            reason="invalid_payload",
+            details="missing charge pressure",
+        )
+    values = (
+        target_dose_mol,
+        trough_psig,
+        maximum_charge_psig,
+        headspace_volume_l,
+        temperature_c,
+    )
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("Carbonate partial-charge inputs must be finite.")
+    if target_dose_mol < 0.0 or trough_psig < 0.0 or maximum_charge_psig < trough_psig:
+        raise ValueError("Carbonate partial-charge pressures or dose are invalid.")
+    if headspace_volume_l <= 0.0 or temperature_c + 273.15 <= 0.0:
+        raise ValueError(
+            "Carbonate partial-charge headspace or temperature is invalid."
+        )
+    temperature_k = temperature_c + 273.15
+
+    def _inventory(psig: float) -> Tuple[float, str]:
+        """Return absolute-pressure CO2 inventory using VDW with an ideal-gas contingency."""
+        psia = psig + CARBONATE_PSI_PER_ATM
+        inventory = _carbonate_vdw_inventory_moles(
+            psia / CARBONATE_PSI_PER_ATM, headspace_volume_l, temperature_k
+        )
+        if inventory is not None and math.isfinite(inventory):
+            return inventory, "co2_vdw_absolute_inventory"
+        return (
+            psia
+            / CARBONATE_PSI_PER_ATM
+            * headspace_volume_l
+            / (_SOL_IDEAL_GAS_R_L_ATM_PER_MOLK * temperature_k),
+            "ideal_gas_fallback_vdw_unavailable",
+        )
+
+    trough_inventory, trough_source = _inventory(trough_psig)
+    maximum_inventory, maximum_source = _inventory(maximum_charge_psig)
+    maximum_dose = maximum_inventory - trough_inventory
+    if target_dose_mol > maximum_dose + 1e-10:
+        raise ValueError(
+            "Requested partial CO2 dose exceeds the configured charge-pressure range."
+        )
+    charge_inventory = trough_inventory + max(target_dose_mol, 0.0)
+    if trough_source == maximum_source == "co2_vdw_absolute_inventory":
+        # The VDW inventory is known at both endpoints.  Invert its pressure
+        # equation directly instead of nesting an expensive gas-root solve in
+        # a pressure bisection for every endpoint recommendation.
+        free_volume = headspace_volume_l - charge_inventory * CARBONATE_CO2_VDW_B
+        if free_volume <= 0.0:
+            raise ValueError("Requested partial CO2 dose exceeds the physical headspace volume.")
+        charge_pressure_atm = (
+            charge_inventory * _SOL_IDEAL_GAS_R_L_ATM_PER_MOLK * temperature_k
+            / free_volume
+            - CARBONATE_CO2_VDW_A * (charge_inventory / headspace_volume_l) ** 2
+        )
+    else:
+        charge_pressure_atm = (
+            charge_inventory * _SOL_IDEAL_GAS_R_L_ATM_PER_MOLK * temperature_k
+            / headspace_volume_l
+        )
+    charge_psig = charge_pressure_atm * CARBONATE_PSI_PER_ATM - CARBONATE_PSI_PER_ATM
+    if not (trough_psig - 1e-8 <= charge_psig <= maximum_charge_psig + 1e-8):
+        raise ValueError("Calculated partial charge pressure is outside the configured range.")
+    source = (
+        "co2_vdw_absolute_inventory"
+        if trough_source == maximum_source == "co2_vdw_absolute_inventory"
+        else "ideal_gas_fallback_vdw_unavailable"
+    )
+    return {
+        "status": "ok",
+        "calculation_source": source,
+        "trough_pressure_psig": trough_psig,
+        "charge_pressure_psig": charge_psig,
+        "charge_pressure_psia": charge_psig + CARBONATE_PSI_PER_ATM,
+        "charge_delta_psi": charge_psig - trough_psig,
+        "trough_inventory_mol": trough_inventory,
+        "charge_inventory_mol": charge_inventory,
+        "dose_mol": max(charge_inventory - trough_inventory, 0.0),
+        "dose_g": max(charge_inventory - trough_inventory, 0.0) * SOL_MW_CO2,
+    }
 
 
 def _python_carbonate_endpoint_forecast_core(
@@ -41165,7 +41301,9 @@ def _regression_test_naoh_pitzer_analysis_calculated_ph_stays_trajectory_owned()
 
         def __init__(self) -> None:
             """Initialize deterministic pH/speciation values for test rows."""
-            self.ph = 13.85
+            # This deliberately acidic fixed-pCO2 result emulates the bad
+            # headspace-equilibrium substitution that must not replace Pitzer.
+            self.ph = 6.81
             self.moles = {"HCO3-": 0.0, "CO3^2-": 0.0}
             self.fractional_carbon = {"H2CO3": 0.0, "HCO3-": 0.0, "CO3^2-": 1.0}
             self.warnings = []
@@ -41189,6 +41327,37 @@ def _regression_test_naoh_pitzer_analysis_calculated_ph_stays_trajectory_owned()
             _ = math_logger
             _ = math_section
             return _StubSpec()
+
+        def predict_planning_ph(
+            self,
+            *,
+            planning_context: Dict[str, Any],
+            cumulative_co2_moles: float,
+            cycle_index: int,
+        ) -> Tuple[float, Dict[str, float]]:
+            """Return the deterministic carbonate-rich Pitzer trajectory value.
+
+            Purpose:
+                Model the selected cumulative-CO2 predictor for the Analysis
+                channel-ownership regression.
+            Why:
+                The test must distinguish the model result from the deliberately
+                acidic generic fixed-pCO2 speciation result above.
+            Inputs:
+                planning_context: NaOH/volume/temperature predictor context.
+                cumulative_co2_moles: Cumulative charged CO2 in moles.
+                cycle_index: One-based cycle index.
+            Outputs:
+                A pH and carbonate species-molality mapping.
+            Side Effects:
+                None.
+            Exceptions:
+                None; inputs are accepted because this is deterministic test data.
+            """
+            _ = planning_context
+            _ = cumulative_co2_moles
+            _ = cycle_index
+            return 10.42, {"m_CO2": 0.0, "m_HCO3": 1.0, "m_CO3": 3.0}
 
     params = SolubilityInputs(
         mass_na_hco3_g=1.0,
@@ -41252,12 +41421,13 @@ def _regression_test_naoh_pitzer_analysis_calculated_ph_stays_trajectory_owned()
             raise AssertionError(
                 "NaOH-Pitzer Analysis should align calculated pH with trajectory pH."
             )
-        if calculated_ph < 8.0:
+        if calculated_ph <= 10.0:
             raise AssertionError(
-                f"Calculated pH should remain alkaline for this trajectory test, got {calculated_ph:.3f}."
+                "NaOH-Pitzer Analysis should use the selected cumulative-CO2 "
+                f"model instead of the fixed-pCO2 result; got {calculated_ph:.3f}."
             )
-        if str(row.get("ph_source") or "").strip() == "equilibrium_guidance":
-            raise AssertionError("ph_source should preserve provenance and avoid forced equilibrium relabel.")
+        if str(row.get("ph_source") or "").strip() != "planning_model":
+            raise AssertionError("NaOH-Pitzer Analysis should retain native model provenance.")
 
 
 def _regression_test_analysis_anchor_guidance_cycle_gating_uses_latest_prior_anchor() -> None:
@@ -193303,9 +193473,19 @@ class UnifiedApp(tk.Tk):
             ),
             cycle_count=len(cycles),
         )
-        naoh_mass_entry = form_data.get("reaction_naoh_mass")
-        if naoh_mass_entry is None:
-            naoh_mass_entry = form_data.get("naoh_mass_basis")
+        if workflow == "Planning":
+            # Planning owns the caustic charge.  An Analysis field can remain
+            # populated in shared form state, but it must never replace the
+            # Planning mass passed to the selected native Pitzer model.
+            naoh_mass_entry = form_data.get("mass_naoh_g")
+            if naoh_mass_entry is None:
+                naoh_mass_entry = form_data.get("naoh_mass_basis")
+        else:
+            naoh_mass_entry = form_data.get("reaction_naoh_mass")
+            if naoh_mass_entry is None:
+                naoh_mass_entry = form_data.get("mass_naoh_g")
+            if naoh_mass_entry is None:
+                naoh_mass_entry = form_data.get("naoh_mass_basis")
         solution_volume_entry = form_data.get("reaction_solution_volume")
         if solution_volume_entry is None:
             try:
@@ -194784,10 +194964,23 @@ class UnifiedApp(tk.Tk):
                 details.append("target speciation requires review")
             operator_plan = forecast.get("operator_dosing_plan")
             if isinstance(operator_plan, Mapping):
-                details.append(
-                    f"{int(operator_plan.get('full_cycles_before_guard') or 0)} full + "
-                    f"≤{float(operator_plan.get('max_final_partial_co2_g') or 0.0):.2f} g final partial"
+                full_cycles = int(operator_plan.get("full_cycles_before_guard") or 0)
+                partial_charge_psig = _safe_float(
+                    operator_plan.get("final_partial_charge_pressure_psig")
                 )
+                partial_trough_psig = _safe_float(
+                    operator_plan.get("final_partial_trough_pressure_psig")
+                )
+                if partial_charge_psig is not None and partial_trough_psig is not None:
+                    details.append(
+                        f"{full_cycles} full; then charge to {partial_charge_psig:.1f} psig "
+                        f"and draw down to {partial_trough_psig:.1f} psig"
+                    )
+                else:
+                    details.append(
+                        f"{full_cycles} full + "
+                        f"≤{float(operator_plan.get('max_final_partial_co2_g') or 0.0):.2f} g final partial"
+                    )
             history_comparison = forecast.get("history_comparison")
             if isinstance(history_comparison, Mapping):
                 history_cycles = _safe_float(history_comparison.get("estimated_cycles"))
@@ -212688,8 +212881,30 @@ class UnifiedApp(tk.Tk):
         form_data: Dict[str, Any],
         solver_inputs: SolubilitySolverInputs,
     ) -> Optional[Dict[str, Any]]:
-        """Generate planning cycle payload.
-        Used to produce planning cycle payload outputs for analysis or export."""
+        """Generate a carbonate-aware Planning cycle timeline and endpoint payload.
+
+        Purpose:
+            Convert configured pressure or manual CO2 cycle doses into cumulative
+            NaOH/carbonate ledger states, pH predictions, and endpoint guidance.
+        Why:
+            Planning, plots, exports, and Analysis reference overlays must share
+            one chemistry-owned cycle sequence and dose provenance.
+        Inputs:
+            form_data: Normalized Planning controls including NaOH basis, vessel,
+                pressure/dose, stop criteria, target, and model selections.
+            solver_inputs: Validated solver configuration and solution constants.
+        Outputs:
+            Mapping with ``cycle_transfer`` rows, gas totals, warnings, reference
+            ledger states, and optional Carbonate Mode forecast; returns ``None``
+            outside the Planning workflow.
+        Side Effects:
+            Canonicalizes compatible Planning values into ``form_data`` and emits
+            periodic debug logging; it does not write persistent state.
+        Exceptions:
+            Raises ``ValueError`` for invalid NaOH, vessel/headspace, pressure, or
+            cycle-dose configuration. Individual row failures are represented in
+            row warnings and retain a safe model/ledger fallback.
+        """
         workflow_key = form_data.get("workflow_key")
         if workflow_key != "Planning":
             return None
@@ -213132,13 +213347,38 @@ class UnifiedApp(tk.Tk):
                         full_cycles = max(0, int(math.floor(guard_cycles - 1e-12)))
                         target_cycles = _safe_float(carbonate_forecast.get("estimated_cycles")) or 0.0
                         partial_fraction = max(0.0, min(1.0, target_cycles - full_cycles))
-                        carbonate_forecast["operator_dosing_plan"] = {
+                        operator_dosing_plan: Dict[str, Any] = {
                             "full_cycles_before_guard": full_cycles,
                             "final_partial_cycle_fraction": partial_fraction,
                             "max_final_partial_co2_g": partial_fraction * moles_per_cycle * SOL_MW_CO2,
-                            "max_final_partial_delta_psi": partial_fraction * float(delta_psi or 0.0),
                             "instruction": "Verify pH at the guard threshold before the final partial dose; decision support only.",
                         }
+                        if (
+                            manual_cycle_co2_g is None
+                            and pressure_inventory is not None
+                            and delta_psi is not None
+                            and partial_fraction > 1e-12
+                        ):
+                            partial_dose_mol = partial_fraction * moles_per_cycle
+                            try:
+                                partial_charge = _python_carbonate_charge_pressure_setpoint_core(
+                                    target_dose_mol=partial_dose_mol,
+                                    trough_psig=float(pressure_inventory["trough_pressure_psig"]),
+                                    maximum_charge_psig=float(headspace_pressure_high_psi),
+                                    headspace_volume_l=float(headspace_volume_l),
+                                    temperature_c=float(temp_c or 25.0),
+                                )
+                                operator_dosing_plan.update(
+                                    {
+                                        "final_partial_charge_pressure_psig": partial_charge["charge_pressure_psig"],
+                                        "final_partial_trough_pressure_psig": partial_charge["trough_pressure_psig"],
+                                        "final_partial_charge_delta_psi": partial_charge["charge_delta_psi"],
+                                        "final_partial_pressure_source": partial_charge["calculation_source"],
+                                    }
+                                )
+                            except ValueError as exc:
+                                operator_dosing_plan["pressure_instruction_warning"] = str(exc)
+                        carbonate_forecast["operator_dosing_plan"] = operator_dosing_plan
                     history_sizes: List[float] = []
                     excluded_history = 0
                     active_model = str(planning_ph_key or "")
