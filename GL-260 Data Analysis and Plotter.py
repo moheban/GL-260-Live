@@ -26162,6 +26162,9 @@ def solubility_simulate_cycle_timeline(
     baseline_headspace_pco2_atm = _pressure_psi_to_atm(baseline_headspace_pressure_psi)
     workflow_key = context.get("workflow_key")
     pressure_controlled = workflow_key == "Planning"
+    carbonate_planning = bool(
+        pressure_controlled and context.get("carbonate_mode_enabled", False)
+    )
     selected_model_key = str(getattr(selected_model, "key", "") or "").strip().lower()
     ph_model_key = str(getattr(ph_model, "key", "") or "").strip().lower()
     naoh_pitzer_analysis = bool(
@@ -27263,7 +27266,13 @@ def solubility_simulate_cycle_timeline(
         ph_fallback_fractions = _carbonate_fractions_from_ph(solution_ph_value)
         solver_fractions = spec_fractions(spec)
         fractions: Dict[str, float] = {}
-        if model_fractions:
+        if carbonate_planning and ledger_fractions:
+            # Carbonate Planning owns dissolved-carbon form through its finite
+            # NaOH/CO2 ledger. A fixed-pCO2 diagnostic solve must not invent a
+            # carbonic-acid fraction while free NaOH or carbonate remains.
+            fractions = ledger_fractions
+            fractions_source = "carbonate_ledger"
+        elif model_fractions:
             fractions = model_fractions
             fractions_source = "planning_model"
         elif solver_fractions and any(
@@ -27289,6 +27298,14 @@ def solubility_simulate_cycle_timeline(
         elif speciation_ph_value is None:
             speciation_ph_value = solution_ph_value
         if (
+            carbonate_planning
+            and solution_ph_value is not None
+            and math.isfinite(solution_ph_value)
+        ):
+            # The carbonate target is an operator endpoint, whereas generic
+            # bicarbonate guidance is advisory and can default acidic.
+            equilibrium_ph_value = float(solution_ph_value)
+        elif (
             equilibrium_ph_value is None
             and forecast_ph_value is not None
             and math.isfinite(forecast_ph_value)
@@ -41428,6 +41445,205 @@ def _regression_test_naoh_pitzer_analysis_calculated_ph_stays_trajectory_owned()
             )
         if str(row.get("ph_source") or "").strip() != "planning_model":
             raise AssertionError("NaOH-Pitzer Analysis should retain native model provenance.")
+
+
+def _regression_test_carbonate_planning_uses_basic_ledger_not_acidic_guidance() -> None:
+    """Validate Carbonate Planning preserves its basic ledger/model pH contract.
+
+    Purpose:
+        Exercise a carbonate-mode Planning row in which the generic bicarbonate
+        guidance returns an intentionally acidic advisory value.
+    Why:
+        Carbonate Planning must use the finite NaOH/CO2 ledger and selected pH
+        model, rather than presenting an acidic bicarbonate forecast or a
+        fixed-pCO2 carbonic-acid fraction while the batch is still basic.
+    Inputs:
+        None; deterministic cycle, model, and guidance doubles are built locally.
+    Outputs:
+        None.
+    Side Effects:
+        Temporarily replaces ``analyze_bicarbonate_reaction`` for this test.
+    Exceptions:
+        Raises AssertionError when carbonate-mode pH or species ownership regresses.
+    """
+
+    class _StubSpec:
+        """Provide a deliberately acidic fixed-pCO2 diagnostic result."""
+
+        def __init__(self) -> None:
+            """Initialize an acidic result that must remain diagnostic only.
+
+            Purpose:
+                Supply deterministic fixed-pCO2 fields for the regression path.
+            Why:
+                The test distinguishes diagnostic carbonic-acid output from the
+                basic carbonate Planning calculation.
+            Inputs:
+                None.
+            Outputs:
+                None.
+            Side Effects:
+                Initializes instance attributes.
+            Exceptions:
+                None.
+            """
+            self.ph = 6.25
+            self.moles = {"HCO3-": 0.0, "CO3^2-": 0.0}
+            self.fractional_carbon = {
+                "H2CO3": 1.0,
+                "HCO3-": 0.0,
+                "CO3^2-": 0.0,
+            }
+            self.warnings: List[str] = []
+            self.ionic_strength = 0.1
+
+    class _StubModel:
+        """Provide a deterministic carbonate-rich Planning pH prediction."""
+
+        key = "naoh_co2_pitzer_hmw"
+
+        def solve(
+            self,
+            _inputs: Any,
+            *,
+            model_options: Optional[ModelOptions] = None,
+            math_logger: Optional[Callable[..., None]] = None,
+            math_section: str = "",
+        ) -> _StubSpec:
+            """Return the diagnostic fixed-pCO2 result for timeline assembly.
+
+            Purpose:
+                Make any accidental preference for generic speciation observable.
+            Why:
+                Carbonate Planning must not display this result as its pH.
+            Inputs:
+                _inputs: Ignored solver input payload.
+                model_options: Ignored optional model configuration.
+                math_logger: Ignored optional logger.
+                math_section: Ignored section label.
+            Outputs:
+                _StubSpec: Deliberately acidic diagnostic result.
+            Side Effects:
+                None.
+            Exceptions:
+                None.
+            """
+            _ = model_options, math_logger, math_section
+            return _StubSpec()
+
+        def predict_planning_ph(
+            self,
+            *,
+            planning_context: Dict[str, Any],
+            cumulative_co2_moles: float,
+            cycle_index: int,
+        ) -> Tuple[float, Dict[str, float]]:
+            """Return a carbonate-rich model result for the active cycle.
+
+            Purpose:
+                Represent the selected finite-inventory Planning chemistry path.
+            Why:
+                The regression must prove this value outranks acidic guidance.
+            Inputs:
+                planning_context: NaOH/volume/temperature context.
+                cumulative_co2_moles: Cumulative charged CO2 amount in moles.
+                cycle_index: One-based cycle position.
+            Outputs:
+                Tuple of basic pH and carbonate-only species molalities.
+            Side Effects:
+                None.
+            Exceptions:
+                None.
+            """
+            _ = planning_context, cumulative_co2_moles, cycle_index
+            return 11.82, {"m_CO2": 0.0, "m_HCO3": 0.0, "m_CO3": 1.0}
+
+    params = SolubilityInputs(
+        mass_na_hco3_g=1.0,
+        water_mass_g=2200.0,
+        solution_volume_l=2.2,
+        temperature_c=25.0,
+        initial_ph_guess=8.4,
+        forced_ph_target=None,
+        use_temperature_adjusted_constants=False,
+        ionic_strength_cap=None,
+        headspace_pco2_atm=None,
+        headspace_kh_m_per_atm=None,
+        degassed_fraction=0.0,
+        headspace_volume_l=10.0,
+        speciation_mode=SPEC_MODE_FIXED_PCO2,
+    )
+    guidance_targets: List[Optional[float]] = []
+    original_guidance = analyze_bicarbonate_reaction
+
+    def _guidance_stub(**kwargs: Any) -> Dict[str, Any]:
+        """Return acidic advisory guidance while capturing its carbonate target.
+
+        Purpose:
+            Prove the correct carbonate target reaches generic guidance without
+            allowing its advisory pH to replace the Planning model value.
+        Why:
+            The historical wiring both omitted the target and displayed guidance.
+        Inputs:
+            kwargs: Guidance inputs supplied by the timeline.
+        Outputs:
+            Dict with deterministic acidic advisory fields.
+        Side Effects:
+            Appends the supplied target pH to a local test list.
+        Exceptions:
+            None.
+        """
+        guidance_targets.append(_safe_float(kwargs.get("target_ph")))
+        return {
+            "predicted_ph_after": 7.10,
+            "target_ph": kwargs.get("target_ph"),
+            "recommended_co2_g": 100.0,
+            "ledger": {},
+            "warnings": [],
+        }
+
+    try:
+        globals()["analyze_bicarbonate_reaction"] = _guidance_stub
+        result = solubility_simulate_cycle_timeline(
+            params,
+            [{"cycle_id": 1, "selected_moles": 1.0, "delta_pressure_psi": 30.0}],
+            reaction_context={
+                "workflow_key": "Planning",
+                "carbonate_mode_enabled": True,
+                "carbonate_target_ph": 11.45,
+                "target_ph": 11.45,
+                "naoh_mass_g": 700.0,
+                "solution_volume_l": 2.2,
+            },
+            model=_StubModel(),
+            ph_model=_StubModel(),
+        )
+    finally:
+        globals()["analyze_bicarbonate_reaction"] = original_guidance
+
+    row = (result.get("timeline") or [{}])[0]
+    if guidance_targets != [11.45]:
+        raise AssertionError(
+            f"Carbonate target was not passed to guidance: {guidance_targets!r}"
+        )
+    for field in ("equilibrium_ph", "calculated_ph"):
+        value = _safe_float(row.get(field))
+        if value is None or abs(value - 11.82) > 1e-9:
+            raise AssertionError(
+                f"Carbonate Planning {field} must retain basic model pH: {row!r}"
+            )
+    final_ph = _safe_float(result.get("final_ph"))
+    if final_ph is None or abs(final_ph - 11.82) > 1e-9:
+        raise AssertionError(
+            f"Carbonate Planning final pH must retain basic model pH: {result!r}"
+        )
+    fractions = row.get("fractions") or {}
+    if _safe_float(fractions.get("H2CO3"), 0.0) > 1e-12:
+        raise AssertionError(
+            f"Carbonate Planning incorrectly reported carbonic acid: {fractions!r}"
+        )
+    if row.get("fractions_source") != "carbonate_ledger":
+        raise AssertionError(f"Carbonate fractions must be ledger-owned: {row!r}")
 
 
 def _regression_test_analysis_anchor_guidance_cycle_gating_uses_latest_prior_anchor() -> None:
@@ -80980,6 +81196,10 @@ REGRESSION_TESTS: List[Tuple[str, Callable[[], None]]] = [
     (
         "NaOH-Pitzer Analysis calculated pH remains trajectory-owned",
         _regression_test_naoh_pitzer_analysis_calculated_ph_stays_trajectory_owned,
+    ),
+    (
+        "Carbonate Planning retains basic ledger pH",
+        _regression_test_carbonate_planning_uses_basic_ledger_not_acidic_guidance,
     ),
     (
         "Analysis guidance anchor cycle gating latest-prior behavior",
@@ -193495,7 +193715,17 @@ class UnifiedApp(tk.Tk):
         reaction_context = {
             "naoh_mass_g": naoh_mass_entry,
             "solution_volume_l": solution_volume_entry,
-            "target_ph": form_data.get("reaction_target_ph"),
+            "target_ph": (
+                form_data.get("carbonate_target_ph")
+                if workflow == "Planning"
+                and bool(form_data.get("carbonate_mode_enabled", False))
+                else form_data.get("reaction_target_ph")
+            ),
+            "carbonate_mode_enabled": bool(
+                workflow == "Planning"
+                and form_data.get("carbonate_mode_enabled", False)
+            ),
+            "carbonate_target_ph": form_data.get("carbonate_target_ph"),
             "measured_ph": resolved_measurements.get("measured_ph"),
             "slurry_ph": resolved_measurements.get("slurry_ph"),
             "reaction_final_ph": form_data.get("reaction_final_ph"),
