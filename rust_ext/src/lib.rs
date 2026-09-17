@@ -36,7 +36,7 @@ const RUST_BACKEND_INTERFACE_ID: &str = "gl260_rust_backend";
 const RUST_BACKEND_INTERFACE_VERSION: &str = "4";
 const RUST_BACKEND_MODULE_NAME: &str = env!("CARGO_PKG_NAME");
 const RUST_BACKEND_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
-const RUST_EXPORTED_KERNELS: [&str; 30] = [
+const RUST_EXPORTED_KERNELS: [&str; 31] = [
     "simulate_reaction_state_with_accounting",
     "analyze_bicarbonate_core",
     "carbonate_state_core",
@@ -67,6 +67,7 @@ const RUST_EXPORTED_KERNELS: [&str; 30] = [
     "reaction_dashboard_core",
     "reaction_endpoint_calibration_core",
     "carbonate_endpoint_forecast_core",
+    "carbonate_pressure_drop_inventory_core",
 ];
 
 #[derive(Clone, Copy)]
@@ -6045,6 +6046,75 @@ fn carbonate_endpoint_forecast_core(
     Ok(out.unbind())
 }
 
+fn carbonate_vdw_inventory_moles(pressure_atm: f64, volume_l: f64, temp_k: f64) -> Option<f64> {
+    if !pressure_atm.is_finite() || !volume_l.is_finite() || !temp_k.is_finite() || pressure_atm <= 0.0 || volume_l <= 0.0 || temp_k <= 0.0 { return None; }
+    let b = 0.0427_f64;
+    let a = 3.592_f64;
+    let upper = volume_l / b * (1.0 - 1e-10);
+    let residual = |n: f64| -> f64 {
+        let free = volume_l - n * b;
+        if free <= 0.0 { return f64::INFINITY; }
+        n * CYCLE_GAS_CONSTANT * temp_k / free - a * (n / volume_l).powi(2) - pressure_atm
+    };
+    let mut previous_n = 0.0;
+    let mut previous_f = residual(previous_n);
+    for index in 1..=512 {
+        let candidate = upper * index as f64 / 512.0;
+        let candidate_f = residual(candidate);
+        if candidate_f.is_finite() && previous_f <= 0.0 && candidate_f >= 0.0 {
+            let mut low = previous_n;
+            let mut high = candidate;
+            for _ in 0..80 {
+                let middle = (low + high) / 2.0;
+                if residual(middle) >= 0.0 { high = middle; } else { low = middle; }
+            }
+            let result = (low + high) / 2.0;
+            return if result > 0.0 && result * b < volume_l { Some(result) } else { None };
+        }
+        previous_n = candidate;
+        previous_f = candidate_f;
+    }
+    None
+}
+
+#[pyfunction]
+#[pyo3(signature = (high_psig, delta_psig, headspace_volume_l, temperature_c))]
+fn carbonate_pressure_drop_inventory_core(py: Python<'_>, high_psig: f64, delta_psig: f64, headspace_volume_l: f64, temperature_c: f64) -> PyResult<Py<PyDict>> {
+    if !high_psig.is_finite() || !delta_psig.is_finite() || !headspace_volume_l.is_finite() || !temperature_c.is_finite() || high_psig <= 0.0 || delta_psig <= 0.0 || delta_psig > high_psig || headspace_volume_l <= 0.0 || temperature_c + 273.15 <= 0.0 {
+        return Err(PyRuntimeError::new_err("Invalid carbonate pressure-dose inputs."));
+    }
+    let psi_per_atm = 14.696_f64;
+    let high_psia = high_psig + psi_per_atm;
+    let trough_psig = high_psig - delta_psig;
+    let trough_psia = trough_psig + psi_per_atm;
+    let temp_k = temperature_c + 273.15;
+    let high = carbonate_vdw_inventory_moles(high_psia / psi_per_atm, headspace_volume_l, temp_k);
+    let trough = carbonate_vdw_inventory_moles(trough_psia / psi_per_atm, headspace_volume_l, temp_k);
+    let (high_mol, trough_mol, source) = match (high, trough) {
+        (Some(h), Some(t)) if h > t => (h, t, "co2_vdw_absolute_inventory"),
+        _ => (
+            high_psia / psi_per_atm * headspace_volume_l / (CYCLE_GAS_CONSTANT * temp_k),
+            trough_psia / psi_per_atm * headspace_volume_l / (CYCLE_GAS_CONSTANT * temp_k),
+            "ideal_gas_fallback_vdw_unavailable",
+        ),
+    };
+    let dose = high_mol - trough_mol;
+    if !dose.is_finite() || dose <= 0.0 { return Err(PyRuntimeError::new_err("Computed carbonate dose is non-positive.")); }
+    let out = PyDict::new(py);
+    out.set_item("status", "ok")?;
+    out.set_item("calculation_source", source)?;
+    out.set_item("headspace_volume_l", headspace_volume_l)?;
+    out.set_item("high_pressure_psig", high_psig)?;
+    out.set_item("trough_pressure_psig", trough_psig)?;
+    out.set_item("high_pressure_psia", high_psia)?;
+    out.set_item("trough_pressure_psia", trough_psia)?;
+    out.set_item("high_inventory_mol", high_mol)?;
+    out.set_item("trough_inventory_mol", trough_mol)?;
+    out.set_item("dose_mol", dose)?;
+    out.set_item("dose_g", dose * SOL_MW_CO2)?;
+    Ok(out.unbind())
+}
+
 #[pymodule(gil_used = false)]
 fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(rust_backend_manifest, module)?)?;
@@ -6102,5 +6172,6 @@ fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
     module.add_function(wrap_pyfunction!(reaction_dashboard_core, module)?)?;
     module.add_function(wrap_pyfunction!(reaction_endpoint_calibration_core, module)?)?;
     module.add_function(wrap_pyfunction!(carbonate_endpoint_forecast_core, module)?)?;
+    module.add_function(wrap_pyfunction!(carbonate_pressure_drop_inventory_core, module)?)?;
     Ok(())
 }

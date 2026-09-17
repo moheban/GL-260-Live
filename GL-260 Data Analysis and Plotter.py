@@ -19713,6 +19713,11 @@ CARBONATE_MODE_PH_LOW = 10.50
 CARBONATE_MODE_PH_HIGH = 12.40
 CARBONATE_MODE_DEFAULT_TARGET_PH = 11.45
 CARBONATE_MODE_DEFAULT_GUARD_PH = 0.10
+CARBONATE_MODE_DEFAULT_MAX_BICARBONATE_PCT = 10.0
+CARBONATE_MODE_DEFAULT_MIN_CARBONATE_PCT = 90.0
+CARBONATE_CO2_VDW_A = 3.592
+CARBONATE_CO2_VDW_B = 0.0427
+CARBONATE_PSI_PER_ATM = 14.696
 SOL_ANALYSIS_PROFILE_LAST_RESULT_PAYLOAD_KEY = "analysis_last_result"
 ANALYSIS_DASHBOARD_LAYOUT_SCHEMA_VERSION = 4
 ANALYSIS_DASHBOARD_TILE_ORDER_LEGACY_V1: Tuple[str, ...] = (
@@ -24348,8 +24353,8 @@ SOL_MODE_FIELD_LABELS: Dict[str, str] = {
     "diag_slurry_degas_pct": "Degassed slurry loss (%)",
     "headspace_pco2_atm": "Headspace pCO₂ (atm)",
     "headspace_kh_m_per_atm": "Henry constant (mol·L⁻¹·atm⁻¹)",
-    "analysis_headspace_volume_l": "Headspace Volume (L)",
-    "planning_headspace_volume_l": "Headspace Volume (L)",
+    "analysis_total_vessel_volume_l": "Total Vessel Volume (L)",
+    "planning_total_vessel_volume_l": "Total Vessel Volume (L)",
     "planning_headspace_pressure_high_psi": "Headspace pressure setpoint high (psig)",
     "planning_cycle_delta_p_psi": "Pressure drop per cycle (psi)",
     "planning_cycle_co2_g": "Manual CO₂ per cycle (g; overrides ΔP/headspace)",
@@ -24364,11 +24369,11 @@ SOL_MODE_FIELD_HELP: Dict[str, str] = {
     "solution_volume_l": "Final liquid volume after dissolution (liters).",
     "temperature_c": "Temperature used for equilibration (deg C).",
     "initial_ph_guess": "Initial guess for the Newton solver and forced scenario (pH units).",
-    "analysis_headspace_volume_l": "Fixed headspace gas volume used to accumulate excess CO₂ during cycle replay.",
+    "analysis_total_vessel_volume_l": "Gross vessel volume; Analysis derives headspace by subtracting process liquor volume.",
     "measured_ph_cycle_index": "Cycle index where the reactor was opened, blended, and measured.",
     "measured_ph_value": "Measured pH value for one legacy anchor entry; multi-anchor rows are preferred.",
     "measured_ph_anchors": "Measured pH anchor rows (cycle + pH) used for piecewise uptake correction.",
-    "planning_headspace_volume_l": "Fixed headspace gas volume used with ΔP to estimate absorbed CO₂ per planning cycle.",
+    "planning_total_vessel_volume_l": "Gross vessel volume; Planning derives headspace by subtracting final liquid volume.",
     "planning_headspace_pressure_high_psi": "Headspace pressure setpoint high (psig) used for planning model inputs.",
     "planning_cycle_delta_p_psi": "Pressure drop from the CO₂ setpoint to trough each cycle before re-pressurization (psi).",
     "planning_cycle_co2_g": "Manual per-cycle CO₂ dose (g). When set, it overrides the ΔP/headspace-derived value.",
@@ -24379,9 +24384,9 @@ SOL_MODE_FIELD_HELP: Dict[str, str] = {
 
 SOL_PLANNING_DEFAULTS: Dict[str, str] = {
     "planning_cycle_co2_g": "",
-    "planning_headspace_volume_l": "1.0",
+    "planning_total_vessel_volume_l": "",
     "planning_headspace_pressure_high_psi": "750.0",
-    "analysis_headspace_volume_l": "1.0",
+    "analysis_total_vessel_volume_l": "",
     "measured_ph_cycle_index": "",
     "measured_ph_value": "",
     "measured_ph_anchor_enabled": "1",
@@ -24396,7 +24401,7 @@ PLANNING_STANDARD_REQUIRED_FIELDS = {
     "solution_volume_l",
     "temperature_c",
     "planning_cycle_delta_p_psi",
-    "planning_headspace_volume_l",
+    "planning_total_vessel_volume_l",
 }
 
 PLANNING_STANDARD_OPTIONAL_FIELDS = {
@@ -24420,7 +24425,7 @@ MODEL_REQUIRED_FIELDS: Dict[str, Set[str]] = {
         "water_mass_g",
         "solution_volume_l",
         "temperature_c",
-        "planning_headspace_volume_l",
+        "planning_total_vessel_volume_l",
         "planning_headspace_pressure_high_psi",
         "planning_cycle_delta_p_psi",
     },
@@ -24525,7 +24530,7 @@ SOL_WORKFLOW_TEMPLATES: "OrderedDict[str, Dict[str, Any]]" = OrderedDict(
                     ("reaction_slurry_ph", "Measured slurry pH (legacy)", False),
                     ("measured_ph_cycle_index", "Measured pH cycle", False),
                     ("measured_ph_value", "Measured pH anchor", False),
-                    ("analysis_headspace_volume_l", "Headspace Volume (L)", True),
+                    ("analysis_total_vessel_volume_l", "Total Vessel Volume (L)", True),
                 ],
                 "include_shared_slider": True,
             },
@@ -28920,6 +28925,137 @@ def _solubility_newton_system_solve(
 
 SPEC_MODE_FIXED_PCO2 = "fixed_pCO2"
 SPEC_MODE_CLOSED = "closed_carbon"
+
+
+def _carbonate_vdw_inventory_moles(
+    pressure_atm: float, headspace_volume_l: float, temperature_k: float
+) -> Optional[float]:
+    """Solve the low-density physical CO2 Van der Waals inventory.
+
+    Purpose: calculate a gas-phase CO2 inventory at one absolute pressure.
+    Why: pressure-controlled carbonate dosing must compare complete high and
+    trough states, rather than applying a real-gas equation directly to delta-P.
+    Inputs: absolute pressure (atm), headspace volume (L), and temperature (K).
+    Outputs: physical gas-root moles, or ``None`` when no valid root exists.
+    Side Effects: None.
+    Exceptions: Invalid or nonphysical inputs are contained as ``None``.
+    """
+    if not all(
+        math.isfinite(value) and value > 0.0
+        for value in (pressure_atm, headspace_volume_l, temperature_k)
+    ):
+        return None
+    upper = headspace_volume_l / CARBONATE_CO2_VDW_B * (1.0 - 1e-10)
+    if not math.isfinite(upper) or upper <= 0.0:
+        return None
+
+    def _residual(moles: float) -> float:
+        """Return Van der Waals pressure residual for the gas-root bracket."""
+        free_volume = headspace_volume_l - moles * CARBONATE_CO2_VDW_B
+        if free_volume <= 0.0:
+            return float("inf")
+        return (
+            (moles * _SOL_IDEAL_GAS_R_L_ATM_PER_MOLK * temperature_k / free_volume)
+            - CARBONATE_CO2_VDW_A * (moles / headspace_volume_l) ** 2
+            - pressure_atm
+        )
+
+    low = 0.0
+    previous_n = low
+    previous_f = _residual(low)
+    # Scan once for the first sign transition: this selects the low-density gas
+    # root when subcritical CO2 mathematically admits multiple VDW roots.
+    for index in range(1, 513):
+        candidate = upper * index / 512.0
+        candidate_f = _residual(candidate)
+        if math.isfinite(candidate_f) and previous_f <= 0.0 <= candidate_f:
+            low, high = previous_n, candidate
+            for _ in range(80):
+                midpoint = (low + high) / 2.0
+                midpoint_f = _residual(midpoint)
+                if not math.isfinite(midpoint_f):
+                    high = midpoint
+                elif midpoint_f >= 0.0:
+                    high = midpoint
+                else:
+                    low = midpoint
+            result = (low + high) / 2.0
+            return result if result > 0.0 and result * CARBONATE_CO2_VDW_B < headspace_volume_l else None
+        previous_n, previous_f = candidate, candidate_f
+    return None
+
+
+def _python_carbonate_pressure_drop_inventory_core(
+    *, high_psig: float, delta_psig: float, headspace_volume_l: float, temperature_c: float
+) -> Dict[str, Any]:
+    """Calculate pressure-cycle CO2 dose from absolute VDW inventories.
+
+    Purpose: convert configured gauge-pressure bounds and calculated headspace
+    into an auditable carbonate CO2 dose.
+    Why: high-pressure CO2 is nonideal and its inventory depends on both states.
+    Inputs: high and drop pressures (psig), headspace (L), temperature (deg C).
+    Outputs: inventory, dose, pressure, and calculation-source mapping.
+    Side Effects: None.
+    Exceptions: invalid configuration raises ValueError with an operator message.
+    """
+    values = (high_psig, delta_psig, headspace_volume_l, temperature_c)
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("Carbonate pressure dosing inputs must be finite.")
+    if high_psig <= 0.0 or delta_psig <= 0.0 or delta_psig > high_psig:
+        raise ValueError("Pressure drop must be positive and no greater than the high PSIg setpoint.")
+    if headspace_volume_l <= 0.0:
+        raise ValueError("Total vessel volume must exceed liquid volume to create positive headspace.")
+    temperature_k = temperature_c + 273.15
+    if temperature_k <= 0.0:
+        raise ValueError("Temperature must be above absolute zero.")
+    high_psia = high_psig + CARBONATE_PSI_PER_ATM
+    trough_psig = high_psig - delta_psig
+    trough_psia = trough_psig + CARBONATE_PSI_PER_ATM
+    high_atm, trough_atm = high_psia / CARBONATE_PSI_PER_ATM, trough_psia / CARBONATE_PSI_PER_ATM
+    high_moles = _carbonate_vdw_inventory_moles(high_atm, headspace_volume_l, temperature_k)
+    trough_moles = _carbonate_vdw_inventory_moles(trough_atm, headspace_volume_l, temperature_k)
+    source = "co2_vdw_absolute_inventory"
+    if high_moles is None or trough_moles is None or high_moles <= trough_moles:
+        # Preserve operability on unusual VDW states while making the degraded
+        # equation visible to users and persisted scenario data.
+        high_moles = high_atm * headspace_volume_l / (_SOL_IDEAL_GAS_R_L_ATM_PER_MOLK * temperature_k)
+        trough_moles = trough_atm * headspace_volume_l / (_SOL_IDEAL_GAS_R_L_ATM_PER_MOLK * temperature_k)
+        source = "ideal_gas_fallback_vdw_unavailable"
+    dose_moles = high_moles - trough_moles
+    if not math.isfinite(dose_moles) or dose_moles <= 0.0:
+        raise ValueError("Computed CO2 pressure-cycle dose is non-positive.")
+    return {
+        "status": "ok", "calculation_source": source,
+        "headspace_volume_l": headspace_volume_l, "high_pressure_psig": high_psig,
+        "trough_pressure_psig": trough_psig, "high_pressure_psia": high_psia,
+        "trough_pressure_psia": trough_psia, "high_inventory_mol": high_moles,
+        "trough_inventory_mol": trough_moles, "dose_mol": dose_moles,
+        "dose_g": dose_moles * SOL_MW_CO2,
+    }
+
+
+def _carbonate_pressure_drop_inventory_core(**kwargs: Any) -> Dict[str, Any]:
+    """Use the healthy native pressure-dose kernel or retain the Python fallback.
+
+    Purpose: centralize Rust/Python parity and fail-safe selection for carbonate.
+    Why: Planning must remain usable when the compiled extension is unavailable.
+    Inputs/Outputs: mirror `_python_carbonate_pressure_drop_inventory_core`.
+    Side Effects: marks malformed native responses unhealthy for this session.
+    Exceptions: native failures are contained; input validation still propagates.
+    """
+    fallback = _python_carbonate_pressure_drop_inventory_core(**kwargs)
+    backend = _load_rust_backend()
+    resolver = getattr(backend, "carbonate_pressure_drop_inventory_core", None) if backend else None
+    if not callable(resolver):
+        return fallback
+    payload = _run_rust_kernel_with_timeout(
+        "carbonate_pressure_drop_inventory_core",
+        lambda: resolver(**kwargs),
+    )
+    if not isinstance(payload, Mapping) or _safe_float(payload.get("dose_mol")) is None:
+        _mark_rust_kernel_session_unhealthy("carbonate_pressure_drop_inventory_core", reason="invalid_payload", details="missing pressure dose")
+        return fallback
+    return dict(payload)
 
 
 def _python_carbonate_endpoint_forecast_core(
@@ -39612,6 +39748,32 @@ def _regression_test_planning_input_wiring() -> None:
     print(
         f"Headspace wiring regression: 1 L -> {small_volume_moles:.4f} mol, 2 L -> {large_volume_moles:.4f} mol"
     )
+
+
+def _regression_test_carbonate_real_gas_pressure_dose() -> None:
+    """Validate vessel-derived, absolute-pressure carbonate VDW dosing.
+
+    Purpose: protect the 800-PSIg pressure-drop use case from reverting to a
+    fixed cycle mass or a direct delta-P real-gas calculation.
+    Why: carbonate endpoint accuracy depends on the high/trough inventory gap.
+    Inputs: None; uses deterministic representative CO2 process conditions.
+    Outputs: None; raises AssertionError on a contract failure.
+    Side Effects: None.
+    Exceptions: AssertionError describes invalid dose or pressure validation.
+    """
+    payload = _python_carbonate_pressure_drop_inventory_core(
+        high_psig=800.0, delta_psig=800.0, headspace_volume_l=7.0, temperature_c=25.0
+    )
+    assert payload["dose_g"] > 0.0, "800-PSIg pressure drop must produce a positive CO2 dose."
+    assert payload["trough_pressure_psig"] == 0.0, "Full pressure drop must end at atmospheric gauge pressure."
+    assert payload["high_pressure_psia"] > payload["trough_pressure_psia"], "Absolute pressure bounds are invalid."
+    try:
+        _python_carbonate_pressure_drop_inventory_core(
+            high_psig=200.0, delta_psig=201.0, headspace_volume_l=1.0, temperature_c=25.0
+        )
+    except ValueError:
+        return
+    raise AssertionError("Pressure drops larger than the high setpoint must be rejected.")
 
 
 def _regression_test_planning_tail_ph_band() -> None:
@@ -175453,7 +175615,7 @@ class UnifiedApp(tk.Tk):
             "reaction_solution_volume_l": _entry_float("reaction_solution_volume"),
             "reaction_solution_volume_input_l": _entry_float("reaction_solution_volume_l"),
             "reaction_co2_charged_g": _entry_float("reaction_co2_charged_g"),
-            "analysis_headspace_volume_l": _entry_float("analysis_headspace_volume_l"),
+            "analysis_total_vessel_volume_l": _entry_float("analysis_total_vessel_volume_l"),
             "temperature_c": (
                 _safe_float(getattr(params, "temperature_c", None))
                 if params is not None
@@ -179508,9 +179670,8 @@ class UnifiedApp(tk.Tk):
             if params is not None
             else None
         )
-        headspace_volume_l = _safe_float(form_snapshot.get("analysis_headspace_volume_l"))
-        if headspace_volume_l is None and params is not None:
-            headspace_volume_l = _safe_float(getattr(params, "headspace_volume_l", None))
+        vessel_volume_l = _safe_float(form_snapshot.get("analysis_total_vessel_volume_l"))
+        headspace_volume_l = vessel_volume_l - reaction_solution_volume if vessel_volume_l and vessel_volume_l > reaction_solution_volume else None
         _spec_key, ph_key, _use_same = self._resolve_workflow_model_keys(
             "Analysis", form_snapshot
         )
@@ -179803,13 +179964,8 @@ class UnifiedApp(tk.Tk):
             if params is not None
             else None
         )
-        headspace_volume_l = _safe_float(
-            resolved_form_data.get("analysis_headspace_volume_l")
-        )
-        if headspace_volume_l is None and params is not None:
-            headspace_volume_l = _safe_float(
-                getattr(params, "headspace_volume_l", None)
-            )
+        vessel_volume_l = _safe_float(resolved_form_data.get("analysis_total_vessel_volume_l"))
+        headspace_volume_l = vessel_volume_l - reaction_solution_volume if vessel_volume_l and vessel_volume_l > reaction_solution_volume else None
         _spec_key, ph_key, _use_same = self._resolve_workflow_model_keys(
             "Analysis", dict(resolved_form_data)
         )
@@ -190533,7 +190689,6 @@ class UnifiedApp(tk.Tk):
                         "planning_cycle_delta_p_psi",
                         "planning_headspace_pressure_high_psi",
                         "planning_cycle_co2_g",
-                        "planning_headspace_volume_l",
                     ),
                 ),
                 (
@@ -190553,7 +190708,7 @@ class UnifiedApp(tk.Tk):
                 "solution_volume_l": 12,
                 "planning_cycle_delta_p_psi": 12,
                 "planning_headspace_pressure_high_psi": 12,
-                "planning_headspace_volume_l": 12,
+                "planning_total_vessel_volume_l": 12,
                 "planning_cycle_co2_g": 12,
                 "planning_stop_co2_added_g": 12,
                 "planning_stop_ph": 10,
@@ -190635,6 +190790,15 @@ class UnifiedApp(tk.Tk):
         self._carbonate_cycle_size_var = self._create_persistent_solubility_var(
             "carbonate_manual_cycle_size_g", ""
         )
+        self._carbonate_max_bicarbonate_pct_var = self._create_persistent_solubility_var(
+            "carbonate_max_bicarbonate_pct", str(CARBONATE_MODE_DEFAULT_MAX_BICARBONATE_PCT)
+        )
+        self._carbonate_min_carbonate_pct_var = self._create_persistent_solubility_var(
+            "carbonate_min_carbonate_pct", str(CARBONATE_MODE_DEFAULT_MIN_CARBONATE_PCT)
+        )
+        self._carbonate_guard_margin_var = self._create_persistent_solubility_var(
+            "carbonate_guard_margin_ph", str(CARBONATE_MODE_DEFAULT_GUARD_PH)
+        )
         _ui_checkbutton(
             planning_carbonate_card,
             text="Enable sodium carbonate target-pH forecast",
@@ -190647,13 +190811,19 @@ class UnifiedApp(tk.Tk):
         ttk.Entry(planning_carbonate_card, textvariable=self._carbonate_target_ph_var, width=10).grid(row=1, column=1, sticky="w", pady=2)
         ttk.Label(planning_carbonate_card, text="Manual cycle CO₂ g (optional)").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=2)
         ttk.Entry(planning_carbonate_card, textvariable=self._carbonate_cycle_size_var, width=10).grid(row=1, column=3, sticky="w", pady=2)
+        ttk.Label(planning_carbonate_card, text="Max HCO₃⁻ at target (%)").grid(row=2, column=0, sticky="w", padx=8, pady=2)
+        ttk.Entry(planning_carbonate_card, textvariable=self._carbonate_max_bicarbonate_pct_var, width=10).grid(row=2, column=1, sticky="w", pady=2)
+        ttk.Label(planning_carbonate_card, text="Guard margin above target pH").grid(row=2, column=2, sticky="w", padx=(12, 4), pady=2)
+        ttk.Entry(planning_carbonate_card, textvariable=self._carbonate_guard_margin_var, width=10).grid(row=2, column=3, sticky="w", pady=2)
+        ttk.Label(planning_carbonate_card, text="Min CO₃²⁻ at target (%)").grid(row=3, column=0, sticky="w", padx=8, pady=2)
+        ttk.Entry(planning_carbonate_card, textvariable=self._carbonate_min_carbonate_pct_var, width=10).grid(row=3, column=1, sticky="w", pady=2)
         self._carbonate_planning_summary_var = tk.StringVar(
             value="Enable Carbonate Mode to predict guard/target cycles, gas, and endpoint speciation."
         )
         ttk.Label(
             planning_carbonate_card, textvariable=self._carbonate_planning_summary_var,
             style="Sol.Help.TLabel", wraplength=700, justify="left",
-        ).grid(row=2, column=0, columnspan=4, sticky="w", padx=8, pady=(2, 4))
+        ).grid(row=4, column=0, columnspan=4, sticky="w", padx=8, pady=(2, 4))
 
         target_box = ttk.LabelFrame(planning_tab, text="Target pH & Headspace")
         target_box.grid(
@@ -190750,8 +190920,8 @@ class UnifiedApp(tk.Tk):
             "headspace_pco2_atm", str(SOL_HEADSPACE_DEFAULT_PCO2_ATM)
         )
         kh_var = _ensure_headspace_var("headspace_kh_m_per_atm", "0.033")
-        planning_headspace_volume_var = _ensure_headspace_var(
-            "planning_headspace_volume_l", "1.0"
+        planning_vessel_volume_var = _ensure_headspace_var(
+            "planning_total_vessel_volume_l", ""
         )
         pco2_frame = ttk.Frame(headspace_frame)
         pco2_frame.grid(row=0, column=0, sticky="w", padx=(0, 12))
@@ -190775,20 +190945,20 @@ class UnifiedApp(tk.Tk):
 
         headspace_vol_frame = ttk.Frame(headspace_frame)
         headspace_vol_frame.grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        ttk.Label(headspace_vol_frame, text="Headspace Volume (L)").grid(
+        ttk.Label(headspace_vol_frame, text="Total Vessel Volume (L)").grid(
             row=0, column=0, sticky="w", padx=(0, 4)
         )
         headspace_vol_entry = _ui_entry(
-            headspace_vol_frame, textvariable=planning_headspace_volume_var, width=12
+            headspace_vol_frame, textvariable=planning_vessel_volume_var, width=12
         )
         headspace_vol_entry.grid(row=0, column=1, sticky="w", padx=(0, 12))
-        self._solubility_field_meta["planning_headspace_volume_l"][
+        self._solubility_field_meta["planning_total_vessel_volume_l"][
             "entry"
         ] = headspace_vol_entry
         _register_planning_field(
-            "planning_headspace_volume_l",
+            "planning_total_vessel_volume_l",
             headspace_vol_frame,
-            planning_headspace_volume_var,
+            planning_vessel_volume_var,
             headspace_vol_entry,
         )
 
@@ -190842,7 +191012,7 @@ class UnifiedApp(tk.Tk):
                     "reaction_final_ph",
                     "reaction_slurry_ph",
                     "reaction_target_ph",
-                    "analysis_headspace_volume_l",
+                    "analysis_total_vessel_volume_l",
                 ),
             ),
             start_row=0,
@@ -190852,7 +191022,7 @@ class UnifiedApp(tk.Tk):
                 "reaction_final_ph": 10,
                 "reaction_slurry_ph": 10,
                 "reaction_target_ph": 10,
-                "analysis_headspace_volume_l": 12,
+                "analysis_total_vessel_volume_l": 12,
             },
             compact_mode=True,
             wrap_widgets=analysis_input_layout.get("wrap_widgets"),
@@ -190945,13 +191115,19 @@ class UnifiedApp(tk.Tk):
         ttk.Entry(carbonate_card, textvariable=self._carbonate_target_ph_var, width=10).grid(row=1, column=1, sticky="w", pady=2)
         ttk.Label(carbonate_card, text="Manual cycle CO₂ g (fallback)").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=2)
         ttk.Entry(carbonate_card, textvariable=self._carbonate_cycle_size_var, width=10).grid(row=1, column=3, sticky="w", pady=2)
+        ttk.Label(carbonate_card, text="Max HCO₃⁻ at target (%)").grid(row=2, column=0, sticky="w", padx=8, pady=2)
+        ttk.Entry(carbonate_card, textvariable=self._carbonate_max_bicarbonate_pct_var, width=10).grid(row=2, column=1, sticky="w", pady=2)
+        ttk.Label(carbonate_card, text="Guard margin above target pH").grid(row=2, column=2, sticky="w", padx=(12, 4), pady=2)
+        ttk.Entry(carbonate_card, textvariable=self._carbonate_guard_margin_var, width=10).grid(row=2, column=3, sticky="w", pady=2)
+        ttk.Label(carbonate_card, text="Min CO₃²⁻ at target (%)").grid(row=3, column=0, sticky="w", padx=8, pady=2)
+        ttk.Entry(carbonate_card, textvariable=self._carbonate_min_carbonate_pct_var, width=10).grid(row=3, column=1, sticky="w", pady=2)
         self._carbonate_mode_summary_var = tk.StringVar(
             value="Enable Carbonate Mode to forecast remaining CO₂ and cycles from compatible saved runs."
         )
         ttk.Label(
             carbonate_card, textvariable=self._carbonate_mode_summary_var,
             style="Sol.Help.TLabel", wraplength=700, justify="left",
-        ).grid(row=2, column=0, columnspan=4, sticky="w", padx=8, pady=(2, 4))
+        ).grid(row=4, column=0, columnspan=4, sticky="w", padx=8, pady=(2, 4))
         _register_wrap_widgets(
             analysis_input_layout,
             [
@@ -193154,7 +193330,7 @@ class UnifiedApp(tk.Tk):
             "ionic_strength_cap": params.ionic_strength_cap,
             "workflow_key": context_workflow_key,
             "planning_cycle_delta_p_psi": form_data.get("planning_cycle_delta_p_psi"),
-            "planning_headspace_volume_l": form_data.get("planning_headspace_volume_l"),
+            "planning_total_vessel_volume_l": form_data.get("planning_total_vessel_volume_l"),
             "planning_headspace_pressure_high_psi": form_data.get(
                 "planning_headspace_pressure_high_psi"
             ),
@@ -194272,10 +194448,9 @@ class UnifiedApp(tk.Tk):
                     if isinstance(row, Mapping)
                 ]
                 compatible_sizes.extend(value for value in current_sizes if value)
-                guard_ph = min(
-                    CARBONATE_MODE_PH_HIGH,
-                    target_ph + CARBONATE_MODE_DEFAULT_GUARD_PH,
-                )
+                guard_margin = _safe_float(form_snapshot.get("carbonate_guard_margin_ph"))
+                guard_margin = guard_margin if guard_margin is not None and guard_margin > 0.0 else CARBONATE_MODE_DEFAULT_GUARD_PH
+                guard_ph = min(CARBONATE_MODE_PH_HIGH, target_ph + guard_margin)
                 endpoint = _carbonate_target_endpoint_from_timeline(
                     timeline, target_ph=target_ph, guard_ph=guard_ph
                 )
@@ -194313,6 +194488,24 @@ class UnifiedApp(tk.Tk):
                     "current_ph": primary_ph,
                     "message": "Stop and verify pH at the guard threshold; do not use this decision-support forecast for automatic control.",
                 })
+                target_spec = dict(target_row.get("row") or {}) if isinstance(target_row, Mapping) else {}
+                    fractions = target_spec.get("fractions") if isinstance(target_spec.get("fractions"), Mapping) else {}
+                    hco3_pct = _safe_float(fractions.get("HCO3-") or fractions.get("HCO3"))
+                    co3_pct = _safe_float(fractions.get("CO3^2-") or fractions.get("CO3-2") or fractions.get("CO3"))
+                    max_hco3 = _safe_float(form_snapshot.get("carbonate_max_bicarbonate_pct"))
+                    max_hco3 = max_hco3 if max_hco3 is not None and 0.0 < max_hco3 <= 100.0 else CARBONATE_MODE_DEFAULT_MAX_BICARBONATE_PCT
+                    min_co3 = _safe_float(form_snapshot.get("carbonate_min_carbonate_pct"))
+                    min_co3 = min_co3 if min_co3 is not None and 0.0 < min_co3 <= 100.0 else CARBONATE_MODE_DEFAULT_MIN_CARBONATE_PCT
+                    forecast["max_bicarbonate_pct"] = max_hco3
+                    forecast["min_carbonate_pct"] = min_co3
+                    forecast["target_bicarbonate_pct"] = hco3_pct
+                    forecast["target_carbonate_pct"] = co3_pct
+                    forecast["speciation_verified"] = hco3_pct is not None and co3_pct is not None and hco3_pct < max_hco3 and co3_pct >= min_co3
+                    forecast["speciation_message"] = (
+                        f"Target speciation verified: carbonate {co3_pct:.2f}% is at least {min_co3:.2f}% and bicarbonate {hco3_pct:.2f}% is below {max_hco3:.2f}%."
+                        if forecast["speciation_verified"] else
+                        f"Target carbonate must be at least {min_co3:.2f}% and bicarbonate below {max_hco3:.2f}%; model result is unavailable or outside the limits."
+                    )
                 for timeline_row in timeline:
                     # Keep endpoint metadata on shared rows so existing tables, plots, and exports can render it without a parallel dataset.
                     timeline_row["carbonate_target_ph"] = target_ph
@@ -194552,6 +194745,16 @@ class UnifiedApp(tk.Tk):
             ]
             if guard_g is not None:
                 details.append(f"guard/verify at {guard_g:.2f} g")
+            if forecast.get("speciation_verified") is True:
+                details.append(f"HCO₃⁻ {float(forecast.get('target_bicarbonate_pct') or 0.0):.2f}% verified")
+            elif forecast.get("max_bicarbonate_pct") is not None:
+                details.append("target speciation requires review")
+            operator_plan = forecast.get("operator_dosing_plan")
+            if isinstance(operator_plan, Mapping):
+                details.append(
+                    f"{int(operator_plan.get('full_cycles_before_guard') or 0)} full + "
+                    f"≤{float(operator_plan.get('max_final_partial_co2_g') or 0.0):.2f} g final partial"
+                )
             history_comparison = forecast.get("history_comparison")
             if isinstance(history_comparison, Mapping):
                 history_cycles = _safe_float(history_comparison.get("estimated_cycles"))
@@ -211337,7 +211540,7 @@ class UnifiedApp(tk.Tk):
         allowed_keys.update(shared_keys)
         if workflow_key == "Planning":
             allowed_keys.update(
-                {"planning_headspace_volume_l", "planning_speciation_ph"}
+                {"planning_total_vessel_volume_l", "planning_speciation_ph"}
             )
         if workflow_trace_temperature and "temperature_c" in allowed_keys:
             self._resolve_workflow_temperature_input(workflow_key, strict=True)
@@ -211550,8 +211753,8 @@ class UnifiedApp(tk.Tk):
         planning_stop_added_g: Optional[float] = None
         planning_stop_ph: Optional[float] = None
 
-        analysis_headspace_volume: Optional[float] = None
-        planning_headspace_volume: Optional[float] = None
+        analysis_total_vessel_volume: Optional[float] = None
+        planning_total_vessel_volume: Optional[float] = None
         headspace_pco2: Optional[float] = None
         headspace_kh: Optional[float] = None
 
@@ -211573,7 +211776,7 @@ class UnifiedApp(tk.Tk):
             planning_speciation_ph = _parse_scoped("planning_speciation_ph")
             planning_stop_added_g = _parse_scoped("planning_stop_co2_added_g")
             planning_stop_ph = _parse_scoped("planning_stop_ph")
-            planning_headspace_volume = _parse_scoped("planning_headspace_volume_l")
+            planning_total_vessel_volume = _parse_scoped("planning_total_vessel_volume_l")
             headspace_pco2 = _parse_scoped("headspace_pco2_atm")
             headspace_kh = _parse_scoped("headspace_kh_m_per_atm")
 
@@ -211671,7 +211874,7 @@ class UnifiedApp(tk.Tk):
             legacy_measured_cycle_raw = _parse_scoped("measured_ph_cycle_index")
             legacy_measured_ph_value = _parse_scoped("measured_ph_value")
             measured_ph_anchor_raw = _parse_scoped("measured_ph_anchor_enabled")
-            analysis_headspace_volume = _parse_scoped("analysis_headspace_volume_l")
+            analysis_total_vessel_volume = _parse_scoped("analysis_total_vessel_volume_l")
             headspace_pco2 = _parse_scoped("headspace_pco2_atm")
             headspace_kh = _parse_scoped("headspace_kh_m_per_atm")
             analysis_headspace_required = True
@@ -211859,21 +212062,40 @@ class UnifiedApp(tk.Tk):
             raise ValueError("Provide either a water mass or a final solution volume.")
 
         headspace_volume: Optional[float] = None
+        total_vessel_volume: Optional[float] = None
         headspace_label: Optional[str] = None
         headspace_key: Optional[str] = None
         if workflow_key == "Planning":
-            headspace_volume = planning_headspace_volume
-            headspace_label = _field_label("planning_headspace_volume_l")
-            headspace_key = "planning_headspace_volume_l"
+            total_vessel_volume = planning_total_vessel_volume
+            headspace_label = _field_label("planning_total_vessel_volume_l")
+            headspace_key = "planning_total_vessel_volume_l"
         elif workflow_key == "Analysis":
-            headspace_volume = analysis_headspace_volume
-            headspace_label = _field_label("analysis_headspace_volume_l")
-            headspace_key = "analysis_headspace_volume_l"
+            total_vessel_volume = analysis_total_vessel_volume
+            headspace_label = _field_label("analysis_total_vessel_volume_l")
+            headspace_key = "analysis_total_vessel_volume_l"
         if headspace_key and headspace_key in allowed_keys:
             if planning_headspace_required or analysis_headspace_required:
-                _ensure_positive(headspace_volume, headspace_label)
-            elif headspace_volume is not None and headspace_volume <= 0:
+                legacy_key = (
+                    "planning_headspace_volume_l"
+                    if workflow_key == "Planning"
+                    else "analysis_headspace_volume_l"
+                )
+                legacy_var = vars_map.get(legacy_key)
+                legacy_value = _safe_float(legacy_var.get()) if legacy_var is not None else None
+                if total_vessel_volume is None and legacy_value is not None and legacy_value > 0.0:
+                    raise ValueError(
+                        "A saved legacy headspace volume was found. Enter Total Vessel Volume (L) to run a new pressure-derived scenario."
+                    )
+                _ensure_positive(total_vessel_volume, headspace_label)
+            elif total_vessel_volume is not None and total_vessel_volume <= 0:
                 raise ValueError(f"{headspace_label} must be positive.")
+        if total_vessel_volume is not None:
+            liquid_volume = solution_volume if workflow_key == "Planning" else reaction_solution_volume
+            if liquid_volume is None or liquid_volume <= 0:
+                raise ValueError("A positive liquid volume is required to derive carbonate headspace.")
+            headspace_volume = total_vessel_volume - liquid_volume
+            if headspace_volume <= 0:
+                raise ValueError("Total vessel volume must be greater than liquid volume.")
 
         diagnostic_data: Optional[Dict[str, Any]] = None
         diag_assumed_water: Optional[float] = None
@@ -212041,6 +212263,9 @@ class UnifiedApp(tk.Tk):
             "carbonate_mode_enabled": carbonate_mode_enabled,
             "carbonate_target_ph": carbonate_target_ph,
             "carbonate_manual_cycle_size_g": carbonate_manual_cycle_size_g,
+            "carbonate_max_bicarbonate_pct": _safe_float(getattr(self, "_carbonate_max_bicarbonate_pct_var", tk.StringVar()).get()),
+            "carbonate_min_carbonate_pct": _safe_float(getattr(self, "_carbonate_min_carbonate_pct_var", tk.StringVar()).get()),
+            "carbonate_guard_margin_ph": _safe_float(getattr(self, "_carbonate_guard_margin_var", tk.StringVar()).get()),
             "measured_ph_cycle_index": measured_ph_cycle_index,
             "measured_ph_value": measured_ph_value,
             "measured_ph_anchors": measured_ph_anchors,
@@ -212081,6 +212306,8 @@ class UnifiedApp(tk.Tk):
             "planning_headspace_pressure_high_psi": planning_headspace_pressure_high_psi,
             "planning_stop_co2_added_g": planning_stop_added_g,
             "planning_stop_ph": planning_stop_ph,
+            "planning_total_vessel_volume_l": planning_total_vessel_volume,
+            "analysis_total_vessel_volume_l": analysis_total_vessel_volume,
             "planning_plot_ph": planning_speciation_ph,
             "mode": mode_key,
             "model_key": model_key,
@@ -212101,7 +212328,7 @@ class UnifiedApp(tk.Tk):
             "workflow_key": workflow_key,
             "assumed_solution_volume_l": assumed_solution_volume_l,
             "headspace_volume_l": headspace_volume,
-            "planning_headspace_volume_l": planning_headspace_volume,
+            "planning_headspace_volume_l": headspace_volume,
         }
 
     def _save_solubility_summary_png(self) -> None:
@@ -212318,8 +212545,8 @@ class UnifiedApp(tk.Tk):
         canonical["planning_cycle_delta_p_psi"] = _safe_float(
             canonical.get("planning_cycle_delta_p_psi")
         )
-        canonical["planning_headspace_volume_l"] = _safe_float(
-            canonical.get("planning_headspace_volume_l")
+        canonical["planning_total_vessel_volume_l"] = _safe_float(
+            canonical.get("planning_total_vessel_volume_l")
         )
         canonical["planning_headspace_pressure_high_psi"] = _safe_float(
             canonical.get("planning_headspace_pressure_high_psi")
@@ -212357,7 +212584,7 @@ class UnifiedApp(tk.Tk):
                 initial_naoh = naoh_mass / SOL_MW_NAOH
         canonical["planning_initial_naoh_mol"] = initial_naoh
         # Planning inputs source-of-truth: planning_cycle_delta_p_psi, planning_cycle_co2_g,
-        # planning_headspace_volume_l, planning_stop_co2_added_g, planning_stop_ph,
+        # planning_total_vessel_volume_l, planning_stop_co2_added_g, planning_stop_ph,
         # planning_initial_naoh_mol.
         return canonical
 
@@ -212441,8 +212668,8 @@ class UnifiedApp(tk.Tk):
                 "planning_cycle_delta_p_psi": canonical_inputs.get(
                     "planning_cycle_delta_p_psi"
                 ),
-                "planning_headspace_volume_l": canonical_inputs.get(
-                    "planning_headspace_volume_l"
+                "planning_total_vessel_volume_l": canonical_inputs.get(
+                    "planning_total_vessel_volume_l"
                 ),
                 "planning_headspace_pressure_high_psi": canonical_inputs.get(
                     "planning_headspace_pressure_high_psi"
@@ -212460,7 +212687,7 @@ class UnifiedApp(tk.Tk):
 
         manual_cycle_co2_g = canonical_inputs.get("planning_cycle_co2_g")
         delta_psi = canonical_inputs.get("planning_cycle_delta_p_psi")
-        headspace_volume_l = canonical_inputs.get("planning_headspace_volume_l")
+        vessel_volume_l = canonical_inputs.get("planning_total_vessel_volume_l")
         headspace_pressure_high_psi = canonical_inputs.get(
             "planning_headspace_pressure_high_psi"
         )
@@ -212492,6 +212719,9 @@ class UnifiedApp(tk.Tk):
             pass
         if solution_volume_l is None or solution_volume_l <= 0:
             solution_volume_l = 1.0
+        if vessel_volume_l is None or vessel_volume_l <= solution_volume_l:
+            raise ValueError("Planning: total vessel volume must exceed solution volume.")
+        headspace_volume_l = vessel_volume_l - solution_volume_l
 
         use_temp_constants = bool(
             solver_inputs.params.use_temperature_adjusted_constants
@@ -212527,10 +212757,12 @@ class UnifiedApp(tk.Tk):
                 raise ValueError(
                     "Planning: provide a positive pressure drop per cycle or a manual CO2-per-cycle override."
                 )
-            moles_per_cycle = self._planning_cycle_moles_from_pressure(
-                delta_psi, headspace_volume_l, temp_c
+            pressure_inventory = _carbonate_pressure_drop_inventory_core(
+                high_psig=float(headspace_pressure_high_psi), delta_psig=float(delta_psi),
+                headspace_volume_l=float(headspace_volume_l), temperature_c=float(temp_c or 25.0),
             )
-            moles_basis = "delta_p_headspace"
+            moles_per_cycle = float(pressure_inventory["dose_mol"])
+            moles_basis = str(pressure_inventory["calculation_source"])
 
         sodium_total_moles = max(initial_naoh_mol, 0.0)
         ledger_state = {
@@ -212590,6 +212822,7 @@ class UnifiedApp(tk.Tk):
                 "cumulative_co2_moles": cumulative_moles,
                 "cumulative_co2_mass_g": cumulative_mass,
                 "moles_basis": moles_basis,
+                "pressure_inventory": pressure_inventory if manual_cycle_co2_g is None else None,
             }
             entry_warnings: List[str] = []
             if measured_scrub_note and idx == 1:
@@ -212810,10 +213043,9 @@ class UnifiedApp(tk.Tk):
         if bool(form_data.get("carbonate_mode_enabled", False)):
             target_ph = _safe_float(form_data.get("carbonate_target_ph"))
             if target_ph is not None:
-                guard_ph = min(
-                    CARBONATE_MODE_PH_HIGH,
-                    target_ph + CARBONATE_MODE_DEFAULT_GUARD_PH,
-                )
+                guard_margin = _safe_float(form_data.get("carbonate_guard_margin_ph"))
+                guard_margin = guard_margin if guard_margin is not None and guard_margin > 0.0 else CARBONATE_MODE_DEFAULT_GUARD_PH
+                guard_ph = min(CARBONATE_MODE_PH_HIGH, target_ph + guard_margin)
                 endpoint = _carbonate_target_endpoint_from_timeline(
                     cycle_entries, target_ph=target_ph, guard_ph=guard_ph
                 )
@@ -212843,6 +213075,37 @@ class UnifiedApp(tk.Tk):
                             ),
                         }
                     )
+                    target_spec = dict(target_row.get("row") or {}) if isinstance(target_row, Mapping) else {}
+                    fractions = target_spec.get("fractions") if isinstance(target_spec.get("fractions"), Mapping) else {}
+                    hco3_pct = _safe_float(fractions.get("HCO3-") or fractions.get("HCO3"))
+                    co3_pct = _safe_float(fractions.get("CO3^2-") or fractions.get("CO3-2") or fractions.get("CO3"))
+                    max_hco3 = _safe_float(form_data.get("carbonate_max_bicarbonate_pct"))
+                    max_hco3 = max_hco3 if max_hco3 is not None and 0.0 < max_hco3 <= 100.0 else CARBONATE_MODE_DEFAULT_MAX_BICARBONATE_PCT
+                    min_co3 = _safe_float(form_data.get("carbonate_min_carbonate_pct"))
+                    min_co3 = min_co3 if min_co3 is not None and 0.0 < min_co3 <= 100.0 else CARBONATE_MODE_DEFAULT_MIN_CARBONATE_PCT
+                    carbonate_forecast["max_bicarbonate_pct"] = max_hco3
+                    carbonate_forecast["min_carbonate_pct"] = min_co3
+                    carbonate_forecast["target_bicarbonate_pct"] = hco3_pct
+                    carbonate_forecast["target_carbonate_pct"] = co3_pct
+                    carbonate_forecast["speciation_verified"] = hco3_pct is not None and co3_pct is not None and hco3_pct < max_hco3 and co3_pct >= min_co3
+                    carbonate_forecast["speciation_message"] = (
+                        f"Target speciation verified: carbonate {co3_pct:.2f}% is at least {min_co3:.2f}% and bicarbonate {hco3_pct:.2f}% is below {max_hco3:.2f}%."
+                        if carbonate_forecast["speciation_verified"] else
+                        f"Target carbonate must be at least {min_co3:.2f}% and bicarbonate below {max_hco3:.2f}%; model result is unavailable or outside the limits."
+                    )
+                    guard_endpoint = endpoint.get("guard_endpoint")
+                    guard_cycles = _safe_float(guard_endpoint.get("cycle") if isinstance(guard_endpoint, Mapping) else None)
+                    if guard_cycles is not None:
+                        full_cycles = max(0, int(math.floor(guard_cycles - 1e-12)))
+                        target_cycles = _safe_float(carbonate_forecast.get("estimated_cycles")) or 0.0
+                        partial_fraction = max(0.0, min(1.0, target_cycles - full_cycles))
+                        carbonate_forecast["operator_dosing_plan"] = {
+                            "full_cycles_before_guard": full_cycles,
+                            "final_partial_cycle_fraction": partial_fraction,
+                            "max_final_partial_co2_g": partial_fraction * moles_per_cycle * SOL_MW_CO2,
+                            "max_final_partial_delta_psi": partial_fraction * float(delta_psi or 0.0),
+                            "instruction": "Verify pH at the guard threshold before the final partial dose; decision support only.",
+                        }
                     history_sizes: List[float] = []
                     excluded_history = 0
                     active_model = str(planning_ph_key or "")
