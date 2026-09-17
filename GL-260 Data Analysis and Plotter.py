@@ -194488,24 +194488,57 @@ class UnifiedApp(tk.Tk):
                     "current_ph": primary_ph,
                     "message": "Stop and verify pH at the guard threshold; do not use this decision-support forecast for automatic control.",
                 })
-                target_spec = dict(target_row.get("row") or {}) if isinstance(target_row, Mapping) else {}
-                    fractions = target_spec.get("fractions") if isinstance(target_spec.get("fractions"), Mapping) else {}
-                    hco3_pct = _safe_float(fractions.get("HCO3-") or fractions.get("HCO3"))
-                    co3_pct = _safe_float(fractions.get("CO3^2-") or fractions.get("CO3-2") or fractions.get("CO3"))
-                    max_hco3 = _safe_float(form_snapshot.get("carbonate_max_bicarbonate_pct"))
-                    max_hco3 = max_hco3 if max_hco3 is not None and 0.0 < max_hco3 <= 100.0 else CARBONATE_MODE_DEFAULT_MAX_BICARBONATE_PCT
-                    min_co3 = _safe_float(form_snapshot.get("carbonate_min_carbonate_pct"))
-                    min_co3 = min_co3 if min_co3 is not None and 0.0 < min_co3 <= 100.0 else CARBONATE_MODE_DEFAULT_MIN_CARBONATE_PCT
-                    forecast["max_bicarbonate_pct"] = max_hco3
-                    forecast["min_carbonate_pct"] = min_co3
-                    forecast["target_bicarbonate_pct"] = hco3_pct
-                    forecast["target_carbonate_pct"] = co3_pct
-                    forecast["speciation_verified"] = hco3_pct is not None and co3_pct is not None and hco3_pct < max_hco3 and co3_pct >= min_co3
-                    forecast["speciation_message"] = (
-                        f"Target speciation verified: carbonate {co3_pct:.2f}% is at least {min_co3:.2f}% and bicarbonate {hco3_pct:.2f}% is below {max_hco3:.2f}%."
-                        if forecast["speciation_verified"] else
-                        f"Target carbonate must be at least {min_co3:.2f}% and bicarbonate below {max_hco3:.2f}%; model result is unavailable or outside the limits."
+                target_spec = (
+                    dict(target_row.get("row") or {})
+                    if isinstance(target_row, Mapping)
+                    else {}
+                )
+                fractions = (
+                    target_spec.get("fractions")
+                    if isinstance(target_spec.get("fractions"), Mapping)
+                    else {}
+                )
+                hco3_pct = _safe_float(fractions.get("HCO3-") or fractions.get("HCO3"))
+                co3_pct = _safe_float(
+                    fractions.get("CO3^2-")
+                    or fractions.get("CO3-2")
+                    or fractions.get("CO3")
+                )
+                max_hco3 = _safe_float(form_snapshot.get("carbonate_max_bicarbonate_pct"))
+                max_hco3 = (
+                    max_hco3
+                    if max_hco3 is not None and 0.0 < max_hco3 <= 100.0
+                    else CARBONATE_MODE_DEFAULT_MAX_BICARBONATE_PCT
+                )
+                min_co3 = _safe_float(form_snapshot.get("carbonate_min_carbonate_pct"))
+                min_co3 = (
+                    min_co3
+                    if min_co3 is not None and 0.0 < min_co3 <= 100.0
+                    else CARBONATE_MODE_DEFAULT_MIN_CARBONATE_PCT
+                )
+                forecast["max_bicarbonate_pct"] = max_hco3
+                forecast["min_carbonate_pct"] = min_co3
+                forecast["target_bicarbonate_pct"] = hco3_pct
+                forecast["target_carbonate_pct"] = co3_pct
+                forecast["speciation_verified"] = (
+                    hco3_pct is not None
+                    and co3_pct is not None
+                    and hco3_pct < max_hco3
+                    and co3_pct >= min_co3
+                )
+                forecast["speciation_message"] = (
+                    (
+                        f"Target speciation verified: carbonate {co3_pct:.2f}% "
+                        f"is at least {min_co3:.2f}% and bicarbonate "
+                        f"{hco3_pct:.2f}% is below {max_hco3:.2f}%."
                     )
+                    if forecast["speciation_verified"]
+                    else (
+                        f"Target carbonate must be at least {min_co3:.2f}% and "
+                        f"bicarbonate below {max_hco3:.2f}%; model result is "
+                        "unavailable or outside the limits."
+                    )
+                )
                 for timeline_row in timeline:
                     # Keep endpoint metadata on shared rows so existing tables, plots, and exports can render it without a parallel dataset.
                     timeline_row["carbonate_target_ph"] = target_ph
