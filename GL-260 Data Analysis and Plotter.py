@@ -24736,6 +24736,8 @@ class SolubilitySolverInputs:
     failing_ph: Optional[float]
     solvent_basis: Optional[str]
     solvent_basis_value: Optional[float]
+    carbonate_mode_enabled: bool = False
+    carbonate_target_ph: Optional[float] = None
 
 
 @dataclass
@@ -29005,6 +29007,100 @@ def _carbonate_endpoint_forecast_core(
         _mark_rust_kernel_session_unhealthy("carbonate_endpoint_forecast_core", reason="invalid_payload", details="missing forecast status")
         return fallback
     return dict(payload)
+
+
+def _carbonate_target_endpoint_from_timeline(
+    timeline_rows: Sequence[Mapping[str, Any]],
+    *,
+    target_ph: float,
+    guard_ph: float,
+) -> Dict[str, Any]:
+    """Locate carbonate guard and target endpoints on a simulated pH trajectory.
+
+    Purpose: derive dose and fractional-cycle endpoint positions from the shared
+    Planning/Analysis timeline rather than applying a fixed stoichiometric dose.
+    Why: sodium-carbonate production is operated to an alkaline pH specification,
+    so the target-pH crossing is the primary decision point and equivalence is
+    only supporting chemistry context.
+    Inputs: ordered timeline rows with cumulative CO2 mass in grams and pH values,
+    plus target and conservative guard pH values.
+    Outputs: mapping with interpolated guard/target masses, cycles, and endpoint
+    speciation rows, or an explicit unavailable status for a missing crossing.
+    Side Effects: none.
+    Exceptions: malformed rows are ignored so one bad cycle cannot abort a run.
+    """
+    points: List[Tuple[float, float, float, Mapping[str, Any]]] = []
+    # Normalize only usable rows once so both endpoint levels share one trajectory scan.
+    for fallback_cycle, row in enumerate(timeline_rows or (), start=1):
+        if not isinstance(row, Mapping):
+            continue
+        mass = _safe_float(
+            row.get("cumulative_co2_added_mass_g")
+            or row.get("cumulative_co2_mass_g")
+            or row.get("co2_g")
+        )
+        ph_value = _safe_float(
+            row.get("ph_after") or row.get("solution_ph") or row.get("ph")
+        )
+        cycle = _safe_float(row.get("cycle_id"), float(fallback_cycle))
+        if mass is None or ph_value is None or cycle is None:
+            continue
+        if math.isfinite(mass) and math.isfinite(ph_value) and math.isfinite(cycle):
+            points.append((float(mass), float(ph_value), float(cycle), row))
+
+    def _crossing(level: float) -> Optional[Dict[str, Any]]:
+        """Interpolate the first descending pH crossing for one endpoint level.
+
+        Purpose: convert discrete cycle observations into the fractional dose at a
+        guard or target pH threshold.
+        Why: operators need a usable partial-cycle estimate instead of rounding
+        every endpoint to the next full dose.
+        Inputs: level is an alkaline pH threshold on the normalized outer points.
+        Outputs: endpoint mass/cycle/speciation mapping, or None when unbracketed.
+        Side Effects: none.
+        Exceptions: none; invalid points were removed by the outer normalization.
+        """
+        if not points:
+            return None
+        first_mass, first_ph, first_cycle, first_row = points[0]
+        if first_ph <= level:
+            return {
+                "co2_g": first_mass,
+                "cycle": first_cycle,
+                "fraction": 0.0,
+                "row": dict(first_row),
+                "already_reached": True,
+            }
+        for previous, current in zip(points, points[1:]):
+            previous_mass, previous_ph, previous_cycle, _ = previous
+            mass, ph_value, cycle, row = current
+            if previous_ph >= level >= ph_value and previous_ph > ph_value:
+                ratio = (previous_ph - level) / (previous_ph - ph_value)
+                return {
+                    "co2_g": previous_mass + ratio * (mass - previous_mass),
+                    "cycle": previous_cycle + ratio * (cycle - previous_cycle),
+                    "fraction": ratio,
+                    "row": dict(row),
+                    "already_reached": False,
+                }
+        return None
+
+    guard = _crossing(guard_ph)
+    target = _crossing(target_ph)
+    return {
+        "status": "target_reached"
+        if target and target.get("already_reached")
+        else ("forecast" if target else "target_unreachable"),
+        "guard_endpoint": guard,
+        "target_endpoint": target,
+        "message": (
+            "Target pH was not crossed by the available carbonate trajectory."
+            if target is None
+            else "Target-pH endpoint derived from the simulated carbonate trajectory."
+        ),
+    }
+
+
 
 
 def _normalize_speciation_mode(mode: Optional[str]) -> str:
@@ -189854,6 +189950,7 @@ class UnifiedApp(tk.Tk):
             )
             if workflow_key == "Planning":
                 self._refresh_planning_model_fields_visibility()
+                self._refresh_planning_target_slider_mode()
             self._sync_target_slider_from_entry()
             self._refresh_analysis_sticky_action_bar(workflow_key)
             self._sol_output_workspace_update_profile_action_state()
@@ -190525,6 +190622,39 @@ class UnifiedApp(tk.Tk):
         _register_wrap_widgets(planning_actions_layout, [title_label, plot_label])
         self._refresh_sol_workflow_tile_layouts()
 
+        planning_carbonate_card = _add_workflow_tile_card(
+            planning_actions_layout, title="Carbonate Mode Endpoint Forecast"
+        )
+        planning_carbonate_card.grid_columnconfigure(3, weight=1)
+        self._carbonate_mode_enabled_var = self._create_persistent_solubility_bool(
+            "carbonate_mode_enabled", False
+        )
+        self._carbonate_target_ph_var = self._create_persistent_solubility_var(
+            "carbonate_target_ph", str(CARBONATE_MODE_DEFAULT_TARGET_PH)
+        )
+        self._carbonate_cycle_size_var = self._create_persistent_solubility_var(
+            "carbonate_manual_cycle_size_g", ""
+        )
+        _ui_checkbutton(
+            planning_carbonate_card,
+            text="Enable sodium carbonate target-pH forecast",
+            variable=self._carbonate_mode_enabled_var,
+        ).grid(row=0, column=0, columnspan=4, sticky="w", padx=8, pady=(4, 2))
+        self._carbonate_mode_enabled_var.trace_add(
+            "write", self._refresh_planning_target_slider_mode
+        )
+        ttk.Label(planning_carbonate_card, text="Target pH (10.50–12.40)").grid(row=1, column=0, sticky="w", padx=8, pady=2)
+        ttk.Entry(planning_carbonate_card, textvariable=self._carbonate_target_ph_var, width=10).grid(row=1, column=1, sticky="w", pady=2)
+        ttk.Label(planning_carbonate_card, text="Manual cycle CO₂ g (optional)").grid(row=1, column=2, sticky="w", padx=(12, 4), pady=2)
+        ttk.Entry(planning_carbonate_card, textvariable=self._carbonate_cycle_size_var, width=10).grid(row=1, column=3, sticky="w", pady=2)
+        self._carbonate_planning_summary_var = tk.StringVar(
+            value="Enable Carbonate Mode to predict guard/target cycles, gas, and endpoint speciation."
+        )
+        ttk.Label(
+            planning_carbonate_card, textvariable=self._carbonate_planning_summary_var,
+            style="Sol.Help.TLabel", wraplength=700, justify="left",
+        ).grid(row=2, column=0, columnspan=4, sticky="w", padx=8, pady=(2, 4))
+
         target_box = ttk.LabelFrame(planning_tab, text="Target pH & Headspace")
         target_box.grid(
             row=helper_end_row + 1,
@@ -190546,14 +190676,16 @@ class UnifiedApp(tk.Tk):
         ttk.Label(target_box, text="Target pH slider").grid(
             row=0, column=0, sticky="w", padx=(8, 4), pady=2
         )
-        _ui_scale(
+        planning_target_slider = _ui_scale(
             target_box,
             from_=6.5,
             to=9.5,
             orient="horizontal",
             variable=slider_var,
             command=self._on_solubility_forced_slider,
-        ).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=2)
+        )
+        planning_target_slider.grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=2)
+        self._planning_target_ph_slider = planning_target_slider
         self._sol_target_ph_display_var = tk.StringVar(
             value=f"Target pH slider: {slider_var.get():.2f}"
         )
@@ -190572,6 +190704,7 @@ class UnifiedApp(tk.Tk):
         forced_var = self._solubility_vars.get("forced_ph_target")
         if forced_var is not None:
             forced_var.trace_add("write", self._sync_target_slider_from_entry)
+        self._refresh_planning_target_slider_mode()
 
         headspace_frame = ttk.Frame(planning_tab)
         headspace_frame.grid(
@@ -190803,15 +190936,6 @@ class UnifiedApp(tk.Tk):
             analysis_input_layout, title="Carbonate Mode Monitoring Hub"
         )
         carbonate_card.grid_columnconfigure(3, weight=1)
-        self._carbonate_mode_enabled_var = self._create_persistent_solubility_bool(
-            "carbonate_mode_enabled", False
-        )
-        self._carbonate_target_ph_var = self._create_persistent_solubility_var(
-            "carbonate_target_ph", str(CARBONATE_MODE_DEFAULT_TARGET_PH)
-        )
-        self._carbonate_cycle_size_var = self._create_persistent_solubility_var(
-            "carbonate_manual_cycle_size_g", ""
-        )
         _ui_checkbutton(
             carbonate_card,
             text="Enable sodium carbonate endpoint monitoring",
@@ -193205,6 +193329,21 @@ class UnifiedApp(tk.Tk):
                 model_options=model_options_snapshot,
                 treat_excess_as_headspace=treat_excess_as_headspace,
             )
+            if workflow_key == "Planning":
+                planned_forecast = payload_snapshot.get("carbonate_forecast")
+                if isinstance(planned_forecast, Mapping):
+                    cycle_result["carbonate_forecast"] = dict(planned_forecast)
+                    for timeline_row in cycle_result.get("timeline") or []:
+                        if isinstance(timeline_row, Mapping):
+                            timeline_row.update(
+                                {
+                                    "carbonate_target_ph": planned_forecast.get("target_ph"),
+                                    "carbonate_guard_ph": planned_forecast.get("guard_ph"),
+                                    "carbonate_estimated_total_co2_g": planned_forecast.get("estimated_total_co2_g"),
+                                    "carbonate_estimated_cycles": planned_forecast.get("estimated_cycles"),
+                                    "carbonate_forecast_status": planned_forecast.get("status"),
+                                }
+                            )
             if workflow_key == "Analysis":
                 analysis_runtime = self._build_analysis_runtime_payload(
                     cycle_payload=payload_snapshot,
@@ -194133,19 +194272,44 @@ class UnifiedApp(tk.Tk):
                     if isinstance(row, Mapping)
                 ]
                 compatible_sizes.extend(value for value in current_sizes if value)
-                # One CO2 mole per NaOH mole is the carbonate stoichiometric planning basis.
-                target_g = naoh_mass_g / SOL_MW_NAOH * SOL_MW_CO2
-                forecast = _carbonate_endpoint_forecast_core(
-                    compatible_sizes,
-                    current_co2_g=current_g,
-                    target_co2_g=target_g,
-                    manual_cycle_size_g=_safe_float(form_snapshot.get("carbonate_manual_cycle_size_g")),
+                guard_ph = min(
+                    CARBONATE_MODE_PH_HIGH,
+                    target_ph + CARBONATE_MODE_DEFAULT_GUARD_PH,
                 )
+                endpoint = _carbonate_target_endpoint_from_timeline(
+                    timeline, target_ph=target_ph, guard_ph=guard_ph
+                )
+                target_row = endpoint.get("target_endpoint")
+                target_g = _safe_float(
+                    target_row.get("co2_g") if isinstance(target_row, Mapping) else None
+                )
+                if target_g is None:
+                    forecast = dict(endpoint)
+                    forecast.update({
+                        "remaining_co2_g": None,
+                        "estimated_total_co2_g": None,
+                        "cycle_size_source": "unavailable",
+                        "history_cycle_count": len(compatible_sizes),
+                    })
+                else:
+                    forecast = _carbonate_endpoint_forecast_core(
+                        compatible_sizes,
+                        current_co2_g=current_g,
+                        target_co2_g=target_g,
+                        manual_cycle_size_g=_safe_float(form_snapshot.get("carbonate_manual_cycle_size_g")),
+                    )
+                    forecast.update(endpoint)
                 forecast.update({
                     "target_ph": target_ph,
-                    "guard_ph": min(CARBONATE_MODE_PH_HIGH, target_ph + CARBONATE_MODE_DEFAULT_GUARD_PH),
+                    "guard_ph": guard_ph,
+                    # Carbonate formation consumes one CO2 mole per two NaOH moles.
+                    "equivalence_co2_g": naoh_mass_g / (2.0 * SOL_MW_NAOH) * SOL_MW_CO2,
                     "history_runs_excluded": excluded,
-                    "history_source": "measured-pH recalibrated" if measured_anchor else "equilibrium model",
+                    "history_source": (
+                        "measured-pH recalibrated"
+                        if bool(form_snapshot.get("measured_ph_anchors"))
+                        else "equilibrium model"
+                    ),
                     "current_ph": primary_ph,
                     "message": "Stop and verify pH at the guard threshold; do not use this decision-support forecast for automatic control.",
                 })
@@ -194325,8 +194489,16 @@ class UnifiedApp(tk.Tk):
                         form_data = getattr(self, "_sol_last_form_data", {}) or {}
                         record = {
                             "model_key": str(form_data.get("model_key") or ""),
-                            "naoh_mass_g": _safe_float(form_data.get("reaction_naoh_mass")),
+                            "naoh_mass_g": _safe_float(
+                                form_data.get("reaction_naoh_mass")
+                                or form_data.get("mass_naoh_g")
+                            ),
                             "temperature_c": _safe_float(form_data.get("temperature_c")),
+                            "solution_volume_l": _safe_float(
+                                form_data.get("reaction_solution_volume")
+                                or getattr(form_data.get("params"), "solution_volume_l", None)
+                            ),
+                            "source": "analysis_measured_cycles",
                             "cycle_sizes_g": cycle_sizes,
                         }
                         history = list(self.settings.get(CARBONATE_MODE_HISTORY_SETTINGS_KEY) or [])
@@ -194340,6 +194512,56 @@ class UnifiedApp(tk.Tk):
         )
         dashboard_payload = result_map.get("analysis_dashboard")
         return dict(dashboard_payload) if isinstance(dashboard_payload, Mapping) else None
+
+    def _apply_carbonate_forecast_summary(
+        self, forecast: Any, *, workflow_key: str
+    ) -> None:
+        """Render the shared Carbonate Mode endpoint summary for one workflow.
+
+        Purpose: update the Analysis or Planning Carbonate Mode status text from
+        a worker-produced forecast without repeating chemistry calculations in Tk.
+        Why: both workflows must report the same target-pH endpoint semantics
+        while retaining their distinct displayed control cards.
+        Inputs: forecast mapping produced by the cycle worker and workflow name.
+        Outputs: none.
+        Side Effects: updates the applicable Tk StringVar when it exists.
+        Exceptions: malformed forecast values degrade to an explanatory message.
+        """
+        target_var = (
+            getattr(self, "_carbonate_planning_summary_var", None)
+            if workflow_key == "Planning"
+            else getattr(self, "_carbonate_mode_summary_var", None)
+        )
+        if target_var is None:
+            return
+        if not isinstance(forecast, Mapping):
+            target_var.set("Carbonate Mode forecast unavailable for this run.")
+            return
+        status = str(forecast.get("status") or "unavailable")
+        target = forecast.get("target_endpoint")
+        guard = forecast.get("guard_endpoint")
+        if status in {"forecast", "target_reached"}:
+            target_g = _safe_float(forecast.get("estimated_total_co2_g"))
+            cycles = _safe_float(forecast.get("estimated_cycles"))
+            guard_g = _safe_float(guard.get("co2_g")) if isinstance(guard, Mapping) else None
+            endpoint_ph = _safe_float(forecast.get("target_ph"))
+            details = [
+                f"Carbonate target pH {endpoint_ph:.2f}" if endpoint_ph is not None else "Carbonate target",
+                f"CO₂ {target_g:.2f} g" if target_g is not None else "CO₂ unavailable",
+                f"{cycles:.2f} cycles" if cycles is not None else "cycles unavailable",
+            ]
+            if guard_g is not None:
+                details.append(f"guard/verify at {guard_g:.2f} g")
+            history_comparison = forecast.get("history_comparison")
+            if isinstance(history_comparison, Mapping):
+                history_cycles = _safe_float(history_comparison.get("estimated_cycles"))
+                if history_cycles is not None:
+                    details.append(f"history median {history_cycles:.2f} cycles")
+            if isinstance(target, Mapping) and target.get("already_reached"):
+                details.append("target already reached")
+            target_var.set(" | ".join(details) + ". Decision support only; verify pH before stopping.")
+            return
+        target_var.set(str(forecast.get("message") or "Carbonate target was not reached by the available trajectory."))
 
     def _update_cycle_solubility_widgets(
         self,
@@ -194462,6 +194684,9 @@ class UnifiedApp(tk.Tk):
         self._update_analysis_dashboard(
             dashboard_payload,
             workflow_key=workflow,
+        )
+        self._apply_carbonate_forecast_summary(
+            result_map.get("carbonate_forecast"), workflow_key=workflow
         )
         self._apply_cycle_timeline_render_payload_staged(
             render_payload,
@@ -208706,11 +208931,58 @@ class UnifiedApp(tk.Tk):
         snapshot["solvent_basis_mode"] = self._solvent_mode_var.get()
         return snapshot
 
+    def _refresh_planning_target_slider_mode(self, *_args: Any) -> None:
+        """Configure Planning's shared target slider for the active chemistry mode.
+
+        Purpose: switch the Planning slider between its legacy forced-pH range
+        and Carbonate Mode's production target range.
+        Why: a sodium-carbonate operator must be able to set the 11.45 target
+        directly on the visible Planning slider instead of using a separate field.
+        Inputs: optional Tk trace arguments, ignored after the mode is read.
+        Outputs: none.
+        Side Effects: reconfigures the Planning scale, initializes its carbonate
+        value to 11.45 when blank, synchronizes its display value, and refreshes
+        the paired carbon-basis mass for the selected chemistry.
+        Exceptions: unavailable widgets/variables are safely ignored during UI build.
+        """
+        slider_widget = getattr(self, "_planning_target_ph_slider", None)
+        slider_var = getattr(self, "_sol_forced_slider", None)
+        enabled_var = getattr(self, "_carbonate_mode_enabled_var", None)
+        target_var = getattr(self, "_carbonate_target_ph_var", None)
+        if slider_widget is None or slider_var is None:
+            return
+        try:
+            carbonate_enabled = bool(enabled_var.get()) if enabled_var is not None else False
+        except Exception:
+            carbonate_enabled = False
+        if carbonate_enabled:
+            try:
+                target_value = _safe_float(target_var.get()) if target_var is not None else None
+                if target_value is None or not CARBONATE_MODE_PH_LOW <= target_value <= CARBONATE_MODE_PH_HIGH:
+                    target_value = CARBONATE_MODE_DEFAULT_TARGET_PH
+                    if target_var is not None:
+                        target_var.set(f"{target_value:.2f}")
+                slider_widget.configure(
+                    from_=CARBONATE_MODE_PH_LOW, to=CARBONATE_MODE_PH_HIGH
+                )
+                slider_var.set(float(target_value))
+            except Exception:
+                return
+        else:
+            slider_widget.configure(from_=6.5, to=9.5)
+        self._sync_target_slider_from_entry()
+        # Recalculate the visible carbon basis immediately when the chemistry
+        # mode changes, rather than waiting for the user to edit the NaOH mass.
+        self._sync_planning_mass()
+
     def _slider_target_keys(self) -> List[str]:
         """Perform slider target keys.
         Used to keep the workflow logic localized and testable."""
         workflow_key = self._current_solubility_workflow()
         if workflow_key == "Planning":
+            carbonate_var = getattr(self, "_carbonate_mode_enabled_var", None)
+            if carbonate_var is not None and bool(carbonate_var.get()):
+                return ["carbonate_target_ph"]
             return ["forced_ph_target"]
         if workflow_key == "Analysis":
             return ["reaction_target_ph", "forced_ph_target"]
@@ -208863,14 +209135,41 @@ class UnifiedApp(tk.Tk):
             break
         if target_value is None:
             return
-        slider.set(max(6.5, min(9.5, target_value)))
+        carbonate_var = getattr(self, "_carbonate_mode_enabled_var", None)
+        if (
+            self._current_solubility_workflow() == "Planning"
+            and carbonate_var is not None
+            and bool(carbonate_var.get())
+        ):
+            slider.set(
+                max(CARBONATE_MODE_PH_LOW, min(CARBONATE_MODE_PH_HIGH, target_value))
+            )
+        else:
+            slider.set(max(6.5, min(9.5, target_value)))
         display_var = getattr(self, "_sol_target_ph_display_var", None)
         if display_var is not None:
             display_var.set(f"Target pH slider: {target_value:.2f}")
 
     def _sync_planning_mass(self, *_args) -> None:
-        """Perform sync planning mass.
-        Used to keep the workflow logic localized and testable."""
+        """Synchronize the Planning carbon-basis mass from the entered NaOH mass.
+
+        This keeps the legacy bicarbonate-equivalent display for ordinary Planning,
+        while Carbonate Mode uses the chemically correct one-carbon-per-two-NaOH
+        inventory.  The callback reads Tk variables, updates the paired display
+        variable, and silently ignores incomplete numeric entry values.
+
+        Args:
+            *_args: Tk trace callback arguments, which are not otherwise used.
+
+        Returns:
+            None.
+
+        Side Effects:
+            Updates the Planning bicarbonate-equivalent mass display variable.
+
+        Error Handling:
+            Invalid transient entry text is ignored so typing is not interrupted.
+        """
         if getattr(self, "_planning_mass_lock", False):
             return
         naoh_var = self._solubility_vars.get("mass_naoh_g")
@@ -208884,7 +209183,15 @@ class UnifiedApp(tk.Tk):
             return
         try:
             self._planning_mass_lock = True
-            equivalent = value * SOL_MW_NAHCO3 / SOL_MW_NAOH
+            carbonate_enabled = bool(
+                getattr(
+                    self, "_carbonate_mode_enabled_var", tk.BooleanVar(value=False)
+                ).get()
+            )
+            # Carbonate formation is 2 NaOH + CO2 -> Na2CO3 + H2O; this proxy
+            # therefore has one carbon equivalent for every two NaOH equivalents.
+            naoh_per_carbon = 2.0 if carbonate_enabled else 1.0
+            equivalent = value * SOL_MW_NAHCO3 / (naoh_per_carbon * SOL_MW_NAOH)
             nahco3_var.set(f"{equivalent:.4f}")
         finally:
             self._planning_mass_lock = False
@@ -211323,6 +211630,22 @@ class UnifiedApp(tk.Tk):
             if forced_ph_value is None:
                 forced_ph_value = planning_speciation_ph
                 parsed_values["forced_ph_target"] = forced_ph_value
+            if carbonate_mode_enabled:
+                if mass_naoh is None or mass_naoh <= 0:
+                    raise ValueError(
+                        "Carbonate Planning requires a positive initial NaOH mass."
+                    )
+                # The target carbonate inventory contains one carbon per two NaOH
+                # equivalents, unlike the legacy bicarbonate-equivalent display basis.
+                mass = mass_naoh * SOL_MW_NAHCO3 / (2.0 * SOL_MW_NAOH)
+                parsed_values["mass_na_hco3_g"] = mass
+                forced_ph_value = carbonate_target_ph
+                reaction_naoh_mass = mass_naoh
+                reaction_solution_volume = solution_volume
+                reaction_target_ph = carbonate_target_ph
+                planning_speciation_ph = carbonate_target_ph
+                parsed_values["forced_ph_target"] = forced_ph_value
+                parsed_values["planning_speciation_ph"] = planning_speciation_ph
             headspace_ready = (
                 include_headspace_fields
                 and headspace_pco2 is not None
@@ -211624,6 +211947,12 @@ class UnifiedApp(tk.Tk):
             )
         if sweep_steps_value < 3:
             sweep_steps_value = SOL_PH_SWEEP_DEFAULT[2]
+
+        if workflow_key == "Planning" and carbonate_mode_enabled:
+            # A carbonate run should present the production specification band,
+            # not the generic acidic-to-basic diagnostic sweep.
+            sweep_low_value = CARBONATE_MODE_PH_LOW
+            sweep_high_value = CARBONATE_MODE_PH_HIGH
 
         forced_target = forced_ph_value if forced_ph_value is not None else None
         if mode_key == "naoh_reaction":
@@ -212477,6 +212806,91 @@ class UnifiedApp(tk.Tk):
             projection_warning = stop_reason
         if not cycle_entries:
             return None
+        carbonate_forecast: Optional[Dict[str, Any]] = None
+        if bool(form_data.get("carbonate_mode_enabled", False)):
+            target_ph = _safe_float(form_data.get("carbonate_target_ph"))
+            if target_ph is not None:
+                guard_ph = min(
+                    CARBONATE_MODE_PH_HIGH,
+                    target_ph + CARBONATE_MODE_DEFAULT_GUARD_PH,
+                )
+                endpoint = _carbonate_target_endpoint_from_timeline(
+                    cycle_entries, target_ph=target_ph, guard_ph=guard_ph
+                )
+                target_row = endpoint.get("target_endpoint")
+                target_g = _safe_float(
+                    target_row.get("co2_g") if isinstance(target_row, Mapping) else None
+                )
+                if target_g is not None:
+                    carbonate_forecast = _carbonate_endpoint_forecast_core(
+                        (),
+                        current_co2_g=0.0,
+                        target_co2_g=target_g,
+                        manual_cycle_size_g=moles_per_cycle * SOL_MW_CO2,
+                    )
+                    carbonate_forecast.update(endpoint)
+                    carbonate_forecast.update(
+                        {
+                            "target_ph": target_ph,
+                            "guard_ph": guard_ph,
+                            "equivalence_co2_g": equivalence_moles * SOL_MW_CO2,
+                            "forecast_basis": "configured Planning cycle dose",
+                            "current_ph": _safe_float(cycle_entries[0].get("ph_after")),
+                            "endpoint_speciation": (
+                                dict(target_row.get("row") or {})
+                                if isinstance(target_row, Mapping)
+                                else None
+                            ),
+                        }
+                    )
+                    history_sizes: List[float] = []
+                    excluded_history = 0
+                    active_model = str(planning_ph_key or "")
+                    naoh_mass_g = _safe_float(planning_context.get("naoh_mass_g"))
+                    for history_row in list(
+                        self.settings.get(CARBONATE_MODE_HISTORY_SETTINGS_KEY) or []
+                    ):
+                        if not isinstance(history_row, Mapping):
+                            continue
+                        prior_naoh = _safe_float(history_row.get("naoh_mass_g"))
+                        same_model = str(history_row.get("model_key") or "") == active_model
+                        compatible = bool(
+                            same_model
+                            and prior_naoh
+                            and naoh_mass_g
+                            and abs(prior_naoh - naoh_mass_g) / naoh_mass_g <= 0.25
+                        )
+                        if compatible:
+                            history_sizes.extend(history_row.get("cycle_sizes_g") or [])
+                        else:
+                            excluded_history += 1
+                    carbonate_forecast["history_comparison"] = _carbonate_endpoint_forecast_core(
+                        history_sizes,
+                        current_co2_g=0.0,
+                        target_co2_g=target_g,
+                        manual_cycle_size_g=None,
+                    )
+                    carbonate_forecast["history_runs_excluded"] = excluded_history
+                else:
+                    carbonate_forecast = dict(endpoint)
+                    carbonate_forecast.update(
+                        {
+                            "target_ph": target_ph,
+                            "guard_ph": guard_ph,
+                            "equivalence_co2_g": equivalence_moles * SOL_MW_CO2,
+                            "forecast_basis": "configured Planning cycle dose",
+                        }
+                    )
+                for entry in cycle_entries:
+                    entry["carbonate_target_ph"] = target_ph
+                    entry["carbonate_guard_ph"] = guard_ph
+                    entry["carbonate_estimated_total_co2_g"] = (
+                        carbonate_forecast.get("estimated_total_co2_g")
+                    )
+                    entry["carbonate_estimated_cycles"] = carbonate_forecast.get(
+                        "estimated_cycles"
+                    )
+                    entry["carbonate_forecast_status"] = carbonate_forecast.get("status")
         return {
             "cycle_transfer": cycle_entries,
             "total_moles_vdw": cumulative_moles,
@@ -212485,6 +212899,7 @@ class UnifiedApp(tk.Tk):
             "timestamp": datetime.now().isoformat(),
             "projection_warning": projection_warning,
             "reference_ledgers": reference_ledgers,
+            "carbonate_forecast": carbonate_forecast,
         }
 
     def _build_planning_reference_trace_for_analysis(
@@ -213732,6 +214147,8 @@ class UnifiedApp(tk.Tk):
             failing_ph=form_data.get("failing_ph"),
             solvent_basis=form_data.get("solvent_basis"),
             solvent_basis_value=form_data.get("solvent_basis_value"),
+            carbonate_mode_enabled=bool(form_data.get("carbonate_mode_enabled", False)),
+            carbonate_target_ph=form_data.get("carbonate_target_ph"),
         )
 
     def _read_sensitivity_axes(self) -> Dict[str, bool]:
@@ -213909,6 +214326,14 @@ class UnifiedApp(tk.Tk):
             forced_result, forced_error = self._solve_forced_ph(
                 model, params, solver_inputs, math_logger, model_options
             )
+            if (
+                solver_inputs.workflow_key == "Planning"
+                and solver_inputs.carbonate_mode_enabled
+                and forced_result is not None
+            ):
+                # The forced target state is the planned NaOH-to-carbonate product;
+                # use it consistently for the displayed equilibrium/speciation panels.
+                result = forced_result
             _log_active_model_pathway_math(
                 math_logger,
                 solver_inputs=solver_inputs,
