@@ -36,7 +36,7 @@ const RUST_BACKEND_INTERFACE_ID: &str = "gl260_rust_backend";
 const RUST_BACKEND_INTERFACE_VERSION: &str = "4";
 const RUST_BACKEND_MODULE_NAME: &str = env!("CARGO_PKG_NAME");
 const RUST_BACKEND_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
-const RUST_EXPORTED_KERNELS: [&str; 31] = [
+const RUST_EXPORTED_KERNELS: [&str; 32] = [
     "simulate_reaction_state_with_accounting",
     "analyze_bicarbonate_core",
     "carbonate_state_core",
