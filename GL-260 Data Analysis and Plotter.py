@@ -19707,6 +19707,8 @@ ANALYSIS_CONSISTENCY_LOW_PH_WARNING_TEXT = (
     "Simulated pH dropped below 8.0 while NaOH remains; verify CO2 totals."
 )
 SOL_ANALYSIS_LAST_RESULT_SETTINGS_KEY = "sol_analysis_last_result_v2"
+SOL_WORKFLOW_COMPARISON_STATE_SETTINGS_KEY = "sol_workflow_comparison_state_v1"
+SOL_WORKFLOW_COMPARISON_STATE_VERSION = "v1"
 CARBONATE_MODE_HISTORY_SETTINGS_KEY = "carbonate_mode_history_v1"
 CARBONATE_MODE_HISTORY_LIMIT = 48
 CARBONATE_MODE_PH_LOW = 10.50
@@ -27266,10 +27268,10 @@ def solubility_simulate_cycle_timeline(
         ph_fallback_fractions = _carbonate_fractions_from_ph(solution_ph_value)
         solver_fractions = spec_fractions(spec)
         fractions: Dict[str, float] = {}
-        if carbonate_planning and ledger_fractions:
-            # Carbonate Planning owns dissolved-carbon form through its finite
-            # NaOH/CO2 ledger. A fixed-pCO2 diagnostic solve must not invent a
-            # carbonic-acid fraction while free NaOH or carbonate remains.
+        if (carbonate_planning or naoh_pitzer_analysis) and ledger_fractions:
+            # A finite NaOH/CO2 ledger owns dissolved-carbon form for carbonate
+            # Planning and NaOH-Pitzer Analysis. A fixed-pCO2 diagnostic solve
+            # must not invent carbonic acid while hydroxide/carbonate remains.
             fractions = ledger_fractions
             fractions_source = "carbonate_ledger"
         elif model_fractions:
@@ -27298,12 +27300,12 @@ def solubility_simulate_cycle_timeline(
         elif speciation_ph_value is None:
             speciation_ph_value = solution_ph_value
         if (
-            carbonate_planning
+            (carbonate_planning or naoh_pitzer_analysis)
             and solution_ph_value is not None
             and math.isfinite(solution_ph_value)
         ):
-            # The carbonate target is an operator endpoint, whereas generic
-            # bicarbonate guidance is advisory and can default acidic.
+            # The finite-inventory trajectory outranks acidic fixed-pCO2/guidance
+            # diagnostics while the NaOH/carbonate reaction basis is active.
             equilibrium_ph_value = float(solution_ph_value)
         elif (
             equilibrium_ph_value is None
@@ -41445,6 +41447,15 @@ def _regression_test_naoh_pitzer_analysis_calculated_ph_stays_trajectory_owned()
             )
         if str(row.get("ph_source") or "").strip() != "planning_model":
             raise AssertionError("NaOH-Pitzer Analysis should retain native model provenance.")
+        fractions = row.get("fractions") or {}
+        if str(row.get("fractions_source") or "").strip() != "carbonate_ledger":
+            raise AssertionError(
+                "NaOH-Pitzer Analysis should keep carbonate ledger species ownership."
+            )
+        if _safe_float(fractions.get("H2CO3"), 0.0) > 1e-9:
+            raise AssertionError(
+                "NaOH-Pitzer Analysis must not classify basic carbonate inventory as carbonic acid."
+            )
 
 
 def _regression_test_carbonate_planning_uses_basic_ledger_not_acidic_guidance() -> None:
@@ -91856,16 +91867,25 @@ def _normalize_gas_name(value: Optional[str]) -> str:
 BASE_GAS_PRESETS = OrderedDict(
     [
         ("Custom", None),
-        ("NaHCO₃ (a=1.390, b=0.0391)", {"a": 1.390, "b": 0.0391, "formula": "NaHCO₃"}),
-        ("CO₂ (a=3.592, b=0.0427)", {"a": 3.592, "b": 0.0427, "formula": "CO₂"}),
-        ("CO (a=1.4514, b=0.03948)", {"a": 1.4514, "b": 0.03948, "formula": "CO"}),
+        (
+            "NaHCO₃ (a=1.390, b=0.0391)",
+            {"a": 1.390, "b": 0.0391, "formula": "NaHCO₃", "molar_mass": 84.0066},
+        ),
+        (
+            "CO₂ (a=3.592, b=0.0427)",
+            {"a": 3.592, "b": 0.0427, "formula": "CO₂", "molar_mass": SOL_MW_CO2},
+        ),
+        (
+            "CO (a=1.4514, b=0.03948)",
+            {"a": 1.4514, "b": 0.03948, "formula": "CO", "molar_mass": 28.0101},
+        ),
         (
             "Hydrogen (a=0.24186, b=0.02651)",
-            {"a": 0.24186, "b": 0.02651, "formula": "H₂"},
+            {"a": 0.24186, "b": 0.02651, "formula": "H₂", "molar_mass": 2.01588},
         ),
         (
             "Ethanol (a=12.38416, b=0.08710)",
-            {"a": 12.38416, "b": 0.08710, "formula": "C₂H₆O"},
+            {"a": 12.38416, "b": 0.08710, "formula": "C₂H₆O", "molar_mass": 46.06844},
         ),
     ]
 )
@@ -91927,6 +91947,52 @@ def _normalize_gas_preset_entry(name, data):
     if molar_val is not None and math.isfinite(molar_val) and molar_val > 0.0:
         entry["molar_mass"] = float(molar_val)
     return entry
+
+
+def _resolve_cycle_gas_molar_mass(
+    requested_mass: Any,
+    *,
+    gas_preset_label: Any,
+    fallback_mass: float = DEFAULT_GAS_MOLAR_MASS,
+) -> float:
+    """Return the molecular weight used for cycle gas-mass conversion.
+
+    Purpose:
+        Resolve one valid gas molecular weight for Cycle Analysis transfer rows
+        and summary mass calculations.
+    Why:
+        Selecting the built-in CO₂ VDW preset must not retain a molecular weight
+        from a previously selected reagent, because the pressure-derived moles
+        are specifically CO₂ moles in that workflow.
+    Inputs:
+        requested_mass: Active UI/context molecular weight in g/mol.
+        gas_preset_label: Selected VDW preset name.
+        fallback_mass: Positive default molecular weight in g/mol.
+    Returns:
+        A finite positive molecular weight in g/mol; the built-in CO₂ preset
+        always returns ``SOL_MW_CO2``.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid values fall back safely and never raise.
+    """
+    preset = GAS_PRESETS.get(str(gas_preset_label or ""))
+    formula = preset.get("formula") if isinstance(preset, Mapping) else ""
+    if _normalize_gas_name(formula) == "co2":
+        return float(SOL_MW_CO2)
+    try:
+        mass = float(requested_mass)
+    except (TypeError, ValueError):
+        mass = float("nan")
+    if math.isfinite(mass) and mass > 0.0:
+        return mass
+    try:
+        fallback = float(fallback_mass)
+    except (TypeError, ValueError):
+        fallback = float(DEFAULT_GAS_MOLAR_MASS)
+    if math.isfinite(fallback) and fallback > 0.0:
+        return fallback
+    return float(DEFAULT_GAS_MOLAR_MASS)
 
 
 # Load custom gas presets after helper utilities are defined
@@ -92837,8 +92903,26 @@ def resolve_cycle_summary_inputs(
     globals_fallback: Mapping[str, Any],
     context: Optional[Dict[str, Any]] = None,
 ) -> ResolvedCycleSummaryInputs:
-    """Resolve cycle summary inputs.
-    Used to compute cycle summary inputs before rendering or export."""
+    """Resolve validated Cycle Analysis inputs for summary rendering and export.
+
+    Purpose:
+        Combine persisted settings and live cycle context into one immutable
+        summary-input payload.
+    Why:
+        Every cycle summary must use the same gas model and molecular-weight
+        basis, including canonical CO₂ mass conversion for the CO₂ VDW preset.
+    Inputs:
+        settings: Persisted application settings mapping.
+        globals_fallback: Legacy runtime values used when settings are absent.
+        context: Optional prepared cycle metrics and selection metadata.
+    Returns:
+        A ``ResolvedCycleSummaryInputs`` instance with finite safe defaults.
+    Side Effects:
+        None.
+    Exceptions:
+        Invalid numeric values are normalized to safe defaults; no exceptions
+        are raised for malformed settings.
+    """
     ctx = context or {}
 
     def _float_or_none(value):
@@ -92937,6 +93021,10 @@ def resolve_cycle_summary_inputs(
         gas_molar_mass = _float_or_none(override_mw)
     if gas_molar_mass is None:
         gas_molar_mass = _float_or_none(preset_mw)
+    gas_molar_mass = _resolve_cycle_gas_molar_mass(
+        gas_molar_mass,
+        gas_preset_label=vdw_gas_label,
+    )
 
     mw_override_active = False
     if _float_or_none(override_mw) is not None:
@@ -95543,12 +95631,10 @@ def analyze_pressure_cycles(
         "gas_molar_mass",
         settings.get("vdw_gas_molar_mass", DEFAULT_GAS_MOLAR_MASS),
     )
-    try:
-        gas_molar_mass = float(gas_molar_mass)
-        if not math.isfinite(gas_molar_mass) or gas_molar_mass <= 0:
-            raise ValueError
-    except Exception:
-        gas_molar_mass = DEFAULT_GAS_MOLAR_MASS
+    gas_molar_mass = _resolve_cycle_gas_molar_mass(
+        gas_molar_mass,
+        gas_preset_label=settings.get("vdw_gas"),
+    )
 
     summary_context = {
         "selection_mode": "Auto",
@@ -164262,12 +164348,10 @@ class UnifiedApp(tk.Tk):
                 globals().get("gas_molar_mass", DEFAULT_GAS_MOLAR_MASS),
             ),
         )
-        try:
-            gas_molar_mass = float(gas_molar_mass)
-            if not math.isfinite(gas_molar_mass) or gas_molar_mass <= 0:
-                raise ValueError
-        except Exception:
-            gas_molar_mass = DEFAULT_GAS_MOLAR_MASS
+        gas_molar_mass = _resolve_cycle_gas_molar_mass(
+            gas_molar_mass,
+            gas_preset_label=settings.get("vdw_gas"),
+        )
         try:
             x_all = np.asarray(xv, dtype=float)
         except Exception:
@@ -170241,8 +170325,24 @@ class UnifiedApp(tk.Tk):
         self._update_apply_vdw_indicator("pending")
 
     def _on_gas_selected(self, *_):
-        """Handle gas selected.
-        Used as an event callback for gas selected."""
+        """Synchronize editable gas fields with the selected VDW preset.
+
+        Purpose:
+            Populate the VDW constants and molecular-weight field for a chosen
+            gas preset.
+        Why:
+            A built-in CO₂ selection must reset an inherited non-CO₂ molecular
+            weight before cycle moles are converted to grams.
+        Inputs:
+            *_: Unused Tk trace-event arguments.
+        Returns:
+            None.
+        Side Effects:
+            Updates ``v_a``, ``v_b``, and, when supplied by the preset,
+            ``v_gas_molar_mass``.
+        Exceptions:
+            Invalid optional override values leave the existing field unchanged.
+        """
 
         choice = self.v_gas.get()
 
@@ -170257,10 +170357,15 @@ class UnifiedApp(tk.Tk):
             self.v_b.set(preset["b"])
 
         override = self._gas_preset_overrides.get(choice) or {}
-        molar = override.get("molar_mass")
-
-        if molar is None and preset is not None:
-            molar = preset.get("molar_mass")
+        formula = preset.get("formula") if isinstance(preset, Mapping) else ""
+        # CO₂ is a fixed species in Cycle Analysis; use its canonical mass instead
+        # of preserving a stale per-preset override from another gas selection.
+        if _normalize_gas_name(formula) == "co2":
+            molar = SOL_MW_CO2
+        else:
+            molar = override.get("molar_mass")
+            if molar is None and preset is not None:
+                molar = preset.get("molar_mass")
 
         try:
             molar_val = float(molar)
@@ -175915,6 +176020,233 @@ class UnifiedApp(tk.Tk):
         except Exception:
             return ""
 
+    def _workflow_comparison_state(self) -> Dict[str, Any]:
+        """Return the normalized persisted Planning/Analysis comparison state.
+
+        Purpose:
+            Keep the approved Planning baseline, real Analysis data, and optional
+            replay result in one workflow-scoped state container.
+        Why:
+            The two workflows must never infer one trace by overwriting or
+            relabeling the other workflow's cycle data.
+        Inputs:
+            None.
+        Outputs:
+            Dict containing the schema version plus baseline, real, and replay
+            mappings when available.
+        Side Effects:
+            Normalizes the in-memory settings mapping for later persistence.
+        Exceptions:
+            Invalid legacy settings are replaced with a safe empty state.
+        """
+        settings_ref = self._settings_dict()
+        raw = settings_ref.get(SOL_WORKFLOW_COMPARISON_STATE_SETTINGS_KEY)
+        state = dict(raw) if isinstance(raw, Mapping) else {}
+        if state.get("version") != SOL_WORKFLOW_COMPARISON_STATE_VERSION:
+            state = {"version": SOL_WORKFLOW_COMPARISON_STATE_VERSION}
+        for key in ("planning_baseline", "real_cycles", "replay"):
+            if not isinstance(state.get(key), Mapping):
+                state[key] = None
+        settings_ref[SOL_WORKFLOW_COMPARISON_STATE_SETTINGS_KEY] = state
+        return state
+
+    def _save_workflow_comparison_state(self, state: Mapping[str, Any]) -> None:
+        """Persist a sanitized workflow comparison state without mutable UI objects.
+
+        Purpose:
+            Save trace identity/provenance across profile restores.
+        Why:
+            A completed plan remains an approval baseline after tab changes and
+            application restarts, while non-serializable solver objects do not.
+        Inputs:
+            state: Comparison state mapping to normalize and store.
+        Outputs:
+            None.
+        Side Effects:
+            Updates settings and schedules its normal deferred save.
+        Exceptions:
+            Save scheduling errors are ignored to preserve the completed run.
+        """
+        normalized = self._sanitize_value_for_settings(dict(state))
+        self._settings_dict()[SOL_WORKFLOW_COMPARISON_STATE_SETTINGS_KEY] = normalized
+        try:
+            self._schedule_save_settings()
+        except Exception:
+            pass
+
+    def _publish_planning_comparison_baseline(
+        self,
+        *,
+        form_data: Mapping[str, Any],
+        cycle_payload: Mapping[str, Any],
+        cycle_result: Mapping[str, Any],
+    ) -> None:
+        """Freeze a successful Planning simulation as the Analysis comparison baseline.
+
+        Purpose:
+            Capture one immutable approved plan only after its cycle solve succeeds.
+        Why:
+            Analysis must compare real identified cycles to the exact plan that was
+            run, rather than to current editable Planning controls.
+        Inputs:
+            form_data: Planning input snapshot used by the solver.
+            cycle_payload: Planning cycle payload used by the solver.
+            cycle_result: Completed Planning result containing its timeline.
+        Outputs:
+            None.
+        Side Effects:
+            Replaces the saved Planning baseline and clears any stale replay.
+        Exceptions:
+            Invalid/missing timeline data does not replace an existing baseline.
+        """
+        timeline = [
+            dict(row) for row in (cycle_result.get("timeline") or [])
+            if isinstance(row, Mapping)
+        ]
+        if not timeline:
+            return
+        state = self._workflow_comparison_state()
+        inputs = dict(form_data)
+        state["planning_baseline"] = {
+            "trace_id": "planning_baseline",
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "workflow_key": "Planning",
+            "input_signature": self._analysis_signature_fingerprint(inputs),
+            "inputs": inputs,
+            "cycle_payload": dict(cycle_payload),
+            "timeline": timeline,
+        }
+        # A replay only applies to the previous baseline, so it cannot survive a
+        # newly approved plan.
+        state["replay"] = None
+        self._save_workflow_comparison_state(state)
+
+    def _comparison_trace_rows(
+        self,
+        timeline_rows: Sequence[Mapping[str, Any]],
+        *,
+        trace_id: str,
+        real_ph_precedence: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Normalize one trace into stable cycle/comparison rows.
+
+        Purpose:
+            Give Planning, real Analysis, and replay timelines one common schema.
+        Why:
+            Alignment and explorer rendering must preserve trace provenance instead
+            of depending on workflow-specific aliases.
+        Inputs:
+            timeline_rows: Source cycle rows.
+            trace_id: Stable trace identifier.
+            real_ph_precedence: Use observed, calibrated, then calculated pH.
+        Outputs:
+            List of normalized trace rows ordered by cycle.
+        Side Effects:
+            None.
+        Exceptions:
+            Invalid rows are skipped and missing values remain None.
+        """
+        rows: List[Dict[str, Any]] = []
+        cumulative_g = 0.0
+        for index, raw in enumerate(timeline_rows or (), start=1):
+            if not isinstance(raw, Mapping):
+                continue
+            row = dict(raw)
+            cycle_g = _safe_float(row.get("co2_mass_g", row.get("co2_added_mass_g")))
+            cumulative = _safe_float(
+                row.get("cumulative_co2_added_mass_g", row.get("co2_g"))
+            )
+            if cumulative is None:
+                cumulative_g += max(0.0, float(cycle_g or 0.0))
+                cumulative = cumulative_g
+            else:
+                cumulative_g = float(cumulative)
+            channels = _analysis_ph_channels_from_row(row)
+            calculated = _safe_float(channels.get("calculated_ph"))
+            calibrated = _safe_float(channels.get("calibrated_estimated_ph"))
+            observed = _safe_float(channels.get("actual_observed_ph"))
+            ph = calculated
+            source = "calculated"
+            if real_ph_precedence:
+                if observed is not None:
+                    ph, source = observed, "observed"
+                elif calibrated is not None:
+                    ph, source = calibrated, "calibrated"
+            rows.append({
+                "trace_id": trace_id,
+                "cycle_id": _safe_rust_int(row.get("cycle_id"), index),
+                "co2_cycle_g": cycle_g,
+                "cumulative_co2_g": cumulative,
+                "ph": ph,
+                "calculated_ph": calculated,
+                "calibrated_estimated_ph": calibrated,
+                "actual_observed_ph": observed,
+                "headline_ph_source": source,
+                "peak_pressure_psi": _safe_float(row.get("peak_pressure_psi")),
+                "trough_pressure_psi": _safe_float(row.get("trough_pressure_psi")),
+                "co2_consumed_g": _safe_float(row.get("co2_consumed_mass_g")),
+                "duration_x": _safe_float(row.get("duration_x")),
+                "temperature_c": _safe_float(row.get("temperature_c")),
+                "raw": row,
+            })
+        return rows
+
+    def _build_replay_trace_from_real_cycles(
+        self,
+        baseline: Mapping[str, Any],
+        actual_rows: Sequence[Mapping[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Replay frozen Planning chemistry over real cycle conditions.
+
+        Purpose:
+            Produce a diagnostic simulation trace whose cycle schedule comes from
+            real data but whose chemistry basis remains the approved plan.
+        Why:
+            Operators need to distinguish process-condition variance from a change
+            in the planned chemical target.
+        Inputs:
+            baseline: Frozen Planning baseline mapping.
+            actual_rows: Normalized real-cycle rows.
+        Outputs:
+            List of replay rows including per-field real/plan provenance.
+        Side Effects:
+            None.
+        Exceptions:
+            Missing baseline data produces an empty trace.
+        """
+        plan_rows = self._comparison_trace_rows(
+            baseline.get("timeline") or [], trace_id="planning_baseline"
+        )
+        if not plan_rows or not actual_rows:
+            return []
+        plan_by_cycle = {int(row["cycle_id"]): row for row in plan_rows}
+        plan_x = [float(row["cumulative_co2_g"]) for row in plan_rows if row.get("cumulative_co2_g") is not None]
+        plan_ph = [row.get("calculated_ph", row.get("ph")) for row in plan_rows if row.get("cumulative_co2_g") is not None]
+        replay: List[Dict[str, Any]] = []
+        for index, actual in enumerate(actual_rows, start=1):
+            cycle_id = int(actual.get("cycle_id") or index)
+            planned = plan_by_cycle.get(cycle_id, plan_rows[min(index - 1, len(plan_rows) - 1)])
+            provenance: Dict[str, str] = {}
+            merged: Dict[str, Any] = {"trace_id": "replay_real_conditions", "cycle_id": cycle_id}
+            for field in ("co2_cycle_g", "cumulative_co2_g", "peak_pressure_psi", "trough_pressure_psi", "co2_consumed_g", "duration_x", "temperature_c"):
+                value = _safe_float(actual.get(field))
+                if value is not None:
+                    merged[field] = value
+                    provenance[field] = "real"
+                else:
+                    merged[field] = planned.get(field)
+                    provenance[field] = "planning_fallback"
+            mapped = _map_current_state_to_planning_curve(
+                _safe_float(merged.get("cumulative_co2_g")), plan_x, plan_ph
+            )
+            merged["ph"] = mapped[1] if mapped[1] is not None else planned.get("ph")
+            merged["calculated_ph"] = merged["ph"]
+            merged["headline_ph_source"] = "replay_calculated"
+            merged["input_provenance"] = provenance
+            merged["fallback_fields"] = [key for key, source in provenance.items() if source == "planning_fallback"]
+            replay.append(merged)
+        return replay
+
     def _analysis_input_signature_payload(
         self,
         form_snapshot: Optional[Mapping[str, Any]] = None,
@@ -177617,6 +177949,69 @@ class UnifiedApp(tk.Tk):
                 continue
         self._planning_input_cache = cache
         self._planning_inputs_persisted = True
+
+    def _capture_workflow_input_state(self, workflow_key: str) -> None:
+        """Capture editable values for one workflow before a tab transition.
+
+        Purpose:
+            Preserve separate Planning and Analysis drafts despite their shared Tk
+            variable registry.
+        Why:
+            Entering one workflow must not silently replace its values with values
+            last entered in the other workflow.
+        Inputs:
+            workflow_key: Workflow tab currently being left.
+        Outputs:
+            None.
+        Side Effects:
+            Stores string values in an in-memory workflow-state cache.
+        Exceptions:
+            Unreadable variables are skipped.
+        """
+        if workflow_key not in {"Planning", "Analysis"}:
+            return
+        states = getattr(self, "_workflow_input_states", {})
+        if not isinstance(states, dict):
+            states = {}
+        states[workflow_key] = {
+            key: var.get()
+            for key, var in getattr(self, "_solubility_vars", {}).items()
+            if var is not None
+            and hasattr(var, "get")
+            and not isinstance(var, tk.BooleanVar)
+        }
+        self._workflow_input_states = states
+
+    def _restore_workflow_input_state(self, workflow_key: str) -> None:
+        """Restore the saved draft for a selected Planning or Analysis workflow.
+
+        Purpose:
+            Reapply a workflow's own editable values after the shared input UI
+            changes tabs.
+        Why:
+            This is the counterpart to capture and prevents accidental value
+            leakage between Planning and Analysis modes.
+        Inputs:
+            workflow_key: Workflow tab being entered.
+        Outputs:
+            None.
+        Side Effects:
+            Mutates compatible Tk StringVars for the selected workflow only.
+        Exceptions:
+            Missing state or unavailable widgets is a safe no-op.
+        """
+        states = getattr(self, "_workflow_input_states", {})
+        values = states.get(workflow_key) if isinstance(states, Mapping) else None
+        if not isinstance(values, Mapping):
+            return
+        for key, value in values.items():
+            var = getattr(self, "_solubility_vars", {}).get(key)
+            if var is None or isinstance(var, tk.BooleanVar):
+                continue
+            try:
+                var.set(str(value))
+            except Exception:
+                continue
 
     def _restore_planning_inputs(self) -> None:
         """Restore cached Planning inputs after refresh.
@@ -180242,6 +180637,19 @@ class UnifiedApp(tk.Tk):
             else:
                 warnings_list = []
             row_channels = _analysis_ph_channels_from_row(row)
+            calculated_channel_ph = _safe_float(row_channels.get("calculated_ph"))
+            calibrated_channel_ph = _safe_float(
+                row_channels.get("calibrated_estimated_ph")
+            )
+            observed_channel_ph = _safe_float(row_channels.get("actual_observed_ph"))
+            headline_ph = observed_channel_ph
+            headline_source = "observed"
+            if headline_ph is None:
+                headline_ph = calibrated_channel_ph
+                headline_source = "calibrated"
+            if headline_ph is None:
+                headline_ph = calculated_channel_ph
+                headline_source = "calculated"
             actual_cycle_series.append(
                 {
                     "cycle_id": cycle_id,
@@ -180263,13 +180671,12 @@ class UnifiedApp(tk.Tk):
                     "corrected_cumulative_co2_g": _safe_float(
                         row.get("corrected_cumulative_co2_g")
                     ),
-                    "ph": _safe_float(row_channels.get("calculated_ph")),
-                    "corrected_ph": _safe_float(row_channels.get("calibrated_estimated_ph")),
-                    "calculated_ph": _safe_float(row_channels.get("calculated_ph")),
-                    "calibrated_estimated_ph": _safe_float(
-                        row_channels.get("calibrated_estimated_ph")
-                    ),
-                    "actual_observed_ph": _safe_float(row_channels.get("actual_observed_ph")),
+                    "ph": headline_ph,
+                    "headline_ph_source": headline_source,
+                    "corrected_ph": calibrated_channel_ph,
+                    "calculated_ph": calculated_channel_ph,
+                    "calibrated_estimated_ph": calibrated_channel_ph,
+                    "actual_observed_ph": observed_channel_ph,
                     "fractions": {
                         "H2CO3": _safe_float(fractions_raw.get("H2CO3"), 0.0),
                         "HCO3-": _safe_float(fractions_raw.get("HCO3-"), 0.0),
@@ -180309,7 +180716,11 @@ class UnifiedApp(tk.Tk):
         reference_trace_source = str(
             resolved_form_data.get("_analysis_reference_trace_source") or "unavailable"
         ).strip()
-        if reference_trace_source not in {"analysis_cycle", "planning_fallback"}:
+        if reference_trace_source not in {
+            "planning_baseline",
+            "analysis_only_fallback",
+            "legacy_planning_fallback",
+        }:
             reference_trace_source = "unavailable"
         analysis_last_action = str(
             resolved_form_data.get("_analysis_last_action")
@@ -180377,12 +180788,35 @@ class UnifiedApp(tk.Tk):
             ),
             "planning_cycle_co2_g": resolved_form_data.get("planning_cycle_co2_g"),
         }
-        reference_cycle_series = self._build_analysis_reference_series(
-            actual_cycle_series,
-            target_ph=reaction_target_ph,
-            ph_model=ph_model,
-            planning_context=planning_context,
-            initial_naoh_mol=initial_naoh_mol,
+        comparison_state_getter = getattr(self, "_workflow_comparison_state", None)
+        comparison_state = (
+            comparison_state_getter() if callable(comparison_state_getter) else {}
+        )
+        baseline = comparison_state.get("planning_baseline")
+        reference_cycle_series = (
+            self._comparison_trace_rows(
+                baseline.get("timeline") or [], trace_id="planning_baseline"
+            )
+            if isinstance(baseline, Mapping)
+            and callable(getattr(self, "_comparison_trace_rows", None))
+            else []
+        )
+        if not reference_cycle_series:
+            # Retain a clearly labeled Analysis-only estimate for legacy datasets,
+            # but never call it the completed Planning baseline.
+            reference_cycle_series = self._build_analysis_reference_series(
+                actual_cycle_series,
+                target_ph=reaction_target_ph,
+                ph_model=ph_model,
+                planning_context=planning_context,
+                initial_naoh_mol=initial_naoh_mol,
+            )
+            reference_trace_source = "analysis_only_fallback"
+        replay_builder = getattr(self, "_build_replay_trace_from_real_cycles", None)
+        replay_cycle_series = (
+            replay_builder(baseline, actual_cycle_series)
+            if isinstance(baseline, Mapping) and callable(replay_builder)
+            else []
         )
         use_rust = False
         rust_mode = _current_rust_backend_mode()
@@ -180439,6 +180873,23 @@ class UnifiedApp(tk.Tk):
         comparison_series = [
             dict(row) for row in (core_payload.get("comparison_series") or []) if isinstance(row, Mapping)
         ]
+        replay_by_cycle = {
+            int(row.get("cycle_id") or 0): row for row in replay_cycle_series
+            if _safe_rust_int(row.get("cycle_id"), 0) > 0
+        }
+        for row in comparison_series:
+            replay = replay_by_cycle.get(_safe_rust_int(row.get("cycle_id"), 0))
+            if replay is None:
+                continue
+            row["replay_ph"] = replay.get("ph")
+            row["replay_delta_ph"] = (
+                _safe_float(row.get("actual_ph")) - _safe_float(replay.get("ph"))
+                if _safe_float(row.get("actual_ph")) is not None
+                and _safe_float(replay.get("ph")) is not None
+                else None
+            )
+            row["replay_input_provenance"] = dict(replay.get("input_provenance") or {})
+            row["replay_fallback_fields"] = list(replay.get("fallback_fields") or [])
         summary = (
             dict(core_payload.get("summary"))
             if isinstance(core_payload.get("summary"), Mapping)
@@ -181011,6 +181462,7 @@ class UnifiedApp(tk.Tk):
         return {
             "actual_cycle_series": actual_cycle_series,
             "reference_cycle_series": reference_cycle_series,
+            "replay_cycle_series": replay_cycle_series,
             "comparison_series": comparison_series,
             "pressure_context_series": pressure_context_series,
             "summary": summary,
@@ -181493,6 +181945,7 @@ class UnifiedApp(tk.Tk):
         actual_rows = dashboard_data.get("actual_cycle_series") or []
         reference_rows = dashboard_data.get("reference_cycle_series") or []
         comparisons = dashboard_data.get("comparison_series") or []
+        replay_rows = dashboard_data.get("replay_cycle_series") or []
         summary = dashboard_data.get("summary") or {}
         selected_cycle_id = self._analysis_dashboard_selected_cycle_id()
         self._sync_sol_cycle_tree_selection(selected_cycle_id)
@@ -181524,6 +181977,14 @@ class UnifiedApp(tk.Tk):
             selected_rows.get("selected_comparison")
             if isinstance(selected_rows.get("selected_comparison"), Mapping)
             else None
+        )
+        selected_replay = next(
+            (
+                row for row in replay_rows
+                if isinstance(row, Mapping)
+                and _safe_rust_int(row.get("cycle_id"), -1) == selected_cycle_id
+            ),
+            None,
         )
         if selected_actual is None:
             self._populate_treeview(tree, [], getattr(self, "_sol_cycle_comparison_columns", ()))
@@ -181592,6 +182053,7 @@ class UnifiedApp(tk.Tk):
             if selected_comparison is not None
             else None
         )
+        replay_ph = _safe_float(selected_replay.get("ph")) if selected_replay else None
         ph_primary_value = actual_ph
         ph_primary_note = "Actual observed anchor"
         if ph_primary_value is None and calibrated_ph is not None:
@@ -181615,8 +182077,9 @@ class UnifiedApp(tk.Tk):
                 "metric": "pH",
                 "primary": _fmt(ph_primary_value, ".2f"),
                 "actual": _fmt(actual_ph, ".2f"),
-                "plan_cycle": _fmt(calculated_ph, ".2f"),
+                "plan_cycle": _fmt(plan_cycle_ph, ".2f"),
                 "plan_co2_diag": _fmt(plan_co2_ph, ".2f"),
+                "replay": _fmt(replay_ph, ".2f"),
                 "delta_notes": (
                     f"{ph_primary_note}; "
                     f"cycle delta {_fmt(_safe_float(selected_comparison.get('delta_cycle_ph')), '+.3f')} | "
@@ -181634,6 +182097,7 @@ class UnifiedApp(tk.Tk):
                     ".2f",
                 ),
                 "plan_co2_diag": _fmt(co2_hco3, ".2f"),
+                "replay": "--",
                 "delta_notes": (
                     f"{hco3_primary_note}; "
                     "actual-primary "
@@ -181652,6 +182116,7 @@ class UnifiedApp(tk.Tk):
                     ".2f",
                 ),
                 "plan_co2_diag": _fmt(co2_co3, ".2f"),
+                "replay": "--",
                 "delta_notes": (
                     f"{co3_primary_note}; "
                     "actual-primary "
@@ -181674,6 +182139,7 @@ class UnifiedApp(tk.Tk):
                     ".2f",
                 ),
                 "plan_co2_diag": "--",
+                "replay": _fmt(_safe_float(selected_replay.get("co2_cycle_g")) if selected_replay else None, ".2f"),
                 "delta_notes": (
                     _fmt(
                         _safe_float(selected_actual.get("co2_cycle_g"))
@@ -181707,6 +182173,12 @@ class UnifiedApp(tk.Tk):
                 ),
                 "plan_co2_diag": _fmt(
                     _safe_float(selected_actual.get("cumulative_co2_g")), ".2f"
+                ),
+                "replay": _fmt(
+                    _safe_float(selected_replay.get("cumulative_co2_g"))
+                    if selected_replay
+                    else None,
+                    ".2f",
                 ),
                 "delta_notes": (
                     _fmt(
@@ -190474,6 +190946,11 @@ class UnifiedApp(tk.Tk):
             """Handle workflow tab changed.
             Used as an event callback for workflow tab changed."""
             workflow_key = self._current_solubility_workflow()
+            previous_workflow = getattr(self, "_active_sol_workflow_input_state", None)
+            if previous_workflow and previous_workflow != workflow_key:
+                self._capture_workflow_input_state(previous_workflow)
+                self._restore_workflow_input_state(workflow_key)
+            self._active_sol_workflow_input_state = workflow_key
             settings["sol_last_workflow"] = workflow_key
             try:
                 self._schedule_save_settings()
@@ -191667,6 +192144,16 @@ class UnifiedApp(tk.Tk):
             text="Run Analysis",
             command=self._run_analysis_with_selected_options,
         ).grid(row=0, column=1, sticky="w", padx=(0, 6), pady=(4, 2))
+        _ui_button(
+            analysis_action_bar,
+            text="Use Planning Assumptions",
+            command=self._copy_planning_assumptions_to_analysis,
+        ).grid(row=1, column=0, sticky="w", padx=(8, 6), pady=(0, 4))
+        _ui_button(
+            analysis_action_bar,
+            text="Replay Plan on Real Cycles",
+            command=self._replay_planning_on_real_cycles,
+        ).grid(row=1, column=1, sticky="w", padx=(0, 6), pady=(0, 4))
         _ui_checkbutton(
             analysis_action_bar,
             text="Refresh cycle data",
@@ -191980,6 +192467,7 @@ class UnifiedApp(tk.Tk):
             "actual",
             "plan_cycle",
             "plan_co2_diag",
+            "replay",
             "delta_notes",
         )
         comparison_tree_shell = ttk.Frame(cycle_compare_body)
@@ -192000,6 +192488,7 @@ class UnifiedApp(tk.Tk):
             ("actual", "Actual observed (anchor)"),
             ("plan_cycle", "Calculated"),
             ("plan_co2_diag", "Plan (CO2 aligned diag)"),
+            ("replay", "Replay (real conditions)"),
             ("delta_notes", "Delta/notes"),
         ):
             comparison_heading_map[col_id] = heading
@@ -194068,6 +194557,14 @@ class UnifiedApp(tk.Tk):
             target_workflow = workflow_key or workflow
             self._set_cycle_result_for_workflow(target_workflow, result)
             self._set_cycle_payload_for_workflow(target_workflow, payload)
+            if target_workflow == "Planning":
+                # Freeze only the successful worker snapshots; live UI entries may
+                # already contain a user's next draft when this callback arrives.
+                self._publish_planning_comparison_baseline(
+                    form_data=form_data_snapshot,
+                    cycle_payload=payload_snapshot,
+                    cycle_result=result,
+                )
             finalize_state = {"done": False}
 
             def _finalize_success() -> None:
@@ -194365,14 +194862,49 @@ class UnifiedApp(tk.Tk):
         trace: Optional[Dict[str, Any]] = None
         reference_trace_source = "unavailable"
         if form_snapshot.get("workflow_key") == "Analysis":
-            cycle_trace = self._build_analysis_reference_trace_from_timeline(
-                timeline,
-                form_data=form_snapshot,
+            comparison_state_getter = getattr(self, "_workflow_comparison_state", None)
+            comparison_state = (
+                comparison_state_getter()
+                if callable(comparison_state_getter)
+                else {}
             )
-            if isinstance(cycle_trace, Mapping) and (cycle_trace.get("x_co2_g_series") or []):
-                trace = dict(cycle_trace)
-                reference_trace_source = "analysis_cycle"
+            baseline = comparison_state.get("planning_baseline")
+            trace_row_builder = getattr(self, "_comparison_trace_rows", None)
+            baseline_rows = (
+                trace_row_builder(
+                    baseline.get("timeline") or [], trace_id="planning_baseline"
+                )
+                if isinstance(baseline, Mapping) and callable(trace_row_builder)
+                else []
+            )
+            if baseline_rows:
+                trace = {
+                    "x_co2_g_series": [row.get("cumulative_co2_g") for row in baseline_rows],
+                    "ph_series": [row.get("calculated_ph", row.get("ph")) for row in baseline_rows],
+                    "cumulative_co2_mol_series": [
+                        float(row.get("cumulative_co2_g") or 0.0) / SOL_MW_CO2
+                        for row in baseline_rows
+                    ],
+                    "cycle_co2_mol_series": [
+                        float(row.get("co2_cycle_g") or 0.0) / SOL_MW_CO2
+                        for row in baseline_rows
+                    ],
+                    "final_co2_g": baseline_rows[-1].get("cumulative_co2_g"),
+                    "equivalence_co2_g": None,
+                    "trace_id": "planning_baseline",
+                }
+                reference_trace_source = "planning_baseline"
             else:
+                # Analysis-only progress remains available, but is deliberately
+                # labeled as non-comparable until a Planning baseline exists.
+                cycle_trace = self._build_analysis_reference_trace_from_timeline(
+                    timeline,
+                    form_data=form_snapshot,
+                )
+                if isinstance(cycle_trace, Mapping) and (cycle_trace.get("x_co2_g_series") or []):
+                    trace = dict(cycle_trace)
+                    reference_trace_source = "analysis_only_fallback"
+            if trace is None:
                 try:
                     solver_inputs = self._prepare_solver_inputs(form_snapshot)
                 except Exception as exc:
@@ -194390,11 +194922,11 @@ class UnifiedApp(tk.Tk):
                         planning_trace.get("x_co2_g_series") or []
                     ):
                         trace = dict(planning_trace)
-                        reference_trace_source = "planning_fallback"
+                        reference_trace_source = "legacy_planning_fallback"
                 if not (isinstance(trace, Mapping) and (trace.get("x_co2_g_series") or [])):
                     if planning_warning is None:
                         planning_warning = (
-                            "Unable to generate Analysis cycle-derived or Planning fallback "
+                            "No completed Planning baseline is available and no Analysis-only "
                             "reference curves from current inputs."
                         )
         runtime_payload["analysis_reference_trace_source"] = reference_trace_source
@@ -195274,6 +195806,33 @@ class UnifiedApp(tk.Tk):
         dashboard_payload: Optional[Dict[str, Any]] = None
         if workflow == "Analysis":
             dashboard_payload = self._apply_analysis_runtime_payload(result)
+            real_rows = (
+                dashboard_payload.get("actual_cycle_series")
+                if isinstance(dashboard_payload, Mapping)
+                else None
+            )
+            if isinstance(real_rows, Sequence):
+                comparison_state = self._workflow_comparison_state()
+                comparison_state["real_cycles"] = {
+                    "trace_id": "real_identified_cycles",
+                    "updated_at": datetime.now().isoformat(timespec="seconds"),
+                    "timeline": list(real_rows),
+                }
+                self._save_workflow_comparison_state(comparison_state)
+            replay_rows = (
+                dashboard_payload.get("replay_cycle_series")
+                if isinstance(dashboard_payload, Mapping)
+                else None
+            )
+            if isinstance(replay_rows, Sequence) and replay_rows:
+                comparison_state = self._workflow_comparison_state()
+                comparison_state["replay"] = {
+                    "trace_id": "replay_real_conditions",
+                    "completed_at": datetime.now().isoformat(timespec="seconds"),
+                    "status": "ready",
+                    "timeline": list(replay_rows),
+                }
+                self._save_workflow_comparison_state(comparison_state)
         else:
             self._analysis_reference_trace = None
             self._analysis_overlay_marker = None
@@ -215727,6 +216286,104 @@ class UnifiedApp(tk.Tk):
         """
         self._capture_planning_inputs()
         self._run_solubility_workflow("nahco3_dissolution")
+
+    def _copy_planning_assumptions_to_analysis(self) -> None:
+        """Copy the frozen Planning chemistry basis into editable Analysis inputs.
+
+        Purpose:
+            Give operators an explicit, reversible way to start Analysis from the
+            approved plan rather than silently synchronizing workflow controls.
+        Why:
+            Shared Tk variables previously caused implicit cross-mode mutations.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Updates compatible Analysis input variables and selects Analysis.
+        Exceptions:
+            Missing or legacy Planning baselines leave inputs unchanged.
+        """
+        baseline = self._workflow_comparison_state().get("planning_baseline")
+        inputs = baseline.get("inputs") if isinstance(baseline, Mapping) else None
+        if not isinstance(inputs, Mapping):
+            try:
+                messagebox.showinfo(
+                    "Planning Assumptions",
+                    "Run a Planning scenario before copying its assumptions to Analysis.",
+                )
+            except Exception:
+                pass
+            return
+        key_map = {
+            "mass_naoh_g": "reaction_naoh_mass_g",
+            "solution_volume_l": "reaction_solution_volume_l",
+            "reaction_naoh_mass": "reaction_naoh_mass_g",
+            "reaction_solution_volume": "reaction_solution_volume_l",
+            "temperature_c": "temperature_c",
+            "reaction_target_ph": "reaction_target_ph",
+        }
+        for source_key, target_key in key_map.items():
+            value = inputs.get(source_key)
+            if value is None:
+                continue
+            variable = getattr(self, "_solubility_vars", {}).get(target_key)
+            if variable is None:
+                continue
+            try:
+                variable.set(str(value))
+            except Exception:
+                continue
+        self._select_sol_workflow_tab("Analysis")
+        try:
+            self._schedule_save_settings()
+        except Exception:
+            pass
+
+    def _replay_planning_on_real_cycles(self) -> None:
+        """Request a comparison replay using the frozen plan and real cycle data.
+
+        Purpose:
+            Refresh Analysis with the replay trace that substitutes real cycle
+            conditions into the approved Planning basis.
+        Why:
+            Replay must be a deliberate diagnostic action, never a replacement for
+            the original plan or imported real observations.
+        Inputs:
+            None.
+        Outputs:
+            None.
+        Side Effects:
+            Records replay request metadata and dispatches one Analysis refresh.
+        Exceptions:
+            Missing baseline or real payload produces a user-facing no-op.
+        """
+        state = self._workflow_comparison_state()
+        if not isinstance(state.get("planning_baseline"), Mapping):
+            try:
+                messagebox.showinfo(
+                    "Replay Planning",
+                    "Run a Planning scenario before replaying it on real cycles.",
+                )
+            except Exception:
+                pass
+            return
+        if not isinstance(self._get_cycle_payload_for_workflow("Analysis"), Mapping):
+            try:
+                messagebox.showinfo(
+                    "Replay Planning",
+                    "Import real Cycle Analysis data before running a replay.",
+                )
+            except Exception:
+                pass
+            return
+        state["replay"] = {
+            "trace_id": "replay_real_conditions",
+            "requested_at": datetime.now().isoformat(timespec="seconds"),
+            "status": "requested",
+        }
+        self._save_workflow_comparison_state(state)
+        self._run_analysis_scenario(skip_apply=True, action="run_analysis")
 
     def _run_analysis_scenario(
         self,
@@ -248901,8 +249558,9 @@ class UnifiedApp(tk.Tk):
             Data source and column choices can change independently; this action
             creates one synchronized runtime payload consumed across tabs.
         Args:
-            auto_refresh_axes: When True, compute and apply auto-range axis
-                bounds from the newly prepared series payload.
+            auto_refresh_axes: Legacy caller flag retained for compatibility;
+                axis ranges are only applied by the explicit Refresh Axis Ranges
+                action.
         Returns:
             None.
         Side Effects:
@@ -249094,20 +249752,6 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
-        axis_pad_pct = self._safe_get_var(self.axis_pad_pct, float)
-        axis_auto_flags = self._get_axis_auto_range_flags()
-
-        fallback_ranges = {
-            "x_min": self._safe_get_var(self.min_time, float),
-            "x_max": self._safe_get_var(self.max_time, float),
-            "y_min": self._safe_get_var(self.min_y, float),
-            "y_max": self._safe_get_var(self.max_y, float),
-            "twin_y_min": self._safe_get_var(self.twin_y_min, float),
-            "twin_y_max": self._safe_get_var(self.twin_y_max, float),
-            "deriv_y_min": self._safe_get_var(self.deriv_y_min, float),
-            "deriv_y_max": self._safe_get_var(self.deriv_y_max, float),
-        }
-
         columns_snapshot = dict(self.columns)
         trace_groups_snapshot = self._get_column_trace_groups()
         trace_legend_labels_snapshot = self._get_column_trace_legend_labels()
@@ -249150,7 +249794,6 @@ class UnifiedApp(tk.Tk):
             calculation_trace_snapshot=calculation_trace_snapshot,
             effective_columns_snapshot=effective_columns_snapshot,
             cycle_choice=cycle_temp_choice,
-            auto_flags=axis_auto_flags,
         ):
             """Perform worker.
             Used to keep the workflow logic localized and testable."""
@@ -249351,18 +249994,9 @@ class UnifiedApp(tk.Tk):
             x_series = series_map.get("x")
             payload["data_len"] = int(len(x_series)) if x_series is not None else 0
 
-            ranges = None
-            if auto_refresh_axes:
-                ranges = self._compute_axis_ranges_for_snapshot(
-                    effective_columns_snapshot,
-                    axis_pad_pct,
-                    fallback_ranges,
-                    auto_flags=auto_flags,
-                    series_map=series_map,
-                    trace_groups=trace_group_series,
-                    df_snapshot=df_snapshot,
-                )
-            return payload, ranges
+            # Axis-range calculation is intentionally deferred until the user
+            # explicitly requests it, avoiding needless work and range resets.
+            return payload, None
 
         # Closure captures _apply_columns state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _apply_columns.
         def _on_ok(result):
@@ -249374,9 +250008,7 @@ class UnifiedApp(tk.Tk):
                 y1_none = y1_series is None
                 y1_len = int(len(y1_series)) if y1_series is not None else 0
                 self._debug_series_flow("payload", f"y1_none={y1_none} len={y1_len}")
-            self._on_apply_columns_complete(
-                payload, ranges, auto_refresh_axes, axis_auto_flags
-            )
+            self._on_apply_columns_complete(payload, ranges, auto_refresh_axes)
 
         # Closure captures _apply_columns state for callback wiring, kept nested to scope the handler, and invoked by bindings set in _apply_columns.
         def _on_err(exc):
@@ -249426,15 +250058,19 @@ class UnifiedApp(tk.Tk):
         """Finalize successful Columns-tab apply operations on the UI thread.
 
         Purpose:
-            Commit prepared series payload, axis ranges, and post-apply UI state.
+            Commit prepared series payload and post-apply UI state while retaining
+            all manual axis-range entries.
         Why:
             Column mapping changes drive cycle analysis, plotting, and any
             workflow controls that depend on mapped traces.
         Inputs:
             payload: Prepared series payload from the background apply worker.
-            ranges: Optional axis ranges when auto-refresh is enabled.
-            auto_refresh_axes: Whether axis ranges should be applied immediately.
-            auto_flags: Optional axis auto-range flag overrides.
+            ranges: Deprecated prepared range payload, retained for callback
+                compatibility and intentionally not applied here.
+            auto_refresh_axes: Deprecated request flag, retained for callers;
+                axis ranges are applied only by ``_refresh_axis_ranges``.
+            auto_flags: Deprecated auto-range flag override, retained for
+                callback compatibility.
         Outputs:
             None.
         Side Effects:
@@ -249464,48 +250100,10 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
-        if auto_refresh_axes:
-            if not isinstance(ranges, dict):
-
-                self._on_apply_columns_failed(
-                    RuntimeError("Column selection did not return axis ranges.")
-                )
-
-                return
-
-            flags = (
-                _sanitize_axis_auto_range_settings(auto_flags)
-                if auto_flags is not None
-                else self._get_axis_auto_range_flags()
-            )
-
-            try:
-
-                if flags.get("time", True):
-                    self.min_time.set(ranges["x_min"])
-
-                    self.max_time.set(ranges["x_max"])
-
-                if flags.get("pressure", True):
-                    self.min_y.set(ranges["y_min"])
-
-                    self.max_y.set(ranges["y_max"])
-
-                if flags.get("temperature", True):
-                    self.twin_y_min.set(ranges["twin_y_min"])
-
-                    self.twin_y_max.set(ranges["twin_y_max"])
-
-                if flags.get("derivative", True):
-                    self.deriv_y_min.set(ranges["deriv_y_min"])
-
-                    self.deriv_y_max.set(ranges["deriv_y_max"])
-
-            except Exception as exc:
-
-                self._on_apply_columns_failed(exc)
-
-                return
+        # Range payloads are deliberately ignored here.  Re-applying columns or
+        # redrawing a combined plot must not overwrite a manually edited axis;
+        # the explicit Refresh Axis Ranges button remains the sole apply action.
+        _ = ranges, auto_refresh_axes, auto_flags
 
         self._columns_applied = True
         try:

@@ -709,6 +709,8 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
 6. Use the sticky **Analysis Workflow Actions** bar (top of Advanced Speciation outputs) for:
    - **Import from Cycle Analysis**
    - **Run Analysis**
+   - **Use Planning Assumptions** to explicitly copy the frozen Planning chemistry basis into editable Analysis fields; tab changes never copy values implicitly.
+   - **Replay Plan on Real Cycles** to retain the original approved plan while replaying its chemistry against real pressure, uptake, consumption, duration, and temperature records. Missing real fields are visibly marked as Planning fallbacks.
    - **Refresh cycle data** (toggle)
    - **Relearn anchors** (toggle)
    - **Use learned anchors/history** (toggle)
@@ -719,7 +721,9 @@ Perform chemistry-driven analyses including cycle-to-speciation projections, pla
      - **Relearn anchors** recalibrates/retrains from current measured pH anchors.
      - **Use learned anchors/history** includes compatible global anchors and prior history.
      - **Use ML pH** applies the guarded ML-corrected pH channel when available.
-     - corrected pH is constrained to non-increasing cycle order so additional CO2 dosing cannot create an unrealistic upward pH reversal.
+    - corrected pH is constrained to non-increasing cycle order so additional CO2 dosing cannot create an unrealistic upward pH reversal.
+    - a completed Planning run is the immutable comparison baseline until Planning is run again. The cycle explorer compares **Planning baseline**, **real identified cycles**, and **replay on real conditions** by cycle number and cumulative CO2.
+    - headline real-cycle pH uses measured, then calibrated, then calculated pH with its source shown. NaOH-Pitzer Analysis retains the finite NaOH/carbonate ledger for pH and carbon species while the batch remains basic; fixed-pCO2 carbonic-acid output is diagnostic only.
 7. Verify anchored outputs:
    - measured pH marker appears on cycle timeline plot
    - equilibrium pH trajectory appears alongside corrected/planning trajectories
