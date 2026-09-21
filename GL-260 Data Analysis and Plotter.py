@@ -62388,9 +62388,13 @@ def _regression_test_analysis_sticky_action_bar_wiring() -> None:
         "command=self._send_cycle_to_solubility",
         'text="Run Analysis"',
         "command=self._run_analysis_with_selected_options",
-        'text="Refresh cycle data"',
-        'text="Relearn anchors"',
-        'text="Use learned anchors/history"',
+        'text="Use Planning Assumptions"',
+        "command=self._copy_planning_assumptions_to_analysis",
+        'text="Replay Plan on Real Cycles"',
+        "command=self._replay_planning_on_real_cycles",
+        'text="Refresh"',
+        'text="Relearn"',
+        'text="Learned anchors"',
         'text="Use ML pH"',
         'text="Cycle timeline plot title"',
     )
@@ -160130,9 +160134,28 @@ class UnifiedApp(tk.Tk):
             tooltip="Copy the Cycle Analysis Summary text to the clipboard.",
         )
 
+        make_button(
+            manual_frame,
+            text="Generate Reaction Cycle Report (PDF)",
+            command=self._open_cycle_analysis_reaction_report,
+            grid_kwargs={
+                "row": 6,
+                "column": 0,
+                "columnspan": 2,
+                "sticky": "nsew",
+                "padx": scale_pad((0, 0)),
+                "pady": scale_pad((6, 0)),
+            },
+            tooltip=(
+                "Use the cycles identified above as the uptake source, then open "
+                "the same configurable Reaction Cycle PDF report workflow."
+            ),
+            allow_wrap=False,
+        )
+
         tweak_frame = ttk.Labelframe(manual_frame, text="Tweak Nearest Marker")
         tweak_frame.grid(
-            row=6,
+            row=7,
             column=0,
             columnspan=2,
             sticky="ew",
@@ -161616,6 +161639,78 @@ class UnifiedApp(tk.Tk):
                 )
             except Exception:
                 pass
+
+    def _open_cycle_analysis_reaction_report(self) -> None:
+        """Open the shared Reaction Cycle PDF flow for identified Cycle Analysis rows.
+
+        Purpose:
+            Route the current Cycle Analysis transfer payload through the existing
+            Reaction Dashboard calculation and PDF-export workflow.
+        Why:
+            Operators should be able to report the cycles they identified without
+            manually changing tabs or risking export of a stale dashboard run.
+        Args:
+            None.
+        Returns:
+            None.
+        Side Effects:
+            Selects Cycle Analysis as the Reaction Dashboard gas source, refreshes
+            its result cache, and opens the shared PDF configuration dialog.
+        Exceptions:
+            Missing, empty, or stale Cycle Analysis payloads are reported through
+            a user-facing dialog; the report dialog is not opened in those cases.
+        """
+        payload = getattr(self, "_cycle_last_transfer_payload", None)
+        cycle_rows = (
+            list(payload.get("cycle_transfer") or [])
+            if isinstance(payload, Mapping)
+            else []
+        )
+        if not cycle_rows:
+            try:
+                messagebox.showwarning(
+                    "Reaction Cycle Report",
+                    "Identify one or more cycles in Cycle Analysis before generating "
+                    "a Reaction Cycle report.",
+                    parent=self,
+                )
+            except Exception:
+                pass
+            return
+
+        self._reaction_dashboard_import_cycle_payload()
+        result = getattr(self, "_reaction_dashboard_last_result", None)
+        summary = getattr(self, "_reaction_dashboard_visual_summary", None)
+        expected_signature = self._analysis_cycle_signature_from_payload(payload)
+        result_signature = (
+            str(result.get("cycle_payload_signature") or "")
+            if isinstance(result, Mapping)
+            else ""
+        )
+        report_rows = (
+            list(summary.get("cycle_rows") or [])
+            if isinstance(summary, Mapping)
+            else []
+        )
+        if (
+            not isinstance(result, Mapping)
+            or str(result.get("source_mode") or "") != "cycle_payload"
+            or not expected_signature
+            or result_signature != str(expected_signature)
+            or not report_rows
+        ):
+            try:
+                messagebox.showwarning(
+                    "Reaction Cycle Report",
+                    "The Reaction Dashboard could not prepare a report from the "
+                    "current identified cycles. Complete its required reaction inputs "
+                    "and try again.",
+                    parent=self,
+                )
+            except Exception:
+                pass
+            return
+        self._open_reaction_cycle_pdf_export_options()
 
     def _reset_manual_edits(self):
         """Perform reset manual edits.
@@ -164934,8 +165029,12 @@ class UnifiedApp(tk.Tk):
                 "cycle_transfer": cycle_transfer,
                 "cycle_context": cycle_context,
                 "total_drop_psi": result.get("total_drop"),
+                # This payload is produced from measurements selected in Cycle
+                # Analysis; Planning projections must never write this slot.
+                "cycle_payload_origin": "real_identified_cycle_analysis",
             }
         self._cycle_last_transfer_payload = payload
+        self._real_cycle_analysis_payload = payload
 
         self._cycle_ax.clear()
 
@@ -165363,7 +165462,9 @@ class UnifiedApp(tk.Tk):
             "cycle_transfer": [],
             "cycle_context": cycle_context,
             "total_drop_psi": total_drop,
+            "cycle_payload_origin": "real_identified_cycle_analysis",
         }
+        self._real_cycle_analysis_payload = self._cycle_last_transfer_payload
         # Push the summary through the shared callback
 
         cb = globals().get("update_cycle_summary_callback")
@@ -177182,8 +177283,24 @@ class UnifiedApp(tk.Tk):
     def _set_cycle_payload_for_workflow(
         self, workflow_key: str, payload: Optional[Dict[str, Any]]
     ) -> None:
-        """Set cycle payload for workflow.
-        Used to persist cycle payload for workflow into the current state."""
+        """Store one workflow's cycle payload without crossing workflow boundaries.
+
+        Purpose:
+            Keep Planning projections, real Analysis observations, and
+            Reprocessing payloads independently addressable.
+        Why:
+            A shared payload slot can make a Planning projection appear to be
+            measured Cycle Analysis data in a later Analysis run.
+        Inputs:
+            workflow_key: Destination workflow identifier.
+            payload: Cycle-transfer payload or ``None`` to clear the workflow.
+        Outputs:
+            None.
+        Side Effects:
+            Updates the workflow-scoped payload cache and active-view payload.
+        Exceptions:
+            Cache initialization is delegated to ``_cycle_state_for``.
+        """
         self._cycle_state_for(workflow_key)
         self._sol_cycle_payloads[workflow_key] = payload
         if self._current_solubility_workflow() == workflow_key:
@@ -184978,8 +185095,18 @@ class UnifiedApp(tk.Tk):
             text="Run Analysis",
             command=self._run_analysis_with_selected_options,
         ).grid(row=1, column=0, sticky="w", padx=8, pady=(0, 2))
+        _ui_button(
+            panel,
+            text="Use Planning Assumptions",
+            command=self._copy_planning_assumptions_to_analysis,
+        ).grid(row=2, column=0, sticky="w", padx=8, pady=(0, 2))
+        _ui_button(
+            panel,
+            text="Replay Plan on Real Cycles",
+            command=self._replay_planning_on_real_cycles,
+        ).grid(row=3, column=0, sticky="w", padx=8, pady=(0, 2))
         options = ttk.Frame(panel)
-        options.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 2))
+        options.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 2))
         options.grid_columnconfigure(0, weight=1)
         _ui_checkbutton(
             options,
@@ -185006,11 +185133,11 @@ class UnifiedApp(tk.Tk):
             command=self._on_analysis_run_option_changed,
         ).grid(row=3, column=0, sticky="w")
         ttk.Label(panel, text="Cycle timeline plot title").grid(
-            row=3, column=0, sticky="w", padx=8, pady=(2, 2)
+            row=5, column=0, sticky="w", padx=8, pady=(2, 2)
         )
         title_var = self._ensure_cycle_timeline_title_var()
         title_entry = _ui_entry(panel, textvariable=title_var, width=36)
-        title_entry.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 4))
+        title_entry.grid(row=6, column=0, sticky="ew", padx=8, pady=(0, 4))
         self._bind_cycle_timeline_title_commit_handlers(title_entry)
 
     def _build_analysis_dashboard_panel(self, parent: ttk.Frame, *, row: int) -> None:
@@ -192133,7 +192260,9 @@ class UnifiedApp(tk.Tk):
 
         analysis_action_bar = ttk.LabelFrame(inner, text="Analysis Workflow Actions")
         analysis_action_bar.grid(row=5, column=0, sticky="ew", padx=12, pady=(6, 4))
-        analysis_action_bar.grid_columnconfigure(7, weight=1)
+        # This frame is intentionally one row tall in the sticky workflow area;
+        # every operator action must therefore share the visible first row.
+        analysis_action_bar.grid_columnconfigure(9, weight=1)
         _ui_button(
             analysis_action_bar,
             text="Import from Cycle Analysis",
@@ -192148,44 +192277,44 @@ class UnifiedApp(tk.Tk):
             analysis_action_bar,
             text="Use Planning Assumptions",
             command=self._copy_planning_assumptions_to_analysis,
-        ).grid(row=1, column=0, sticky="w", padx=(8, 6), pady=(0, 4))
+        ).grid(row=0, column=2, sticky="w", padx=(0, 6), pady=(4, 2))
         _ui_button(
             analysis_action_bar,
             text="Replay Plan on Real Cycles",
             command=self._replay_planning_on_real_cycles,
-        ).grid(row=1, column=1, sticky="w", padx=(0, 6), pady=(0, 4))
-        _ui_checkbutton(
-            analysis_action_bar,
-            text="Refresh cycle data",
-            variable=self._analysis_refresh_cycle_payload_var,
-            command=self._on_analysis_run_option_changed,
-        ).grid(row=0, column=2, sticky="w", padx=(0, 6), pady=(4, 2))
-        _ui_checkbutton(
-            analysis_action_bar,
-            text="Relearn anchors",
-            variable=self._analysis_relearn_calibration_var,
-            command=self._on_analysis_run_option_changed,
         ).grid(row=0, column=3, sticky="w", padx=(0, 6), pady=(4, 2))
         _ui_checkbutton(
             analysis_action_bar,
-            text="Use learned anchors/history",
-            variable=self._speciation_anchor_learning_enabled_var,
+            text="Refresh",
+            variable=self._analysis_refresh_cycle_payload_var,
             command=self._on_analysis_run_option_changed,
         ).grid(row=0, column=4, sticky="w", padx=(0, 6), pady=(4, 2))
+        _ui_checkbutton(
+            analysis_action_bar,
+            text="Relearn",
+            variable=self._analysis_relearn_calibration_var,
+            command=self._on_analysis_run_option_changed,
+        ).grid(row=0, column=5, sticky="w", padx=(0, 6), pady=(4, 2))
+        _ui_checkbutton(
+            analysis_action_bar,
+            text="Learned anchors",
+            variable=self._speciation_anchor_learning_enabled_var,
+            command=self._on_analysis_run_option_changed,
+        ).grid(row=0, column=6, sticky="w", padx=(0, 6), pady=(4, 2))
         _ui_checkbutton(
             analysis_action_bar,
             text="Use ML pH",
             variable=self._analysis_apply_ml_correction_var,
             command=self._on_analysis_run_option_changed,
-        ).grid(row=0, column=5, sticky="w", padx=(0, 12), pady=(4, 2))
-        ttk.Label(analysis_action_bar, text="Cycle timeline plot title").grid(
-            row=0, column=6, sticky="w", padx=(0, 4), pady=(4, 2)
+        ).grid(row=0, column=7, sticky="w", padx=(0, 8), pady=(4, 2))
+        ttk.Label(analysis_action_bar, text="Timeline title").grid(
+            row=0, column=8, sticky="w", padx=(0, 4), pady=(4, 2)
         )
         analysis_title_entry = _ui_entry(
             analysis_action_bar, textvariable=cycle_timeline_title_var, width=34
         )
         analysis_title_entry.grid(
-            row=0, column=7, sticky="ew", padx=(0, 8), pady=(4, 2)
+            row=0, column=9, sticky="ew", padx=(0, 8), pady=(4, 2)
         )
         self._bind_cycle_timeline_title_commit_handlers(analysis_title_entry)
         ttk.Label(
@@ -192197,7 +192326,7 @@ class UnifiedApp(tk.Tk):
             style="Sol.FieldHelp.TLabel",
             wraplength=860,
             justify="left",
-        ).grid(row=1, column=0, columnspan=8, sticky="ew", padx=8, pady=(0, 4))
+        ).grid(row=1, column=0, columnspan=10, sticky="ew", padx=8, pady=(0, 4))
         self._analysis_sticky_action_bar = analysis_action_bar
         self._refresh_analysis_sticky_action_bar()
 
@@ -193653,6 +193782,77 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
+    def _real_cycle_analysis_payload_for_import(self) -> Optional[Dict[str, Any]]:
+        """Return only the latest payload identified from measured cycle data.
+
+        Purpose:
+            Select the real Cycle Analysis dataset eligible for Analysis import.
+        Why:
+            Planning projections have the same broad payload shape as measured
+            cycles, so origin must be checked at the import boundary.
+        Inputs:
+            None.
+        Outputs:
+            The newest real identified-cycle payload, or ``None`` when none is
+            available for safe import.
+        Side Effects:
+            None.
+        Exceptions:
+            Missing cache attributes are treated as no eligible payload.
+        """
+        # Prefer the live Cycle Analysis result.  The workflow-scoped Analysis
+        # payload is intentionally last because it can be an older import.
+        candidates = (
+            getattr(self, "_real_cycle_analysis_payload", None),
+            getattr(self, "_cycle_last_transfer_payload", None),
+            self._get_cycle_payload_for_workflow("Analysis"),
+        )
+        for candidate in candidates:
+            if not isinstance(candidate, Mapping):
+                continue
+            if candidate.get("cycle_payload_origin") != "real_identified_cycle_analysis":
+                continue
+            if candidate.get("cycle_transfer"):
+                return dict(candidate)
+        return None
+
+    def _analysis_real_cycle_payload_needs_refresh(self) -> bool:
+        """Return whether a newer real cycle dataset must replace Analysis data.
+
+        Purpose:
+            Detect a fresh Cycle Analysis result even when the optional manual
+            refresh checkbox is not selected.
+        Why:
+            A measured-pH anchor is defined against the current identified
+            cycles; retaining a prior three-cycle import after a fourth cycle is
+            identified makes a valid cycle-four anchor fail range validation.
+        Inputs:
+            None.
+        Outputs:
+            ``True`` when the live real payload differs from Analysis's imported
+            payload and should be applied before solving.
+        Side Effects:
+            None.
+        Exceptions:
+            Missing/invalid payloads and signature failures return ``False``.
+        """
+        latest_payload = self._real_cycle_analysis_payload_for_import()
+        current_payload = self._get_cycle_payload_for_workflow("Analysis")
+        if not isinstance(latest_payload, Mapping):
+            return False
+        if not isinstance(current_payload, Mapping):
+            return True
+        try:
+            latest_signature = self._analysis_cycle_signature_from_payload(
+                latest_payload
+            )
+            current_signature = self._analysis_cycle_signature_from_payload(
+                current_payload
+            )
+        except Exception:
+            return False
+        return bool(latest_signature and latest_signature != current_signature)
+
     def _apply_cycle_payload_to_solubility(
         self,
         *,
@@ -193665,7 +193865,8 @@ class UnifiedApp(tk.Tk):
         Purpose: Transfer Cycle Analysis payload data into solubility inputs/tracking.
         Why: Keep Analysis/Planning/Reprocessing workflows synchronized with cycle runs.
         Inputs:
-            payload (dict[str, Any] | None): Cycle payload to apply (None uses last).
+            payload (dict[str, Any] | None): Cycle payload to apply. Analysis
+                selects only the latest real identified-cycle payload when omitted.
             notify (bool): When True, show user notifications for applied transfers.
             run_simulation (bool): When True, run the cycle simulation after applying.
             workflow_key (str | None): Target workflow key (None uses current).
@@ -193678,7 +193879,31 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             - Best-effort; handles notification/UI failures without raising.
         """
-        payload = payload or getattr(self, "_cycle_last_transfer_payload", None)
+        workflow = workflow_key or self._current_solubility_workflow()
+        if payload is None:
+            payload = (
+                self._real_cycle_analysis_payload_for_import()
+                if workflow == "Analysis"
+                else getattr(self, "_cycle_last_transfer_payload", None)
+            )
+        if (
+            workflow == "Analysis"
+            and (
+                not isinstance(payload, Mapping)
+                or payload.get("cycle_payload_origin")
+                != "real_identified_cycle_analysis"
+            )
+        ):
+            if notify:
+                try:
+                    messagebox.showinfo(
+                        "Cycle Analysis",
+                        "Analysis imports only real identified cycles. Run Cycle "
+                        "Analysis on the measured trace, then import its results.",
+                    )
+                except Exception:
+                    pass
+            return False
         if not payload:
             if notify:
                 try:
@@ -193692,8 +193917,6 @@ class UnifiedApp(tk.Tk):
                     # workflow.
                     pass
             return False
-        workflow = workflow_key or self._current_solubility_workflow()
-
         moles = payload.get("total_moles_vdw")
         if moles is None:
             moles = payload.get("total_moles_ideal")
@@ -193829,7 +194052,7 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             Downstream apply/run handlers present best-effort UI errors.
         """
-        payload = getattr(self, "_cycle_last_transfer_payload", None)
+        payload = self._real_cycle_analysis_payload_for_import()
         success = self._apply_cycle_payload_to_solubility(
             payload=payload,
             notify=True,
@@ -194101,7 +194324,14 @@ class UnifiedApp(tk.Tk):
         planning_measured_note: Optional[str] = None
         try:
             form_data = getattr(self, "_sol_last_form_data", None)
-            if form_data is None:
+            # The asynchronous solver cache is shared for rendering, but it is
+            # not a valid input source when it was captured for another mode.
+            # Recollecting here keeps Analysis chemistry independent from the
+            # last Planning run while retaining the same canonical form builder.
+            if (
+                not isinstance(form_data, Mapping)
+                or form_data.get("workflow_key") != workflow
+            ):
                 form_data = self._collect_solubility_form_data()
                 self._sol_last_form_data = form_data
             planning_measured_note = self._scrub_planning_measured_fields(form_data)
@@ -198525,6 +198755,94 @@ class UnifiedApp(tk.Tk):
             or corrected_below_reference_break
         )
 
+    def _analysis_pin_corrected_ph_to_measured_anchors(
+        self,
+        calibration_payload: Mapping[str, Any],
+        *,
+        anchor_rows: Sequence[Mapping[str, Any]],
+        row_count: int,
+    ) -> Dict[str, Any]:
+        """Pin calibrated pH to each accepted measured-pH anchor cycle.
+
+        Purpose:
+            Make the calibrated-estimated pH series honor the actual measured pH
+            at every anchor cycle after any reference-shape or ML repair.
+        Why:
+            Those repair stages can replace a solver-fit pH series with a smooth
+            reference curve, accidentally erasing a valid hard anchor while the
+            separate observed channel still retains it.
+        Inputs:
+            calibration_payload: Successful uptake-calibration payload.
+            anchor_rows: Normalized current-run measured-pH anchor mappings.
+            row_count: Number of Analysis timeline rows.
+        Outputs:
+            Dict[str, Any]: Copy of the calibration payload with anchor-constrained
+            pH/fraction series and compatibility diagnostics.
+        Side Effects:
+            None.
+        Exceptions:
+            Invalid series lengths leave the payload unchanged with a recorded
+            non-application reason.
+        """
+        payload = dict(calibration_payload or {})
+        corrected_ph = list(payload.get("corrected_ph_series") or [])
+        if len(corrected_ph) != int(row_count):
+            payload["anchor_hard_constraint_applied"] = False
+            payload["anchor_hard_constraint_reason"] = (
+                "corrected pH series length did not match Analysis timeline"
+            )
+            return payload
+        corrected_fractions = list(payload.get("corrected_fraction_series") or [])
+        if len(corrected_fractions) != int(row_count):
+            corrected_fractions = [None for _ in range(int(row_count))]
+        constraints: List[Dict[str, Any]] = []
+        normalized_anchors, _anchor_errors = _normalize_analysis_measured_ph_anchors(
+            anchor_rows or [], cycle_count=int(row_count)
+        )
+        for anchor in normalized_anchors:
+            cycle_index = int(anchor["cycle_index"])
+            measured_ph = float(anchor["measured_ph"])
+            series_index = cycle_index - 1
+            predicted_ph = _safe_float(corrected_ph[series_index])
+            corrected_ph[series_index] = measured_ph
+            # The pH is measured; fraction values are explicitly marked as a
+            # pH-based display estimate, never as a new chemistry solve.
+            corrected_fractions[series_index] = self._analysis_dashboard_fraction_fallback(
+                measured_ph
+            )
+            residual = (
+                float(predicted_ph) - measured_ph
+                if predicted_ph is not None and math.isfinite(float(predicted_ph))
+                else None
+            )
+            constraints.append(
+                {
+                    "cycle_index": cycle_index,
+                    "measured_ph": measured_ph,
+                    "predicted_ph_before_pin": predicted_ph,
+                    "residual_before_pin": residual,
+                    "source": str(anchor.get("source") or "manual"),
+                    "fraction_source": "measured_anchor_ph_estimate",
+                    "model_basis_incompatibility": bool(
+                        residual is not None and abs(float(residual)) > 0.25
+                    ),
+                }
+            )
+        payload["corrected_ph_series"] = corrected_ph
+        payload["corrected_fraction_series"] = corrected_fractions
+        payload["anchor_hard_constraint_applied"] = bool(constraints)
+        payload["anchor_hard_constraint_rows"] = constraints
+        payload["anchor_hard_constraint_reason"] = (
+            "Measured pH is authoritative at its anchor cycle; calculated pH "
+            "remains a separately labeled model diagnostic."
+        )
+        if constraints and int(constraints[-1]["cycle_index"]) == int(row_count):
+            payload["latest_corrected_speciation"] = {
+                "ph": float(constraints[-1]["measured_ph"]),
+                "fractions": dict(corrected_fractions[-1] or {}),
+            }
+        return payload
+
     def _apply_analysis_measured_ph_calibration(
         self,
         timeline_rows: Sequence[Mapping[str, Any]],
@@ -198902,6 +199220,14 @@ class UnifiedApp(tk.Tk):
                 calibration_payload["corrected_ph_repair_reason"] = str(
                     repair_payload.get("reason") or "reference repair unavailable"
                 )
+        # Reference-shape and ML repairs are useful between observations, but a
+        # current-run pH anchor remains the authoritative calibrated value at
+        # its own cycle and must not be smoothed back onto the model curve.
+        calibration_payload = self._analysis_pin_corrected_ph_to_measured_anchors(
+            calibration_payload,
+            anchor_rows=anchor_rows,
+            row_count=len(rows),
+        )
         corrected_cycle_mol = list(
             calibration_payload.get("corrected_cycle_uptake_mol_series") or []
         )
@@ -198944,6 +199270,13 @@ class UnifiedApp(tk.Tk):
                 "source": str(anchor_row.get("source") or "manual").strip().lower()
                 or "manual",
             }
+        hard_constraint_lookup = {
+            int(row.get("cycle_index")): dict(row)
+            for row in calibration_payload.get("anchor_hard_constraint_rows") or []
+            if isinstance(row, Mapping)
+            and _safe_rust_int(row.get("cycle_index"), -1) is not None
+            and _safe_rust_int(row.get("cycle_index"), -1) > 0
+        }
         primary_anchor_cycle = int(anchor_payload["cycle_index"])
 
         ref_x_for_corrected_calc = list(reference_map.get("x_co2_g_series") or [])
@@ -199033,6 +199366,17 @@ class UnifiedApp(tk.Tk):
                 row["analysis_anchor_source"] = str(
                     row_anchor.get("source") or "manual"
                 ).strip().lower() or "manual"
+                hard_constraint = hard_constraint_lookup.get(row_cycle_index)
+                if isinstance(hard_constraint, Mapping):
+                    row["calibrated_estimated_ph_source"] = (
+                        "measured_anchor_constraint"
+                    )
+                    row["corrected_fraction_source"] = str(
+                        hard_constraint.get("fraction_source") or ""
+                    )
+                    row["model_basis_incompatibility"] = bool(
+                        hard_constraint.get("model_basis_incompatibility", False)
+                    )
             else:
                 row["analysis_anchor_measured_ph"] = None
                 row["analysis_anchor_cycle_index"] = primary_anchor_cycle
@@ -214520,7 +214864,9 @@ class UnifiedApp(tk.Tk):
             self._restore_planning_inputs()
             return
         projection_warning = payload.get("projection_warning")
-        self._cycle_last_transfer_payload = payload
+        # Keep the approved Planning projection workflow-scoped.  The global
+        # transfer slot belongs exclusively to measured Cycle Analysis output.
+        payload["cycle_payload_origin"] = "planning_projection"
         self._apply_cycle_payload_to_solubility(
             payload=payload,
             notify=False,
@@ -216430,7 +216776,16 @@ class UnifiedApp(tk.Tk):
         except Exception:
             pass
         self._select_sol_workflow_tab("Analysis")
-        if not skip_apply:
+        refresh_helper = getattr(
+            self, "_analysis_real_cycle_payload_needs_refresh", None
+        )
+        try:
+            newer_real_payload_available = bool(
+                refresh_helper() if callable(refresh_helper) else False
+            )
+        except Exception:
+            newer_real_payload_available = False
+        if not skip_apply or newer_real_payload_available:
             self._apply_cycle_payload_to_solubility(
                 notify=False, run_simulation=False, workflow_key="Analysis"
             )
