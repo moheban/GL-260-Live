@@ -120,7 +120,8 @@ def test_pdf_pages_and_metadata(app, baseline, tmp_path, orientation):
     """Render and read the actual compiled PDF in both supported orientations.
 
     Uses fixtures and pytest's temporary output path. Writes one PDF, closes all
-    figures through the shared writer, and raises on lost content/page numbering.
+    figures through the shared writer, and raises on lost content/page numbering
+    or incorrect plot/table page orientation.
     """
     sections = [key for key, _label in app.PLANNING_PDF_REPORT_SECTIONS]
     report = app._build_planning_pdf_report(baseline, sections=sections)
@@ -146,6 +147,13 @@ def test_pdf_pages_and_metadata(app, baseline, tmp_path, orientation):
     pages = app._write_reaction_dashboard_cycle_pdf(path, figures, report["metadata"])
     pdf = PdfReader(path)
     assert len(pdf.pages) == pages
+    # Check persisted page dimensions, including mixed-orientation reports.
+    assert float(pdf.pages[-1].mediabox.width) == pytest.approx(11 * 72)
+    assert float(pdf.pages[-1].mediabox.height) == pytest.approx(8.5 * 72)
+    for page in pdf.pages[:-1]:
+        assert (page.mediabox.width > page.mediabox.height) == (
+            orientation == "landscape"
+        )
     assert pdf.metadata.title == "Sodium Carbonate Run Plan"
     assert "Planning" in pdf.metadata.subject
     text = "\n".join(page.extract_text() for page in pdf.pages)

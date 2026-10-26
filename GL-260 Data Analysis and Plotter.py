@@ -38899,7 +38899,8 @@ def _render_planning_pdf_report(
 
     export DPI. Returns owned figures with continuous page numbering, optionally
 
-    including a vector plot of the saved trajectory. No solver or UI state is read.
+    including an always-landscape vector plot of the saved trajectory.
+    No solver or UI state is read.
 
     Closes all created figures if rendering fails, then propagates the error.
 
@@ -38925,9 +38926,8 @@ def _render_planning_pdf_report(
         timeline = report.get("timeline") or []
 
         if timeline:
-            page_size = (
-                (11, 8.5) if preferences["orientation"] == "landscape" else (8.5, 11)
-            )
+            # Plot readability requires landscape independently of table pages.
+            page_size = (11, 8.5)
 
             fig = Figure(figsize=page_size, dpi=dpi)
 
