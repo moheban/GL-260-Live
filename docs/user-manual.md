@@ -1803,3 +1803,34 @@ Define required structure and quality criteria for screenshot-driven documentati
 ## Versioning Note
 
 This manual tracks application behavior for the currently active repository state and must be updated incrementally with each user-facing feature change.
+
+## Reaction Dashboard endpoint calibration and sodium carbonate
+
+Changing the reaction definition invalidates its previous endpoint calibration.
+Running the dashboard with calibrated uptake rechecks the current charge, reaction
+steps, pressure/temperature trace and endpoint settings. Completion accounts for
+stoichiometric coefficients: the 2 NaOH : 1 Na2CO3 reaction reaches 100% theoretical
+conversion at its defined product capacity, rather than displaying 50%.
+
+For sodium carbonate, select the NaOH/CO2/Na2CO3 definition and enter the actual
+starting-material charge, carbonate liquid volume, independent gas headspace and
+gas temperature. The carbonate specification fields default to pH **10.5–12.40**,
+with an editable target of **11.4**. Repeated charge limits default to **0–780 PSIg**.
+The forecast uses the pH model selected in **Planning**, including its existing
+Python fallback. Choose a model that supports NaOH/CO2 dose-based pH prediction.
+
+**Suggest Endpoint** reports the predicted cycle interval inside specification,
+the cycles to the selected target, and predicted pH after four and five charges.
+It compares those results with the previous batch's observed four-to-five cycles;
+that observation is not imposed on the calculation. Missing inputs or unresolved
+model predictions produce an unavailable explanation. Pressure-based cycle counts
+assume ideal-gas uptake and do not account for venting or leaks.
+
+If the mapped pressure trace reaches the modeled target dose, the suggestion can
+be confirmed using **Use Suggested Endpoint** after checking measured pH. Carbonate
+headspace calibration uses the modeled pH-target demand; this is distinct from
+100% stoichiometric conversion. A predicted endpoint is not a measured pH pass.
+Identify the charge cycles in Cycle Analysis so calibration can sum each
+temperature-corrected pressure decay while excluding recharge intervals.
+Dashboard cycle results include only the calibrated interval and leave the
+original Cycle Analysis measurements unchanged.

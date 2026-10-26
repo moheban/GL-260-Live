@@ -3419,6 +3419,10 @@ fn reaction_solution_charge_core(
 /// behavior in Python. Species rows provide initial moles and molar masses;
 /// step rows provide signed stoichiometry maps with negative reactants and
 /// positive products.
+/// Gas uptake and inventories are moles, molar masses are g/mol, and optional
+/// isolated yield is grams. Returns a new metrics dictionary including target-
+/// derived product capacity; does not mutate the inputs. PyO3 conversion errors
+/// propagate to the Python wrapper, which preserves the Python fallback.
 fn reaction_dashboard_core(
     py: Python<'_>,
     species_rows: &Bound<'_, PyList>,
@@ -3477,6 +3481,14 @@ fn reaction_dashboard_core(
         initial_inventory.insert(gas_id.clone(), next_initial);
     }
 
+    // Carry target-derived stoichiometric capacity through intermediates so
+    // non-unit coefficients do not turn a completed reaction into 50% completion.
+    let target_id = target_reactant_species_id.unwrap_or("").trim().to_string();
+    let mut completion_basis: BTreeMap<String, f64> = BTreeMap::new();
+    completion_basis.insert(
+        target_id.clone(),
+        initial_inventory.get(&target_id).copied().unwrap_or(0.0),
+    );
     let step_results = PyList::empty(py);
     for (idx, item) in step_rows.iter().enumerate() {
         let Ok(step) = item.cast_into::<PyDict>() else {
@@ -3521,6 +3533,19 @@ fn reaction_dashboard_core(
                 "{} has no consumed species.",
                 dict_string_value(&step, "name")
             ))?;
+        }
+        let basis_extent = stoich
+            .iter()
+            .filter(|(_, coeff)| **coeff < 0.0)
+            .filter_map(|(id, coeff)| completion_basis.get(id).map(|amount| amount / coeff.abs()))
+            .reduce(f64::min);
+        if let Some(basis_extent) = basis_extent {
+            for (id, coeff) in stoich.iter() {
+                if *coeff > 0.0 || completion_basis.contains_key(id) {
+                    let amount = completion_basis.get(id).copied().unwrap_or(0.0);
+                    completion_basis.insert(id.clone(), (amount + coeff * basis_extent).max(0.0));
+                }
+            }
         }
         for (species_id, coeff) in stoich.iter() {
             let current = inventory.get(species_id).copied().unwrap_or(0.0);
@@ -3586,8 +3611,9 @@ fn reaction_dashboard_core(
     } else {
         initial_inventory.get(&target_id).copied().unwrap_or(0.0)
     };
-    let completion_pct = if target_initial > 1e-12 {
-        Some(((product_mol / target_initial) * 100.0).clamp(0.0, 100.0))
+    let product_capacity = completion_basis.get(&product_id).copied().unwrap_or(0.0);
+    let completion_pct = if target_initial > 1e-12 && product_capacity > 1e-12 {
+        Some(((product_mol / product_capacity) * 100.0).clamp(0.0, 100.0))
     } else if let Some(actual_pct) = actual_yield_pct {
         Some(actual_pct.clamp(0.0, 100.0))
     } else if product_mol > 1e-12 {
@@ -3618,6 +3644,7 @@ fn reaction_dashboard_core(
     out.set_item("step_results", step_results)?;
     out.set_item("yield_species_id", product_id)?;
     out.set_item("yield_species_moles", product_mol)?;
+    out.set_item("completion_basis_product_mol", product_capacity)?;
     if let Some(value) = theoretical_yield_g {
         out.set_item("theoretical_yield_g", value)?;
     } else {
@@ -3643,12 +3670,16 @@ fn reaction_dashboard_core(
 }
 
 #[pyfunction]
-#[pyo3(signature = (x_values, pressure_absolute_psi, temperature_c, expected_gas_mol, endpoint_position, displacement_l=None))]
+#[pyo3(signature = (x_values, pressure_absolute_psi, temperature_c, expected_gas_mol, endpoint_position, displacement_l=None, cycle_intervals=None))]
 /// Calculate confirmed endpoint pressure-trace calibration values.
 ///
 /// This native kernel intentionally performs only deterministic exact arithmetic.
 /// Python retains the UI-specific endpoint suggestion policy and routes here only
 /// after it has validated a confirmed endpoint and aligned trace arrays.
+/// Inputs are elapsed samples, absolute psi, Celsius, endpoint demand in moles,
+/// anchor index, optional displacement in liters and ordered peak/trough indices.
+/// Returns headspace and cumulative uptake without mutating inputs. Invalid
+/// intervals raise ValueError; invalid physical inputs return warning payloads.
 fn reaction_endpoint_calibration_core(
     py: Python<'_>,
     x_values: Vec<f64>,
@@ -3657,6 +3688,7 @@ fn reaction_endpoint_calibration_core(
     expected_gas_mol: f64,
     endpoint_position: usize,
     displacement_l: Option<f64>,
+    cycle_intervals: Option<Vec<(usize, usize)>>,
 ) -> PyResult<Py<PyDict>> {
     let out = PyDict::new(py);
     let warnings = PyList::empty(py);
@@ -3664,7 +3696,12 @@ fn reaction_endpoint_calibration_core(
         .len()
         .min(pressure_absolute_psi.len())
         .min(temperature_c.len());
-    if size < 5 || endpoint_position == 0 || endpoint_position >= size || !expected_gas_mol.is_finite() || expected_gas_mol <= 1e-12 {
+    if size < 5
+        || endpoint_position == 0
+        || endpoint_position >= size
+        || !expected_gas_mol.is_finite()
+        || expected_gas_mol <= 1e-12
+    {
         warnings.append("A valid endpoint and positive stoichiometric gas demand are required.")?;
         out.set_item("effective_headspace_l", py.None())?;
         out.set_item("gross_vessel_volume_l", py.None())?;
@@ -3678,7 +3715,12 @@ fn reaction_endpoint_calibration_core(
     for index in 0..size {
         let pressure = pressure_absolute_psi[index];
         let temperature_k = temperature_c[index] + 273.15;
-        if !x_values[index].is_finite() || !pressure.is_finite() || !temperature_k.is_finite() || pressure <= 0.0 || temperature_k <= 0.0 {
+        if !x_values[index].is_finite()
+            || !pressure.is_finite()
+            || !temperature_k.is_finite()
+            || pressure <= 0.0
+            || temperature_k <= 0.0
+        {
             warnings.append("Mapped absolute pressure and temperature must be finite and positive within the selected reaction-start to endpoint interval.")?;
             out.set_item("effective_headspace_l", py.None())?;
             out.set_item("gross_vessel_volume_l", py.None())?;
@@ -3690,9 +3732,31 @@ fn reaction_endpoint_calibration_core(
         }
         corrected.push((pressure / 14.6959) / temperature_k);
     }
-    let denominator = corrected[0] - corrected[endpoint_position];
+    let mut drop: Vec<f64> = corrected.iter().map(|value| corrected[0] - value).collect();
+    if let Some(intervals) = cycle_intervals.filter(|values| !values.is_empty()) {
+        let mut previous_end = 0;
+        let mut cumulative = 0.0;
+        for (peak, trough) in intervals {
+            if peak < previous_end || trough <= peak || trough >= size {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Invalid or overlapping calibration cycle boundaries.",
+                ));
+            }
+            // Recharge gaps hold uptake constant; each identified decay adds its drop.
+            drop[previous_end..peak].fill(cumulative);
+            for index in peak..=trough {
+                drop[index] = cumulative + corrected[peak] - corrected[index];
+            }
+            cumulative = drop[trough];
+            previous_end = trough + 1;
+        }
+        drop[previous_end..].fill(cumulative);
+    }
+    let denominator = drop[endpoint_position];
     if !denominator.is_finite() || denominator <= 1e-15 {
-        warnings.append("Corrected pressure drop is zero or negative; headspace cannot be calibrated.")?;
+        warnings.append(
+            "Corrected pressure drop is zero or negative; headspace cannot be calibrated.",
+        )?;
         out.set_item("effective_headspace_l", py.None())?;
         out.set_item("gross_vessel_volume_l", py.None())?;
         out.set_item("conversion_pct", PyList::empty(py))?;
@@ -3712,8 +3776,14 @@ fn reaction_endpoint_calibration_core(
         out.set_item("warnings", warnings)?;
         return Ok(out.unbind());
     }
-    let conversion: Vec<f64> = corrected.iter().map(|value| ((corrected[0] - value) / denominator) * 100.0).collect();
-    let consumed: Vec<f64> = conversion.iter().map(|value| (value / 100.0) * expected_gas_mol).collect();
+    let conversion: Vec<f64> = drop
+        .iter()
+        .map(|value| (value / denominator) * 100.0)
+        .collect();
+    let consumed: Vec<f64> = conversion
+        .iter()
+        .map(|value| (value / 100.0) * expected_gas_mol)
+        .collect();
     if conversion.iter().any(|value| *value > 100.0 + 1e-6) {
         warnings.append("Pressure-equivalent conversion exceeds 100%; continued uptake or endpoint mismatch is present.")?;
     }
