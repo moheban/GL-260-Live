@@ -676,6 +676,14 @@ The carbonate operator plan reports full cycles allowed before the configurable 
 
 The displayed stop threshold is a conservative **stop and verify** prompt above the entered target because CO₂ dosing lowers pH. It is decision support only: it does not operate equipment, replace a validated plant endpoint procedure, or guarantee product composition. Review the current pH and carbonate/bicarbonate trajectory before ending a batch.
 
+### Partial endpoint charges and cylinder pressure decline
+
+With **Carbonate Mode** enabled in Planning, the final timeline row uses the charge needed to reach the requested pH. The planner solves the selected pH model within that cycle, converts the dose to a charge pressure, and recalculates the delivered CO? from that pressure down to the trough. It then recomputes the ledger, cumulative uptake, and timeline pH using that dose. A fourth charge to 550 PSIg therefore uses the 550-to-trough inventory rather than repeating the uptake of the preceding full charges. Because this evaluates the model at the endpoint instead of interpolating between full cycles, the recommended pressure can differ from older forecasts.
+
+For a cylinder whose available charge pressure declines, enter **Available charge pressures (PSIg)** in the Planning Carbonate Mode card. Provide one maximum per cycle, in order, such as `730, 715, 700, 685, 670` for a 15 PSIg decline. Values are available charge pressures, not pressure increments. The trough remains the configured high pressure minus the configured pressure drop; for 730 PSIg high and 730 psi drop, the trough is 0 PSIg. Each supplied maximum must exceed that trough. Leave the list blank for constant-pressure charges, and clear manual CO? dosing when using a pressure list.
+
+Each full cycle uses its own pressure inventory. The final charge may be below that cycle's available maximum. If the list ends before the requested pH is reached, Planning retains only the supplied cycles and reports that more pressures are needed; it does not extrapolate the cylinder decline. The saved run and PDF retain the pressure schedule. These values are user-supplied planning assumptions, so update them as measured cylinder performance becomes available.
+
 ### Planning PDF report
 
 After a sodium carbonate Planning scenario completes, select **Generate PDF Report** beside **Open Plot in New Tab**. The first page highlights the number of full charges, their pressure setpoint, the final partial-charge pressure, and the requested pH endpoint. Final pressure comes from the completed scenario's gas-inventory calculation; it is not calculated by multiplying full pressure by the partial-dose fraction.

@@ -28972,6 +28972,36 @@ SPEC_MODE_FIXED_PCO2 = "fixed_pCO2"
 SPEC_MODE_CLOSED = "closed_carbon"
 
 
+def _parse_planning_charge_pressures(value: Any) -> List[float]:
+    """Parse optional per-cycle available charge pressures in PSIg.
+
+    Accepts comma/semicolon/whitespace-separated text or a numeric sequence.
+    Returns finite positive pressures in entered order, or [] for blank input.
+    No state is changed. Invalid entries raise ValueError with their cycle index;
+    a missing pressure is never interpolated or silently skipped.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return []
+    if isinstance(value, str):
+        groups = re.split(r"[,;]", value.strip())
+        if any(not group.strip() for group in groups):
+            raise ValueError("Planning: a cycle charge pressure is blank.")
+        values = [token for group in groups for token in group.split()]
+    elif isinstance(value, (list, tuple)):
+        values = value
+    else:
+        raise ValueError("Planning: enter a pressure value for each cycle.")
+    pressures = []
+    for index, item in enumerate(values, 1):
+        pressure = _safe_float(item)
+        if pressure is None or not math.isfinite(pressure) or pressure <= 0:
+            raise ValueError(
+                f"Planning: cycle {index} needs a positive finite PSIg value."
+            )
+        pressures.append(pressure)
+    return pressures
+
+
 def _carbonate_vdw_inventory_moles(
     pressure_atm: float, headspace_volume_l: float, temperature_k: float
 ) -> Optional[float]:
@@ -29085,20 +29115,38 @@ def _carbonate_pressure_drop_inventory_core(**kwargs: Any) -> Dict[str, Any]:
     Purpose: centralize Rust/Python parity and fail-safe selection for carbonate.
     Why: Planning must remain usable when the compiled extension is unavailable.
     Inputs/Outputs: mirror `_python_carbonate_pressure_drop_inventory_core`.
-    Side Effects: marks malformed native responses unhealthy for this session.
+    Side Effects: marks malformed or incompatible native responses unhealthy
+    for this session.
     Exceptions: native failures are contained; input validation still propagates.
     """
     fallback = _python_carbonate_pressure_drop_inventory_core(**kwargs)
     backend = _load_rust_backend()
-    resolver = getattr(backend, "carbonate_pressure_drop_inventory_core", None) if backend else None
+    resolver = (
+        getattr(backend, "carbonate_pressure_drop_inventory_core", None)
+        if backend
+        else None
+    )
     if not callable(resolver):
         return fallback
     payload = _run_rust_kernel_with_timeout(
         "carbonate_pressure_drop_inventory_core",
         lambda: resolver(**kwargs),
     )
-    if not isinstance(payload, Mapping) or _safe_float(payload.get("dose_mol")) is None:
-        _mark_rust_kernel_session_unhealthy("carbonate_pressure_drop_inventory_core", reason="invalid_payload", details="missing pressure dose")
+    # Older native builds used a different gas constant. Reject their inventory
+    # before mixing it with the Python inverse-pressure or endpoint calculation.
+    compatible = isinstance(payload, Mapping) and all(
+        _safe_float(payload.get(key)) is not None
+        and math.isclose(
+            float(payload[key]), float(fallback[key]), rel_tol=1e-9, abs_tol=1e-10
+        )
+        for key in ("dose_mol", "high_inventory_mol", "trough_inventory_mol")
+    )
+    if not compatible:
+        _mark_rust_kernel_session_unhealthy(
+            "carbonate_pressure_drop_inventory_core",
+            reason="invalid_payload",
+            details="pressure inventory differs from Python contract",
+        )
         return fallback
     return dict(payload)
 
@@ -29120,9 +29168,10 @@ def _python_carbonate_charge_pressure_setpoint_core(
     Inputs: target dose (mol), trough and maximum charge pressures (psig),
     headspace volume (L), and temperature (deg C).
     Outputs: mapping with the calculated charge pressure and delivered inventory.
-    Side Effects: none.
+    Side Effects: marks incompatible native results unhealthy for this session.
     Exceptions: invalid or unreachable dosing requests raise ``ValueError``.
     """
+    native_payload = None
     backend = _load_rust_backend()
     resolver = (
         getattr(backend, "carbonate_charge_pressure_setpoint_core", None)
@@ -29139,18 +29188,6 @@ def _python_carbonate_charge_pressure_setpoint_core(
                 headspace_volume_l=headspace_volume_l,
                 temperature_c=temperature_c,
             ),
-        )
-        native_pressure = (
-            _safe_float(native_payload.get("charge_pressure_psig"))
-            if isinstance(native_payload, Mapping)
-            else None
-        )
-        if native_pressure is not None and math.isfinite(native_pressure):
-            return dict(native_payload)
-        _mark_rust_kernel_session_unhealthy(
-            "carbonate_charge_pressure_setpoint_core",
-            reason="invalid_payload",
-            details="missing charge pressure",
         )
     values = (
         target_dose_mol,
@@ -29170,7 +29207,11 @@ def _python_carbonate_charge_pressure_setpoint_core(
     temperature_k = temperature_c + 273.15
 
     def _inventory(psig: float) -> Tuple[float, str]:
-        """Return absolute-pressure CO2 inventory using VDW with an ideal-gas contingency."""
+        """Return CO2 moles and source for gauge pressure in PSIg.
+
+        Uses the enclosing validated volume/temperature without mutation. Falls
+        back to ideal gas if VDW has no physical root; arithmetic errors propagate.
+        """
         psia = psig + CARBONATE_PSI_PER_ATM
         inventory = _carbonate_vdw_inventory_moles(
             psia / CARBONATE_PSI_PER_ATM, headspace_volume_l, temperature_k
@@ -29199,26 +29240,34 @@ def _python_carbonate_charge_pressure_setpoint_core(
         # a pressure bisection for every endpoint recommendation.
         free_volume = headspace_volume_l - charge_inventory * CARBONATE_CO2_VDW_B
         if free_volume <= 0.0:
-            raise ValueError("Requested partial CO2 dose exceeds the physical headspace volume.")
+            raise ValueError(
+                "Requested partial CO2 dose exceeds the physical headspace volume."
+            )
         charge_pressure_atm = (
-            charge_inventory * _SOL_IDEAL_GAS_R_L_ATM_PER_MOLK * temperature_k
+            charge_inventory
+            * _SOL_IDEAL_GAS_R_L_ATM_PER_MOLK
+            * temperature_k
             / free_volume
             - CARBONATE_CO2_VDW_A * (charge_inventory / headspace_volume_l) ** 2
         )
     else:
         charge_pressure_atm = (
-            charge_inventory * _SOL_IDEAL_GAS_R_L_ATM_PER_MOLK * temperature_k
+            charge_inventory
+            * _SOL_IDEAL_GAS_R_L_ATM_PER_MOLK
+            * temperature_k
             / headspace_volume_l
         )
     charge_psig = charge_pressure_atm * CARBONATE_PSI_PER_ATM - CARBONATE_PSI_PER_ATM
     if not (trough_psig - 1e-8 <= charge_psig <= maximum_charge_psig + 1e-8):
-        raise ValueError("Calculated partial charge pressure is outside the configured range.")
+        raise ValueError(
+            "Calculated partial charge pressure is outside the configured range."
+        )
     source = (
         "co2_vdw_absolute_inventory"
         if trough_source == maximum_source == "co2_vdw_absolute_inventory"
         else "ideal_gas_fallback_vdw_unavailable"
     )
-    return {
+    fallback = {
         "status": "ok",
         "calculation_source": source,
         "trough_pressure_psig": trough_psig,
@@ -29230,6 +29279,28 @@ def _python_carbonate_charge_pressure_setpoint_core(
         "dose_mol": max(charge_inventory - trough_inventory, 0.0),
         "dose_g": max(charge_inventory - trough_inventory, 0.0) * SOL_MW_CO2,
     }
+
+    if callable(resolver):
+        # Compare both pressure and inventory so an old extension cannot make
+        # the final cycle disagree with the dose used by the pH model.
+        compatible = isinstance(native_payload, Mapping) and all(
+            _safe_float(native_payload.get(key)) is not None
+            and math.isclose(
+                float(native_payload[key]),
+                float(fallback[key]),
+                rel_tol=1e-9,
+                abs_tol=1e-8,
+            )
+            for key in ("charge_pressure_psig", "dose_mol", "charge_inventory_mol")
+        )
+        if compatible:
+            return dict(native_payload)
+        _mark_rust_kernel_session_unhealthy(
+            "carbonate_charge_pressure_setpoint_core",
+            reason="invalid_payload",
+            details="charge pressure differs from Python contract",
+        )
+    return fallback
 
 
 def _python_carbonate_endpoint_forecast_core(
@@ -38569,8 +38640,25 @@ def _build_planning_pdf_report(
 
     no_partial = valid_schedule and fraction <= 1e-9
 
+    variable_pressures = bool(plan.get("variable_charge_pressures"))
+    charge_schedule = plan.get("full_cycle_schedule") or []
+    final_ceiling = finite(plan.get("final_cycle_available_pressure_psig"))
+    if final_ceiling is None:
+        final_ceiling = high
+    schedule_valid = not variable_pressures or (
+        valid_schedule
+        and len(charge_schedule) == full
+        and all(
+            isinstance(row, Mapping)
+            and finite(row.get("charge_pressure_psig")) is not None
+            and finite(row.get("trough_pressure_psig")) is not None
+            and row["charge_pressure_psig"] > row["trough_pressure_psig"] >= 0
+            for row in charge_schedule
+        )
+    )
     pressure_valid = (
         valid_schedule
+        and schedule_valid
         and not mass_dosing
         and high is not None
         and low is not None
@@ -38580,7 +38668,7 @@ def _build_planning_pdf_report(
             or (
                 final_pressure is not None
                 and final_low is not None
-                and 0 <= final_low < final_pressure <= high + 1e-6
+                and 0 <= final_low < final_pressure <= final_ceiling + 1e-6
             )
         )
     )
@@ -38602,7 +38690,9 @@ def _build_planning_pdf_report(
     full_text = str(full) if valid_schedule else "Unavailable"
 
     normal_charge = (
-        number(high, 1, "PSIg")
+        "Per-cycle schedule"
+        if pressure_valid and variable_pressures
+        else number(high, 1, "PSIg")
         if pressure_valid
         else "Mass dosing"
         if mass_dosing
@@ -38624,13 +38714,26 @@ def _build_planning_pdf_report(
     summary_rows = []
 
     if pressure_valid:
-        summary_rows.append(
-            [
-                "Full charges",
-                f"{full} full charge cycles to {high:.1f} PSIg.",
-                f"Draw down to {low:.1f} PSIg after each charge.",
-            ]
-        )
+        if variable_pressures:
+            # These rows are mandatory: a single fixed pressure would misstate
+            # the available cylinder pressure for the preceding full charges.
+            for charge_row in charge_schedule:
+                summary_rows.append(
+                    [
+                        f"Full charge {charge_row['cycle_id']}",
+                        f"Charge to {charge_row['charge_pressure_psig']:.1f} PSIg; "
+                        f"draw down to {charge_row['trough_pressure_psig']:.1f} PSIg.",
+                        number(charge_row.get("co2_g"), 3, "g CO2"),
+                    ]
+                )
+        else:
+            summary_rows.append(
+                [
+                    "Full charges",
+                    f"{full} full charge cycles to {high:.1f} PSIg.",
+                    f"Draw down to {low:.1f} PSIg after each charge.",
+                ]
+            )
 
         summary_rows.append(
             [
@@ -38685,7 +38788,13 @@ def _build_planning_pdf_report(
             [
                 "Total target dose",
                 number(forecast.get("estimated_total_co2_g"), 3, "g CO2"),
-                f"{number(total_cycles, 4)} equivalent full cycles.",
+                (
+                    f"{full} full charges + "
+                    f"{number(fraction * 100 if fraction is not None else None, 2)}% "
+                    "of the final available dose."
+                    if variable_pressures and valid_schedule
+                    else f"{number(total_cycles, 4)} equivalent full cycles."
+                ),
             ],
             [
                 "Run provenance",
@@ -38759,6 +38868,13 @@ def _build_planning_pdf_report(
                     str(inputs.get("planning_spec_model_key") or "Unavailable"),
                 ],
                 ["Model options", str(inputs.get("model_options") or "Unavailable")],
+                [
+                    "Available charge pressures (PSIg)",
+                    str(
+                        inputs.get("planning_charge_pressures_psig")
+                        or "Constant pressure"
+                    ),
+                ],
             ]
         )
 
@@ -38786,7 +38902,11 @@ def _build_planning_pdf_report(
         models.append(
             {
                 **metadata,
-                "title": "Planning - Full-Cycle Forecast",
+                "title": (
+                    "Planning - Charge-Cycle Forecast"
+                    if forecast.get("endpoint_dose_applied")
+                    else "Planning - Full-Cycle Forecast"
+                ),
                 "table_headers": [
                     "Cycle",
                     "CO2 added (g)",
@@ -38833,10 +38953,19 @@ def _build_planning_pdf_report(
                 str(forecast.get("message") or "Saved Planning forecast"),
             ],
             ["Dose basis", str(forecast.get("forecast_basis") or "Unavailable")],
-            ["CO2 per full cycle", number(forecast.get("cycle_size_median_g"), 4, "g")],
             [
-                "Equivalent cycles",
-                "Target CO2 mass / CO2 mass per full cycle = "
+                "Nominal full-cycle CO2"
+                if variable_pressures
+                else "CO2 per full cycle",
+                number(forecast.get("cycle_size_median_g"), 4, "g"),
+            ],
+            [
+                "Charge cycles" if variable_pressures else "Equivalent cycles",
+                (
+                    "Full scheduled charges + final scheduled-dose fraction = "
+                    if variable_pressures
+                    else "Target CO2 mass / CO2 mass per full cycle = "
+                )
                 + number(total_cycles, 6),
             ],
             [
@@ -38883,7 +39012,12 @@ def _build_planning_pdf_report(
         "models": models,
         "timeline": copy.deepcopy(timeline) if "plot" in selected else [],
         "target_ph": target_ph,
-        "target_cycles": total_cycles,
+        "target_cycles": (
+            finite(forecast.get("target_charge_cycle"))
+            if forecast.get("endpoint_dose_applied")
+            else total_cycles
+        ),
+        "endpoint_dose_applied": bool(forecast.get("endpoint_dose_applied")),
         "guard_ph": finite(forecast.get("guard_ph")),
         "metadata": models[0],
     }
@@ -38969,7 +39103,14 @@ def _render_planning_pdf_report(
 
             axis.plot(cycles, ph, color="#17324d", marker="o", label="Predicted pH")
 
-            axis.set(xlabel="Equivalent full-charge cycle", ylabel="Predicted pH")
+            axis.set(
+                xlabel=(
+                    "Charge cycle"
+                    if report.get("endpoint_dose_applied")
+                    else "Equivalent full-charge cycle"
+                ),
+                ylabel="Predicted pH",
+            )
 
             axis.grid(alpha=0.2)
 
@@ -39013,8 +39154,13 @@ def _render_planning_pdf_report(
             fig.text(
                 0.07,
                 0.08,
-                "Full-cycle trajectory is context; "
-                "use the final partial-charge instruction on page 1.",
+                (
+                    "Charge trajectory includes the endpoint dose; "
+                    "see charge instructions on page 1."
+                    if report.get("endpoint_dose_applied")
+                    else "Full-cycle trajectory is context; "
+                    "use the final partial-charge instruction on page 1."
+                ),
                 fontsize=8,
             )
 
@@ -193097,13 +193243,40 @@ class UnifiedApp(tk.Tk):
         ttk.Entry(planning_carbonate_card, textvariable=self._carbonate_guard_margin_var, width=10).grid(row=2, column=3, sticky="w", pady=2)
         ttk.Label(planning_carbonate_card, text="Min CO₃²⁻ at target (%)").grid(row=3, column=0, sticky="w", padx=8, pady=2)
         ttk.Entry(planning_carbonate_card, textvariable=self._carbonate_min_carbonate_pct_var, width=10).grid(row=3, column=1, sticky="w", pady=2)
+        self._planning_charge_pressures_var = self._create_persistent_solubility_var(
+            "planning_charge_pressures_psig", ""
+        )
+        ttk.Label(planning_carbonate_card, text="Available charge pressures (PSIg)").grid(
+            row=4, column=0, sticky="w", padx=8, pady=2
+        )
+        ttk.Entry(
+            planning_carbonate_card,
+            textvariable=self._planning_charge_pressures_var,
+            width=38,
+        ).grid(row=4, column=1, columnspan=3, sticky="ew", padx=8, pady=2)
+        ttk.Label(
+            planning_carbonate_card,
+            text="Optional: one maximum per cycle, comma-separated (730, 715, 700, 685, 670). "
+            "Blank uses constant pressure. Trough = high pressure minus pressure drop. "
+            "Clear manual CO2 dosing to use this list.",
+            style="Sol.Help.TLabel",
+            wraplength=700,
+            justify="left",
+        ).grid(row=5, column=0, columnspan=4, sticky="w", padx=8, pady=2)
         self._carbonate_planning_summary_var = tk.StringVar(
-            value="Enable Carbonate Mode to predict guard/target cycles, gas, and endpoint speciation."
+            value=(
+                "Enable Carbonate Mode to predict guard/target cycles, "
+                "gas, and endpoint speciation."
+            )
         )
         ttk.Label(
-            planning_carbonate_card, textvariable=self._carbonate_planning_summary_var,
-            style="Sol.Help.TLabel", wraplength=700, justify="left",
-        ).grid(row=4, column=0, columnspan=4, sticky="w", padx=8, pady=(2, 4))
+            planning_carbonate_card,
+            textvariable=self._carbonate_planning_summary_var,
+            style="Sol.Help.TLabel",
+            wraplength=700,
+            justify="left",
+        ).grid(row=6, column=0, columnspan=4, sticky="w", padx=8, pady=(2, 4))
+
 
         target_box = ttk.LabelFrame(planning_tab, text="Target pH & Headspace")
         target_box.grid(
@@ -215037,6 +215210,12 @@ class UnifiedApp(tk.Tk):
             "naoh_mass_basis": mass_naoh,
             "planning_initial_naoh_mol": planning_initial_naoh_mol,
             "planning_cycle_co2_g": planning_cycle_co2,
+            "planning_charge_pressures_psig": (
+                getattr(self, "_planning_charge_pressures_var", None).get()
+                if workflow_key == "Planning"
+                and getattr(self, "_planning_charge_pressures_var", None) is not None
+                else ""
+            ),
             "planning_cycle_delta_p_psi": planning_cycle_delta_p_psi,
             "planning_headspace_pressure_high_psi": planning_headspace_pressure_high_psi,
             "planning_stop_co2_added_g": planning_stop_added_g,
@@ -215397,7 +215576,8 @@ class UnifiedApp(tk.Tk):
             NaOH/carbonate ledger states, pH predictions, and endpoint guidance.
         Why:
             Planning, plots, exports, and Analysis reference overlays must share
-            one chemistry-owned cycle sequence and dose provenance.
+            one chemistry-owned cycle sequence and dose provenance. Carbonate
+            targets are solved within the final charge before updating the ledger.
         Inputs:
             form_data: Normalized Planning controls including NaOH basis, vessel,
                 pressure/dose, stop criteria, target, and model selections.
@@ -215411,7 +215591,8 @@ class UnifiedApp(tk.Tk):
             periodic debug logging; it does not write persistent state.
         Exceptions:
             Raises ``ValueError`` for invalid NaOH, vessel/headspace, pressure, or
-            cycle-dose configuration. Individual row failures are represented in
+            cycle-dose configuration or an unresolved carbonate endpoint.
+            Individual row failures are represented in
             row warnings and retain a safe model/ledger fallback.
         """
         workflow_key = form_data.get("workflow_key")
@@ -215455,9 +215636,7 @@ class UnifiedApp(tk.Tk):
         stop_ph = canonical_inputs.get("planning_stop_ph") or PLANNING_DEFAULT_STOP_PH
         initial_naoh_mol = canonical_inputs.get("planning_initial_naoh_mol")
         if initial_naoh_mol is None or initial_naoh_mol <= 0:
-            raise ValueError(
-                "Planning: provide a valid NaOH mass to define total sodium."
-            )
+            raise ValueError("Planning: provide a valid NaOH mass to define total sodium.")
         equivalence_moles = initial_naoh_mol / 2.0
 
         temp_c = solver_inputs.params.temperature_c
@@ -215480,9 +215659,7 @@ class UnifiedApp(tk.Tk):
             raise ValueError("Planning: total vessel volume must exceed solution volume.")
         headspace_volume_l = vessel_volume_l - solution_volume_l
 
-        use_temp_constants = bool(
-            solver_inputs.params.use_temperature_adjusted_constants
-        )
+        use_temp_constants = bool(solver_inputs.params.use_temperature_adjusted_constants)
         ionic_cap = solver_inputs.params.ionic_strength_cap
         pka2_value = _resolve_pka2_value(temp_c, use_temp_constants)
         ledger_constants = _basic_carbonate_constants(temp_c, use_temp_constants)
@@ -215506,17 +215683,46 @@ class UnifiedApp(tk.Tk):
             "planning_cycle_co2_g": manual_cycle_co2_g,
         }
 
+        pressure_schedule = (
+            _parse_planning_charge_pressures(
+                form_data.get("planning_charge_pressures_psig", "")
+            )
+            if bool(form_data.get("carbonate_mode_enabled", False))
+            else []
+        )
+        if pressure_schedule and manual_cycle_co2_g is not None:
+            raise ValueError(
+                "Planning: clear the manual CO2 dose to use per-cycle pressures."
+            )
+        trough_psig = (
+            float(headspace_pressure_high_psi) - float(delta_psi)
+            if headspace_pressure_high_psi is not None and delta_psi is not None
+            else None
+        )
+        if pressure_schedule and (
+            trough_psig is None
+            or trough_psig < 0
+            or any(pressure <= trough_psig for pressure in pressure_schedule)
+        ):
+            raise ValueError(
+                "Planning: every charge pressure must exceed the configured "
+                "trough (high pressure minus pressure drop)."
+            )
+        pressure_inventory = None
         if manual_cycle_co2_g is not None and manual_cycle_co2_g > 0:
             moles_per_cycle = manual_cycle_co2_g / SOL_MW_CO2
             moles_basis = "manual_override"
         else:
             if delta_psi is None or not math.isfinite(delta_psi) or delta_psi <= 0:
                 raise ValueError(
-                    "Planning: provide a positive pressure drop per cycle or a manual CO2-per-cycle override."
+                    "Planning: provide a positive pressure drop per cycle "
+                    "or a manual CO2-per-cycle override."
                 )
             pressure_inventory = _carbonate_pressure_drop_inventory_core(
-                high_psig=float(headspace_pressure_high_psi), delta_psig=float(delta_psi),
-                headspace_volume_l=float(headspace_volume_l), temperature_c=float(temp_c or 25.0),
+                high_psig=float(headspace_pressure_high_psi),
+                delta_psig=float(delta_psi),
+                headspace_volume_l=float(headspace_volume_l),
+                temperature_c=float(temp_c if temp_c is not None else 25.0),
             )
             moles_per_cycle = float(pressure_inventory["dose_mol"])
             moles_basis = str(pressure_inventory["calculation_source"])
@@ -215564,42 +215770,191 @@ class UnifiedApp(tk.Tk):
         stop_reason: Optional[str] = None
         recent_ph_values: List[float] = []
         recent_post_eq_ph: List[float] = []
+        carbonate_target = (
+            _safe_float(form_data.get("carbonate_target_ph"))
+            if bool(form_data.get("carbonate_mode_enabled", False))
+            else None
+        )
+        if carbonate_target is not None and not (
+            math.isfinite(carbonate_target)
+            and CARBONATE_MODE_PH_LOW <= carbonate_target <= CARBONATE_MODE_PH_HIGH
+        ):
+            raise ValueError("Planning: carbonate target pH is outside specification.")
+        initial_carbonate_ph = None
+        endpoint_charge = None
+        carbonate_endpoint_reached = False
+
+        def evaluate_dose(dose_mol: float) -> Tuple[Any, Any, Any]:
+            """Evaluate a trial dose without advancing the current cycle ledger.
+
+            Takes CO2 moles for the current cycle; returns state, accounting and
+            the selected model's pH/species/source/warning tuple. Uses existing
+            Rust-backed chemistry with Python fallback. No persistent state is
+            mutated; invalid pH or inconsistent model fallback raises ValueError.
+            """
+            trial_state, trial_accounting = _simulate_reaction_state_with_accounting(
+                dict(ledger_state),
+                dose_mol,
+                pka2_value,
+                solution_volume_l=solution_volume_l,
+                temperature_c=temp_c,
+                ionic_strength_cap=ionic_cap,
+                use_temp_adjusted_constants=use_temp_constants,
+                constants=ledger_constants,
+                planning_mode=True,
+            )
+            prediction = _predict_planning_ph_for_model(
+                ph_model,
+                planning_context=dict(planning_context),
+                cumulative_co2_moles=cumulative_moles + dose_mol,
+                cycle_index=idx,
+                fallback_ph=trial_state.get("ph"),
+            )
+            value = _safe_float(prediction[0])
+            if value is None or not math.isfinite(value):
+                raise ValueError("Planning: carbonate endpoint pH is unavailable.")
+            return trial_state, trial_accounting, prediction
+
         # Iterate over the configured range to apply the per-item logic.
         for idx in range(1, MAX_PLANNING_SYNTH_CYCLES + 1):
             previous_ph = recent_ph_values[-1] if recent_ph_values else None
-            cumulative_moles += moles_per_cycle
+            cycle_high_psig = headspace_pressure_high_psi
+            cycle_delta_psi = delta_psi
+            cycle_inventory = pressure_inventory
+            if pressure_schedule:
+                if idx > len(pressure_schedule):
+                    projection_warning = (
+                        "Provided charge pressures were exhausted before the "
+                        "carbonate target. Add more cycle pressures and rerun."
+                    )
+                    break
+                cycle_high_psig = pressure_schedule[idx - 1]
+                cycle_delta_psi = cycle_high_psig - trough_psig
+                cycle_inventory = _carbonate_pressure_drop_inventory_core(
+                    high_psig=cycle_high_psig,
+                    delta_psig=cycle_delta_psi,
+                    headspace_volume_l=float(headspace_volume_l),
+                    temperature_c=float(temp_c if temp_c is not None else 25.0),
+                )
+            full_cycle_moles = (
+                float(cycle_inventory["dose_mol"])
+                if cycle_inventory is not None
+                else moles_per_cycle
+            )
+            cycle_dose = full_cycle_moles
+            evaluated = None
+            if carbonate_target is not None:
+                # Bracket only the crossing cycle. Reuse its trial state below,
+                # so full charges are not simulated twice during generation.
+                evaluated = evaluate_dose(cycle_dose)
+                if idx == 1:
+                    initial_carbonate_ph = evaluate_dose(0.0)[2][0]
+                    if initial_carbonate_ph <= carbonate_target:
+                        raise ValueError(
+                            "Planning: initial pH is already at or below the "
+                            "carbonate target; no positive CO2 charge is warranted."
+                        )
+                if evaluated[2][0] <= carbonate_target:
+                    lower, upper = 0.0, full_cycle_moles
+                    source = evaluated[2][2]
+                    # Keep the reached side of the bracket; pH is recalculated
+                    # from dose at every trial, never interpolated from full rows.
+                    for _ in range(48):
+                        if abs(evaluated[2][0] - carbonate_target) <= 1e-7:
+                            break
+                        trial_dose = (lower + upper) / 2.0
+                        trial = evaluate_dose(trial_dose)
+                        if trial[2][2] != source:
+                            raise ValueError(
+                                "Planning: pH model changed during endpoint solving."
+                            )
+                        if trial[2][0] > carbonate_target:
+                            lower = trial_dose
+                        else:
+                            upper, evaluated = trial_dose, trial
+                    if abs(evaluated[2][0] - carbonate_target) > 1e-5:
+                        raise ValueError(
+                            "Planning: carbonate endpoint did not converge; "
+                            "no partial-charge schedule was generated."
+                        )
+                    cycle_dose = upper
+                    if pressure_inventory is not None:
+                        endpoint_charge = _python_carbonate_charge_pressure_setpoint_core(
+                            target_dose_mol=cycle_dose,
+                            trough_psig=float(pressure_inventory["trough_pressure_psig"]),
+                            maximum_charge_psig=float(cycle_high_psig),
+                            headspace_volume_l=float(headspace_volume_l),
+                            temperature_c=float(temp_c if temp_c is not None else 25.0),
+                        )
+                        cycle_delta_psi = endpoint_charge["charge_delta_psi"]
+                        # Feed the actual high-to-trough gas inventory into both
+                        # ledger passes, keeping displayed pressure and mass equal.
+                        cycle_inventory = _carbonate_pressure_drop_inventory_core(
+                            high_psig=endpoint_charge["charge_pressure_psig"],
+                            delta_psig=cycle_delta_psi,
+                            headspace_volume_l=float(headspace_volume_l),
+                            temperature_c=float(temp_c if temp_c is not None else 25.0),
+                        )
+                        delivered = float(cycle_inventory["dose_mol"])
+                        if not math.isclose(
+                            delivered, cycle_dose, rel_tol=1e-7, abs_tol=1e-9
+                        ):
+                            raise ValueError("Planning: endpoint pressure/dose mismatch.")
+                        cycle_dose = delivered
+                        evaluated = evaluate_dose(cycle_dose)
+                        if abs(evaluated[2][0] - carbonate_target) > 1e-5:
+                            raise ValueError(
+                                "Planning: endpoint pressure misses target pH."
+                            )
+                    carbonate_endpoint_reached = True
+            cumulative_moles += cycle_dose
             cumulative_mass = cumulative_moles * SOL_MW_CO2
             entry: Dict[str, Any] = {
                 "cycle_id": idx,
-                "delta_pressure_psi": delta_psi,
+                "delta_pressure_psi": cycle_delta_psi,
+                "peak_pressure_psi": (
+                    cycle_inventory.get("high_pressure_psig")
+                    if cycle_inventory is not None
+                    else None
+                ),
+                "trough_pressure_psi": (
+                    cycle_inventory.get("trough_pressure_psig")
+                    if cycle_inventory is not None
+                    else None
+                ),
+                "is_partial_charge": cycle_dose < full_cycle_moles * (1.0 - 1e-9),
+                "available_charge_pressure_psig": cycle_high_psig,
+                "full_cycle_moles": full_cycle_moles,
+                "cycle_charge_fraction": cycle_dose / full_cycle_moles,
                 "mean_temperature_c": temp_c,
-                "selected_moles": moles_per_cycle,
-                "selected_mass_g": moles_per_cycle * SOL_MW_CO2,
-                "co2_mass_g": moles_per_cycle * SOL_MW_CO2,
+                "selected_moles": cycle_dose,
+                "selected_mass_g": cycle_dose * SOL_MW_CO2,
+                "co2_mass_g": cycle_dose * SOL_MW_CO2,
                 "cumulative_co2_moles": cumulative_moles,
                 "cumulative_co2_mass_g": cumulative_mass,
                 "moles_basis": moles_basis,
-                "pressure_inventory": pressure_inventory if manual_cycle_co2_g is None else None,
+                "pressure_inventory": cycle_inventory,
             }
             entry_warnings: List[str] = []
             if measured_scrub_note and idx == 1:
                 entry_warnings.append(measured_scrub_note)
             try:
-                state, accounting = _simulate_reaction_state_with_accounting(
-                    ledger_state,
-                    moles_per_cycle,
-                    pka2_value,
-                    solution_volume_l=solution_volume_l,
-                    temperature_c=temp_c,
-                    ionic_strength_cap=ionic_cap,
-                    use_temp_adjusted_constants=use_temp_constants,
-                    constants=ledger_constants,
-                    planning_mode=True,
-                )
+                if evaluated is not None:
+                    state, accounting, _prediction = evaluated
+                else:
+                    state, accounting = _simulate_reaction_state_with_accounting(
+                        ledger_state,
+                        cycle_dose,
+                        pka2_value,
+                        solution_volume_l=solution_volume_l,
+                        temperature_c=temp_c,
+                        ionic_strength_cap=ionic_cap,
+                        use_temp_adjusted_constants=use_temp_constants,
+                        constants=ledger_constants,
+                        planning_mode=True,
+                    )
                 ledger_state = {
-                    "naoh_remaining_mol": max(
-                        state.get("naoh_remaining_mol", 0.0), 0.0
-                    ),
+                    "naoh_remaining_mol": max(state.get("naoh_remaining_mol", 0.0), 0.0),
                     "na2co3_mol": max(state.get("na2co3_mol", 0.0), 0.0),
                     "nahco3_mol": max(state.get("nahco3_mol", 0.0), 0.0),
                     "co2_excess_mol": max(state.get("co2_excess_mol", 0.0), 0.0),
@@ -215626,16 +215981,19 @@ class UnifiedApp(tk.Tk):
                     regime_label = "carbonate_to_bicarbonate"
                     if carbonate_remaining <= PLANNING_PLATEAU_CARBONATE_THRESHOLD:
                         regime_label = "excess_co2"
-                ph_after = state.get("ph")
-                ph_after, model_species, ph_source, model_warning = (
-                    _predict_planning_ph_for_model(
-                        ph_model,
-                        planning_context=planning_context,
-                        cumulative_co2_moles=cumulative_moles,
-                        cycle_index=idx,
-                        fallback_ph=ph_after,
+                if evaluated is not None:
+                    ph_after, model_species, ph_source, model_warning = evaluated[2]
+                else:
+                    ph_after = state.get("ph")
+                    ph_after, model_species, ph_source, model_warning = (
+                        _predict_planning_ph_for_model(
+                            ph_model,
+                            planning_context=planning_context,
+                            cumulative_co2_moles=cumulative_moles,
+                            cycle_index=idx,
+                            fallback_ph=ph_after,
+                        )
                     )
-                )
                 if model_warning:
                     entry_warnings.append(model_warning)
                 if idx % 5 == 0:
@@ -215648,16 +216006,20 @@ class UnifiedApp(tk.Tk):
                     print(
                         "[Planning dbg]"
                         f" cyc={idx:03d} total_g={cumulative_mass:.2f}"
-                        f" eq={'Y' if cumulative_moles >= equivalence_moles - 1e-12 else 'N'}"
-                        f" na2co3={carbonate_remaining:.4f}mol nahco3={bicarbonate_remaining:.4f}mol"
+                        f" eq={
+                            'Y' if cumulative_moles >= equivalence_moles - 1e-12 else 'N'
+                        }"
+                        f" na2co3={carbonate_remaining:.4f}mol"
+                        f" nahco3={bicarbonate_remaining:.4f}mol"
                         f" ph_aq={_safe_float(ph_after) or float('nan'):.3f}"
-                        f" solids_g={na2co3_solid * SOL_MW_NA2CO3:.2f}/{nahco3_solid * SOL_MW_NAHCO3:.2f}",
+                        f" solids_g={na2co3_solid * SOL_MW_NA2CO3:.2f}/"
+                        f"{nahco3_solid * SOL_MW_NAHCO3:.2f}",
                         flush=True,
                     )
                 entry.update(
                     {
-                        "co2_added_moles": moles_per_cycle,
-                        "co2_added_mass_g": moles_per_cycle * SOL_MW_CO2,
+                        "co2_added_moles": cycle_dose,
+                        "co2_added_mass_g": cycle_dose * SOL_MW_CO2,
                         "co2_consumed_moles": consumed_cycle,
                         "co2_consumed_mass_g": consumed_cycle * SOL_MW_CO2,
                         "co2_unconsumed_moles": unconsumed_cycle,
@@ -215691,8 +216053,8 @@ class UnifiedApp(tk.Tk):
             except Exception as exc:
                 ph_after = None
                 entry_warnings.append(f"Planning ledger update failed: {exc}")
-                entry.setdefault("co2_added_moles", moles_per_cycle)
-                entry.setdefault("co2_added_mass_g", moles_per_cycle * SOL_MW_CO2)
+                entry.setdefault("co2_added_moles", cycle_dose)
+                entry.setdefault("co2_added_mass_g", cycle_dose * SOL_MW_CO2)
                 entry.setdefault("cumulative_co2_added_moles", cumulative_moles)
                 entry.setdefault("cumulative_co2_added_mass_g", cumulative_mass)
                 entry.setdefault("co2_consumed_moles", 0.0)
@@ -215701,9 +216063,7 @@ class UnifiedApp(tk.Tk):
                 entry.setdefault(
                     "co2_unconsumed_mass_g", cumulative_unconsumed_moles * SOL_MW_CO2
                 )
-                entry.setdefault(
-                    "cumulative_co2_consumed_moles", cumulative_consumed_moles
-                )
+                entry.setdefault("cumulative_co2_consumed_moles", cumulative_consumed_moles)
                 entry.setdefault(
                     "cumulative_co2_consumed_mass_g",
                     cumulative_consumed_moles * SOL_MW_CO2,
@@ -215757,7 +216117,10 @@ class UnifiedApp(tk.Tk):
             ):
                 tail_delta = abs(ph_after - previous_ph)
                 if tail_delta < 0.005:
-                    note = "Carbonate depleted and pH tail is flat; continuing until pH/COâ‚‚ caps."
+                    note = (
+                        "Carbonate depleted and pH tail is flat; "
+                        "continuing until pH/COâ‚‚ caps."
+                    )
                     plateau_note = f"{plateau_note} {note}" if plateau_note else note
             if plateau_note:
                 entry_warnings.append(plateau_note)
@@ -215767,7 +216130,12 @@ class UnifiedApp(tk.Tk):
                     else f"{projection_warning} {plateau_note}"
                 )
 
-            if (
+            if carbonate_endpoint_reached:
+                stop_reason = (
+                    f"Planning stop: carbonate target pH {carbonate_target:.2f} "
+                    f"reached after {idx} charge(s), including the endpoint dose."
+                )
+            elif (
                 ph_after is not None
                 and math.isfinite(ph_after)
                 and ph_after <= stop_ph + 1e-12
@@ -215789,7 +216157,8 @@ class UnifiedApp(tk.Tk):
                 break
         if len(cycle_entries) >= MAX_PLANNING_SYNTH_CYCLES and stop_reason is None:
             projection_warning = (
-                "Planning projection hit the safety cap before reaching the target pH (~8); "
+                "Planning projection hit the safety cap before "
+                "reaching the target pH (~8); "
                 "check delta-P, headspace setpoint, NaOH basis, and volume assumptions."
             )
         if stop_reason and projection_warning is None:
@@ -215801,11 +216170,38 @@ class UnifiedApp(tk.Tk):
             target_ph = _safe_float(form_data.get("carbonate_target_ph"))
             if target_ph is not None:
                 guard_margin = _safe_float(form_data.get("carbonate_guard_margin_ph"))
-                guard_margin = guard_margin if guard_margin is not None and guard_margin > 0.0 else CARBONATE_MODE_DEFAULT_GUARD_PH
-                guard_ph = min(CARBONATE_MODE_PH_HIGH, target_ph + guard_margin)
-                endpoint = _carbonate_target_endpoint_from_timeline(
-                    cycle_entries, target_ph=target_ph, guard_ph=guard_ph
+                guard_margin = (
+                    guard_margin
+                    if guard_margin is not None and guard_margin > 0.0
+                    else CARBONATE_MODE_DEFAULT_GUARD_PH
                 )
+                guard_ph = min(CARBONATE_MODE_PH_HIGH, target_ph + guard_margin)
+                endpoint_rows = cycle_entries
+                if initial_carbonate_ph is not None:
+                    endpoint_rows = [
+                        {
+                            "cycle_id": 0,
+                            "cumulative_co2_added_mass_g": 0.0,
+                            "ph_after": initial_carbonate_ph,
+                        },
+                        *cycle_entries,
+                    ]
+                endpoint = _carbonate_target_endpoint_from_timeline(
+                    endpoint_rows, target_ph=target_ph, guard_ph=guard_ph
+                )
+                if carbonate_endpoint_reached:
+                    endpoint["target_endpoint"] = {
+                        "co2_g": cumulative_mass,
+                        "cycle": len(cycle_entries),
+                        "fraction": cycle_entries[-1]["cycle_charge_fraction"],
+                        "row": dict(cycle_entries[-1]),
+                    }
+                    endpoint["status"] = "forecast"
+                    endpoint["message"] = (
+                        "Target pH solved from the selected model at the final "
+                        "charge dose; pressure and timeline use that same inventory."
+                    )
+
                 target_row = endpoint.get("target_endpoint")
                 target_g = _safe_float(
                     target_row.get("co2_g") if isinstance(target_row, Mapping) else None
@@ -215818,12 +216214,37 @@ class UnifiedApp(tk.Tk):
                         manual_cycle_size_g=moles_per_cycle * SOL_MW_CO2,
                     )
                     carbonate_forecast.update(endpoint)
+                    if carbonate_endpoint_reached:
+                        last = cycle_entries[-1]
+                        actual_cycles = (
+                            len(cycle_entries) - 1 + last["cycle_charge_fraction"]
+                        )
+                        carbonate_forecast["nominal_full_dose_equivalent_cycles"] = (
+                            carbonate_forecast["estimated_cycles"]
+                        )
+                        carbonate_forecast["estimated_cycles"] = actual_cycles
+                        carbonate_forecast["estimated_full_cycles"] = int(
+                            math.floor(actual_cycles + 1e-9)
+                        )
+                        carbonate_forecast["estimated_partial_cycle_fraction"] = (
+                            actual_cycles - math.floor(actual_cycles + 1e-9)
+                        )
+                        carbonate_forecast["cycle_confidence_low"] = actual_cycles
+                        carbonate_forecast["cycle_confidence_high"] = actual_cycles
                     carbonate_forecast.update(
                         {
                             "target_ph": target_ph,
                             "guard_ph": guard_ph,
                             "equivalence_co2_g": equivalence_moles * SOL_MW_CO2,
-                            "forecast_basis": "configured Planning cycle dose",
+                            "forecast_basis": (
+                                "per-cycle available charge pressures"
+                                if pressure_schedule
+                                else "configured Planning cycle dose"
+                            ),
+                            "endpoint_dose_applied": carbonate_endpoint_reached,
+                            "target_charge_cycle": (
+                                len(cycle_entries) if carbonate_endpoint_reached else None
+                            ),
                             "current_ph": _safe_float(cycle_entries[0].get("ph_after")),
                             "endpoint_speciation": (
                                 dict(target_row.get("row") or {})
@@ -215832,35 +216253,96 @@ class UnifiedApp(tk.Tk):
                             ),
                         }
                     )
-                    target_spec = dict(target_row.get("row") or {}) if isinstance(target_row, Mapping) else {}
-                    fractions = target_spec.get("fractions") if isinstance(target_spec.get("fractions"), Mapping) else {}
+                    target_spec = (
+                        dict(target_row.get("row") or {})
+                        if isinstance(target_row, Mapping)
+                        else {}
+                    )
+                    fractions = (
+                        target_spec.get("fractions")
+                        if isinstance(target_spec.get("fractions"), Mapping)
+                        else {}
+                    )
                     hco3_pct = _safe_float(fractions.get("HCO3-") or fractions.get("HCO3"))
-                    co3_pct = _safe_float(fractions.get("CO3^2-") or fractions.get("CO3-2") or fractions.get("CO3"))
+                    co3_pct = _safe_float(
+                        fractions.get("CO3^2-")
+                        or fractions.get("CO3-2")
+                        or fractions.get("CO3")
+                    )
                     max_hco3 = _safe_float(form_data.get("carbonate_max_bicarbonate_pct"))
-                    max_hco3 = max_hco3 if max_hco3 is not None and 0.0 < max_hco3 <= 100.0 else CARBONATE_MODE_DEFAULT_MAX_BICARBONATE_PCT
+                    max_hco3 = (
+                        max_hco3
+                        if max_hco3 is not None and 0.0 < max_hco3 <= 100.0
+                        else CARBONATE_MODE_DEFAULT_MAX_BICARBONATE_PCT
+                    )
                     min_co3 = _safe_float(form_data.get("carbonate_min_carbonate_pct"))
-                    min_co3 = min_co3 if min_co3 is not None and 0.0 < min_co3 <= 100.0 else CARBONATE_MODE_DEFAULT_MIN_CARBONATE_PCT
+                    min_co3 = (
+                        min_co3
+                        if min_co3 is not None and 0.0 < min_co3 <= 100.0
+                        else CARBONATE_MODE_DEFAULT_MIN_CARBONATE_PCT
+                    )
                     carbonate_forecast["max_bicarbonate_pct"] = max_hco3
                     carbonate_forecast["min_carbonate_pct"] = min_co3
                     carbonate_forecast["target_bicarbonate_pct"] = hco3_pct
                     carbonate_forecast["target_carbonate_pct"] = co3_pct
-                    carbonate_forecast["speciation_verified"] = hco3_pct is not None and co3_pct is not None and hco3_pct < max_hco3 and co3_pct >= min_co3
+                    carbonate_forecast["speciation_verified"] = (
+                        hco3_pct is not None
+                        and co3_pct is not None
+                        and hco3_pct < max_hco3
+                        and co3_pct >= min_co3
+                    )
                     carbonate_forecast["speciation_message"] = (
-                        f"Target speciation verified: carbonate {co3_pct:.2f}% is at least {min_co3:.2f}% and bicarbonate {hco3_pct:.2f}% is below {max_hco3:.2f}%."
-                        if carbonate_forecast["speciation_verified"] else
-                        f"Target carbonate must be at least {min_co3:.2f}% and bicarbonate below {max_hco3:.2f}%; model result is unavailable or outside the limits."
+                        (
+                            f"Target speciation verified: carbonate {co3_pct:.2f}% "
+                            f"is at least {min_co3:.2f}% and bicarbonate {hco3_pct:.2f}% "
+                            f"is below {max_hco3:.2f}%."
+                        )
+                        if carbonate_forecast["speciation_verified"]
+                        else (
+                            f"Target carbonate must be at least {min_co3:.2f}% "
+                            f"and bicarbonate below {max_hco3:.2f}%; "
+                            "model result is unavailable or outside the limits."
+                        )
                     )
                     guard_endpoint = endpoint.get("guard_endpoint")
-                    guard_cycles = _safe_float(guard_endpoint.get("cycle") if isinstance(guard_endpoint, Mapping) else None)
+                    guard_cycles = _safe_float(
+                        guard_endpoint.get("cycle")
+                        if isinstance(guard_endpoint, Mapping)
+                        else None
+                    )
                     if guard_cycles is not None:
-                        full_cycles = max(0, int(math.floor(guard_cycles - 1e-12)))
-                        target_cycles = _safe_float(carbonate_forecast.get("estimated_cycles")) or 0.0
-                        partial_fraction = max(0.0, min(1.0, target_cycles - full_cycles))
+                        target_cycles = (
+                            _safe_float(carbonate_forecast.get("estimated_cycles")) or 0.0
+                        )
+                        # Guard position is a verification checkpoint. The charge
+                        # count must describe the complete dose to the target.
+                        full_cycles = max(0, int(math.floor(target_cycles + 1e-9)))
+                        partial_fraction = max(0.0, target_cycles - full_cycles)
                         operator_dosing_plan: Dict[str, Any] = {
                             "full_cycles_before_guard": full_cycles,
                             "final_partial_cycle_fraction": partial_fraction,
-                            "max_final_partial_co2_g": partial_fraction * moles_per_cycle * SOL_MW_CO2,
-                            "instruction": "Verify pH at the guard threshold before the final partial dose; decision support only.",
+                            "max_final_partial_co2_g": (
+                                cycle_entries[-1]["selected_mass_g"]
+                                if carbonate_endpoint_reached and partial_fraction > 1e-9
+                                else partial_fraction * moles_per_cycle * SOL_MW_CO2
+                            ),
+                            "full_cycle_schedule": [
+                                {
+                                    "cycle_id": row["cycle_id"],
+                                    "charge_pressure_psig": row["peak_pressure_psi"],
+                                    "trough_pressure_psig": row["trough_pressure_psi"],
+                                    "co2_g": row["selected_mass_g"],
+                                }
+                                for row in cycle_entries[:full_cycles]
+                            ],
+                            "variable_charge_pressures": bool(pressure_schedule),
+                            "final_cycle_available_pressure_psig": cycle_entries[-1][
+                                "available_charge_pressure_psig"
+                            ],
+                            "instruction": (
+                                "Verify pH at the guard threshold before "
+                                "the final partial dose; decision support only."
+                            ),
                         }
                         if (
                             manual_cycle_co2_g is None
@@ -215870,23 +216352,42 @@ class UnifiedApp(tk.Tk):
                         ):
                             partial_dose_mol = partial_fraction * moles_per_cycle
                             try:
-                                partial_charge = _python_carbonate_charge_pressure_setpoint_core(
-                                    target_dose_mol=partial_dose_mol,
-                                    trough_psig=float(pressure_inventory["trough_pressure_psig"]),
-                                    maximum_charge_psig=float(headspace_pressure_high_psi),
-                                    headspace_volume_l=float(headspace_volume_l),
-                                    temperature_c=float(temp_c or 25.0),
+                                charge = (
+                                    endpoint_charge
+                                    or _python_carbonate_charge_pressure_setpoint_core(
+                                        target_dose_mol=partial_dose_mol,
+                                        trough_psig=float(
+                                            pressure_inventory["trough_pressure_psig"]
+                                        ),
+                                        maximum_charge_psig=float(
+                                            headspace_pressure_high_psi
+                                        ),
+                                        headspace_volume_l=float(headspace_volume_l),
+                                        temperature_c=float(
+                                            temp_c if temp_c is not None else 25.0
+                                        ),
+                                    )
                                 )
                                 operator_dosing_plan.update(
                                     {
-                                        "final_partial_charge_pressure_psig": partial_charge["charge_pressure_psig"],
-                                        "final_partial_trough_pressure_psig": partial_charge["trough_pressure_psig"],
-                                        "final_partial_charge_delta_psi": partial_charge["charge_delta_psi"],
-                                        "final_partial_pressure_source": partial_charge["calculation_source"],
+                                        "final_partial_charge_pressure_psig": charge[
+                                            "charge_pressure_psig"
+                                        ],
+                                        "final_partial_trough_pressure_psig": charge[
+                                            "trough_pressure_psig"
+                                        ],
+                                        "final_partial_charge_delta_psi": charge[
+                                            "charge_delta_psi"
+                                        ],
+                                        "final_partial_pressure_source": charge[
+                                            "calculation_source"
+                                        ],
                                     }
                                 )
                             except ValueError as exc:
-                                operator_dosing_plan["pressure_instruction_warning"] = str(exc)
+                                operator_dosing_plan["pressure_instruction_warning"] = str(
+                                    exc
+                                )
                         carbonate_forecast["operator_dosing_plan"] = operator_dosing_plan
                     history_sizes: List[float] = []
                     excluded_history = 0
@@ -215909,11 +216410,13 @@ class UnifiedApp(tk.Tk):
                             history_sizes.extend(history_row.get("cycle_sizes_g") or [])
                         else:
                             excluded_history += 1
-                    carbonate_forecast["history_comparison"] = _carbonate_endpoint_forecast_core(
-                        history_sizes,
-                        current_co2_g=0.0,
-                        target_co2_g=target_g,
-                        manual_cycle_size_g=None,
+                    carbonate_forecast["history_comparison"] = (
+                        _carbonate_endpoint_forecast_core(
+                            history_sizes,
+                            current_co2_g=0.0,
+                            target_co2_g=target_g,
+                            manual_cycle_size_g=None,
+                        )
                     )
                     carbonate_forecast["history_runs_excluded"] = excluded_history
                 else:
@@ -215923,14 +216426,18 @@ class UnifiedApp(tk.Tk):
                             "target_ph": target_ph,
                             "guard_ph": guard_ph,
                             "equivalence_co2_g": equivalence_moles * SOL_MW_CO2,
-                            "forecast_basis": "configured Planning cycle dose",
+                            "forecast_basis": (
+                                "per-cycle available charge pressures"
+                                if pressure_schedule
+                                else "configured Planning cycle dose"
+                            ),
                         }
                     )
                 for entry in cycle_entries:
                     entry["carbonate_target_ph"] = target_ph
                     entry["carbonate_guard_ph"] = guard_ph
-                    entry["carbonate_estimated_total_co2_g"] = (
-                        carbonate_forecast.get("estimated_total_co2_g")
+                    entry["carbonate_estimated_total_co2_g"] = carbonate_forecast.get(
+                        "estimated_total_co2_g"
                     )
                     entry["carbonate_estimated_cycles"] = carbonate_forecast.get(
                         "estimated_cycles"
@@ -215946,6 +216453,7 @@ class UnifiedApp(tk.Tk):
             "reference_ledgers": reference_ledgers,
             "carbonate_forecast": carbonate_forecast,
         }
+
 
     def _build_planning_reference_trace_for_analysis(
         self, form_data: Dict[str, Any], solver_inputs: SolubilitySolverInputs
