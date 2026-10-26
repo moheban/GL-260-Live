@@ -676,6 +676,14 @@ The carbonate operator plan reports full cycles allowed before the configurable 
 
 The displayed stop threshold is a conservative **stop and verify** prompt above the entered target because CO₂ dosing lowers pH. It is decision support only: it does not operate equipment, replace a validated plant endpoint procedure, or guarantee product composition. Review the current pH and carbonate/bicarbonate trajectory before ending a batch.
 
+### Planning PDF report
+
+After a sodium carbonate Planning scenario completes, select **Generate PDF Report** beside **Open Plot in New Tab**. The first page highlights the number of full charges, their pressure setpoint, the final partial-charge pressure, and the requested pH endpoint. Final pressure comes from the completed scenario's gas-inventory calculation; it is not calculated by multiplying full pressure by the partial-dose fraction.
+
+Choose whether to include run inputs, the full-cycle forecast table, speciation, calculation details, and the forecast plot. Set portrait or landscape layout, font, font size, and row padding before saving. The operating summary and run warnings are always included. Missing or inconsistent pressure instructions are explicitly marked unavailable; manual mass-dose scenarios report mass instructions instead.
+
+The report captures the completed scenario when the export dialog opens. Later form edits do not change that report. Run Planning again to report revised inputs. The button is disabled while a new scenario is pending and is hidden in other workflows. Predictions retain the scenario's guard-point verification instructions and quality-check results.
+
 ### Purpose
 Perform chemistry-driven analyses including cycle-to-speciation projections, planning guidance, and equilibrium summaries.
 

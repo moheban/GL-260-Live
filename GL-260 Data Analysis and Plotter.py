@@ -38433,6 +38433,618 @@ _REACTION_DASHBOARD_PDF_SUPERSCRIPT_CHARACTERS = str.maketrans(
 )
 
 
+PLANNING_PDF_REPORT_SECTIONS = (
+    ("inputs", "Batch inputs and model selection"),
+    ("timeline", "Cycle-by-cycle forecast"),
+    ("speciation", "Endpoint speciation details"),
+    ("calculations", "Calculation basis and intermediate values"),
+    ("plot", "Planning pH and cumulative CO2 plot"),
+)
+
+
+
+def _build_planning_pdf_report(
+    baseline: Mapping[str, Any],
+    *,
+    sections: Sequence[str],
+    generated_at: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Build a report from a completed, frozen sodium-carbonate Planning run.
+
+
+    Inputs are the saved Planning baseline, selected optional section ids and an
+
+    optional export timestamp. Returns independent renderer models and plot data.
+
+    This adapter reuses the solver's pressure setpoint without rerunning chemistry
+
+    or estimating a partial pressure by multiplying the full-charge pressure.
+
+    No inputs or settings are mutated. Missing completed carbonate data raises
+
+    ValueError; missing or inconsistent dosing values become explicit warnings.
+
+    """
+
+    payload = baseline.get("cycle_payload") or {}
+
+    inputs = baseline.get("inputs") or {}
+
+    forecast = payload.get("carbonate_forecast")
+
+    timeline = [row for row in baseline.get("timeline", []) if isinstance(row, Mapping)]
+
+    if (
+        baseline.get("workflow_key") != "Planning"
+        or not timeline
+        or not isinstance(forecast, Mapping)
+    ):
+        raise ValueError(
+            "Complete a sodium-carbonate Planning scenario before exporting."
+        )
+
+    selected = set(sections)
+
+    plan = forecast.get("operator_dosing_plan") or {}
+
+    def number(value: Any, digits: int = 2, unit: str = "") -> str:
+        """Format a saved scalar with units; return 'Unavailable' for invalid data.
+
+
+        Takes any scalar, decimal precision and optional units; returns text with
+
+        no side effects or exceptions for nonnumeric/nonfinite inputs.
+
+        """
+
+        parsed = _safe_float(value)
+
+        return (
+            f"{parsed:.{digits}f}{(' ' + unit) if unit else ''}"
+            if parsed is not None and math.isfinite(parsed)
+            else "Unavailable"
+        )
+
+    def finite(value: Any) -> Optional[float]:
+        """Return a finite saved scalar or None, without mutation or exceptions.
+
+
+        This keeps missing or corrupt report values from becoming charge commands.
+
+        """
+
+        parsed = _safe_float(value)
+
+        return parsed if parsed is not None and math.isfinite(parsed) else None
+
+    high = finite(inputs.get("planning_headspace_pressure_high_psi"))
+
+    delta = finite(inputs.get("planning_cycle_delta_p_psi"))
+
+    low = high - delta if high is not None and delta is not None else None
+
+    total_cycles = finite(forecast.get("estimated_cycles"))
+
+    full_raw = finite(plan.get("full_cycles_before_guard"))
+
+    fraction = finite(plan.get("final_partial_cycle_fraction"))
+
+    final_pressure = finite(plan.get("final_partial_charge_pressure_psig"))
+
+    final_low = finite(plan.get("final_partial_trough_pressure_psig"))
+
+    mass_dosing = finite(inputs.get("planning_cycle_co2_g"))
+
+    warnings = [
+        str(value)
+        for value in (
+            payload.get("projection_warning"),
+            plan.get("pressure_instruction_warning"),
+            forecast.get("speciation_message")
+            if forecast.get("speciation_verified") is not True
+            else None,
+        )
+        if value
+    ]
+
+    valid_schedule = (
+        full_raw is not None
+        and full_raw >= 0
+        and full_raw.is_integer()
+        and fraction is not None
+        and 0 <= fraction <= 1
+        and total_cycles is not None
+        and total_cycles >= 0
+        and math.isclose(full_raw + fraction, total_cycles, abs_tol=1e-6, rel_tol=1e-8)
+    )
+
+    full = int(full_raw) if valid_schedule else None
+
+    # A whole final dose is another full charge, not a misleading "partial" charge.
+
+    if valid_schedule and fraction >= 1 - 1e-9:
+        full += 1
+
+        fraction = 0.0
+
+    no_partial = valid_schedule and fraction <= 1e-9
+
+    pressure_valid = (
+        valid_schedule
+        and not mass_dosing
+        and high is not None
+        and low is not None
+        and high > low >= 0
+        and (
+            no_partial
+            or (
+                final_pressure is not None
+                and final_low is not None
+                and 0 <= final_low < final_pressure <= high + 1e-6
+            )
+        )
+    )
+
+    if not valid_schedule:
+        warnings.append(
+            "The saved charge schedule is missing or does not reach "
+            "the modeled target. Rerun Planning; "
+            "no charge instruction is inferred."
+        )
+
+    elif not pressure_valid and not mass_dosing:
+        warnings.append(
+            "A validated pressure setpoint is unavailable. "
+            "Rerun a pressure-based Planning scenario "
+            "before using pressure instructions."
+        )
+
+    full_text = str(full) if valid_schedule else "Unavailable"
+
+    normal_charge = (
+        number(high, 1, "PSIg")
+        if pressure_valid
+        else "Mass dosing"
+        if mass_dosing
+        else "Unavailable"
+    )
+
+    final_text = (
+        "Not required"
+        if no_partial
+        else number(final_pressure, 1, "PSIg")
+        if pressure_valid
+        else "Mass dosing"
+        if mass_dosing
+        else "Unavailable"
+    )
+
+    target_ph = finite(forecast.get("target_ph"))
+
+    summary_rows = []
+
+    if pressure_valid:
+        summary_rows.append(
+            [
+                "Full charges",
+                f"{full} full charge cycles to {high:.1f} PSIg.",
+                f"Draw down to {low:.1f} PSIg after each charge.",
+            ]
+        )
+
+        summary_rows.append(
+            [
+                "Final charge",
+                "No additional partial charge is required."
+                if no_partial
+                else f"Cycle {full + 1}: charge from {final_low:.1f} "
+                f"to {final_pressure:.1f} PSIg.",
+                "All pressure setpoints are gauge pressures, not pressure increments.",
+            ]
+        )
+
+    elif valid_schedule and mass_dosing:
+        summary_rows.extend(
+            [
+                [
+                    "Full doses",
+                    f"{full} full doses of {number(mass_dosing, 3, 'g CO2')}.",
+                    "Mass-based Planning; no pressure setpoint was calculated.",
+                ],
+                [
+                    "Final dose",
+                    "Not required"
+                    if no_partial
+                    else number(plan.get("max_final_partial_co2_g"), 3, "g CO2"),
+                    "Do not convert dose fraction directly into pressure.",
+                ],
+            ]
+        )
+
+    else:
+        summary_rows.append(
+            [
+                "Charge instructions",
+                "Unavailable",
+                "Review the warnings below and rerun Planning.",
+            ]
+        )
+
+    summary_rows.extend(
+        [
+            [
+                "Requested endpoint",
+                number(target_ph, 2, "pH"),
+                "Predicted endpoint; verify measured pH before stopping.",
+            ],
+            [
+                "Guard check",
+                number(forecast.get("guard_ph"), 2, "pH"),
+                str(plan.get("instruction") or "Verify pH before the final dose."),
+            ],
+            [
+                "Total target dose",
+                number(forecast.get("estimated_total_co2_g"), 3, "g CO2"),
+                f"{number(total_cycles, 4)} equivalent full cycles.",
+            ],
+            [
+                "Run provenance",
+                str(baseline.get("created_at") or "Unavailable"),
+                "Completed Planning snapshot; "
+                "later form edits and Analysis results are excluded.",
+            ],
+        ]
+    )
+
+    summary_rows.extend(
+        ["Review", warning, "Retained in every report selection."]
+        for warning in warnings
+    )
+
+    metadata = {
+        "reaction_name": "Sodium carbonate formation",
+        "run_name": str(baseline.get("created_at") or "Completed Planning"),
+        "focus_label": "Planning prediction",
+        "generated_at": generated_at or datetime.now(),
+        "subject": "Completed sodium carbonate Planning scenario "
+        "and charge instructions",
+        "keywords": "GL-260, Planning, sodium carbonate, charge pressure, pH endpoint",
+    }
+
+    models = [
+        {
+            **metadata,
+            "title": "Sodium Carbonate Run Plan",
+            "table_headers": ["Step", "Instruction / value", "Basis / note"],
+            "table_rows": summary_rows,
+            "kpis": [
+                {"label": label, "value": value}
+                for label, value in (
+                    ("Full charge cycles", full_text),
+                    ("Full charge pressure", normal_charge),
+                    ("Final charge pressure", final_text),
+                    ("Target pH", number(target_ph)),
+                )
+            ],
+        }
+    ]
+
+    if "inputs" in selected:
+        rows = [
+            [label, number(inputs.get(key), digits, unit)]
+            for label, key, digits, unit in (
+                ("NaOH charge", "reaction_naoh_mass", 3, "g"),
+                ("Liquid volume", "reaction_solution_volume", 4, "L"),
+                ("Total vessel volume", "planning_total_vessel_volume_l", 4, "L"),
+                ("Gas headspace", "planning_headspace_volume_l", 4, "L"),
+                (
+                    "Full charge pressure",
+                    "planning_headspace_pressure_high_psi",
+                    2,
+                    "PSIg",
+                ),
+                ("Cycle pressure difference", "planning_cycle_delta_p_psi", 2, "psi"),
+            )
+        ]
+
+        rows.extend(
+            [
+                [
+                    "Temperature (first forecast cycle)",
+                    number(timeline[0].get("temperature_c"), 2, "C"),
+                ],
+                ["pH model", str(inputs.get("planning_ph_model_key") or "Unavailable")],
+                [
+                    "Speciation model",
+                    str(inputs.get("planning_spec_model_key") or "Unavailable"),
+                ],
+                ["Model options", str(inputs.get("model_options") or "Unavailable")],
+            ]
+        )
+
+        models.append(
+            {
+                **metadata,
+                "title": "Planning - Batch Inputs",
+                "table_headers": ["Input", "Saved run value"],
+                "table_rows": rows,
+            }
+        )
+
+    if "timeline" in selected:
+        rows = [
+            [
+                str(row.get("cycle_id", "--")),
+                number(row.get("co2_added_mass_g", row.get("co2_mass_g")), 3),
+                number(row.get("cumulative_co2_added_mass_g", row.get("co2_g")), 3),
+                number(row.get("ph", row.get("solution_ph")), 3),
+                number(row.get("temperature_c"), 2),
+            ]
+            for row in timeline
+        ]
+
+        models.append(
+            {
+                **metadata,
+                "title": "Planning - Full-Cycle Forecast",
+                "table_headers": [
+                    "Cycle",
+                    "CO2 added (g)",
+                    "Cumulative CO2 (g)",
+                    "Predicted pH",
+                    "Temperature (C)",
+                ],
+                "table_rows": rows,
+            }
+        )
+
+    if "speciation" in selected:
+        rows = [
+            ["Target carbonate", number(forecast.get("target_carbonate_pct"), 2, "%")],
+            [
+                "Target bicarbonate",
+                number(forecast.get("target_bicarbonate_pct"), 2, "%"),
+            ],
+            ["Minimum carbonate", number(forecast.get("min_carbonate_pct"), 2, "%")],
+            [
+                "Maximum bicarbonate",
+                number(forecast.get("max_bicarbonate_pct"), 2, "%"),
+            ],
+            [
+                "Saved model verification",
+                str(forecast.get("speciation_message") or "Unavailable"),
+            ],
+        ]
+
+        models.append(
+            {
+                **metadata,
+                "title": "Planning - Endpoint Speciation",
+                "table_headers": ["Quantity", "Saved prediction / criterion"],
+                "table_rows": rows,
+            }
+        )
+
+    if "calculations" in selected:
+        rows = [
+            ["Reaction basis", "2 NaOH + CO2 -> Na2CO3 + H2O"],
+            [
+                "Endpoint method",
+                str(forecast.get("message") or "Saved Planning forecast"),
+            ],
+            ["Dose basis", str(forecast.get("forecast_basis") or "Unavailable")],
+            ["CO2 per full cycle", number(forecast.get("cycle_size_median_g"), 4, "g")],
+            [
+                "Equivalent cycles",
+                "Target CO2 mass / CO2 mass per full cycle = "
+                + number(total_cycles, 6),
+            ],
+            [
+                "Final dose fraction",
+                number(plan.get("final_partial_cycle_fraction"), 6),
+            ],
+            [
+                "Final dose mass",
+                number(plan.get("max_final_partial_co2_g"), 4, "g CO2"),
+            ],
+            [
+                "Final pressure calculation",
+                str(
+                    plan.get("final_partial_pressure_source")
+                    or "Not available / not required"
+                ),
+            ],
+            [
+                "Final pressure increment",
+                number(plan.get("final_partial_charge_delta_psi"), 3, "psi"),
+            ],
+            [
+                "Pressure basis",
+                "Uses the saved gas-inventory inversion at the run temperature "
+                "and headspace. The pressure setpoint is not the full pressure "
+                "multiplied by dose fraction.",
+            ],
+            [
+                "Stoichiometric equivalence",
+                number(forecast.get("equivalence_co2_g"), 4, "g CO2"),
+            ],
+        ]
+
+        models.append(
+            {
+                **metadata,
+                "title": "Planning - Calculation Basis",
+                "table_headers": ["Calculation", "Saved value / method"],
+                "table_rows": rows,
+            }
+        )
+
+    return {
+        "models": models,
+        "timeline": copy.deepcopy(timeline) if "plot" in selected else [],
+        "target_ph": target_ph,
+        "target_cycles": total_cycles,
+        "guard_ph": finite(forecast.get("guard_ph")),
+        "metadata": models[0],
+    }
+
+
+def _render_planning_pdf_report(
+    report: Mapping[str, Any], preferences: Mapping[str, Any], *, dpi: int
+) -> List[Figure]:
+    """Render selected Planning sections through the existing Cycle PDF renderer.
+
+
+    Inputs are the frozen report adapter output, normalized layout preferences and
+
+    export DPI. Returns owned figures with continuous page numbering, optionally
+
+    including a vector plot of the saved trajectory. No solver or UI state is read.
+
+    Closes all created figures if rendering fails, then propagates the error.
+
+    """
+
+    figures = []
+
+    try:
+        for model in report["models"]:
+            figures.extend(
+                _render_reaction_dashboard_cycle_pdf_pages(
+                    model,
+                    orientation=preferences["orientation"],
+                    include_gauge=False,
+                    dpi=dpi,
+                    font_family=preferences["font_family"],
+                    font_size=preferences["font_size"],
+                    auto_height_rows=True,
+                    row_padding_pt=preferences["row_padding_pt"],
+                )
+            )
+
+        timeline = report.get("timeline") or []
+
+        if timeline:
+            page_size = (
+                (11, 8.5) if preferences["orientation"] == "landscape" else (8.5, 11)
+            )
+
+            fig = Figure(figsize=page_size, dpi=dpi)
+
+            figures.append(fig)
+
+            FigureCanvasAgg(fig)
+
+            fig.text(
+                0.07,
+                0.95,
+                "Planning - pH and CO2 Forecast",
+                color="#17324d",
+                fontsize=16,
+                weight="bold",
+            )
+
+            fig.text(
+                0.07,
+                0.90,
+                "Completed run: " + report["metadata"]["run_name"],
+                fontsize=9,
+            )
+
+            axis = fig.add_axes([0.10, 0.23, 0.76, 0.59])
+
+            cycles = [_safe_float(row.get("cycle_id"), math.nan) for row in timeline]
+
+            ph = [
+                _safe_float(row.get("ph", row.get("solution_ph")), math.nan)
+                for row in timeline
+            ]
+
+            co2 = [
+                _safe_float(
+                    row.get("cumulative_co2_added_mass_g", row.get("co2_g")), math.nan
+                )
+                for row in timeline
+            ]
+
+            axis.plot(cycles, ph, color="#17324d", marker="o", label="Predicted pH")
+
+            axis.set(xlabel="Equivalent full-charge cycle", ylabel="Predicted pH")
+
+            axis.grid(alpha=0.2)
+
+            if report.get("target_ph") is not None:
+                axis.axhline(
+                    report["target_ph"],
+                    color="#8c4a16",
+                    linestyle="--",
+                    label="Target pH",
+                )
+
+            if report.get("target_cycles") is not None:
+                axis.axvline(
+                    report["target_cycles"],
+                    color="#35745b",
+                    linestyle=":",
+                    label="Planned endpoint",
+                )
+
+            mass_axis = axis.twinx()
+
+            mass_axis.plot(
+                cycles, co2, color="#5e8098", linestyle="--", label="Cumulative CO2"
+            )
+
+            mass_axis.set_ylabel("Cumulative CO2 added (g)")
+
+            lines, labels = axis.get_legend_handles_labels()
+
+            other_lines, other_labels = mass_axis.get_legend_handles_labels()
+
+            axis.legend(
+                lines + other_lines,
+                labels + other_labels,
+                loc="upper center",
+                bbox_to_anchor=(0.5, -0.15),
+                ncol=2,
+                fontsize=8,
+            )
+
+            fig.text(
+                0.07,
+                0.08,
+                "Full-cycle trajectory is context; "
+                "use the final partial-charge instruction on page 1.",
+                fontsize=8,
+            )
+
+            fig.text(
+                0.055,
+                0.035,
+                "GL-260 Data Analysis and Plotter | Planning prediction",
+                fontsize=7.5,
+            )
+
+            fig.text(0.945, 0.035, "Page 0 of 0", ha="right", fontsize=7.5)
+
+        # Section renderers paginate independently; the compiled report has one
+
+        # continuous page count so references to the operating summary stay clear.
+
+        for index, figure in enumerate(figures, start=1):
+            for artist in figure.texts:
+                if artist.get_text().startswith("Page "):
+                    artist.set_text(f"Page {index} of {len(figures)}")
+
+        return figures
+
+    except Exception:
+        for figure in figures:
+            plt.close(figure)
+
+        raise
+
+
 def _reaction_dashboard_pdf_formula_text(value: Any) -> str:
     """Return PDF-safe text with chemical Unicode indices preserved.
 
@@ -39063,53 +39675,96 @@ def _write_reaction_dashboard_cycle_pdf(
 ) -> int:
     """Write rendered Reaction Cycle pages and document metadata to one PDF.
 
+
     Purpose:
+
         Persist the in-memory report figures as a single publication-ready PDF.
+
     Why:
+
         Centralized writing guarantees consistent metadata and figure cleanup for UI
+
         exports and regression smoke checks.
+
     Args:
+
         target_path: Destination PDF path.
+
         figures: Ordered report figures to save.
+
         model: Export model supplying document metadata.
+
     Returns:
+
         Number of pages written.
+
     Side Effects:
+
         Writes ``target_path`` and closes every supplied figure.
+
     Exceptions:
+
         File and Matplotlib errors propagate after figures are closed.
+
     """
+
+    from matplotlib import rc_context
+
     page_count = 0
+
     try:
-        with PdfPages(target_path) as pdf:
+        # TrueType embedding preserves searchable text across PDF readers.
+        with rc_context({"pdf.fonttype": 42}), PdfPages(target_path) as pdf:
             metadata = pdf.infodict()
+
             # PDF Info dictionaries have limited Unicode support, so chemical
+
             # subscripts use searchable plain digits in metadata only.
-            metadata["Title"] = str(
-                model.get("title") or "Reaction Cycle Report"
-            ).translate(_REACTION_DASHBOARD_PDF_SUBSCRIPT_DIGITS).translate(
-                _REACTION_DASHBOARD_PDF_SUPERSCRIPT_CHARACTERS
+
+            metadata["Title"] = (
+                str(model.get("title") or "Reaction Cycle Report")
+                .translate(_REACTION_DASHBOARD_PDF_SUBSCRIPT_DIGITS)
+                .translate(_REACTION_DASHBOARD_PDF_SUPERSCRIPT_CHARACTERS)
             )
+
             metadata["Author"] = "GL-260 Data Analysis and Plotter"
+
             metadata["Subject"] = (
-                f"Reaction Cycle report for {model.get('reaction_name', '--')}"
-            ).translate(_REACTION_DASHBOARD_PDF_SUBSCRIPT_DIGITS).translate(
-                _REACTION_DASHBOARD_PDF_SUPERSCRIPT_CHARACTERS
+                (
+                    str(
+                        model.get("subject")
+                        or f"Reaction Cycle report "
+                        f"for {model.get('reaction_name', '--')}"
+                    )
+                )
+                .translate(_REACTION_DASHBOARD_PDF_SUBSCRIPT_DIGITS)
+                .translate(_REACTION_DASHBOARD_PDF_SUPERSCRIPT_CHARACTERS)
             )
-            metadata["Keywords"] = "GL-260, reaction dashboard, cycle table"
+
+            metadata["Keywords"] = str(
+                model.get("keywords") or "GL-260, reaction dashboard, cycle table"
+            )
+
             generated_at = model.get("generated_at")
+
             if isinstance(generated_at, datetime):
                 metadata["CreationDate"] = generated_at
+
             for figure in figures:
                 _sanitize_figure_text_artists(figure)
+
                 pdf.savefig(figure)
+
                 page_count += 1
+
     finally:
         for figure in figures:
             try:
                 plt.close(figure)
+
             except Exception:
                 pass
+
     return page_count
 
 
@@ -176525,30 +177180,52 @@ class UnifiedApp(tk.Tk):
     ) -> None:
         """Freeze a successful Planning simulation as the Analysis comparison baseline.
 
+
         Purpose:
+
             Capture one immutable approved plan only after its cycle solve succeeds.
+
         Why:
+
             Analysis must compare real identified cycles to the exact plan that was
+
             run, rather than to current editable Planning controls.
+
         Inputs:
+
             form_data: Planning input snapshot used by the solver.
+
             cycle_payload: Planning cycle payload used by the solver.
+
             cycle_result: Completed Planning result containing its timeline.
+
         Outputs:
+
             None.
+
         Side Effects:
+
             Replaces the saved Planning baseline and clears any stale replay.
+
         Exceptions:
+
             Invalid/missing timeline data does not replace an existing baseline.
+
         """
+
         timeline = [
-            dict(row) for row in (cycle_result.get("timeline") or [])
+            dict(row)
+            for row in (cycle_result.get("timeline") or [])
             if isinstance(row, Mapping)
         ]
+
         if not timeline:
             return
+
         state = self._workflow_comparison_state()
+
         inputs = dict(form_data)
+
         state["planning_baseline"] = {
             "trace_id": "planning_baseline",
             "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -176558,10 +177235,17 @@ class UnifiedApp(tk.Tk):
             "cycle_payload": dict(cycle_payload),
             "timeline": timeline,
         }
+
         # A replay only applies to the previous baseline, so it cannot survive a
+
         # newly approved plan.
+
         state["replay"] = None
+
         self._save_workflow_comparison_state(state)
+
+        self._planning_pdf_pending = False
+
 
     def _comparison_trace_rows(
         self,
@@ -193462,43 +194146,69 @@ class UnifiedApp(tk.Tk):
             "cycle_notes_export",
             SOL_OUTPUT_WORKSPACE_PANEL_LABELS["cycle_notes_export"],
         )
+
         cycle_notes_body.grid_columnconfigure(0, weight=1)
-        for idx in range(1, 7):
+
+        for idx in range(1, 8):
             cycle_notes_body.grid_columnconfigure(idx, weight=0)
+
         cycle_notes_body.grid_rowconfigure(0, weight=1)
+
         cycle_notes_body.grid_rowconfigure(1, weight=0)
+
         cycle_notes_body.grid_rowconfigure(2, weight=0)
+
         callout_text = scrolledtext.ScrolledText(
             cycle_notes_body, height=8, wrap="word", state="disabled"
         )
-        callout_text.grid(row=0, column=0, columnspan=7, sticky="nsew")
+
+        callout_text.grid(row=0, column=0, columnspan=8, sticky="nsew")
+
         self._sol_cycle_callouts = callout_text
+
         preview_plot_btn = _ui_button(
             cycle_notes_body,
             text="Plot Preview",
             command=self._open_cycle_timeline_plot_preview,
         )
+
         preview_plot_btn.grid(row=1, column=0, sticky="w", padx=4, pady=4)
+
         trace_settings_btn = _ui_button(
             cycle_notes_body,
             text="Data Trace Settings...",
-            command=lambda: self._open_data_trace_settings_dialog(
-                plot_id="fig_cycle_timeline"
-            ),
+            command=lambda: self._open_data_trace_settings_dialog(plot_id="fig_cycle_timeline"),
         )
+
         trace_settings_btn.grid(row=1, column=1, sticky="w", padx=4, pady=4)
+
         open_plot_tab_btn = _ui_button(
             cycle_notes_body,
             text="Open Plot in New Tab",
             command=self._open_cycle_timeline_plot_in_new_tab,
         )
+
         open_plot_tab_btn.grid(row=1, column=2, sticky="w", padx=4, pady=4)
+
+        planning_pdf_btn = _ui_button(
+            cycle_notes_body,
+            text="Generate PDF Report",
+            command=self._open_planning_pdf_report_options,
+            state="disabled",
+        )
+
+        planning_pdf_btn.grid(row=1, column=3, sticky="w", padx=4, pady=4)
+
+        self._sol_planning_pdf_btn = planning_pdf_btn
+
         layout_manager_btn = _ui_button(
             cycle_notes_body,
             text="Layout Manager...",
             command=self._open_cycle_timeline_layout_manager,
         )
-        layout_manager_btn.grid(row=1, column=3, sticky="w", padx=4, pady=4)
+
+        layout_manager_btn.grid(row=1, column=4, sticky="w", padx=4, pady=4)
+
         layout_health_btn = _ui_button(
             cycle_notes_body,
             text="Layout Health Wizard",
@@ -193510,75 +194220,109 @@ class UnifiedApp(tk.Tk):
                 source="advanced_speciation_analysis_timeline",
             ),
         )
-        layout_health_btn.grid(row=1, column=4, sticky="w", padx=4, pady=4)
+
+        layout_health_btn.grid(row=1, column=5, sticky="w", padx=4, pady=4)
+
         plot_elements_btn = _ui_button(
             cycle_notes_body,
             text="Add Plot Elements...",
             command=self._open_cycle_timeline_plot_elements_editor,
         )
-        plot_elements_btn.grid(row=1, column=5, sticky="w", padx=4, pady=4)
+
+        plot_elements_btn.grid(row=1, column=6, sticky="w", padx=4, pady=4)
+
         expand_btn = _ui_button(
             cycle_notes_body,
             text="Expand Timeline",
             command=self._open_timeline_viewer,
         )
-        expand_btn.grid(row=1, column=6, sticky="w", padx=4, pady=4)
+
+        expand_btn.grid(row=1, column=7, sticky="w", padx=4, pady=4)
+
         export_csv_btn = _ui_button(
             cycle_notes_body,
             text="Export Timeline CSV",
             command=self._export_cycle_timeline_csv,
         )
+
         export_csv_btn.grid(row=2, column=0, sticky="w", padx=4, pady=4)
+
         export_workbook_btn = _ui_button(
             cycle_notes_body,
             text="Export To Workbook",
             command=self._export_simulation_timeline_to_master_workbook,
         )
+
         export_workbook_btn.grid(row=2, column=1, sticky="w", padx=4, pady=4)
+
         export_plot_btn = _ui_button(
             cycle_notes_body,
             text="Export Timeline Plot",
             command=self._export_cycle_timeline_plot,
         )
+
         export_plot_btn.grid(row=2, column=2, sticky="w", padx=4, pady=4)
+
         export_table_btn = _ui_button(
             cycle_notes_body,
             text="Export Timeline Table",
             command=self._export_cycle_timeline_table,
         )
+
         export_table_btn.grid(row=2, column=3, sticky="w", padx=4, pady=4)
+
         export_opts_btn = _ui_button(
             cycle_notes_body,
             text="Export Options...",
             command=self._open_timeline_export_options,
         )
+
         export_opts_btn.grid(row=2, column=4, sticky="w", padx=4, pady=4)
+
         workbook_opts_btn = _ui_button(
             cycle_notes_body,
             text="Workbook Export Options...",
             command=self._open_simulation_export_workbook_options,
         )
+
         workbook_opts_btn.grid(row=2, column=5, sticky="w", padx=4, pady=4)
+
         scroll_latest_btn = _ui_button(
             cycle_notes_body,
             text="Scroll to Latest",
             command=self._scroll_callouts_to_latest,
         )
+
         scroll_latest_btn.grid(row=2, column=6, sticky="e", padx=4, pady=4)
+
         self._sol_cycle_export_csv_btn = export_csv_btn
+
         self._sol_cycle_export_workbook_btn = export_workbook_btn
+
         self._sol_cycle_preview_plot_btn = preview_plot_btn
+
         self._sol_cycle_trace_settings_btn = trace_settings_btn
+
         self._sol_cycle_open_tab_btn = open_plot_tab_btn
+
         self._sol_cycle_layout_manager_btn = layout_manager_btn
+
         self._sol_cycle_layout_health_btn = layout_health_btn
+
         self._sol_cycle_export_plot_btn = export_plot_btn
+
         self._sol_cycle_export_table_btn = export_table_btn
+
         self._sol_cycle_export_opts_btn = export_opts_btn
+
         self._sol_cycle_workbook_export_opts_btn = workbook_opts_btn
+
         self._sol_cycle_plot_elements_btn = plot_elements_btn
+
         self._sol_cycle_expand_btn = expand_btn
+
         self._set_timeline_action_state(False)
+
 
         math_preview_body = _create_workspace_panel(
             "math_preview",
@@ -205160,23 +205904,48 @@ class UnifiedApp(tk.Tk):
     def _set_timeline_action_state(self, enabled: bool) -> None:
         """Enable or disable cycle timeline action buttons.
 
+
         Purpose:
+
             Keep timeline export, preview, layout, and editing buttons aligned
+
             with whether Analysis/Reprocessing timeline data is available.
+
         Why:
+
             Disabled actions prevent users from opening empty timeline surfaces
+
             before a workflow produces renderable results.
+
         Inputs:
+
             enabled: True to enable timeline actions, False to disable them.
+
         Outputs:
+
             None.
+
         Side Effects:
+
             Mutates Tk button states for timeline actions when those buttons exist.
+
         Exceptions:
+
             Widget update failures are ignored per button.
+
         """
+
         state = "normal" if enabled else "disabled"
+
+        # Planning reports require their own completed snapshot; Analysis timeline
+
+        # availability must never enable an export of unrelated Planning inputs.
+
+        if getattr(self, "_sol_planning_pdf_btn", None) is not None:
+            self._update_planning_pdf_action_state(enabled)
+
         # Iterate to apply the per-item logic.
+
         for attr in (
             "_sol_cycle_export_csv_btn",
             "_sol_cycle_export_workbook_btn",
@@ -205191,13 +205960,18 @@ class UnifiedApp(tk.Tk):
             "_sol_cycle_expand_btn",
         ):
             btn = getattr(self, attr, None)
+
             if btn is None:
                 continue
+
             try:
                 btn.configure(state=state)
+
             except Exception:
                 # Best-effort guard; ignore failures to avoid interrupting the workflow.
+
                 pass
+
 
     def _scroll_callouts_to_latest(self) -> None:
         """Perform scroll callouts to latest.
@@ -217218,22 +217992,343 @@ class UnifiedApp(tk.Tk):
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
 
+    def _update_planning_pdf_action_state(self, enabled: bool) -> None:
+        """Gate the Planning PDF button on the completed carbonate snapshot.
+
+
+        Input is the shared timeline readiness flag. Returns None; updates button
+
+        visibility and state without running a solver. Missing widgets are ignored;
+
+        Tk errors propagate through the caller's existing UI error handling.
+
+        """
+
+        button = getattr(self, "_sol_planning_pdf_btn", None)
+
+        if button is None:
+            return
+
+        if self._current_solubility_workflow() != "Planning":
+            button.configure(state="disabled")
+
+            button.grid_remove()
+
+            return
+
+        button.grid()
+
+        baseline = self._workflow_comparison_state().get("planning_baseline")
+
+        ready = (
+            enabled
+            and not getattr(self, "_planning_pdf_pending", False)
+            and isinstance(baseline, Mapping)
+            and bool(baseline.get("timeline"))
+            and isinstance(
+                (baseline.get("cycle_payload") or {}).get("carbonate_forecast"), Mapping
+            )
+        )
+
+        button.configure(state="normal" if ready else "disabled")
+
+
+    def _open_planning_pdf_report_options(self) -> None:
+        """Configure and export a PDF of the completed sodium-carbonate scenario.
+
+
+        Takes no parameters and returns None. Freezes the saved Planning baseline
+
+        when the dialog opens, preventing later form edits or Analysis activity
+
+        from changing its instructions. Creates a Tk dialog, saves report layout
+
+        preferences, and writes the user-selected PDF through the shared renderer
+
+        and writer. Missing results and export failures are shown in message boxes.
+
+        """
+
+        baseline = self._workflow_comparison_state().get("planning_baseline")
+
+        try:
+            snapshot = copy.deepcopy(baseline or {})
+
+            _build_planning_pdf_report(snapshot, sections=())
+
+        except (TypeError, ValueError) as exc:
+            messagebox.showinfo("Planning PDF Report", str(exc), parent=self)
+
+            return
+
+        existing = getattr(self, "_planning_pdf_options_window", None)
+
+        if existing is not None and existing.winfo_exists():
+            existing.lift()
+
+            return
+
+        settings_ref = self._settings_dict()
+
+        saved = settings_ref.get("planning_pdf_report") or {}
+
+        saved = saved if isinstance(saved, Mapping) else {}
+
+        preferences = _normalize_reaction_dashboard_export_preferences(saved)
+
+        window = tk.Toplevel(self)
+
+        self._planning_pdf_options_window = window
+
+        window.title("Planning PDF Report")
+
+        window.transient(self)
+
+        window.resizable(False, False)
+
+        host = ttk.Frame(window, padding=16)
+
+        host.grid(sticky="nsew")
+
+        ttk.Label(
+            host, text="Sodium Carbonate Run Plan", font=("Segoe UI", 12, "bold")
+        ).grid(row=0, column=0, columnspan=2, sticky="w")
+
+        ttk.Label(
+            host, text="Completed scenario: " + str(snapshot.get("created_at", "--"))
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 8))
+
+        ttk.Label(
+            host,
+            text="Full-cycle count, final charge pressure, target pH "
+            "and run warnings\nare always included. "
+            "Choose the supporting details below.",
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 10))
+
+        section_vars = {}
+
+        selected = saved.get(
+            "sections", [key for key, _label in PLANNING_PDF_REPORT_SECTIONS]
+        )
+
+        for row_index, (key, label) in enumerate(PLANNING_PDF_REPORT_SECTIONS, start=3):
+            variable = tk.BooleanVar(value=key in selected)
+
+            section_vars[key] = variable
+
+            ttk.Checkbutton(host, text=label, variable=variable).grid(
+                row=row_index, column=0, columnspan=2, sticky="w", pady=3
+            )
+
+        orientation = tk.StringVar(value=preferences["orientation"])
+
+        family = tk.StringVar(value=preferences["font_family"])
+
+        font_size = tk.StringVar(value=str(preferences["font_size"]))
+
+        padding = tk.StringVar(value=str(preferences["row_padding_pt"]))
+
+        layout = ttk.LabelFrame(host, text="Page layout", padding=8)
+
+        layout.grid(row=8, column=0, columnspan=2, sticky="ew", pady=10)
+
+        ttk.Label(layout, text="Orientation").grid(row=0, column=0, sticky="w")
+
+        ttk.Combobox(
+            layout,
+            textvariable=orientation,
+            values=("landscape", "portrait"),
+            state="readonly",
+            width=22,
+        ).grid(row=0, column=1, sticky="w")
+
+        ttk.Label(layout, text="Font").grid(row=1, column=0, sticky="w")
+
+        ttk.Combobox(
+            layout,
+            textvariable=family,
+            values=sorted(
+                {
+                    preferences["font_family"],
+                    "Times New Roman",
+                    "DejaVu Serif",
+                    "DejaVu Sans",
+                }
+            ),
+            state="readonly",
+            width=22,
+        ).grid(row=1, column=1, sticky="w")
+
+        ttk.Label(layout, text="Table font size (pt)").grid(row=2, column=0, sticky="w")
+
+        ttk.Spinbox(layout, textvariable=font_size, from_=8, to=18, width=8).grid(
+            row=2, column=1, sticky="w"
+        )
+
+        ttk.Label(layout, text="Cell padding (pt)").grid(row=3, column=0, sticky="w")
+
+        ttk.Spinbox(layout, textvariable=padding, from_=0, to=24, width=8).grid(
+            row=3, column=1, sticky="w"
+        )
+
+        def export_report() -> None:
+            """Write the selected frozen scenario, retaining the dialog on failure.
+
+
+            Reads only dialog options and the enclosing snapshot; returns None.
+
+            Shows a save dialog/progress splash, persists successful preferences
+
+            and closes generated figures. Validation and I/O errors show a message.
+
+            """
+
+            size = _safe_float(font_size.get())
+
+            pad = _safe_float(padding.get())
+
+            if (
+                size is None
+                or not math.isfinite(size)
+                or not 8 <= size <= 18
+                or pad is None
+                or not math.isfinite(pad)
+                or not 0 <= pad <= 24
+            ):
+                messagebox.showwarning(
+                    "Planning PDF Report",
+                    "Use font size 8-18 pt and padding 0-24 pt.",
+                    parent=window,
+                )
+
+                return
+
+            options = {
+                "sections": [key for key, var in section_vars.items() if var.get()],
+                "orientation": orientation.get(),
+                "font_family": family.get(),
+                "font_size": size,
+                "row_padding_pt": pad,
+            }
+
+            path = filedialog.asksaveasfilename(
+                parent=window,
+                title="Save Planning PDF Report",
+                defaultextension=".pdf",
+                filetypes=[("PDF Document", "*.pdf")],
+                initialdir=str(saved.get("export_dir") or os.getcwd()),
+                initialfile="sodium_carbonate_plan_"
+                + datetime.now().strftime("%Y%m%d_%H%M%S")
+                + ".pdf",
+            )
+
+            if not path:
+                return
+
+            figures = []
+
+            context = "planning_pdf_export"
+
+            self._show_operation_splash("Generate Planning PDF Report", context=context)
+
+            try:
+                self._update_operation_splash(
+                    message="Compiling completed Planning scenario...",
+                    progress=20.0,
+                    stage_key="render",
+                    detail="Formatting selected sections and charge instructions.",
+                    reset=True,
+                )
+
+                report = _build_planning_pdf_report(snapshot, sections=options["sections"])
+
+                figures = _render_planning_pdf_report(
+                    report, options, dpi=self._get_export_dpi()
+                )
+
+                pages = _write_reaction_dashboard_cycle_pdf(
+                    Path(path), figures, report["metadata"]
+                )
+
+                settings_ref["planning_pdf_report"] = {
+                    **options,
+                    "export_dir": str(Path(path).parent),
+                }
+
+                try:
+                    self._schedule_save_settings()
+
+                except Exception:
+                    # A preference-save failure must not misreport a written PDF.
+
+                    pass
+
+            except Exception as exc:
+                self._hide_operation_splash(context=context)
+
+                messagebox.showerror(
+                    "Planning PDF Report", f"Report export failed:\n{exc}", parent=window
+                )
+
+                return
+
+            finally:
+                for figure in figures:
+                    plt.close(figure)
+
+                self._hide_operation_splash(context=context)
+
+            window.destroy()
+
+            messagebox.showinfo(
+                "Planning PDF Report", f"Saved {pages} pages to:\n{path}", parent=self
+            )
+
+        ttk.Button(host, text="Generate PDF Report", command=export_report).grid(
+            row=9, column=0, sticky="w", pady=(6, 0)
+        )
+
+        ttk.Button(host, text="Cancel", command=window.destroy).grid(
+            row=9, column=1, sticky="e", pady=(6, 0)
+        )
+
+
     def _run_planning_scenario(self) -> None:
         """Run planning scenario.
+
         Purpose: Trigger the Planning workflow execution from the UI.
+
         Why: Capture Planning inputs and run the solver in planning mode.
+
         Inputs:
+
             None.
+
         Outputs:
+
             None.
+
         Side Effects:
+
             - Captures planning input values for persistence.
+
             - Updates workflow mode and starts the analysis pipeline.
+
         Exceptions:
+
             - Best-effort; downstream workflow handles errors.
+
         """
+
+        self._planning_pdf_pending = True
+
+        if getattr(self, "_sol_planning_pdf_btn", None) is not None:
+            self._update_planning_pdf_action_state(False)
+
         self._capture_planning_inputs()
+
         self._run_solubility_workflow("nahco3_dissolution")
+
 
     def _copy_planning_assumptions_to_analysis(self) -> None:
         """Copy the frozen Planning chemistry basis into editable Analysis inputs.
