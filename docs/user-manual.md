@@ -682,6 +682,8 @@ With **Carbonate Mode** enabled in Planning, the final timeline row uses the cha
 
 For a cylinder whose available charge pressure declines, enter **Available charge pressures (PSIg)** in the Planning Carbonate Mode card. Provide one maximum per cycle, in order, such as `730, 715, 700, 685, 670` for a 15 PSIg decline. Values are available charge pressures, not pressure increments. The trough remains the configured high pressure minus the configured pressure drop; for 730 PSIg high and 730 psi drop, the trough is 0 PSIg. Each supplied maximum must exceed that trough. Leave the list blank for constant-pressure charges, and clear manual CO? dosing when using a pressure list.
 
+After a successful run, the text below the pressure list explicitly states **Last completed run USED your available charge pressures** and lists the full-charge setpoints plus the final cycle's available maximum. The final charge instruction separately shows the lower pressure needed at the endpoint. This summary describes the completed run; rerun Planning after changing the list.
+
 Each full cycle uses its own pressure inventory. The final charge may be below that cycle's available maximum. If the list ends before the requested pH is reached, Planning retains only the supplied cycles and reports that more pressures are needed; it does not extrapolate the cylinder decline. The saved run and PDF retain the pressure schedule. These values are user-supplied planning assumptions, so update them as measured cylinder performance becomes available.
 
 ### Planning PDF report

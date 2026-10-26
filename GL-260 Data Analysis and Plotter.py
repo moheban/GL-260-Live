@@ -193257,8 +193257,10 @@ class UnifiedApp(tk.Tk):
         ttk.Label(
             planning_carbonate_card,
             text="Optional: one maximum per cycle, comma-separated (730, 715, 700, 685, 670). "
-            "Blank uses constant pressure. Trough = high pressure minus pressure drop. "
-            "Clear manual CO2 dosing to use this list.",
+            "With Carbonate Mode on, this list sets each cycle's maximum pressure. "
+            "Run Planning to apply changes; the result below confirms pressures used. "
+            "Blank uses constant pressure. Clear manual CO2 dosing to use the list. "
+            "Trough = high pressure minus pressure drop.",
             style="Sol.Help.TLabel",
             wraplength=700,
             justify="left",
@@ -197438,7 +197440,8 @@ class UnifiedApp(tk.Tk):
         Purpose: update the Analysis or Planning Carbonate Mode status text from
         a worker-produced forecast without repeating chemistry calculations in Tk.
         Why: both workflows must report the same target-pH endpoint semantics
-        while retaining their distinct displayed control cards.
+        while retaining their distinct displayed control cards. Planning also
+        identifies the saved pressure schedule actually used, not current edits.
         Inputs: forecast mapping produced by the cycle worker and workflow name.
         Outputs: none.
         Side Effects: updates the applicable Tk StringVar when it exists.
@@ -197460,17 +197463,22 @@ class UnifiedApp(tk.Tk):
         if status in {"forecast", "target_reached"}:
             target_g = _safe_float(forecast.get("estimated_total_co2_g"))
             cycles = _safe_float(forecast.get("estimated_cycles"))
-            guard_g = _safe_float(guard.get("co2_g")) if isinstance(guard, Mapping) else None
+            guard_g = (
+                _safe_float(guard.get("co2_g")) if isinstance(guard, Mapping) else None
+            )
             endpoint_ph = _safe_float(forecast.get("target_ph"))
             details = [
-                f"Carbonate target pH {endpoint_ph:.2f}" if endpoint_ph is not None else "Carbonate target",
+                f"Carbonate target pH {endpoint_ph:.2f}"
+                if endpoint_ph is not None
+                else "Carbonate target",
                 f"CO₂ {target_g:.2f} g" if target_g is not None else "CO₂ unavailable",
                 f"{cycles:.2f} cycles" if cycles is not None else "cycles unavailable",
             ]
             if guard_g is not None:
                 details.append(f"guard/verify at {guard_g:.2f} g")
             if forecast.get("speciation_verified") is True:
-                details.append(f"HCO₃⁻ {float(forecast.get('target_bicarbonate_pct') or 0.0):.2f}% verified")
+                bicarbonate_pct = float(forecast.get("target_bicarbonate_pct") or 0.0)
+                details.append(f"HCO₃⁻ {bicarbonate_pct:.2f}% verified")
             elif forecast.get("max_bicarbonate_pct") is not None:
                 details.append("target speciation requires review")
             operator_plan = forecast.get("operator_dosing_plan")
@@ -197482,16 +197490,46 @@ class UnifiedApp(tk.Tk):
                 partial_trough_psig = _safe_float(
                     operator_plan.get("final_partial_trough_pressure_psig")
                 )
+                if workflow_key == "Planning" and operator_plan.get(
+                    "variable_charge_pressures"
+                ):
+                    used_pressures = []
+                    for row in operator_plan.get("full_cycle_schedule") or []:
+                        if not isinstance(row, Mapping):
+                            continue
+                        pressure = _safe_float(row.get("charge_pressure_psig"))
+                        cycle = row.get("cycle_id", "?")
+                        if pressure is not None and math.isfinite(pressure):
+                            used_pressures.append(f"cycle {cycle}: {pressure:.1f} PSIg")
+                    ceiling = _safe_float(
+                        operator_plan.get("final_cycle_available_pressure_psig")
+                    )
+                    if (
+                        partial_charge_psig is not None
+                        and ceiling is not None
+                        and math.isfinite(ceiling)
+                    ):
+                        used_pressures.append(
+                            f"cycle {full_cycles + 1}: {ceiling:.1f} PSIg available"
+                        )
+                    details.insert(
+                        0,
+                        "Last completed run USED your available charge pressures: "
+                        + ("; ".join(used_pressures) or "saved per-cycle schedule"),
+                    )
+                    details.append(
+                        "Each cycle's CO2 uptake uses its own pressure; "
+                        "rerun Planning after editing the list"
+                    )
                 if partial_charge_psig is not None and partial_trough_psig is not None:
                     details.append(
-                        f"{full_cycles} full; then charge to {partial_charge_psig:.1f} psig "
+                        f"{full_cycles} full; then charge to "
+                        f"{partial_charge_psig:.1f} psig "
                         f"and draw down to {partial_trough_psig:.1f} psig"
                     )
                 else:
-                    details.append(
-                        f"{full_cycles} full + "
-                        f"≤{float(operator_plan.get('max_final_partial_co2_g') or 0.0):.2f} g final partial"
-                    )
+                    partial_g = float(operator_plan.get("max_final_partial_co2_g") or 0.0)
+                    details.append(f"{full_cycles} full + ≤{partial_g:.2f} g final partial")
             history_comparison = forecast.get("history_comparison")
             if isinstance(history_comparison, Mapping):
                 history_cycles = _safe_float(history_comparison.get("estimated_cycles"))
@@ -197499,9 +197537,17 @@ class UnifiedApp(tk.Tk):
                     details.append(f"history median {history_cycles:.2f} cycles")
             if isinstance(target, Mapping) and target.get("already_reached"):
                 details.append("target already reached")
-            target_var.set(" | ".join(details) + ". Decision support only; verify pH before stopping.")
+            target_var.set(
+                " | ".join(details) + ". Decision support only; verify pH before stopping."
+            )
             return
-        target_var.set(str(forecast.get("message") or "Carbonate target was not reached by the available trajectory."))
+        target_var.set(
+            str(
+                forecast.get("message")
+                or "Carbonate target was not reached by the available trajectory."
+            )
+        )
+
 
     def _update_cycle_solubility_widgets(
         self,

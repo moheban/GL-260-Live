@@ -38,3 +38,23 @@ Checks exercise real Pitzer endpoint generation and the actual timeline consumer
 Visual inspection and table-cell bounds checks confirmed the portrait report shows separate full-charge pressures and final charge instructions without clipping. The desktop widgets/save-dialog interaction and broader application regression suite were not run; validation focused on the changed chemistry flow, backend boundary and report pipeline.
 
 Final result: 13 targeted tests passed in 60.44 seconds. All temporary patch-validation files were removed after validation.
+
+## Pressure-list confirmation text
+
+Read-only inspection of the saved completed Planning run confirmed its input list `730, 689, 648, 607, 566, 525` was used. Full charges 1-3 used 730, 689 and 648 PSIg, with CO2 masses 181.7472, 166.7823 and 152.8655 g. The fourth charge had a 607 PSIg available maximum. The previous generic summary omitted these pressures even though the computation consumed them.
+
+The Planning summary now explicitly identifies the completed run's used pressures, including the final available maximum, and separately retains the actual partial-charge instruction. It reads the completed forecast rather than current edited controls. Help text explains that rerunning Planning applies changes. No chemistry or Rust implementation changed in this follow-up.
+
+Modified-block syntax/docstring checks and these scoped static commands passed:
+
+```powershell
+.\.venv-314t\Scripts\python.exe -m ruff check --target-version py312 --ignore F821 .tmp_pressure_summary_validation
+.\.venv-314t\Scripts\python.exe -m ruff format --target-version py312 --check .tmp_pressure_summary_validation
+.\.venv-314t\Scripts\python.exe -m ruff check --target-version py312 --select E9,F401,F811 .tmp_pressure_summary_validation
+.\.venv-314t\Scripts\python.exe -m ruff check --target-version py312 --select F821 "GL-260 Data Analysis and Plotter.py"
+.\.venv-314t\Scripts\python.exe -m pytest -q tests/test_planning_partial_endpoint.py -k declining_pressure_schedule
+```
+
+Scope: `_apply_carbonate_forecast_summary`, the pressure-list help label, and `test_declining_pressure_schedule_and_exhaustion`. The integration test checks actual varying doses and summary text, including a deliberately different current input to ensure the completed summary never claims those edits were applied. Broader tests were not rerun because this follow-up changes presentation only.
+
+Follow-up result: 1 integration test passed, 7 deselected. Temporary validation snippets were removed after checks.

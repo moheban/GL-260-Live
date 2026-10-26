@@ -182,7 +182,7 @@ def test_declining_pressure_schedule_and_exhaustion(app):
 
     Takes the app fixture; runs local Planning objects with real chemistry.
     Returns None and raises on a fabricated pressure, an extra unsupplied cycle,
-    incorrect endpoint mass, or a report that repeats a fixed full pressure.
+    incorrect endpoint mass, or report/status text that hides the used pressures.
     """
     pressures = [730, 715, 700, 685, 670, 655]
     harness, form, params = setup_plan(
@@ -209,6 +209,23 @@ def test_declining_pressure_schedule_and_exhaustion(app):
     assert rows[1]["selected_mass_g"] < rows[0]["selected_mass_g"]
     forecast = payload["carbonate_forecast"]
     plan = forecast["operator_dosing_plan"]
+    messages = []
+    ui = SimpleNamespace(
+        _carbonate_planning_summary_var=SimpleNamespace(set=messages.append),
+        _planning_charge_pressures_var=SimpleNamespace(get=lambda: "999, 999"),
+    )
+    app.UnifiedApp._apply_carbonate_forecast_summary(
+        ui, forecast, workflow_key="Planning"
+    )
+    assert "Last completed run USED your available charge pressures" in messages[-1]
+    assert "999" not in messages[-1]
+    for row in plan["full_cycle_schedule"]:
+        assert (
+            f"cycle {row['cycle_id']}: {row['charge_pressure_psig']:.1f} PSIg"
+            in messages[-1]
+        )
+    assert f"{pressures[len(rows) - 1]:.1f} PSIg available" in messages[-1]
+    assert "rerun Planning after editing" in messages[-1]
     assert plan["full_cycles_before_guard"] == len(rows) - 1
     assert plan["max_final_partial_co2_g"] == pytest.approx(rows[-1]["selected_mass_g"])
     assert forecast["estimated_cycles"] == pytest.approx(
