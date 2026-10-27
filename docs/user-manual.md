@@ -694,6 +694,12 @@ Choose whether to include run inputs, the full-cycle forecast table, speciation,
 
 The report captures the completed scenario when the export dialog opens. Later form edits do not change that report. Run Planning again to report revised inputs. The button is disabled while a new scenario is pending and is hidden in other workflows. Predictions retain the scenario's guard-point verification instructions and quality-check results.
 
+### Analysis PDF report
+
+After Analysis completes with real cycle data, select **Generate PDF Report** beside **Open Plot in New Tab**. The report uses the completed Analysis results and frozen run inputs. It includes a summary and run notes, with optional inputs, measured cycle tables, gas-uptake and calibration calculations, speciation, and plots. Measured pH anchors are explicitly distinguished from calculated and calibrated pH; raw uptake is retained alongside corrected uptake.
+
+Use the same page, font, and spacing controls as Planning. Plot pages always remain landscape. Analysis and Planning retain separate report preferences. Later control edits do not change a completed report. Older saved results without frozen inputs can still be exported, but their missing input provenance is identified; rerun Analysis to capture those details. Imported pressures retain their recorded psi basis.
+
 ### Purpose
 Perform chemistry-driven analyses including cycle-to-speciation projections, planning guidance, and equilibrium summaries.
 

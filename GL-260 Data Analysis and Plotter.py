@@ -38514,6 +38514,611 @@ PLANNING_PDF_REPORT_SECTIONS = (
 
 
 
+ANALYSIS_PDF_REPORT_SECTIONS = (
+    ("inputs", "Run inputs and data provenance"),
+    ("cycles", "Measured cycles and pH results"),
+    ("calculations", "Gas uptake and calibration calculations"),
+    ("speciation", "Calculated speciation by cycle"),
+    ("plot", "Cycle plots (always landscape)"),
+)
+
+
+
+def _freeze_analysis_pdf_snapshot(
+    form_data: Mapping[str, Any],
+    cycle_payload: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Capture successful worker inputs for later Analysis report export.
+
+    Takes worker form and raw cycle mappings. Returns independent report inputs,
+    cycle provenance and a completion timestamp. No persistent state changes;
+    copy errors propagate to the worker error handler. Excludes unrelated live
+    solver objects to keep persisted report snapshots bounded.
+    """
+    keys = (
+        "reaction_naoh_mass",
+        "mass_naoh_g",
+        "reaction_solution_volume",
+        "solution_volume_l",
+        "analysis_total_vessel_volume_l",
+        "temperature_c",
+        "workflow_spec_model_key",
+        "analysis_spec_model_key",
+        "workflow_ph_model_key",
+        "analysis_ph_model_key",
+        "carbonate_mode_enabled",
+        "carbonate_target_ph",
+        "reaction_target_ph",
+        "model_options",
+    )
+    return {
+        "workflow_key": "Analysis",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "inputs": {key: copy.deepcopy(form_data.get(key)) for key in keys},
+        "cycle_payload": {
+            key: copy.deepcopy(cycle_payload.get(key))
+            for key in (
+                "cycle_transfer",
+                "gas_molar_mass",
+                "cycle_context",
+                "timestamp",
+            )
+        },
+    }
+
+
+def _build_analysis_pdf_report(
+    result: Mapping[str, Any],
+    *,
+    sections: Sequence[str],
+    generated_at: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Adapt a completed Analysis result into independent report sections.
+
+    Takes saved Analysis results and optional section ids, plus export time.
+    Returns table models, plot rows and metadata without changing inputs, reading
+    live controls or running chemistry. Observed pH is never inferred from model
+    pH. Missing legacy provenance is reported explicitly; missing/non-Analysis
+    timelines raise ValueError. Numeric formatting contains invalid scalars.
+    """
+    snapshot = result.get("analysis_report_snapshot") or {}
+    if not isinstance(snapshot, Mapping):
+        snapshot = {}
+    if snapshot.get("workflow_key", "Analysis") != "Analysis" or not (
+        snapshot
+        or any(
+            key in result
+            for key in (
+                "analysis_dashboard",
+                "analysis_input_signature",
+                "analysis_uptake_correction",
+            )
+        )
+    ):
+        raise ValueError("Complete an Analysis run before exporting its report.")
+    inputs = snapshot.get("inputs") or {}
+    payload = snapshot.get("cycle_payload") or {}
+    anchor = result.get("analysis_measured_ph_anchor") or {}
+    inputs = inputs if isinstance(inputs, Mapping) else {}
+    payload = payload if isinstance(payload, Mapping) else {}
+    anchor = anchor if isinstance(anchor, Mapping) else {}
+
+    def numeric(value: Any) -> Optional[float]:
+        """Return a finite scalar or None; no mutation or numeric errors escape."""
+        parsed = _safe_float(value)
+        return parsed if parsed is not None and math.isfinite(parsed) else None
+
+    def first(row: Mapping[str, Any], *keys: str) -> Optional[float]:
+        """Return the first finite saved field, retaining zero; no side effects."""
+        for key in keys:
+            value = numeric(row.get(key))
+            if value is not None:
+                return value
+        return None
+
+    def number(value: Any, digits: int = 3, unit: str = "") -> str:
+        """Format a scalar with optional units, or Unavailable; no side effects."""
+        value = numeric(value)
+        return (
+            f"{value:.{digits}f}{(' ' + unit) if unit else ''}"
+            if value is not None
+            else "Unavailable"
+        )
+
+    rows = []
+    source_rows = []
+    for index, row in enumerate(result.get("timeline") or [], 1):
+        if not isinstance(row, Mapping):
+            continue
+        cycle = numeric(row.get("cycle_id", index))
+        # Cycle zero is an initial-state reference, not a detected real charge.
+        if cycle is None or cycle <= 0:
+            continue
+        observed = first(row, "actual_observed_ph", "analysis_anchor_measured_ph")
+        if observed is None and numeric(anchor.get("cycle_index")) == cycle:
+            observed = numeric(anchor.get("measured_ph"))
+        rows.append(
+            {
+                "cycle": cycle,
+                "peak": first(row, "peak_pressure_psi"),
+                "trough": first(row, "trough_pressure_psi"),
+                "delta": first(row, "delta_pressure_psi"),
+                "temperature": first(row, "temperature_c"),
+                "raw_mol": first(
+                    row, "original_cycle_co2_mol", "co2_added_moles", "co2_moles"
+                ),
+                "raw_g": first(
+                    row, "original_cycle_co2_g", "co2_added_mass_g", "co2_mass_g"
+                ),
+                "raw_total_g": first(row, "cumulative_co2_added_mass_g", "co2_g"),
+                "corrected_g": first(row, "corrected_cycle_co2_g"),
+                "corrected_total_g": first(row, "corrected_cumulative_co2_g"),
+                "calculated_ph": first(
+                    row, "calculated_ph", "trajectory_ph", "solution_ph", "ph"
+                ),
+                "calibrated_ph": first(row, "calibrated_estimated_ph", "corrected_ph"),
+                "observed_ph": observed,
+            }
+        )
+        source_rows.append(row)
+    if not rows:
+        raise ValueError("Complete Analysis with real cycle data before exporting.")
+    selected = set(sections)
+    transferred = {
+        numeric(row.get("cycle_id")): row
+        for row in payload.get("cycle_transfer") or []
+        if isinstance(row, Mapping)
+    }
+    latest = rows[-1]
+    total_g = latest["raw_total_g"]
+    if total_g is None and all(row["raw_g"] is not None for row in rows):
+        total_g = sum(row["raw_g"] for row in rows)
+    observed_rows = [row for row in rows if row["observed_ph"] is not None]
+    latest_observed = observed_rows[-1] if observed_rows else None
+    observed_text = (
+        number(latest_observed["observed_ph"], 2)
+        + f" (cycle {latest_observed['cycle']:g})"
+        if latest_observed
+        else "Not recorded"
+    )
+    notes = [
+        "Gas uptake is calculated from measured cycle data. Only observed pH "
+        "values are measurements; calculated and calibrated pH are model results.",
+        "Pressures retain the imported cycle data's psi basis. Export does not "
+        "convert between gauge and absolute pressure.",
+    ]
+    if not snapshot:
+        notes.append(
+            "This older saved result has no frozen run inputs. "
+            "Rerun Analysis to include input provenance; current edits are excluded."
+        )
+    for key in (
+        "errors",
+        "assumptions",
+        "analysis_consistency_findings",
+        "analysis_consistency_recommendations",
+    ):
+        values = result.get(key) or []
+        if isinstance(values, str):
+            values = [values]
+        notes.extend(str(value) for value in values if value)
+    for row in source_rows:
+        warnings = row.get("warnings") or []
+        if isinstance(warnings, str):
+            warnings = [warnings]
+        notes.extend(str(value) for value in warnings if value)
+    notes = list(dict.fromkeys(notes))
+    metadata = {
+        "reaction_name": "Analysis of measured cycles",
+        "run_name": str(
+            snapshot.get("created_at") or "Saved Analysis (time unavailable)"
+        ),
+        "focus_label": "Measured cycles and calculated chemistry",
+        "generated_at": generated_at or datetime.now(),
+        "subject": "Completed Analysis run: real cycle data and calculated chemistry",
+        "keywords": "GL-260, Analysis, measured cycles, gas uptake, pH, calibration",
+    }
+    models = []
+
+    def section(
+        title: str, headers: Sequence[str], table: Sequence[Sequence[Any]]
+    ) -> None:
+        """Append a renderer model from supplied text; mutates only local models."""
+        models.append(
+            {
+                **metadata,
+                "title": title,
+                "table_headers": list(headers),
+                "table_rows": list(table),
+            }
+        )
+
+    summary = [
+        ["Detected cycles", str(len(rows)), "Real cycle rows; initial state excluded."],
+        [
+            "Raw cumulative CO2 uptake",
+            number(total_g, 3, "g"),
+            "From measured cycle inputs.",
+        ],
+        [
+            "Calibrated cumulative CO2",
+            number(latest["corrected_total_g"], 3, "g"),
+            "Saved corrected uptake; not substituted for raw uptake.",
+        ],
+        [
+            "Latest calculated pH",
+            number(latest["calculated_ph"]),
+            f"Model result at cycle {latest['cycle']:g}.",
+        ],
+        [
+            "Latest calibrated pH",
+            number(latest["calibrated_ph"]),
+            "Saved calibration/model result.",
+        ],
+        [
+            "Latest observed pH",
+            observed_text,
+            "Only an explicit measured anchor is reported.",
+        ],
+        [
+            "ML correction applied",
+            str(result.get("ml_correction_applied"))
+            if result.get("ml_correction_applied") is not None
+            else "Unavailable",
+            "Saved application state; calibrated values remain separately labeled.",
+        ],
+        [
+            "Completed run",
+            metadata["run_name"],
+            "Frozen result; later control edits are excluded.",
+        ],
+    ]
+    section("Analysis Run Report", ["Quantity", "Result", "Basis"], summary)
+    models[0]["kpis"] = [
+        {"label": label, "value": value}
+        for label, value in (
+            ("Detected cycles", str(len(rows))),
+            ("Raw CO2 uptake", number(total_g, 2, "g")),
+            ("Calculated pH", number(latest["calculated_ph"], 2)),
+            ("Observed pH", observed_text),
+        )
+    ]
+    # Provenance and saved warnings remain present even when details are excluded.
+    section("Analysis - Run Notes", ["Note"], [[note] for note in notes])
+    if "inputs" in selected:
+        values = [
+            [
+                "NaOH charge",
+                number(first(inputs, "reaction_naoh_mass", "mass_naoh_g"), 3, "g"),
+            ],
+            [
+                "Liquid volume",
+                number(
+                    first(inputs, "reaction_solution_volume", "solution_volume_l"),
+                    4,
+                    "L",
+                ),
+            ],
+            [
+                "Vessel volume",
+                number(inputs.get("analysis_total_vessel_volume_l"), 4, "L"),
+            ],
+            ["Temperature input", number(inputs.get("temperature_c"), 2, "C")],
+            [
+                "Speciation model",
+                str(
+                    inputs.get("workflow_spec_model_key")
+                    or inputs.get("analysis_spec_model_key")
+                    or "Unavailable"
+                ),
+            ],
+            [
+                "pH model",
+                str(
+                    inputs.get("workflow_ph_model_key")
+                    or inputs.get("analysis_ph_model_key")
+                    or "Unavailable"
+                ),
+            ],
+            [
+                "Target pH",
+                number(
+                    inputs.get("carbonate_target_ph")
+                    if inputs.get("carbonate_mode_enabled")
+                    else inputs.get("reaction_target_ph")
+                ),
+            ],
+            ["Gas molar mass", number(payload.get("gas_molar_mass"), 5, "g/mol")],
+            ["Cycle data timestamp", str(payload.get("timestamp") or "Unavailable")],
+            [
+                "Input signature",
+                str(result.get("analysis_input_signature") or "Unavailable"),
+            ],
+            [
+                "Cycle signature",
+                str(result.get("analysis_cycle_signature") or "Unavailable"),
+            ],
+        ]
+        section("Analysis - Run Inputs", ["Input", "Saved value"], values)
+    if "cycles" in selected:
+        section(
+            "Analysis - Measured Cycle Data",
+            [
+                "Cycle",
+                "Peak (psi)",
+                "Trough (psi)",
+                "Drop (psi)",
+                "Temp (C)",
+                "Raw CO2 (g)",
+            ],
+            [
+                [
+                    f"{r['cycle']:g}",
+                    number(r["peak"], 2),
+                    number(r["trough"], 2),
+                    number(r["delta"], 2),
+                    number(r["temperature"], 2),
+                    number(r["raw_g"]),
+                ]
+                for r in rows
+            ],
+        )
+        section(
+            "Analysis - pH Results",
+            ["Cycle", "Calculated pH", "Calibrated pH", "Observed pH"],
+            [
+                [
+                    f"{r['cycle']:g}",
+                    number(r["calculated_ph"]),
+                    number(r["calibrated_ph"]),
+                    number(r["observed_ph"])
+                    if r["observed_ph"] is not None
+                    else "Not recorded",
+                ]
+                for r in rows
+            ],
+        )
+    if "calculations" in selected:
+        section(
+            "Analysis - Gas Uptake Calculations",
+            [
+                "Cycle",
+                "Raw CO2 (mol)",
+                "Raw CO2 (g)",
+                "Corrected CO2 (g)",
+                "Raw total (g)",
+                "Corrected total (g)",
+            ],
+            [
+                [
+                    f"{r['cycle']:g}",
+                    number(r["raw_mol"], 5),
+                    number(r["raw_g"]),
+                    number(r["corrected_g"]),
+                    number(r["raw_total_g"]),
+                    number(r["corrected_total_g"]),
+                ]
+                for r in rows
+            ],
+        )
+        section(
+            "Analysis - Pressure-to-Gas Calculation Records",
+            [
+                "Cycle",
+                "Selected basis",
+                "Ideal CO2 (mol)",
+                "VDW CO2 (mol)",
+                "Selected CO2 (mol)",
+            ],
+            [
+                [
+                    f"{r['cycle']:g}",
+                    str(
+                        transferred.get(r["cycle"], {}).get("moles_basis")
+                        or "Unavailable"
+                    ),
+                    number(transferred.get(r["cycle"], {}).get("moles_ideal"), 5),
+                    number(transferred.get(r["cycle"], {}).get("moles_vdw"), 5),
+                    number(transferred.get(r["cycle"], {}).get("selected_moles"), 5),
+                ]
+                for r in rows
+            ],
+        )
+        correction = result.get("analysis_uptake_correction") or {}
+        correction = correction if isinstance(correction, Mapping) else {}
+        values = [
+            ["Mass conversion", "CO2 mass = saved CO2 moles x run gas molar mass."],
+            [
+                "Raw cumulative uptake",
+                (
+                    "Cumulative sum of raw cycle CO2; "
+                    "retained separately from corrected uptake."
+                ),
+            ],
+            [
+                "Correction status",
+                str(correction.get("solver_status") or "Not available"),
+            ],
+            [
+                "Correction message",
+                str(correction.get("solver_message") or "None recorded"),
+            ],
+            ["Pre-split uptake multiplier", number(correction.get("alpha_pre"), 6)],
+            ["Post-split uptake multiplier", number(correction.get("alpha_post"), 6)],
+            ["Split cycle", number(correction.get("split_cycle_index"), 0)],
+            ["Measured anchor pH", number(correction.get("anchor_measured_ph"))],
+            [
+                "Anchor residual before correction",
+                number(correction.get("anchor_residual_before"), 6),
+            ],
+            [
+                "Anchor residual after correction",
+                number(correction.get("anchor_residual_after"), 6),
+            ],
+            [
+                "Calculated CO2 required for target",
+                number(correction.get("co2_required_for_target_ph_g"), 3, "g"),
+            ],
+            [
+                "Completion inferred from measured pH",
+                number(correction.get("completion_from_measured_ph_pct"), 2, "%"),
+            ],
+            ["Model options", str(inputs.get("model_options") or "Unavailable")],
+        ]
+        section(
+            "Analysis - Calculation Basis and Calibration",
+            ["Calculation", "Saved value / method"],
+            values,
+        )
+    if "speciation" in selected:
+        values = []
+        for row, raw in zip(rows, source_rows, strict=True):
+            values_row = [f"{row['cycle']:g}"]
+            for key in ("fractions", "corrected_fractions"):
+                fractions = raw.get(key) or {}
+                fractions = fractions if isinstance(fractions, Mapping) else {}
+                for species in ("CO3^2-", "HCO3-", "H2CO3"):
+                    value = numeric(fractions.get(species))
+                    values_row.append(
+                        number(value * 100 if value is not None else None, 2)
+                    )
+            values.append(values_row)
+        section(
+            "Analysis - Calculated Speciation",
+            [
+                "Cycle",
+                "CO3 (%)",
+                "HCO3 (%)",
+                "H2CO3 (%)",
+                "Corrected CO3 (%)",
+                "Corrected HCO3 (%)",
+                "Corrected H2CO3 (%)",
+            ],
+            values,
+        )
+    return {
+        "models": models,
+        "metadata": models[0],
+        "plot_rows": rows if "plot" in selected else [],
+    }
+
+
+def _render_analysis_pdf_report(
+    report: Mapping[str, Any],
+    preferences: Mapping[str, Any],
+    *,
+    dpi: int,
+) -> List[Figure]:
+    """Render saved Analysis sections and an optional landscape cycle plot.
+
+    Takes the report adapter output, normalized layout options and DPI. Returns
+    owned figures with continuous page numbers. Uses the shared Planning table
+    pipeline without chemistry or UI reads. Closes figures and propagates errors
+    if rendering fails. Measured pH markers remain distinct from model curves.
+    """
+    figures = []
+    try:
+        figures = _render_planning_pdf_report(
+            {"models": report["models"], "timeline": []}, preferences, dpi=dpi
+        )
+        rows = report.get("plot_rows") or []
+        if rows:
+            fig = Figure(figsize=(11, 8.5), dpi=dpi)
+            figures.append(fig)
+            FigureCanvasAgg(fig)
+            fig.text(
+                0.07,
+                0.95,
+                "Analysis - Measured Cycles and Model Results",
+                fontsize=16,
+                weight="bold",
+                color="#17324d",
+            )
+            fig.text(
+                0.07,
+                0.90,
+                "Completed run: " + report["metadata"]["run_name"],
+                fontsize=9,
+            )
+            ph_axis = fig.add_axes([0.09, 0.54, 0.84, 0.28])
+            mass_axis = fig.add_axes([0.09, 0.15, 0.84, 0.28])
+            cycles = [r["cycle"] for r in rows]
+            for key, label, color, style in (
+                ("calculated_ph", "Calculated pH", "#17324d", "-"),
+                ("calibrated_ph", "Calibrated pH", "#35745b", "--"),
+            ):
+                if any(r[key] is not None for r in rows):
+                    ph_axis.plot(
+                        cycles,
+                        [r[key] if r[key] is not None else math.nan for r in rows],
+                        label=label,
+                        color=color,
+                        linestyle=style,
+                        marker="o",
+                        markersize=3,
+                    )
+            measured = [r for r in rows if r["observed_ph"] is not None]
+            if measured:
+                ph_axis.scatter(
+                    [r["cycle"] for r in measured],
+                    [r["observed_ph"] for r in measured],
+                    label="Observed pH",
+                    color="#b05320",
+                    marker="D",
+                    zorder=5,
+                )
+            for key, label, color, style in (
+                ("raw_total_g", "Raw cumulative CO2", "#17324d", "-"),
+                ("corrected_total_g", "Calibrated cumulative CO2", "#35745b", "--"),
+            ):
+                if any(r[key] is not None for r in rows):
+                    mass_axis.plot(
+                        cycles,
+                        [r[key] if r[key] is not None else math.nan for r in rows],
+                        label=label,
+                        color=color,
+                        linestyle=style,
+                    )
+            for axis, ylabel in ((ph_axis, "pH"), (mass_axis, "CO2 uptake (g)")):
+                axis.set(xlabel="Detected cycle", ylabel=ylabel)
+                axis.grid(alpha=0.2)
+                handles, labels = axis.get_legend_handles_labels()
+                if handles:
+                    axis.legend(
+                        handles,
+                        labels,
+                        loc="upper center",
+                        bbox_to_anchor=(0.5, 1.20),
+                        ncol=3,
+                        fontsize=8,
+                    )
+            fig.text(
+                0.07,
+                0.065,
+                (
+                    "Observed markers are measurements; pH curves and gas uptake "
+                    "are calculated from the saved run."
+                ),
+                fontsize=8,
+            )
+            fig.text(
+                0.055,
+                0.035,
+                "GL-260 Data Analysis and Plotter | Analysis",
+                fontsize=7.5,
+            )
+            fig.text(0.945, 0.035, "Page 0 of 0", ha="right", fontsize=7.5)
+        for index, figure in enumerate(figures, 1):
+            for artist in figure.texts:
+                if artist.get_text().startswith("Page "):
+                    artist.set_text(f"Page {index} of {len(figures)}")
+        return figures
+    except Exception:
+        for figure in figures:
+            plt.close(figure)
+        raise
+
+
 def _build_planning_pdf_report(
     baseline: Mapping[str, Any],
     *,
@@ -194376,6 +194981,17 @@ class UnifiedApp(tk.Tk):
 
         self._sol_planning_pdf_btn = planning_pdf_btn
 
+        analysis_pdf_btn = _ui_button(
+            cycle_notes_body,
+            text="Generate PDF Report",
+            command=self._open_analysis_pdf_report_options,
+            state="disabled",
+        )
+        analysis_pdf_btn.grid(row=1, column=3, sticky="w", padx=4, pady=4)
+        analysis_pdf_btn.grid_remove()
+        self._sol_analysis_pdf_btn = analysis_pdf_btn
+
+
         layout_manager_btn = _ui_button(
             cycle_notes_body,
             text="Layout Manager...",
@@ -196117,6 +196733,12 @@ class UnifiedApp(tk.Tk):
         except Exception:
             payload_snapshot = dict(payload or {})
 
+        if workflow == "Analysis":
+            self._analysis_pdf_pending = True
+            if getattr(self, "_sol_analysis_pdf_btn", None) is not None:
+                self._update_analysis_pdf_action_state(False)
+
+
         def _compute_cycle_result() -> Dict[str, Any]:
             """Compute one cycle-timeline result bundle in the worker thread.
 
@@ -196165,8 +196787,12 @@ class UnifiedApp(tk.Tk):
                                 {
                                     "carbonate_target_ph": planned_forecast.get("target_ph"),
                                     "carbonate_guard_ph": planned_forecast.get("guard_ph"),
-                                    "carbonate_estimated_total_co2_g": planned_forecast.get("estimated_total_co2_g"),
-                                    "carbonate_estimated_cycles": planned_forecast.get("estimated_cycles"),
+                                    "carbonate_estimated_total_co2_g": planned_forecast.get(
+                                        "estimated_total_co2_g"
+                                    ),
+                                    "carbonate_estimated_cycles": planned_forecast.get(
+                                        "estimated_cycles"
+                                    ),
                                     "carbonate_forecast_status": planned_forecast.get("status"),
                                 }
                             )
@@ -196181,9 +196807,7 @@ class UnifiedApp(tk.Tk):
                 cycle_result["analysis_reference_trace"] = analysis_runtime.get(
                     "reference_trace"
                 )
-                cycle_result["analysis_overlay_marker"] = analysis_runtime.get(
-                    "overlay_marker"
-                )
+                cycle_result["analysis_overlay_marker"] = analysis_runtime.get("overlay_marker")
                 cycle_result["analysis_forensic_summary"] = analysis_runtime.get(
                     "forensic_summary"
                 )
@@ -196199,44 +196823,32 @@ class UnifiedApp(tk.Tk):
                 cycle_result["analysis_completion_from_measured_ph"] = analysis_runtime.get(
                     "completion_from_measured_ph"
                 )
-                cycle_result[
-                    "analysis_latest_cycle_corrected_speciation"
-                ] = analysis_runtime.get("latest_cycle_corrected_speciation")
-                cycle_result["analysis_dashboard"] = analysis_runtime.get(
-                    "dashboard_payload"
+                cycle_result["analysis_latest_cycle_corrected_speciation"] = (
+                    analysis_runtime.get("latest_cycle_corrected_speciation")
                 )
+                cycle_result["analysis_dashboard"] = analysis_runtime.get("dashboard_payload")
                 cycle_result["analysis_alignment_audit"] = analysis_runtime.get(
                     "analysis_alignment_audit"
                 )
                 cycle_result["analysis_consistency"] = analysis_runtime.get(
                     "analysis_consistency"
                 )
-                cycle_result["analysis_progress_text"] = analysis_runtime.get(
-                    "progress_text"
-                )
-                cycle_result["analysis_regime_text"] = analysis_runtime.get(
-                    "regime_text"
-                )
+                cycle_result["analysis_progress_text"] = analysis_runtime.get("progress_text")
+                cycle_result["analysis_regime_text"] = analysis_runtime.get("regime_text")
                 cycle_result["analysis_required_co2_text"] = analysis_runtime.get(
                     "required_co2_text"
                 )
-                cycle_result["analysis_co2_g_text"] = analysis_runtime.get(
-                    "co2_g_text"
-                )
-                cycle_result["analysis_co2_mol_text"] = analysis_runtime.get(
-                    "co2_mol_text"
-                )
-                cycle_result["analysis_mapped_ph_text"] = analysis_runtime.get(
-                    "mapped_ph_text"
-                )
+                cycle_result["analysis_co2_g_text"] = analysis_runtime.get("co2_g_text")
+                cycle_result["analysis_co2_mol_text"] = analysis_runtime.get("co2_mol_text")
+                cycle_result["analysis_mapped_ph_text"] = analysis_runtime.get("mapped_ph_text")
                 cycle_result["analysis_equivalence_text"] = analysis_runtime.get(
                     "equivalence_text"
                 )
-                cycle_result["analysis_planning_completion_text"] = (
-                    analysis_runtime.get("planning_completion_text")
+                cycle_result["analysis_planning_completion_text"] = analysis_runtime.get(
+                    "planning_completion_text"
                 )
-                cycle_result["analysis_planning_final_co2_g_text"] = (
-                    analysis_runtime.get("planning_final_co2_g_text")
+                cycle_result["analysis_planning_final_co2_g_text"] = analysis_runtime.get(
+                    "planning_final_co2_g_text"
                 )
                 cycle_result["analysis_consistency_status"] = analysis_runtime.get(
                     "analysis_consistency_status"
@@ -196244,8 +196856,8 @@ class UnifiedApp(tk.Tk):
                 cycle_result["analysis_consistency_findings"] = analysis_runtime.get(
                     "analysis_consistency_findings"
                 )
-                cycle_result["analysis_consistency_recommendations"] = (
-                    analysis_runtime.get("analysis_consistency_recommendations")
+                cycle_result["analysis_consistency_recommendations"] = analysis_runtime.get(
+                    "analysis_consistency_recommendations"
                 )
                 cycle_result["analysis_consistency_sanitized_warning_count"] = (
                     analysis_runtime.get("analysis_consistency_sanitized_warning_count")
@@ -196283,7 +196895,12 @@ class UnifiedApp(tk.Tk):
                 )
             except Exception:
                 cycle_result["timeline_render_payload"] = None
+            if workflow == "Analysis":
+                cycle_result["analysis_report_snapshot"] = _freeze_analysis_pdf_snapshot(
+                    form_data_snapshot, payload_snapshot
+                )
             return cycle_result
+
 
         def _on_ok(result):
             """Apply one successful cycle worker result on the Tk thread.
@@ -196306,6 +196923,8 @@ class UnifiedApp(tk.Tk):
             if payload and payload.get("reference_ledgers"):
                 result["planning_reference_ledgers"] = payload.get("reference_ledgers")
             target_workflow = workflow_key or workflow
+            if target_workflow == "Analysis":
+                self._analysis_pdf_pending = False
             self._set_cycle_result_for_workflow(target_workflow, result)
             self._set_cycle_payload_for_workflow(target_workflow, payload)
             if target_workflow == "Planning":
@@ -196373,6 +196992,7 @@ class UnifiedApp(tk.Tk):
             except Exception as exc:
                 _finalize_failure(exc)
 
+
         def _on_err(exc):
             """Handle one failed cycle worker result on the Tk thread.
 
@@ -196392,6 +197012,10 @@ class UnifiedApp(tk.Tk):
             Exceptions:
                 Dialog failures are swallowed to preserve the UI loop.
             """
+            if workflow == "Analysis":
+                self._analysis_pdf_pending = False
+                if getattr(self, "_sol_analysis_pdf_btn", None) is not None:
+                    self._update_analysis_pdf_action_state(False)
             if status_var is not None:
                 status_var.set(f"Cycle simulation failed: {exc}")
             self._complete_solubility_loading_phase(
@@ -196408,6 +197032,7 @@ class UnifiedApp(tk.Tk):
                 except Exception:
                     # Best-effort guard; ignore failures to avoid interrupting the workflow.
                     pass
+
 
         try:
             self._task_runner.submit(
@@ -206162,6 +206787,9 @@ class UnifiedApp(tk.Tk):
 
         if getattr(self, "_sol_planning_pdf_btn", None) is not None:
             self._update_planning_pdf_action_state(enabled)
+
+        if getattr(self, "_sol_analysis_pdf_btn", None) is not None:
+            self._update_analysis_pdf_action_state(enabled)
 
         # Iterate to apply the per-item logic.
 
@@ -218588,34 +219216,101 @@ class UnifiedApp(tk.Tk):
 
 
     def _open_planning_pdf_report_options(self) -> None:
-        """Configure and export a PDF of the completed sodium-carbonate scenario.
+        """Open options for the completed Planning baseline.
+
+        Takes no input and returns None. Delegates dialog/file side effects and
+        missing-result errors to the shared frozen export flow.
+        """
+        self._open_workflow_pdf_report_options(
+            "Planning", self._workflow_comparison_state().get("planning_baseline") or {}
+        )
 
 
-        Takes no parameters and returns None. Freezes the saved Planning baseline
+    def _open_analysis_pdf_report_options(self) -> None:
+        """Open report options for completed Analysis data, never Planning data.
 
-        when the dialog opens, preventing later form edits or Analysis activity
+        Takes no input and returns None. Reads the Analysis result and delegates
+        dialog/file effects to the shared flow. Pending runs prevent export;
+        missing results are reported by the shared dialog.
+        """
+        if getattr(self, "_analysis_pdf_pending", False):
+            return
+        self._open_workflow_pdf_report_options(
+            "Analysis", self._get_cycle_result_for_workflow("Analysis") or {}
+        )
 
-        from changing its instructions. Creates a Tk dialog, saves report layout
 
-        preferences, and writes the user-selected PDF through the shared renderer
+    def _update_analysis_pdf_action_state(self, enabled: bool) -> None:
+        """Show the Analysis PDF action only for a ready Analysis timeline.
 
-        and writer. Missing results and export failures are shown in message boxes.
+        Takes readiness and returns None. Updates button state/visibility using
+        the Analysis result and pending flag. Missing widgets are ignored;
+        Tk errors propagate through existing caller handling.
+        """
+        button = getattr(self, "_sol_analysis_pdf_btn", None)
+        if button is None:
+            return
+        if self._current_solubility_workflow() != "Analysis":
+            button.configure(state="disabled")
+            button.grid_remove()
+            return
+        button.grid()
+        result = self._get_cycle_result_for_workflow("Analysis")
+        ready = (
+            enabled
+            and not getattr(self, "_analysis_pdf_pending", False)
+            and isinstance(result, Mapping)
+            and bool(result.get("timeline"))
+        )
+        button.configure(state="normal" if ready else "disabled")
 
+
+    def _open_workflow_pdf_report_options(
+        self,
+        workflow_key: str,
+        baseline: Mapping[str, Any],
+    ) -> None:
+        """Configure a frozen Planning or Analysis report through one save flow.
+
+        Takes a workflow name and completed data mapping. Returns None; copies
+        data, creates a Tk dialog, writes selected PDF sections, and persists
+        workflow-specific preferences. Missing data or export errors appear in
+        dialogs. All rendered figures are closed on success or failure.
         """
 
-        baseline = self._workflow_comparison_state().get("planning_baseline")
+        if workflow_key == "Analysis":
+            builder, renderer = _build_analysis_pdf_report, _render_analysis_pdf_report
+            section_choices = ANALYSIS_PDF_REPORT_SECTIONS
+            report_title = "Analysis Run Report"
+            required_text = (
+                "Run summary, value-source labels and run notes are always included.\n"
+                "Choose the supporting details below."
+            )
+            filename_prefix = "analysis_run_"
+        else:
+            builder, renderer = _build_planning_pdf_report, _render_planning_pdf_report
+            section_choices = PLANNING_PDF_REPORT_SECTIONS
+            report_title = "Sodium Carbonate Run Plan"
+            required_text = (
+                "Full-cycle count, final charge pressure, target pH and run warnings\n"
+                "are always included. Choose the supporting details below."
+            )
+            filename_prefix = "sodium_carbonate_plan_"
+        dialog_title = f"{workflow_key} PDF Report"
+        preference_key = f"{workflow_key.lower()}_pdf_report"
+        window_attr = f"_{workflow_key.lower()}_pdf_options_window"
 
         try:
             snapshot = copy.deepcopy(baseline or {})
 
-            _build_planning_pdf_report(snapshot, sections=())
+            builder(snapshot, sections=())
 
         except (TypeError, ValueError) as exc:
-            messagebox.showinfo("Planning PDF Report", str(exc), parent=self)
+            messagebox.showinfo(dialog_title, str(exc), parent=self)
 
             return
 
-        existing = getattr(self, "_planning_pdf_options_window", None)
+        existing = getattr(self, window_attr, None)
 
         if existing is not None and existing.winfo_exists():
             existing.lift()
@@ -218624,7 +219319,7 @@ class UnifiedApp(tk.Tk):
 
         settings_ref = self._settings_dict()
 
-        saved = settings_ref.get("planning_pdf_report") or {}
+        saved = settings_ref.get(preference_key) or {}
 
         saved = saved if isinstance(saved, Mapping) else {}
 
@@ -218632,9 +219327,9 @@ class UnifiedApp(tk.Tk):
 
         window = tk.Toplevel(self)
 
-        self._planning_pdf_options_window = window
+        setattr(self, window_attr, window)
 
-        window.title("Planning PDF Report")
+        window.title(dialog_title)
 
         window.transient(self)
 
@@ -218644,28 +219339,32 @@ class UnifiedApp(tk.Tk):
 
         host.grid(sticky="nsew")
 
-        ttk.Label(
-            host, text="Sodium Carbonate Run Plan", font=("Segoe UI", 12, "bold")
-        ).grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(host, text=report_title, font=("Segoe UI", 12, "bold")).grid(
+            row=0, column=0, columnspan=2, sticky="w"
+        )
 
         ttk.Label(
-            host, text="Completed scenario: " + str(snapshot.get("created_at", "--"))
+            host,
+            text="Completed run: "
+            + str(
+                (snapshot.get("analysis_report_snapshot") or {}).get(
+                    "created_at", "Saved run"
+                )
+                if workflow_key == "Analysis"
+                else snapshot.get("created_at", "--")
+            ),
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 8))
 
         ttk.Label(
             host,
-            text="Full-cycle count, final charge pressure, target pH "
-            "and run warnings\nare always included. "
-            "Choose the supporting details below.",
+            text=required_text,
         ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 10))
 
         section_vars = {}
 
-        selected = saved.get(
-            "sections", [key for key, _label in PLANNING_PDF_REPORT_SECTIONS]
-        )
+        selected = saved.get("sections", [key for key, _label in section_choices])
 
-        for row_index, (key, label) in enumerate(PLANNING_PDF_REPORT_SECTIONS, start=3):
+        for row_index, (key, label) in enumerate(section_choices, start=3):
             variable = tk.BooleanVar(value=key in selected)
 
             section_vars[key] = variable
@@ -218750,7 +219449,7 @@ class UnifiedApp(tk.Tk):
                 or not 0 <= pad <= 24
             ):
                 messagebox.showwarning(
-                    "Planning PDF Report",
+                    dialog_title,
                     "Use font size 8-18 pt and padding 0-24 pt.",
                     parent=window,
                 )
@@ -218767,11 +219466,11 @@ class UnifiedApp(tk.Tk):
 
             path = filedialog.asksaveasfilename(
                 parent=window,
-                title="Save Planning PDF Report",
+                title=f"Save {dialog_title}",
                 defaultextension=".pdf",
                 filetypes=[("PDF Document", "*.pdf")],
                 initialdir=str(saved.get("export_dir") or os.getcwd()),
-                initialfile="sodium_carbonate_plan_"
+                initialfile=filename_prefix
                 + datetime.now().strftime("%Y%m%d_%H%M%S")
                 + ".pdf",
             )
@@ -218781,30 +219480,28 @@ class UnifiedApp(tk.Tk):
 
             figures = []
 
-            context = "planning_pdf_export"
+            context = f"{workflow_key.lower()}_pdf_export"
 
-            self._show_operation_splash("Generate Planning PDF Report", context=context)
+            self._show_operation_splash(f"Generate {dialog_title}", context=context)
 
             try:
                 self._update_operation_splash(
-                    message="Compiling completed Planning scenario...",
+                    message=f"Compiling completed {workflow_key} run...",
                     progress=20.0,
                     stage_key="render",
-                    detail="Formatting selected sections and charge instructions.",
+                    detail="Formatting saved results and selected sections.",
                     reset=True,
                 )
 
-                report = _build_planning_pdf_report(snapshot, sections=options["sections"])
+                report = builder(snapshot, sections=options["sections"])
 
-                figures = _render_planning_pdf_report(
-                    report, options, dpi=self._get_export_dpi()
-                )
+                figures = renderer(report, options, dpi=self._get_export_dpi())
 
                 pages = _write_reaction_dashboard_cycle_pdf(
                     Path(path), figures, report["metadata"]
                 )
 
-                settings_ref["planning_pdf_report"] = {
+                settings_ref[preference_key] = {
                     **options,
                     "export_dir": str(Path(path).parent),
                 }
@@ -218821,7 +219518,7 @@ class UnifiedApp(tk.Tk):
                 self._hide_operation_splash(context=context)
 
                 messagebox.showerror(
-                    "Planning PDF Report", f"Report export failed:\n{exc}", parent=window
+                    dialog_title, f"Report export failed:\n{exc}", parent=window
                 )
 
                 return
@@ -218835,7 +219532,7 @@ class UnifiedApp(tk.Tk):
             window.destroy()
 
             messagebox.showinfo(
-                "Planning PDF Report", f"Saved {pages} pages to:\n{path}", parent=self
+                dialog_title, f"Saved {pages} pages to:\n{path}", parent=self
             )
 
         ttk.Button(host, text="Generate PDF Report", command=export_report).grid(
