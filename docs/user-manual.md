@@ -1858,3 +1858,33 @@ Identify the charge cycles in Cycle Analysis so calibration can sum each
 temperature-corrected pressure decay while excluding recharge intervals.
 Dashboard cycle results include only the calibrated interval and leave the
 original Cycle Analysis measurements unchanged.
+
+
+### Replay real cycles with measured CO2 and a pH anchor
+
+Enter the measured pH against its completed cycle (for example, cycle 4), set the target pH, and choose **Replay Plan on Real Cycles**. After Analysis completes, it asks whether you have a net mass of CO2 consumed over all imported cycles. Enter grams of reactor uptake, excluding vented or leaked gas and supply-line inventory. Declining or cancelling retains the current headspace.
+
+An accepted mass fits an effective gas headspace using each actual peak/trough pressure (PSIg), its mean temperature, and the shared nonideal CO2 inventory model. Analysis shows the inferred liters, updates its total vessel volume by adding the liquid volume, and recomputes cycle inventories and outputs. The original Cycle Analysis measurements and frozen Planning baseline remain available. New cycle data invalidates the prior calibration.
+
+A pH anchor also supplies a forward charge estimate from the selected Analysis pH model: additional grams of CO2, full charges if necessary, and the final partial-charge pressure and drawdown pressure. Observed cycles after the anchor reduce the remaining dose. The pressure ceiling is the highest observed charge pressure; confirm that it remains available. An unavailable or unreachable model state produces an explanation instead of a pressure instruction. These are equilibrium-model estimates; verify pH before the final dose, particularly for a next-day measurement taken under different temperature or gas exposure. The saved Analysis PDF includes the charge recommendation and measured-mass calibration in its run notes.
+### VDW and corrected uptake in Analysis
+
+Analysis keeps imported VDW uptake and pH-calibrated uptake as separate cases.
+The cycle timeline shows adjacent **VDW: consumption / pH / speciation** and
+**Corrected: consumption / pH / speciation** columns. Each case uses its own
+CO2 inventory for cumulative consumption, calculated pH and carbonate/bicarbonate
+fractions. The summary and PDF notes retain both cases. These estimates describe
+the same gas uptake and are never added together. Without a valid correction,
+the corrected case is shown as unavailable.
+
+With the focused NaOH–CO2 Pitzer model selected for both Analysis models,
+carbonate-cycle saturation diagnostics use the finite calculated aqueous state.
+The nahcolite (NaHCO3) diagnostic is Q/K from ion activities and the selected
+database's 25 °C phase constant. Estimated salt solids remain separate from
+this diagnostic; they are not a full precipitation-equilibrium calculation.
+Sodium-equivalent bookkeeping mass is not treated as charged bicarbonate.
+
+Real-cycle replay accepts measured subatmospheric gauge endpoints while their
+absolute pressure remains positive. For example, a 689.3 to −1.9 PSIg cycle is
+included in the optional consumed-CO2 headspace fit without clamping its endpoint.
+Planning pressure-entry limits remain unchanged.

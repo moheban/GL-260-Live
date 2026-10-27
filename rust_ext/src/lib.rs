@@ -6173,26 +6173,34 @@ fn carbonate_vdw_inventory_moles(pressure_atm: f64, volume_l: f64, temp_k: f64) 
 }
 
 #[pyfunction]
-#[pyo3(signature = (high_psig, delta_psig, headspace_volume_l, temperature_c))]
+#[pyo3(signature = (high_psig, delta_psig, headspace_volume_l, temperature_c, allow_subatmospheric=false))]
 /// Calculate delivered CO2 from high and trough absolute-pressure inventories.
 /// Inputs: high/drop pressure (PSIg), headspace (L), temperature (C). Returns an
 /// inventory/dose dictionary with explicit ideal-gas fallback provenance.
 /// No external state changes; invalid inputs raise PyRuntimeError. Matches Python
 /// so a partial charge cannot use a different inventory convention from full ones.
+/// allow_subatmospheric opts measured cycles into negative gauge pressures above
+/// vacuum; false preserves the configured Planning zero-gauge floor.
 fn carbonate_pressure_drop_inventory_core(
     py: Python<'_>,
     high_psig: f64,
     delta_psig: f64,
     headspace_volume_l: f64,
     temperature_c: f64,
+    allow_subatmospheric: bool,
 ) -> PyResult<Py<PyDict>> {
+    let psi_per_atm = 14.696_f64;
+    // Measured gauge pressure can be negative while absolute inventory is valid.
+    let invalid_pressure = if allow_subatmospheric {
+        delta_psig <= 0.0 || high_psig - delta_psig <= -psi_per_atm
+    } else {
+        high_psig <= 0.0 || delta_psig <= 0.0 || delta_psig > high_psig
+    };
     if !high_psig.is_finite()
         || !delta_psig.is_finite()
         || !headspace_volume_l.is_finite()
         || !temperature_c.is_finite()
-        || high_psig <= 0.0
-        || delta_psig <= 0.0
-        || delta_psig > high_psig
+        || invalid_pressure
         || headspace_volume_l <= 0.0
         || temperature_c + 273.15 <= 0.0
     {
@@ -6200,7 +6208,6 @@ fn carbonate_pressure_drop_inventory_core(
             "Invalid carbonate pressure-dose inputs.",
         ));
     }
-    let psi_per_atm = 14.696_f64;
     let high_psia = high_psig + psi_per_atm;
     let trough_psig = high_psig - delta_psig;
     let trough_psia = trough_psig + psi_per_atm;
@@ -6237,14 +6244,17 @@ fn carbonate_pressure_drop_inventory_core(
     Ok(out.unbind())
 }
 
+
 #[pyfunction]
-#[pyo3(signature = (target_dose_mol, trough_psig, maximum_charge_psig, headspace_volume_l, temperature_c))]
+#[pyo3(signature = (target_dose_mol, trough_psig, maximum_charge_psig, headspace_volume_l, temperature_c, allow_subatmospheric=false))]
 /// Invert the carbonate headspace inventory to calculate a partial-dose charge pressure.
 ///
 /// Purpose: report an operator-settable pressure rather than a fractional cycle.
 /// Inputs: requested CO2 moles, pressure bounds (psig), headspace liters, and deg C.
 /// Output: a pressure/inventory payload using the same VDW gas-root convention as full cycles.
 /// Side effects: none. Errors: rejects invalid or unreachable pressure-dose requests.
+/// allow_subatmospheric accepts measured gauge troughs above vacuum, retaining
+/// the existing nonnegative Planning bounds by default.
 fn carbonate_charge_pressure_setpoint_core(
     py: Python<'_>,
     target_dose_mol: f64,
@@ -6252,14 +6262,21 @@ fn carbonate_charge_pressure_setpoint_core(
     maximum_charge_psig: f64,
     headspace_volume_l: f64,
     temperature_c: f64,
+    allow_subatmospheric: bool,
 ) -> PyResult<Py<PyDict>> {
+    let psi_per_atm = 14.696_f64;
+    let invalid_trough = if allow_subatmospheric {
+        trough_psig <= -psi_per_atm
+    } else {
+        trough_psig < 0.0
+    };
     if !target_dose_mol.is_finite()
         || !trough_psig.is_finite()
         || !maximum_charge_psig.is_finite()
         || !headspace_volume_l.is_finite()
         || !temperature_c.is_finite()
         || target_dose_mol < 0.0
-        || trough_psig < 0.0
+        || invalid_trough
         || maximum_charge_psig < trough_psig
         || headspace_volume_l <= 0.0
         || temperature_c + 273.15 <= 0.0
@@ -6268,7 +6285,6 @@ fn carbonate_charge_pressure_setpoint_core(
             "Invalid carbonate partial-charge inputs.",
         ));
     }
-    let psi_per_atm = 14.696_f64;
     let temp_k = temperature_c + 273.15;
     let inventory = |psig: f64| -> (f64, &'static str) {
         let psia = psig + psi_per_atm;
@@ -6334,6 +6350,7 @@ fn carbonate_charge_pressure_setpoint_core(
     )?;
     Ok(out.unbind())
 }
+
 
 #[pymodule(gil_used = false)]
 fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
