@@ -111,3 +111,41 @@ the new optional keyword safely routes to Python. No replacement extension was
 installed, no versions were changed, and no Git actions were performed.
 
 Suggested commit message: `Fixed replay pressure calibration and added parallel uptake chemistry diagnostics`.
+
+## Consistent remaining-dose pressure guidance — 2026-10-28
+
+The screenshot's 126.24 g remainder and 1.097 g charge instruction came from
+different calculations: target-minus-corrected-uptake versus independent inversion
+of anchor and target pH. Analysis now passes its already computed remaining grams
+directly into the pressure planner. That path bypasses chemistry inversion and
+does not subtract post-anchor uptake twice. Standalone pH-inversion callers retain
+their existing behavior. Missing Analysis totals yield an unavailable charge plan,
+not a different dose estimate. Report and carbonate forecast consumers continue
+to receive the same shared recommendation payload.
+
+New checks round-trip 0, 126.24 and 500 g through the full/partial pressure schedule
+using 1.3516 L headspace, 29.26 C and 0.9 PSIg trough. They prohibit a second pH
+solve, exercise native routing and explicit Python fallback, reject invalid demand,
+and verify the runtime passes exactly the remaining mass displayed in its summary.
+Existing native pressure kernels are reused; no Rust change or rebuild is needed.
+
+Commands (repository root):
+
+```powershell
+.\.venv-314t\Scripts\python.exe -m pytest -q tests/test_replay_mass_continuation.py tests/test_planning_partial_endpoint.py tests/test_analysis_pdf_report.py
+$blocks = @(Get-ChildItem .tmp_patch_validation -Filter *.py | ForEach-Object FullName)
+.\.venv-314t\Scripts\python.exe -m ruff check --target-version py312 --ignore F821 $blocks
+.\.venv-314t\Scripts\python.exe -m ruff format --target-version py312 --check $blocks
+.\.venv-314t\Scripts\python.exe -m ruff check --target-version py312 --select E9,F401,F811 $blocks
+.\.venv-314t\Scripts\python.exe -m ruff check --target-version py312 --select F821 "GL-260 Data Analysis and Plotter.py"
+```
+
+Result: 27 tests passed in 156.62 seconds.
+
+Scoped syntax (`compile()`), docstring checks, lint, formatting, import hygiene and
+full-main-file F821 passed. Extracted scopes: `_replay_anchor_continuation`, runtime
+charge dispatch, `test_runtime_publishes_anchor_recommendation`, and
+`test_guidance_mass_drives_charge_pressure`. Temporary snippets were removed.
+Interactive Tk and physical reactor validation were not performed.
+
+Suggested commit message: `Aligned charge pressures with the displayed remaining CO2 dose`.

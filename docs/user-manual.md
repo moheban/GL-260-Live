@@ -1869,6 +1869,15 @@ An accepted mass fits an effective gas headspace using each actual peak/trough p
 A pH anchor also supplies a forward charge estimate from the selected Analysis pH model: additional grams of CO2, full charges if necessary, and the final partial-charge pressure and drawdown pressure. Observed cycles after the anchor reduce the remaining dose. The pressure ceiling is the highest observed charge pressure; confirm that it remains available. An unavailable or unreachable model state produces an explanation instead of a pressure instruction. These are equilibrium-model estimates; verify pH before the final dose, particularly for a next-day measurement taken under different temperature or gas exposure. The saved Analysis PDF includes the charge recommendation and measured-mass calibration in its run notes.
 ### VDW and corrected uptake in Analysis
 
+The charge-pressure recommendation uses the same remaining CO2 shown in dosing
+guidance: target total minus current uptake (corrected uptake when available,
+otherwise VDW uptake). For example, a displayed remainder of 126.24 g is the
+mass passed to the pressure solver. The pH anchor is not independently inverted
+into a second, conflicting dose. Full charges and the final partial charge sum
+to that remainder, using the configured headspace, temperature and observed
+pressure limits. If the target total or uptake is unavailable, the charge plan
+reports that missing information instead of substituting another dose basis.
+
 Analysis keeps imported VDW uptake and pH-calibrated uptake as separate cases.
 The cycle timeline shows adjacent **VDW: consumption / pH / speciation** and
 **Corrected: consumption / pH / speciation** columns. Each case uses its own

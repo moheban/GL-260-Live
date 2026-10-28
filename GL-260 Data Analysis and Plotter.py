@@ -29702,14 +29702,18 @@ def _replay_mass_calibrated_payload(payload, measured_mass_g):
     return calibrated
 
 
-def _replay_anchor_continuation(payload, form, anchor):
+def _replay_anchor_continuation(payload, form, anchor, *, remaining_co2_g=None):
     """Solve additional CO2 and bounded charge pressures from a measured pH.
 
     Inputs are real cycles, Analysis form values (liters, Celsius, grams), and
     a one-based cycle_index/measured_ph anchor. Returns serializable dosing
     metadata and text. No UI mutation; invalid or unbracketed inputs raise
     ValueError. Reuses the selected model's native/fallback chemistry and the
-    native/fallback gas-inventory solvers. Later observed cycles reduce demand.
+    native/fallback gas-inventory solvers. Optional remaining_co2_g is the
+    authoritative current demand in grams from Analysis target-minus-uptake;
+    it bypasses pH inversion and must not subtract later cycles a second time.
+    Without that argument, standalone callers retain pH inversion and later
+    observed cycles reduce demand.
     """
     rows = payload.get("cycle_transfer") or []
     index = int(anchor["cycle_index"])
@@ -29729,86 +29733,99 @@ def _replay_anchor_continuation(payload, form, anchor):
     ):
         raise ValueError("A valid pH anchor and target are required.")
     params = form.get("params")
-    volume = _safe_float(form.get("reaction_solution_volume"))
-    mass = _safe_float(form.get("reaction_naoh_mass"))
     headspace = _safe_float(getattr(params, "headspace_volume_l", None))
     temp = _safe_float(getattr(params, "temperature_c", None))
-    if any(v is None or not math.isfinite(v) for v in (volume, mass, headspace, temp)):
+    if (
+        headspace is None
+        or not math.isfinite(headspace)
+        or headspace <= 0
+        or temp is None
+        or not math.isfinite(temp)
+    ):
         raise ValueError(
-            "Continuation needs liquid/headspace volumes, NaOH mass and temperature."
+            "Continuation needs positive headspace volume and temperature."
         )
-    if min(volume, mass, headspace) <= 0:
-        raise ValueError("Continuation volumes and NaOH mass must be positive.")
-    key = (
-        form.get("workflow_ph_model_key")
-        or form.get("analysis_ph_model_key")
-        or form.get("ph_model_key")
-        or form.get("model_key")
-    )
-    model = get_speciation_model(key)
-    predictor = getattr(model, "predict_planning_ph", None)
-    if not callable(predictor):
-        raise ValueError("Selected pH model does not support forward dosing.")
-    context = dict(
-        form,
-        naoh_mass_g=mass,
-        initial_naoh_mol=mass / SOL_MW_NAOH,
-        solution_volume_l=volume,
-        temperature_c=temp,
-        headspace_volume_l=headspace,
-    )
+    if remaining_co2_g is not None:
+        demand_g = _safe_float(remaining_co2_g)
+        if demand_g is None or not math.isfinite(demand_g) or demand_g < 0:
+            raise ValueError("Remaining CO2 must be finite and nonnegative in grams.")
+        remaining = demand_g / SOL_MW_CO2
+    else:
+        volume = _safe_float(form.get("reaction_solution_volume"))
+        mass = _safe_float(form.get("reaction_naoh_mass"))
+        if any(v is None or not math.isfinite(v) or v <= 0 for v in (volume, mass)):
+            raise ValueError("pH inversion needs positive liquid volume and NaOH mass.")
+        key = (
+            form.get("workflow_ph_model_key")
+            or form.get("analysis_ph_model_key")
+            or form.get("ph_model_key")
+            or form.get("model_key")
+        )
+        model = get_speciation_model(key)
+        predictor = getattr(model, "predict_planning_ph", None)
+        if not callable(predictor):
+            raise ValueError("Selected pH model does not support forward dosing.")
+        context = dict(
+            form,
+            naoh_mass_g=mass,
+            initial_naoh_mol=mass / SOL_MW_NAOH,
+            solution_volume_l=volume,
+            temperature_c=temp,
+            headspace_volume_l=headspace,
+        )
 
-    def solve(ph):
-        """Invert modeled pH to CO2 moles with a bounded bracket.
+        def solve(ph):
+            """Invert modeled pH to CO2 moles with a bounded bracket.
 
-        Takes dimensionless pH and returns moles, without mutation. Raises
-        ValueError for nonfinite, unreachable or discontinuous model results.
-        """
-        lo, hi = 0.0, mass / SOL_MW_NAOH * 2.0
-        for endpoint, is_low in ((lo, True), (hi, False)):
-            value, _ = predictor(
-                planning_context=dict(context),
-                cumulative_co2_moles=endpoint,
-                cycle_index=index,
-            )
-            if (
-                value is None
-                or not math.isfinite(value)
-                or (value < ph if is_low else value > ph)
-            ):
-                raise ValueError(
-                    "Measured/target pH is outside the selected model's solvable range."
+            Takes dimensionless pH and returns moles, without mutation. Raises
+            ValueError for nonfinite, unreachable or discontinuous model results.
+            """
+            lo, hi = 0.0, mass / SOL_MW_NAOH * 2.0
+            for endpoint, is_low in ((lo, True), (hi, False)):
+                value, _ = predictor(
+                    planning_context=dict(context),
+                    cumulative_co2_moles=endpoint,
+                    cycle_index=index,
                 )
-        for _ in range(48):
-            middle = (lo + hi) / 2
-            value, _ = predictor(
-                planning_context=dict(context),
-                cumulative_co2_moles=middle,
-                cycle_index=index,
-            )
-            if value is None or not math.isfinite(value):
-                raise ValueError(
-                    "The pH model returned a nonfinite continuation state."
+                if (
+                    value is None
+                    or not math.isfinite(value)
+                    or (value < ph if is_low else value > ph)
+                ):
+                    raise ValueError(
+                        "Measured/target pH is outside the selected "
+                        "model's solvable range."
+                    )
+            for _ in range(48):
+                middle = (lo + hi) / 2
+                value, _ = predictor(
+                    planning_context=dict(context),
+                    cumulative_co2_moles=middle,
+                    cycle_index=index,
                 )
-            if abs(value - ph) <= 1e-6:
-                return middle
-            if value > ph:
-                lo = middle
-            else:
-                hi = middle
-        raise ValueError("The pH continuation solve did not converge.")
+                if value is None or not math.isfinite(value):
+                    raise ValueError(
+                        "The pH model returned a nonfinite continuation state."
+                    )
+                if abs(value - ph) <= 1e-6:
+                    return middle
+                if value > ph:
+                    lo = middle
+                else:
+                    hi = middle
+            raise ValueError("The pH continuation solve did not converge.")
 
-    later = 0.0
-    for row in rows[index:]:
-        mol = _safe_float(row.get("selected_moles"))
-        if mol is None or not math.isfinite(mol) or mol < 0:
-            raise ValueError("Cycles after the pH anchor need valid CO2 uptake.")
-        later += mol
-    remaining = (
-        max(0.0, solve(target) - solve(measured_ph) - later)
-        if measured_ph > target
-        else 0.0
-    )
+        later = 0.0
+        for row in rows[index:]:
+            mol = _safe_float(row.get("selected_moles"))
+            if mol is None or not math.isfinite(mol) or mol < 0:
+                raise ValueError("Cycles after the pH anchor need valid CO2 uptake.")
+            later += mol
+        remaining = (
+            max(0.0, solve(target) - solve(measured_ph) - later)
+            if measured_ph > target
+            else 0.0
+        )
     high = max(float(row["peak_pressure_psi"]) for row in rows)
     low = float(rows[-1]["trough_pressure_psi"])
     full = _carbonate_pressure_drop_inventory_core(
@@ -29831,7 +29848,10 @@ def _replay_anchor_continuation(payload, form, anchor):
             allow_subatmospheric=low < 0.0,
         )["charge_pressure_psig"]
     text = (
-        f"From cycle {index} pH {measured_ph:.3f} to target {target:.3f}: "
+        f"Charge plan for the remaining {remaining * SOL_MW_CO2:.2f} g CO2 "
+        f"to target pH {target:.3f} (same target-minus-uptake basis above): "
+        if remaining_co2_g is not None
+        else f"From cycle {index} pH {measured_ph:.3f} to target {target:.3f}: "
         f"additional CO2 {remaining * SOL_MW_CO2:.3f} g. "
     )
     if remaining <= 1e-9:
@@ -29844,7 +29864,8 @@ def _replay_anchor_continuation(payload, form, anchor):
             )
         if pressure is not None:
             text += (
-                f"Then charge to {pressure:.2f} PSIg and allow uptake "
+                f"{'Then charge' if count else 'Charge the next cycle'} to "
+                f"{pressure:.2f} PSIg and allow uptake "
                 f"down to {low:.2f} PSIg. "
             )
         text += (
@@ -29854,6 +29875,9 @@ def _replay_anchor_continuation(payload, form, anchor):
         )
     return dict(
         remaining_co2_g=remaining * SOL_MW_CO2,
+        dose_basis="analysis_remaining"
+        if remaining_co2_g is not None
+        else "ph_inversion",
         full_cycles=count,
         partial_charge_psig=pressure,
         trough_psig=low,
@@ -29861,6 +29885,7 @@ def _replay_anchor_continuation(payload, form, anchor):
         anchor_cycle=index,
         message=text,
     )
+
 
 
 def _python_carbonate_endpoint_forecast_core(
@@ -198323,6 +198348,7 @@ class UnifiedApp(tk.Tk):
                 runtime_payload["co2_g_text"] += f" | raw {raw_total_uptake_g:.2f} g"
             runtime_payload["co2_mol_text"] = f"{primary_total_mol:.4f}"
 
+        remaining_g = None
         if required_total_g is not None and math.isfinite(required_total_g):
             requirement_source_label = {
                 "guidance_model": "guidance model",
@@ -198523,7 +198549,13 @@ class UnifiedApp(tk.Tk):
         anchor = runtime_payload.get("measured_ph_anchor")
         if isinstance(anchor, Mapping):
             try:
-                continuation = _replay_anchor_continuation(payload_map, form_snapshot, anchor)
+                if remaining_g is None:
+                    raise ValueError(
+                        "Target total and current uptake are needed for a charge plan."
+                    )
+                continuation = _replay_anchor_continuation(
+                    payload_map, form_snapshot, anchor, remaining_co2_g=remaining_g
+                )
             except (ValueError, TypeError, KeyError, OverflowError) as exc:
                 continuation = {
                     "message": f"pH-anchor charge recommendation unavailable: {exc}"

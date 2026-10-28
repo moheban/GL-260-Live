@@ -226,9 +226,10 @@ def test_runtime_publishes_anchor_recommendation(app, monkeypatch):
     monkeypatch.setattr(
         app,
         "_replay_anchor_continuation",
-        lambda payload, form, anchor: {
+        lambda payload, form, anchor, **kwargs: {
             "message": "Verified charge instruction",
             "anchor_cycle": anchor["cycle_index"],
+            "remaining_co2_g": kwargs["remaining_co2_g"],
         },
     )
     app._regression_test_analysis_runtime_regime_prefers_actual_observed_ph()
@@ -236,6 +237,66 @@ def test_runtime_publishes_anchor_recommendation(app, monkeypatch):
     assert result["charge_recommendation"]["anchor_cycle"] == 2
     assert "Verified charge instruction" in result["required_co2_text"]
     assert result["carbonate_forecast"]["status"] == "anchored_continuation"
+    remaining = result["charge_recommendation"]["remaining_co2_g"]
+    assert f"remaining {remaining:.2f} g" in result["required_co2_text"]
+
+
+
+@pytest.mark.parametrize("remaining", [0.0, 126.24, 500.0])
+def test_guidance_mass_drives_charge_pressure(app, monkeypatch, remaining):
+    """Round-trip the displayed demand through pressure without re-solving pH.
+
+    Uses screenshot headspace/temperature/trough inputs in L/C/PSIg and demand
+    in grams. Exercises zero, partial and multiple charges, native routing and
+    Python fallback. Local fixtures only; invalid demand must raise ValueError.
+    """
+    payload = real_cycles(app)
+    payload["cycle_transfer"][-1]["trough_pressure_psi"] = 0.9
+    form = dict(
+        carbonate_mode_enabled=True,
+        carbonate_target_ph=11.4,
+        params=SimpleNamespace(headspace_volume_l=1.3516, temperature_c=29.26),
+    )
+
+    def forbidden(*args, **kwargs):
+        """Reject a redundant pH model solve; no state is changed."""
+        raise AssertionError("The guidance demand already owns the remaining dose")
+
+    monkeypatch.setattr(app, "get_speciation_model", forbidden)
+    anchor = dict(cycle_index=3, measured_ph=13.01)
+    result = app._replay_anchor_continuation(
+        payload, form, anchor, remaining_co2_g=remaining
+    )
+    assert result["remaining_co2_g"] == pytest.approx(remaining)
+    assert result["dose_basis"] == "analysis_remaining"
+    full = app._carbonate_pressure_drop_inventory_core(
+        high_psig=730,
+        delta_psig=729.1,
+        headspace_volume_l=1.3516,
+        temperature_c=29.26,
+    )["dose_g"]
+    partial = 0.0
+    if result["partial_charge_psig"] is not None:
+        partial = app._carbonate_pressure_drop_inventory_core(
+            high_psig=result["partial_charge_psig"],
+            delta_psig=result["partial_charge_psig"] - 0.9,
+            headspace_volume_l=1.3516,
+            temperature_c=29.26,
+        )["dose_g"]
+    assert result["full_cycles"] * full + partial == pytest.approx(remaining)
+    monkeypatch.setattr(app, "_load_rust_backend", lambda: None)
+    fallback = app._replay_anchor_continuation(
+        payload, form, anchor, remaining_co2_g=remaining
+    )
+    assert fallback["partial_charge_psig"] == pytest.approx(
+        result["partial_charge_psig"]
+    )
+    for invalid in (-1, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="Remaining CO2"):
+            app._replay_anchor_continuation(
+                payload, form, anchor, remaining_co2_g=invalid
+            )
+
 
 
 def test_measured_negative_gauge_cycle_calibrates(app, monkeypatch):
