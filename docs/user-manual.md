@@ -1897,3 +1897,19 @@ Real-cycle replay accepts measured subatmospheric gauge endpoints while their
 absolute pressure remains positive. For example, a 689.3 to −1.9 PSIg cycle is
 included in the optional consumed-CO2 headspace fit without clamping its endpoint.
 Planning pressure-entry limits remain unchanged.
+
+
+### Measured pH anchors and uptake
+
+Analysis learns a pH response from the entered cycle/pH anchors at the supplied cumulative CO2 uptake. It preserves that uptake: pH anchors do not rescale measured gas mass. Between anchors, it interpolates measured pH against cumulative CO2 moles; beyond the measured range it uses the chemistry model with the nearest measured-minus-model pH difference. The uncalibrated chemistry remains available as a separate diagnostic. Calibrated fractions are pH-based estimates, not a new equilibrium species solve.
+
+With anchor learning enabled, the latest response is saved and reused by Planning for the same pH model, NaOH mass, solution volume and temperature. Planning uses the response during target-pH dose solving, including partial charges. Changing those chemistry inputs prevents reuse; resetting the owning profile's learning clears its saved response. Recompute Analysis after editing anchors to update the learned response. Matching entered anchors is a calibration result; accuracy outside the measured range still needs subsequent measurements.
+
+
+Completed Analysis runs with measured CO2 mass and at least two pH anchors are retained as separate verified references when the last anchor reaches the target. A compatible verified reference takes precedence over the latest response from an incomplete run. Planning matches NaOH/water charge and gas molar mass (1%), nominal vessel volume when recorded (1%), and baseline temperature (5 C). Workspace profile and pH model names do not prevent reuse of physical observations. A different estimated solution volume alone does not discard a matching recipe's measurements.
+
+Planning uses the verified effective gas volume inferred from measured mass, the selected gas molar mass (including 13CO2), and the reference's per-cycle temperatures shifted by any baseline temperature difference. It sums each planned pressure-drop inventory, then solves the final partial dose and pressure against the same learned pH response. The output identifies its verified reference. Predictions therefore depend on the planned pressure schedule and expected temperatures; a fractional cycle is relative to its scheduled full charge.
+
+Planning and Analysis share NaOH mass and solution-volume input variables. Water mass and temperature already use common fields. In carbonate mode, editing solvent mass no longer overwrites measured solution volume using pure-water density. Water grams and solution liters describe different quantities in concentrated NaOH liquor.
+
+Operator-confirmed references are restored from `verified_ph_reference_runs.json` at startup, separately from transient settings and imported traces. Resetting a learned response does not erase this confirmed experiment library. The confirmed reference preserves the saved pressure order (730, 689.3, 664.4, 480.8, 721.6 PSIg), 656.9 g of 13CO2, pH 13.01 after charge 4 and pH 11.21 after charge 5. Under that planned pressure sequence, the pH 11.4 endpoint is approximately 639.99 g and 4.90 scheduled cycles. Interpolation is an estimate between two measured endpoints, not a new measurement.

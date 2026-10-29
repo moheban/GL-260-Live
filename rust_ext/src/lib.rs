@@ -38,7 +38,8 @@ const RUST_BACKEND_INTERFACE_ID: &str = "gl260_rust_backend";
 const RUST_BACKEND_INTERFACE_VERSION: &str = "4";
 const RUST_BACKEND_MODULE_NAME: &str = env!("CARGO_PKG_NAME");
 const RUST_BACKEND_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
-const RUST_EXPORTED_KERNELS: [&str; 32] = [
+const RUST_EXPORTED_KERNELS: [&str; 33] = [
+    "ph_anchor_response_core",
     "simulate_reaction_state_with_accounting",
     "analyze_bicarbonate_core",
     "carbonate_state_core",
@@ -6352,8 +6353,47 @@ fn carbonate_charge_pressure_setpoint_core(
 }
 
 
+/// Interpolate measured-minus-model pH residuals at fixed CO2 inventory (mol).
+/// Inputs are finite uptake, baseline pH and strictly increasing mol/pH knots.
+/// Returns calibrated pH in [0,14], retaining boundary residuals for forecasts.
+/// Does not mutate inventory or inputs; malformed knots raise ValueError.
+#[pyfunction]
+fn ph_anchor_response_core(
+    uptake_mol: f64,
+    baseline_ph: f64,
+    points: Vec<(f64, f64)>,
+) -> PyResult<f64> {
+    if !uptake_mol.is_finite()
+        || !baseline_ph.is_finite()
+        || points.iter().any(|(x, y)| !x.is_finite() || !y.is_finite())
+        || points.windows(2).any(|pair| pair[1].0 <= pair[0].0)
+    {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Invalid pH response knots",
+        ));
+    }
+    if points.is_empty() {
+        return Ok(baseline_ph);
+    }
+    let index = points.partition_point(|point| point.0 <= uptake_mol);
+    let residual = if index == 0 {
+        points[0].1
+    } else if index == points.len() {
+        points[index - 1].1
+    } else {
+        let left = points[index - 1];
+        let right = points[index];
+        left.1 + (uptake_mol - left.0) / (right.0 - left.0) * (right.1 - left.1)
+    };
+    Ok((baseline_ph + residual).clamp(0.0, 14.0))
+}
+
+/// Register numerical kernels, including fixed-inventory pH response learning.
+/// Takes the Python interpreter and module; mutates module exports, returning
+/// unit on success and propagating PyO3 registration errors to the importer.
 #[pymodule(gil_used = false)]
 fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(ph_anchor_response_core, module)?)?;
     module.add_function(wrap_pyfunction!(rust_backend_manifest, module)?)?;
     module.add_function(wrap_pyfunction!(
         simulate_reaction_state_with_accounting,

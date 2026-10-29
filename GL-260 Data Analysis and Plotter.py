@@ -24393,7 +24393,7 @@ SOL_MODE_FIELD_HELP: Dict[str, str] = {
     "analysis_total_vessel_volume_l": "Gross vessel volume; Analysis derives headspace by subtracting process liquor volume.",
     "measured_ph_cycle_index": "Cycle index where the reactor was opened, blended, and measured.",
     "measured_ph_value": "Measured pH value for one legacy anchor entry; multi-anchor rows are preferred.",
-    "measured_ph_anchors": "Measured pH anchor rows (cycle + pH) used for piecewise uptake correction.",
+    "measured_ph_anchors": "Measured cycle/pH anchors used to learn pH response at fixed CO2 uptake.",
     "planning_total_vessel_volume_l": "Gross vessel volume; Planning derives headspace by subtracting final liquid volume.",
     "planning_headspace_pressure_high_psi": "Headspace pressure setpoint high (psig) used for planning model inputs.",
     "planning_cycle_delta_p_psi": "Pressure drop from the CO₂ setpoint to trough each cycle before re-pressurization (psi).",
@@ -26035,8 +26035,14 @@ def _predict_planning_ph_for_model(
     cycle_index: int,
     fallback_ph: Optional[float] = None,
 ) -> Tuple[Optional[float], Optional[Dict[str, float]], Optional[str], Optional[str]]:
-    """Predict planning pH for model.
-    Used to compute planning pH for model for planning workflows."""
+    """Predict pH at cumulative CO2 mol, optionally using a learned response.
+
+    Takes a model, chemistry context, one-based cycle and optional fallback pH.
+    Returns pH, uncalibrated model species, source and warning. Compatible
+    response knots in context adjust pH only, including endpoint inversion.
+    No inventory is changed; model failures return the supplied fallback and
+    warning. Invalid response knots raise ValueError rather than corrupt doses.
+    """
     source = "ledger" if fallback_ph is not None else None
     if model is None:
         return fallback_ph, None, source, None
@@ -26064,7 +26070,25 @@ def _predict_planning_ph_for_model(
     if ph_value is None or not math.isfinite(ph_value):
         warning = "Planning pH model returned an invalid pH value."
         return fallback_ph, species, source, warning
-    return _clamp_ph_value(float(ph_value)), species, "planning_model", None
+    points = planning_context.get("ph_response_points") or []
+    if points:
+        from ph_anchor_calibration import observed_response_ph
+
+        backend = (
+            _load_rust_backend() if _current_rust_backend_mode() != "python" else None
+        )
+        ph_value = observed_response_ph(
+            cumulative_co2_moles,
+            ph_value,
+            points,
+            planning_context.get("ph_observation_points") or [],
+            getattr(backend, "ph_anchor_response_core", None),
+        )
+        source = "measured_anchor_response"
+    else:
+        source = "planning_model"
+    return _clamp_ph_value(float(ph_value)), species, source, None
+
 
 
 def solubility_simulate_cycle_timeline(
@@ -26108,6 +26132,9 @@ def solubility_simulate_cycle_timeline(
         captured in timeline error payloads where possible.
     """
 
+    gas_mw = _co2_gas_molar_mass(
+        dict((cycles[0] if cycles else {}), **(reaction_context or {}))
+    )
     timeline: List[Dict[str, Any]] = []
     treat_excess_as_headspace = bool(treat_excess_as_headspace)
     supersaturation = 1.0
@@ -26213,6 +26240,12 @@ def solubility_simulate_cycle_timeline(
         except Exception:
             # Best-effort guard; ignore failures to avoid interrupting the workflow.
             pass
+    if pressure_controlled and cycles:
+        calibrated_volume = _safe_float(
+            cycles[0].get("planning_effective_headspace_volume_l")
+        )
+        if calibrated_volume is not None and calibrated_volume > 0:
+            headspace_volume_l = calibrated_volume
     planning_context = {
         "naoh_mass_g": naoh_mass_g,
         "water_mass_g": params.water_mass_g,
@@ -26222,6 +26255,18 @@ def solubility_simulate_cycle_timeline(
         "planning_headspace_pressure_high_psi": planning_headspace_pressure_high_psi,
         "planning_cycle_delta_p_psi": planning_delta_psi,
         "planning_cycle_co2_g": context.get("planning_cycle_co2_g"),
+        "ph_observation_points": context.get("ph_observation_points")
+        or (
+            (cycles[0].get("ph_observation_points") or [])
+            if cycles and pressure_controlled
+            else []
+        ),
+        "ph_response_points": context.get("ph_response_points")
+        or (
+            (cycles[0].get("ph_response_points") or [])
+            if cycles and pressure_controlled
+            else []
+        ),
     }
 
     def _derive_cycle_moles_from_pressure(
@@ -26476,7 +26521,7 @@ def solubility_simulate_cycle_timeline(
         recommended_co2_g = context.get("recommended_co2_g")
         dissolved_limit_moles = 0.0
         if recommended_co2_g is not None and math.isfinite(recommended_co2_g):
-            dissolved_limit_moles = max(recommended_co2_g / SOL_MW_CO2, 0.0)
+            dissolved_limit_moles = max(recommended_co2_g / gas_mw, 0.0)
         capacity_carbon_m = baseline_carbon_m
         if target_spec_context is not None:
             capacity_carbon_m = max(
@@ -26717,7 +26762,7 @@ def solubility_simulate_cycle_timeline(
             speciation_mode=SPEC_MODE_FIXED_PCO2,
         )
         cycle_params = base_cycle_params
-        cumulative_added_mass = co2_added_moles * SOL_MW_CO2
+        cumulative_added_mass = co2_added_moles * gas_mw
         spec_model = selected_model
         guidance_prediction: Optional[Dict[str, Any]] = None
         target_ph_value: Optional[float] = None
@@ -26952,7 +26997,7 @@ def solubility_simulate_cycle_timeline(
                         "temperature_c": temp_c,
                         "delta_pressure_psi": cycle.get("delta_pressure_psi"),
                         "co2_moles": delta_moles,
-                        "co2_mass_g": delta_moles * SOL_MW_CO2,
+                        "co2_mass_g": delta_moles * gas_mw,
                         "error": msg,
                     }
                 )
@@ -26962,9 +27007,7 @@ def solubility_simulate_cycle_timeline(
             co2_remaining_value = None
             rec_co2_g = reproc_helpers.get("recommended_co2_g")
             if rec_co2_g is not None:
-                co2_remaining_value = max(
-                    rec_co2_g - (dissolved_moles * SOL_MW_CO2), 0.0
-                )
+                co2_remaining_value = max(rec_co2_g - (dissolved_moles * gas_mw), 0.0)
         elif finite_pitzer_analysis:
             # The selected finite-inventory model supplies both pH and species.
             # Its inherited generic solve() assumes charged NaHCO3 and an open
@@ -27081,9 +27124,7 @@ def solubility_simulate_cycle_timeline(
             limit_moles = reproc_helpers.get("dissolved_limit_moles", 0.0)
             headspace_moles_entry = max(co2_added_moles - limit_moles, 0.0)
             if rec_co2_g is not None:
-                co2_to_target_value = max(
-                    rec_co2_g - (co2_added_moles * SOL_MW_CO2), 0.0
-                )
+                co2_to_target_value = max(rec_co2_g - (co2_added_moles * gas_mw), 0.0)
             if headspace_moles_entry > 0 and headspace_volume_l:
                 temp_k = (
                     context_temperature_c
@@ -27098,18 +27139,10 @@ def solubility_simulate_cycle_timeline(
                 )
             elif headspace_moles_entry > 0 and not headspace_volume_l:
                 headspace_volume_warning_logged = True
-        elif (
-            not reprocessing_mode
-            and ledger_state is not None
-            and effective_excess_handling
-        ):
+        elif not reprocessing_mode and ledger_state is not None and effective_excess_handling:
             ledger_excess = max(ledger_state.get("co2_excess_mol", 0.0), 0.0)
             headspace_moles_entry = max(excess_moles, ledger_excess)
-            if (
-                headspace_moles_entry > 0
-                and headspace_volume_l
-                and not pressure_controlled
-            ):
+            if headspace_moles_entry > 0 and headspace_volume_l and not pressure_controlled:
                 temp_k = (
                     context_temperature_c
                     if context_temperature_c is not None
@@ -27431,21 +27464,21 @@ def solubility_simulate_cycle_timeline(
                 "peak_pressure_psi": cycle.get("peak_pressure_psi"),
                 "trough_pressure_psi": cycle.get("trough_pressure_psi"),
                 "co2_moles": delta_moles,
-                "co2_mass_g": delta_moles * SOL_MW_CO2,
+                "co2_mass_g": delta_moles * gas_mw,
                 "co2_added_moles": delta_moles,
-                "co2_added_mass_g": delta_moles * SOL_MW_CO2,
+                "co2_added_mass_g": delta_moles * gas_mw,
                 "co2_consumed_moles": consumed_cycle,
-                "co2_consumed_mass_g": consumed_cycle * SOL_MW_CO2,
+                "co2_consumed_mass_g": consumed_cycle * gas_mw,
                 "co2_unconsumed_moles": unconsumed_cycle,
-                "co2_unconsumed_mass_g": unconsumed_cycle * SOL_MW_CO2,
+                "co2_unconsumed_mass_g": unconsumed_cycle * gas_mw,
                 "co2_total_moles": co2_added_moles,
                 "co2_g": cumulative_added_mass,
                 "cumulative_co2_added_moles": co2_added_moles,
                 "cumulative_co2_added_mass_g": cumulative_added_mass,
                 "cumulative_co2_consumed_moles": co2_consumed_moles,
-                "cumulative_co2_consumed_mass_g": co2_consumed_moles * SOL_MW_CO2,
+                "cumulative_co2_consumed_mass_g": co2_consumed_moles * gas_mw,
                 "cumulative_co2_unconsumed_moles": co2_unconsumed_moles,
-                "cumulative_co2_unconsumed_mass_g": co2_unconsumed_moles * SOL_MW_CO2,
+                "cumulative_co2_unconsumed_mass_g": co2_unconsumed_moles * gas_mw,
                 "ledger_naoh_remaining_mol": (
                     ledger_state.get("naoh_remaining_mol") if ledger_state else None
                 ),
@@ -27531,7 +27564,7 @@ def solubility_simulate_cycle_timeline(
                 },
                 "fractions_source": fractions_source,
                 "headspace_co2_mol": headspace_moles_entry,
-                "headspace_co2_g": headspace_moles_entry * SOL_MW_CO2,
+                "headspace_co2_g": headspace_moles_entry * gas_mw,
                 "regime": regime_label
                 or ("pre_equivalence" if not equivalence_reached else "carbonate_buffer"),
             }
@@ -27563,11 +27596,11 @@ def solubility_simulate_cycle_timeline(
         "timeline": timeline,
         "total_cycles": len(timeline),
         "total_added_moles": co2_added_moles,
-        "total_added_mass_g": co2_added_moles * SOL_MW_CO2,
+        "total_added_mass_g": co2_added_moles * gas_mw,
         "total_consumed_moles": co2_consumed_moles,
-        "total_consumed_mass_g": co2_consumed_moles * SOL_MW_CO2,
+        "total_consumed_mass_g": co2_consumed_moles * gas_mw,
         "total_unconsumed_moles": co2_unconsumed_moles,
-        "total_unconsumed_mass_g": co2_unconsumed_moles * SOL_MW_CO2,
+        "total_unconsumed_mass_g": co2_unconsumed_moles * gas_mw,
         "equilibrium_ph": final_entry.get("equilibrium_ph"),
         "final_ph": final_entry.get("equilibrium_ph"),
         "final_pH": final_entry.get("equilibrium_ph"),
@@ -29641,6 +29674,7 @@ def _replay_mass_calibrated_payload(payload, measured_mass_g):
     """
     if not math.isfinite(measured_mass_g) or measured_mass_g <= 0:
         raise ValueError("Consumed CO2 mass must be finite and positive.")
+    gas_mw = _co2_gas_molar_mass(payload)
     rows = payload.get("cycle_transfer") or []
     if not rows:
         raise ValueError("No real cycles are available for mass calibration.")
@@ -29667,7 +29701,7 @@ def _replay_mass_calibrated_payload(payload, measured_mass_g):
                 f"Peak {high:g} PSIg; trough {low:g} PSIg."
             ) from exc
         unit_doses.append(inventory["dose_mol"])
-    volume = measured_mass_g / (math.fsum(unit_doses) * SOL_MW_CO2)
+    volume = measured_mass_g / (math.fsum(unit_doses) * gas_mw)
     calibrated = copy.deepcopy(dict(payload))
     cumulative = 0.0
     for row, unit_mol in zip(calibrated["cycle_transfer"], unit_doses, strict=True):
@@ -29678,15 +29712,15 @@ def _replay_mass_calibrated_payload(payload, measured_mass_g):
             co2_moles=mol,
             moles_vdw=mol,
             moles_ideal=None,
-            selected_mass_g=mol * SOL_MW_CO2,
-            co2_mass_g=mol * SOL_MW_CO2,
+            selected_mass_g=mol * gas_mw,
+            co2_mass_g=mol * gas_mw,
             cumulative_moles=cumulative,
             cumulative_co2_moles=cumulative,
-            cumulative_co2_mass_g=cumulative * SOL_MW_CO2,
+            cumulative_co2_mass_g=cumulative * gas_mw,
             moles_basis="measured_mass_headspace",
         )
     calibrated.update(
-        total_moles_vdw=cumulative, total_moles_ideal=None, gas_molar_mass=SOL_MW_CO2
+        total_moles_vdw=cumulative, total_moles_ideal=None, gas_molar_mass=gas_mw
     )
     calibrated["replay_mass_calibration"] = {
         "measured_mass_g": measured_mass_g,
@@ -33742,6 +33776,229 @@ def _python_measured_ph_uptake_calibration_core(
         "completion_from_measured_ph_pct": completion_pct,
         "target_ph": _safe_float(target_ph),
     }
+
+
+def _co2_gas_molar_mass(source):
+    """Return selected CO2 isotope molar mass in g/mol from a payload/settings map.
+
+    Missing mass uses ordinary CO2 for legacy callers; invalid explicit values
+    raise ValueError. Pure conversion policy: no global constants are changed.
+    """
+    value = float(
+        source.get("gas_molar_mass") or source.get("vdw_gas_molar_mass") or SOL_MW_CO2
+    )
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("CO2 molar mass must be finite and positive.")
+    return value
+
+
+def _context_with_verified_ph_response(context, model, record):
+    """Rebase physical measured pH observations onto the current prediction model.
+
+    Takes current recipe context and a completed run with uptake-mol/pH pairs.
+    Returns a copied context with empirical observations and extrapolation knots.
+    Keeps measured uptake fixed despite a different estimated liquid volume.
+    No persistence or source mutation; unavailable model states raise ValueError.
+    """
+    result = dict(context)
+    result.pop("ph_response_points", None)
+    result.pop("ph_observation_points", None)
+    points = []
+    observations = list(record["observations"])
+    for index, (uptake, measured) in enumerate(observations, 1):
+        baseline, _, _, _ = _predict_planning_ph_for_model(
+            model,
+            planning_context=result,
+            cumulative_co2_moles=float(uptake),
+            cycle_index=index,
+        )
+        if baseline is None:
+            raise ValueError("Verified pH reference cannot be evaluated by this model.")
+        points.append((float(uptake), float(measured) - baseline))
+    result["ph_response_points"] = points
+    result["ph_observation_points"] = observations
+    return result
+
+
+def _restore_confirmed_ph_references(settings_map):
+    """Restore durable operator-confirmed references alongside ordinary settings.
+
+    Takes a mutable settings mapping, merges the local reference JSON by id and
+    returns None. This separate store prevents an older running app's settings
+    save from erasing a newly confirmed experiment. Reads only; missing/corrupt
+    libraries leave existing settings intact. No source cycle data is rewritten.
+    """
+    path = Path(SETTINGS_FILE).with_name("verified_ph_reference_runs.json")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        if not isinstance(payload, Mapping):
+            return
+        records = payload.get("references", [])
+        if not isinstance(records, list):
+            return
+        merged = {
+            row["reference_id"]: dict(row)
+            for row in settings_map.get("verified_ph_reference_runs", [])
+            if isinstance(row, Mapping) and row.get("reference_id")
+        }
+        for row in records:
+            if (
+                isinstance(row, Mapping)
+                and row.get("verified_by") == "user"
+                and row.get("reference_id")
+            ):
+                merged[row["reference_id"]] = dict(row)
+        settings_map["verified_ph_reference_runs"] = list(merged.values())
+    except (OSError, ValueError, TypeError):
+        return
+
+
+def _fixed_uptake_ph_calibration(rows, doses, anchors, model_key, form):
+    """Fit the pH response without changing supplied per-cycle CO2 moles.
+
+    Inputs are timeline rows, nonnegative molar doses, normalized cycle anchors,
+    a model key and form chemistry in grams/liters/Celsius. Returns the existing
+    calibration payload contract with identity uptake factors and learned pH.
+    Solves target dose using that same response for consistent guidance. No
+    settings or inputs change. Invalid chemistry returns an unavailable payload;
+    native response interpolation fails safely to the Python implementation.
+    """
+    from ph_anchor_calibration import fit_response, observed_response_ph
+
+    gas_mw = _co2_gas_molar_mass(form)
+    params = form.get("params")
+    context = {
+        "naoh_mass_g": form.get("reaction_naoh_mass"),
+        "solution_volume_l": form.get("reaction_solution_volume"),
+        "temperature_c": getattr(
+            params, "temperature_c", form.get("temperature_c", 25.0)
+        ),
+        "water_mass_g": getattr(params, "water_mass_g", None),
+    }
+    model = get_speciation_model(model_key)
+    cumulative = list(np.cumsum(doses))
+    baseline = []
+    for index, uptake in enumerate(cumulative, 1):
+        ph, _species, _source, _warning = _predict_planning_ph_for_model(
+            model,
+            planning_context=context,
+            cumulative_co2_moles=uptake,
+            cycle_index=index,
+            fallback_ph=_safe_float(rows[index - 1].get("equilibrium_ph")),
+        )
+        baseline.append(ph)
+    backend = _load_rust_backend() if _current_rust_backend_mode() != "python" else None
+    try:
+        predicted, points, fitted_anchors = fit_response(
+            cumulative,
+            baseline,
+            anchors,
+            getattr(backend, "ph_anchor_response_core", None),
+        )
+    except (ValueError, TypeError) as exc:
+        return {"solver_status": "invalid_input", "solver_message": str(exc)}
+    context["ph_response_points"] = points
+    observations = [
+        (
+            float(cumulative[int(anchor["cycle_index"]) - 1]),
+            float(anchor["measured_ph"]),
+        )
+        for anchor in fitted_anchors
+    ]
+    context["ph_observation_points"] = observations
+    context["gas_molar_mass"] = gas_mw
+    context["cycle_temperatures_c"] = [
+        _safe_float(row.get("temperature_c"), context["temperature_c"]) for row in rows
+    ]
+    predicted = [
+        observed_response_ph(uptake, ph, points, observations)
+        for uptake, ph in zip(cumulative, baseline, strict=True)
+    ]
+    target = _safe_float(form.get("reaction_target_ph"))
+    required = None
+    if target is not None:
+        # Invert the learned response on fixed molar inventory, rather than
+        # multiplying a theoretical target by fitted uptake scale factors.
+        lower, upper = 0.0, max(float(cumulative[-1]), 1.0)
+        for _ in range(24):
+            value, _, _, _ = _predict_planning_ph_for_model(
+                model,
+                planning_context=context,
+                cumulative_co2_moles=upper,
+                cycle_index=len(rows),
+            )
+            if value is None:
+                break
+            if value <= target:
+                for _ in range(48):
+                    middle = (lower + upper) / 2.0
+                    value, _, _, _ = _predict_planning_ph_for_model(
+                        model,
+                        planning_context=context,
+                        cumulative_co2_moles=middle,
+                        cycle_index=len(rows),
+                    )
+                    if value is None:
+                        break
+                    if abs(value - target) <= 1e-7:
+                        required = middle
+                        break
+                    if value > target:
+                        lower = middle
+                    else:
+                        upper = middle
+                else:
+                    required = upper
+                break
+            upper *= 2.0
+    fractions = [
+        UnifiedApp._analysis_dashboard_fraction_fallback(None, ph) for ph in predicted
+    ]
+    primary = fitted_anchors[-1]
+    return {
+        "solver_status": "ok",
+        "solver_message": "Measured uptake retained; pH response learned from anchors.",
+        "uptake_correction_mode": "fixed_uptake_ph_response",
+        "uptake_scaling_applied": False,
+        "alpha_applies_to": "none; uptake is fixed",
+        "alpha_pre": 1.0,
+        "alpha_post": 1.0,
+        "cycle_factor_series": [1.0] * len(doses),
+        "anchors": fitted_anchors,
+        "anchor_count": len(fitted_anchors),
+        "anchor_cycle_index": primary["cycle_index"],
+        "anchor_measured_ph": primary["measured_ph"],
+        "anchor_predicted_ph_before": primary["predicted_ph_before"],
+        "anchor_predicted_ph_after": primary["predicted_ph_after"],
+        "anchor_residual_before": primary["residual_before"],
+        "anchor_residual_after": primary["residual_after"],
+        "corrected_cycle_uptake_mol_series": list(doses),
+        "corrected_cycle_uptake_g_series": [value * gas_mw for value in doses],
+        "corrected_cumulative_co2_mol_series": cumulative,
+        "corrected_cumulative_co2_g_series": [value * gas_mw for value in cumulative],
+        "corrected_cumulative_uptake_latest_mol": cumulative[-1],
+        "corrected_cumulative_uptake_latest_g": cumulative[-1] * gas_mw,
+        "corrected_ph_series": predicted,
+        "baseline_solver_corrected_ph_series": baseline,
+        "corrected_fraction_series": fractions,
+        "latest_corrected_speciation": {
+            "ph": predicted[-1],
+            "fractions": fractions[-1],
+        },
+        "co2_required_for_target_ph_mol": required,
+        "co2_required_for_target_ph_g": required * gas_mw
+        if required is not None
+        else None,
+        "completion_from_measured_ph_pct": min(cumulative[-1] / required, 1.0) * 100.0
+        if required
+        else None,
+        "response_record": dict(
+            context, points=points, observations=observations, model_key=model_key
+        ),
+        "fraction_source": "calibrated_ph_estimate",
+        "target_ph": target,
+    }
+
 
 
 def _python_multi_anchor_measured_ph_uptake_calibration_core(
@@ -38068,9 +38325,7 @@ def _reaction_dashboard_cycle_metric_series(
                 "pressure_slope_psi_per_hour": _safe_float(
                     row.get("pressure_slope_psi_per_hour")
                 ),
-                "uptake_rate_psi_per_hour": _safe_float(
-                    row.get("uptake_rate_psi_per_hour")
-                ),
+                "uptake_rate_psi_per_hour": _safe_float(row.get("uptake_rate_psi_per_hour")),
                 "cumulative_gas_mol": float(cumulative_moles or 0.0),
                 "cumulative_gas_g": (
                     float(cumulative_moles or 0.0) * gas_mw if gas_mw > 0.0 else None
@@ -95723,14 +95978,10 @@ def build_cycle_analysis_summary(
 
     if has_gas_mw:
         mass_ideal = compute_gas_mass_from_moles(total_moles_ideal, gas_mw)
-        lines.append(
-            f"Total gas mass (Ideal): {_fmt(mass_ideal, '.4f')} g"
-        )
+        lines.append(f"Total gas mass (Ideal): {_fmt(mass_ideal, '.4f')} g")
         if vdw_available:
             mass_vdw = compute_gas_mass_from_moles(total_moles_vdw, gas_mw)
-            lines.append(
-                f"Total gas mass (VDW): {_fmt(mass_vdw, '.4f')} g"
-            )
+            lines.append(f"Total gas mass (VDW): {_fmt(mass_vdw, '.4f')} g")
         elif not scipy_available:
             lines.append("Total gas mass (VDW): N/A (SciPy not installed)")
         else:
@@ -97997,9 +98248,7 @@ def analyze_pressure_cycles(
         "peak_prominence": float(peak_prominence),
         "peak_distance": int(peak_distance),
         "peak_width": int(peak_width),
-        "temp_column_label": settings.get(
-            "cycle_temp_column", CYCLE_TEMP_DEFAULT_LABEL
-        ),
+        "temp_column_label": settings.get("cycle_temp_column", CYCLE_TEMP_DEFAULT_LABEL),
         "per_cycle": per_cycle_rows,
         "volume_l": volume,
         "a_const": a_const,
@@ -122804,6 +123053,9 @@ class UnifiedApp(tk.Tk):
             kept_rows.append(dict(row))
         self._analysis_anchor_learning_history = list(kept_rows)
         self.settings[ANALYSIS_ANCHOR_LEARNING_HISTORY_SETTINGS_KEY] = list(kept_rows)
+        record = self.settings.get("measured_ph_response_calibration") or {}
+        if record.get("profile_key") == profile_key:
+            self.settings.pop("measured_ph_response_calibration", None)
         self._refresh_speciation_anchor_learning_usage_status()
         self._schedule_save_settings()
         status_message = (
@@ -133066,10 +133318,10 @@ class UnifiedApp(tk.Tk):
             "actual_observed_ph": "Actual observed pH (anchor)",
             "co2_cycle_g": "Cycle uptake (g)",
             "co2_cumulative_g": "Cumulative uptake (g)",
-            "corrected_cycle_co2_g": "Corrected cycle uptake (g)",
-            "corrected_cumulative_co2_g": "Corrected cumulative uptake (g)",
-            "corrected_cycle_co2_mol": "Corrected cycle uptake (mol)",
-            "corrected_cumulative_co2_mol": "Corrected cumulative uptake (mol)",
+            "corrected_cycle_co2_g": "Recorded cycle uptake (g)",
+            "corrected_cumulative_co2_g": "Recorded cumulative uptake (g)",
+            "corrected_cycle_co2_mol": "Recorded cycle uptake (mol)",
+            "corrected_cumulative_co2_mol": "Recorded cumulative uptake (mol)",
             "timeline_naoh_pct": "NaOH (%)",
             "timeline_na2co3_pct": "Na2CO3 (%)",
             "timeline_nahco3_pct": "NaHCO3 (%)",
@@ -146477,7 +146729,7 @@ class UnifiedApp(tk.Tk):
                 (
                     "timeline_corrected_cycle_co2",
                     {
-                        "label": "Corrected cycle CO2 (g)",
+                        "label": "Recorded cycle CO2 (g)",
                         "present": bool(analysis_mode)
                         and _has_finite_from_rows(
                             timeline_rows,
@@ -162848,9 +163100,7 @@ class UnifiedApp(tk.Tk):
             padx=scale_len(6),
             pady=scale_len(6),
         )
-        self._cycle_temp_combo.bind(
-            "<<ComboboxSelected>>", self._on_cycle_temp_selected
-        )
+        self._cycle_temp_combo.bind("<<ComboboxSelected>>", self._on_cycle_temp_selected)
 
         self._attach_tooltip(
             self._cycle_temp_combo,
@@ -166978,7 +167228,9 @@ class UnifiedApp(tk.Tk):
             "peak_distance": int(dist),
             "peak_width": int(wid),
             "peak_smoothing_window": int(
-                segmentation.get("peak_smoothing_window", settings.get("peak_smoothing_window", 1))
+                segmentation.get(
+                    "peak_smoothing_window", settings.get("peak_smoothing_window", 1)
+                )
                 or 1
             ),
             "cycle_auto_refine_radius": int(
@@ -166990,12 +167242,8 @@ class UnifiedApp(tk.Tk):
             ),
             "auto_peak_count": len(list(segmentation.get("auto_peaks") or [])),
             "auto_trough_count": len(list(segmentation.get("auto_troughs") or [])),
-            "manual_add_peak_count": len(
-                list(segmentation.get("manual_add_peaks") or [])
-            ),
-            "manual_add_trough_count": len(
-                list(segmentation.get("manual_add_troughs") or [])
-            ),
+            "manual_add_peak_count": len(list(segmentation.get("manual_add_peaks") or [])),
+            "manual_add_trough_count": len(list(segmentation.get("manual_add_troughs") or [])),
             "manual_remove_peak_count": len(
                 list(segmentation.get("manual_remove_peaks") or [])
             ),
@@ -167757,9 +168005,7 @@ class UnifiedApp(tk.Tk):
             "peak_prominence": float(self.pk_prominence.get()),
             "peak_distance": int(self.pk_distance.get()),
             "peak_width": int(self.pk_width.get()),
-            "cycle_temp_column": settings.get(
-                "cycle_temp_column", CYCLE_TEMP_DEFAULT_LABEL
-            ),
+            "cycle_temp_column": settings.get("cycle_temp_column", CYCLE_TEMP_DEFAULT_LABEL),
             "vdw_used": vdw_used,
             "gas_molar_mass": gas_molar_mass,
             "selection_size": int(mask_arr.sum()),
@@ -174584,21 +174830,17 @@ class UnifiedApp(tk.Tk):
             combo.configure(values=choices)
 
         if desired in choices:
-
             self.cycle_temp_column.set(desired)
 
             self._requested_cycle_temp_column = desired
 
             if combo is not None and combo.winfo_exists():
-
                 combo.set(desired)
 
         else:
-
             self._requested_cycle_temp_column = desired
 
             if combo is not None and combo.winfo_exists():
-
                 combo.set(CYCLE_TEMP_DEFAULT_LABEL)
 
     def _refresh_cycle_auto_manual_mode_visibility(self) -> None:
@@ -174710,7 +174952,6 @@ class UnifiedApp(tk.Tk):
         selection = self.cycle_temp_column.get() or CYCLE_TEMP_DEFAULT_LABEL
 
         if selection not in self._cycle_temp_choices():
-
             selection = CYCLE_TEMP_DEFAULT_LABEL
 
             self.cycle_temp_column.set(selection)
@@ -174887,9 +175128,7 @@ class UnifiedApp(tk.Tk):
         """Return cycle temp series.
         Used to retrieve cycle temp series for downstream logic."""
 
-        name = (
-            self.cycle_temp_column.get() if hasattr(self, "cycle_temp_column") else None
-        )
+        name = self.cycle_temp_column.get() if hasattr(self, "cycle_temp_column") else None
 
         return self._get_cycle_temp_series_by_name(name)
 
@@ -175027,20 +175266,54 @@ class UnifiedApp(tk.Tk):
     def _create_persistent_solubility_var(
         self, key: str, default: str = ""
     ) -> tk.StringVar:
-        """Create persistent solubility var.
-        Used to instantiate persistent solubility var during setup."""
+        """Create a persistent input, sharing recipe variables across both workflows.
 
-        settings.setdefault("solubility_inputs", {})
-        default_value = "" if default is None else str(default)
+        Takes an input key/default string; returns a Tk StringVar. NaOH mass and
+        liquid-volume aliases reference the same object, so edits in either view
+        immediately update the other. Water and temperature already use common
+        keys. Binds settings persistence and mirrors legacy aliases; Tk errors
+        propagate. Historical conflicting defaults resolve to the canonical key.
+        """
+        aliases = {
+            "reaction_naoh_mass_g": "mass_naoh_g",
+            "reaction_solution_volume_l": "solution_volume_l",
+        }
+        canonical = aliases.get(key, key)
+        shared_keys = set(aliases.values())
+        cache = getattr(self, "_shared_recipe_vars", {})
+        if canonical in shared_keys and canonical in cache:
+            return cache[canonical]
+        inputs = settings.setdefault("solubility_inputs", {})
+        if canonical in shared_keys and not inputs.get(canonical):
+            alias = next(name for name, target in aliases.items() if target == canonical)
+            inputs[canonical] = inputs.get(alias, default)
         var = tk.StringVar()
         self._bind_setting_var(
             var,
-            ("solubility_inputs", key),
-            default=default_value,
-            to_setting=lambda v: "" if v is None else str(v),
-            from_setting=lambda v: "" if v is None else str(v),
+            ("solubility_inputs", canonical),
+            default="" if default is None else str(default),
+            to_setting=lambda value: "" if value is None else str(value),
+            from_setting=lambda value: "" if value is None else str(value),
         )
+        if canonical in shared_keys:
+            cache[canonical] = var
+            self._shared_recipe_vars = cache
+
+            def persist_alias(*_args):
+                """Mirror the shared string into legacy settings keys after edits.
+
+                Tk trace arguments are unused; returns None, updates settings in
+                memory, and relies on the existing binding to schedule persistence.
+                Tk read errors propagate through the normal callback handler.
+                """
+                for alias, target in aliases.items():
+                    if target == canonical:
+                        settings["solubility_inputs"][alias] = var.get()
+
+            var.trace_add("write", persist_alias)
+            persist_alias()
         return var
+
 
     def _record_solubility_default(self, key: str, default: Optional[str]) -> None:
         """Record a solubility input default value.
@@ -179374,6 +179647,7 @@ class UnifiedApp(tk.Tk):
             except Exception:
                 solution_volume_entry = None
         reaction_context = {
+            "gas_molar_mass": _co2_gas_molar_mass(dict(getattr(self, "settings", {}), **form_data)),
             "naoh_mass_g": naoh_mass_entry,
             "solution_volume_l": solution_volume_entry,
             "target_ph": form_snapshot.get("reaction_target_ph"),
@@ -183096,6 +183370,7 @@ class UnifiedApp(tk.Tk):
         Exceptions:
             Best-effort; invalid form/model data degrades to sparse payloads.
         """
+        gas_mw = _co2_gas_molar_mass(form_data or {})
         rows = [
             dict(entry or {})
             for entry in timeline_rows or []
@@ -183122,7 +183397,7 @@ class UnifiedApp(tk.Tk):
                 running_moles = float(cumulative_moles)
             cycle_mass = _safe_float(row.get("co2_mass_g"))
             if cycle_mass is None and cycle_moles is not None:
-                cycle_mass = float(cycle_moles) * SOL_MW_CO2
+                cycle_mass = float(cycle_moles) * gas_mw
             cumulative_mass = _safe_float(row.get("cumulative_co2_added_mass_g"))
             if cumulative_mass is None:
                 if cycle_mass is not None and math.isfinite(cycle_mass):
@@ -183362,7 +183637,7 @@ class UnifiedApp(tk.Tk):
                 target_ph=reaction_target_ph,
                 reaction_naoh_mass=reaction_naoh_mass,
                 initial_naoh_mol=initial_naoh_mol,
-                co2_mw=SOL_MW_CO2,
+                co2_mw=gas_mw,
                 naoh_mw=SOL_MW_NAOH,
             )
             if use_rust
@@ -183375,7 +183650,7 @@ class UnifiedApp(tk.Tk):
                 target_ph=reaction_target_ph,
                 reaction_naoh_mass=reaction_naoh_mass,
                 initial_naoh_mol=initial_naoh_mol,
-                co2_mw=SOL_MW_CO2,
+                co2_mw=gas_mw,
                 naoh_mw=SOL_MW_NAOH,
             )
         comparison_series = [
@@ -183414,7 +183689,7 @@ class UnifiedApp(tk.Tk):
                     "starting_material_display_name"
                 ),
                 "starting_material_formula": settings.get("starting_material_formula"),
-                "gas_molar_mass": SOL_MW_CO2,
+                "gas_molar_mass": gas_mw,
                 "gas_stoich_mol_per_mol_starting": settings.get(
                     "gas_stoich_mol_per_mol_starting",
                     settings.get("stoich_mol_gas_per_mol_starting"),
@@ -183467,7 +183742,7 @@ class UnifiedApp(tk.Tk):
                 max(0.0, min(raw_total_uptake_g / reference_final_g, 1.0)) * 100.0
             )
         equivalence_co2_g = (
-            (float(initial_naoh_mol) / 2.0) * SOL_MW_CO2
+            (float(initial_naoh_mol) / 2.0) * gas_mw
             if initial_naoh_mol is not None
             and math.isfinite(float(initial_naoh_mol))
             and float(initial_naoh_mol) > 0.0
@@ -183701,7 +183976,7 @@ class UnifiedApp(tk.Tk):
             and primary_total_uptake_g is not None
             and math.isfinite(primary_total_uptake_g)
         ):
-            primary_total_uptake_mol = primary_total_uptake_g / SOL_MW_CO2
+            primary_total_uptake_mol = primary_total_uptake_g / gas_mw
         guidance_payload = resolved_form_data.get("_analysis_reaction_guidance")
         if not isinstance(guidance_payload, Mapping):
             guidance_payload = getattr(self, "_sol_reaction_guidance", None)
@@ -183744,9 +184019,7 @@ class UnifiedApp(tk.Tk):
                     float(calibration_required_total_g),
                     float(reference_final_g),
                 )
-                calibration_reference_total_mol = (
-                    calibration_reference_total_g / SOL_MW_CO2
-                )
+                calibration_reference_total_mol = calibration_reference_total_g / gas_mw
         guidance_total_g = None
         if guidance_additional_g is not None:
             if primary_total_uptake_g is not None and math.isfinite(primary_total_uptake_g):
@@ -183766,11 +184039,24 @@ class UnifiedApp(tk.Tk):
         )
         # Requirement precedence is intentional: guidance text shown to operators
         # must match Target Gap/Forecast tiles and runtime required-CO2 strings.
-        if guidance_additional_g is not None and not guidance_conflicts_with_target_total:
+        if (
+            correction_payload.get("uptake_correction_mode") == "fixed_uptake_ph_response"
+            and calibration_required_total_g is not None
+            and math.isfinite(calibration_required_total_g)
+        ):
+            # The learned pH inverse owns the target; uncalibrated local guidance
+            # must not replace it or impose the theoretical reference as a floor.
+            required_total_g = max(float(calibration_required_total_g), 0.0)
+            required_total_mol = required_total_g / gas_mw
+            additional_required_g = max(
+                required_total_g - float(primary_total_uptake_g or 0.0), 0.0
+            )
+            requirement_source = "measured_ph_calibration"
+        elif guidance_additional_g is not None and not guidance_conflicts_with_target_total:
             additional_required_g = guidance_additional_g
             required_total_g = guidance_total_g
             required_total_mol = (
-                required_total_g / SOL_MW_CO2 if required_total_g is not None else None
+                required_total_g / gas_mw if required_total_g is not None else None
             )
             requirement_source = "guidance_model"
         else:
@@ -183791,13 +184077,14 @@ class UnifiedApp(tk.Tk):
                 required_total_g = max(float(calibration_total_g), 0.0)
                 required_total_mol = (
                     calibration_total_mol
-                    if calibration_total_mol is not None and math.isfinite(calibration_total_mol)
-                    else required_total_g / SOL_MW_CO2
+                    if calibration_total_mol is not None
+                    and math.isfinite(calibration_total_mol)
+                    else required_total_g / gas_mw
                 )
                 requirement_source = "measured_ph_calibration"
             elif reference_final_g is not None and math.isfinite(reference_final_g):
                 required_total_g = max(float(reference_final_g), 0.0)
-                required_total_mol = required_total_g / SOL_MW_CO2
+                required_total_mol = required_total_g / gas_mw
                 requirement_source = "planning_reference"
             if (
                 required_total_g is not None
@@ -183825,7 +184112,7 @@ class UnifiedApp(tk.Tk):
             )
         additional_required_g = _safe_float(summary.get("additional_co2_required_g"))
         if additional_required_g is not None:
-            summary["additional_co2_required_mol"] = additional_required_g / SOL_MW_CO2
+            summary["additional_co2_required_mol"] = additional_required_g / gas_mw
         elif required_total_mol is not None and primary_total_uptake_mol is not None:
             summary["additional_co2_required_mol"] = max(
                 required_total_mol - primary_total_uptake_mol,
@@ -185022,7 +185309,7 @@ class UnifiedApp(tk.Tk):
             left,
             18,
             anchor="w",
-            text=f"Corrected uptake: {current:.2f} g",
+            text=f"CO2 uptake: {current:.2f} g",
             fill="#222222",
             font=("TkDefaultFont", 9, "bold"),
         )
@@ -185654,7 +185941,7 @@ class UnifiedApp(tk.Tk):
         target_gap_var = self._analysis_dashboard_tile_vars.get("target_gap")
         if target_gap_var is not None:
             target_gap_var.set(
-                f"Corrected cumulative uptake: {_fmt_float(primary_uptake_g, '.2f')} g\n"
+                f"CO2 cumulative uptake: {_fmt_float(primary_uptake_g, '.2f')} g\n"
                 f"Additional CO2 required: {_fmt_float(additional_required_g, '.2f')} g "
                 f"({_fmt_float((additional_required_g / SOL_MW_CO2) if additional_required_g is not None else None, '.4f')} mol)\n"
                 f"Required total to target pH: {_fmt_float(required_total_g, '.2f')} g\n"
@@ -185903,7 +186190,7 @@ class UnifiedApp(tk.Tk):
             uptake_var.set(
                 f"Detected cycles: {summary.get('detected_cycles') or 0}\n"
                 f"Reference cycles: {summary.get('reference_cycles') or 0}\n"
-                f"Corrected-first uptake: {_fmt_float(primary_uptake_g, '.2f')} g "
+                f"CO2 uptake: {_fmt_float(primary_uptake_g, '.2f')} g "
                 f"({_fmt_float(primary_uptake_mol, '.4f')} mol)"
                 f"{raw_context_line}\n"
                 f"Estimated product: {_fmt_float(primary_estimated_product_g, '.2f')} g\n"
@@ -186220,7 +186507,7 @@ class UnifiedApp(tk.Tk):
                         "In band: "
                         f"{'yes' if endpoint_in_band is True else ('no' if endpoint_in_band is False else '--')} | "
                         f"Objective total: {_fmt_float(objective_total, '.5f')}",
-                        f"Corrected cumulative uptake: {_fmt_float(corrected_latest_uptake_g, '.2f')} g | "
+                        f"CO2 cumulative uptake: {_fmt_float(corrected_latest_uptake_g, '.2f')} g | "
                         f"CO2 required for target pH: {_fmt_float(required_co2_g, '.2f')} g",
                     ]
                 )
@@ -186819,7 +187106,7 @@ class UnifiedApp(tk.Tk):
                 uptake_text = f"{selected_uptake:.2f} g"
             selection_note = (
                 f"Selected cycle {selected_cycle_id}: corrected pH {ph_text}, "
-                f"corrected uptake {uptake_text}."
+                f"CO2 uptake {uptake_text}."
             )
         def _fmt_float(value: Optional[float], fmt: str) -> str:
             """Format one optional finite float for ledger note text.
@@ -191246,9 +191533,21 @@ class UnifiedApp(tk.Tk):
                 row=3, column=column, sticky="w", padx=(0, 8), pady=(8, 2)
             )
         row_specs = (
-            ("Starting material", "starting_name", "starting_formula", "starting_mw", "starting_coeff"),
+            (
+                "Starting material",
+                "starting_name",
+                "starting_formula",
+                "starting_mw",
+                "starting_coeff",
+            ),
             ("Reactant gas", "gas_name", "gas_formula", "gas_mw", "gas_coeff"),
-            ("Expected product", "product_name", "product_formula", "product_mw", "product_coeff"),
+            (
+                "Expected product",
+                "product_name",
+                "product_formula",
+                "product_mw",
+                "product_coeff",
+            ),
         )
         for row_index, (role, name_key, formula_key, mw_key, coeff_key) in enumerate(row_specs, start=4):
             ttk.Label(host, text=role).grid(row=row_index, column=0, sticky="w", pady=2)
@@ -191307,16 +191606,73 @@ class UnifiedApp(tk.Tk):
                 "reaction_family": "custom",
                 "gas_species_id": "reactant_gas",
                 "species": [
-                    {"species_id": "starting_material", "name": starting_name, "formula": fields["starting_formula"].get().strip(), "phase": "solid", "role": "reactant", "molar_mass_g_mol": starting_mw, "initial_moles": 0.0},
-                    {"species_id": "reactant_gas", "name": gas_name, "formula": fields["gas_formula"].get().strip(), "phase": "gas", "role": "reactant", "molar_mass_g_mol": gas_mw, "initial_moles": 0.0},
-                    {"species_id": "product", "name": product_name, "formula": fields["product_formula"].get().strip(), "phase": "solid", "role": "product", "molar_mass_g_mol": product_mw, "initial_moles": 0.0},
+                    {
+                        "species_id": "starting_material",
+                        "name": starting_name,
+                        "formula": fields["starting_formula"].get().strip(),
+                        "phase": "solid",
+                        "role": "reactant",
+                        "molar_mass_g_mol": starting_mw,
+                        "initial_moles": 0.0,
+                    },
+                    {
+                        "species_id": "reactant_gas",
+                        "name": gas_name,
+                        "formula": fields["gas_formula"].get().strip(),
+                        "phase": "gas",
+                        "role": "reactant",
+                        "molar_mass_g_mol": gas_mw,
+                        "initial_moles": 0.0,
+                    },
+                    {
+                        "species_id": "product",
+                        "name": product_name,
+                        "formula": fields["product_formula"].get().strip(),
+                        "phase": "solid",
+                        "role": "product",
+                        "molar_mass_g_mol": product_mw,
+                        "initial_moles": 0.0,
+                    },
                 ],
-                "steps": [{"step_id": "main_reaction", "name": "Main reaction", "stoichiometry": {"starting_material": -starting_coeff, "reactant_gas": -gas_coeff, "product": product_coeff}}],
+                "steps": [
+                    {
+                        "step_id": "main_reaction",
+                        "name": "Main reaction",
+                        "stoichiometry": {
+                            "starting_material": -starting_coeff,
+                            "reactant_gas": -gas_coeff,
+                            "product": product_coeff,
+                        },
+                    }
+                ],
                 "input_fields": [
-                    {"field_id": "starting_material_mass_g", "label": "Starting material amount", "units": "g", "default": "", "required": True, "target_species_id": "starting_material", "quantity": "mass_g", "group": "charge"},
-                    {"field_id": "actual_product_mass_g", "label": "Measured product mass", "units": "g", "default": "", "required": False, "target_species_id": "product", "quantity": "actual_mass_g", "group": "results"},
+                    {
+                        "field_id": "starting_material_mass_g",
+                        "label": "Starting material amount",
+                        "units": "g",
+                        "default": "",
+                        "required": True,
+                        "target_species_id": "starting_material",
+                        "quantity": "mass_g",
+                        "group": "charge",
+                    },
+                    {
+                        "field_id": "actual_product_mass_g",
+                        "label": "Measured product mass",
+                        "units": "g",
+                        "default": "",
+                        "required": False,
+                        "target_species_id": "product",
+                        "quantity": "actual_mass_g",
+                        "group": "results",
+                    },
                 ],
-                "yield_basis": {"product_species_id": "product", "target_reactant_species_id": "starting_material", "actual_mass_field_id": "actual_product_mass_g", "label": "Product yield"},
+                "yield_basis": {
+                    "product_species_id": "product",
+                    "target_reactant_species_id": "starting_material",
+                    "actual_mass_field_id": "actual_product_mass_g",
+                    "label": "Product yield",
+                },
                 "equilibrium": {"enabled_by_default": False},
                 "kpi_labels": {},
             }
@@ -195424,11 +195780,11 @@ class UnifiedApp(tk.Tk):
         for col, heading in (
             ("cycle", "Cycle"),
             ("co2_cycle_g", "CO2 per cycle (g)"),
-            ("corrected_cycle_co2_g", "Corrected CO2 cycle (g)"),
+            ("corrected_cycle_co2_g", "Recorded CO2 cycle (g)"),
             ("co2_g", "CO2 total (g)"),
-            ("corrected_cumulative_co2_g", "Corrected CO2 total (g)"),
+            ("corrected_cumulative_co2_g", "Recorded CO2 total (g)"),
             ("vdw_basis_result", "VDW: consumption / pH / speciation"),
-            ("corrected_basis_result", "Corrected: consumption / pH / speciation"),
+            ("corrected_basis_result", "Model at supplied uptake"),
             ("ph", "Equilibrium pH (Guidance)"),
             ("corrected_ph", "Corrected pH"),
             ("calculated_ph", "Calculated pH (model)"),
@@ -196984,7 +197340,7 @@ class UnifiedApp(tk.Tk):
             try:
                 messagebox.showerror(
                     "Analysis Calibration",
-                    f"Unable to recompute uptake calibration.\n{exc}",
+                    f"Unable to recompute pH calibration.\n{exc}",
                 )
             except Exception:
                 pass
@@ -198032,6 +198388,11 @@ class UnifiedApp(tk.Tk):
             timeline,
             reference_trace=trace,
         )
+        form_snapshot = dict(
+            form_snapshot,
+            gas_molar_mass=_co2_gas_molar_mass(payload_map),
+            replay_mass_calibration=payload_map.get("replay_mass_calibration"),
+        )
         calibrated_timeline, calibration_payload, anchor_payload = (
             self._apply_analysis_measured_ph_calibration(
                 augmented_timeline,
@@ -198337,7 +198698,7 @@ class UnifiedApp(tk.Tk):
             and math.isfinite(primary_total_mol)
         ):
             runtime_payload["co2_g_text"] = (
-                "CO2 uptake (corrected-primary cumulative): "
+                "CO2 uptake (cumulative): "
                 f"{primary_total_g:.2f} g ({primary_total_mol:.4f} mol)"
             )
             if (
@@ -198543,7 +198904,7 @@ class UnifiedApp(tk.Tk):
             runtime_payload["co2_g_text"] = (
                 "VDW basis | "
                 + _analysis_basis_text(latest_pair["vdw"])
-                + "\nCorrected basis | "
+                + "\nModel at supplied uptake | "
                 + _analysis_basis_text(latest_pair["corrected"])
             )
         anchor = runtime_payload.get("measured_ph_anchor")
@@ -198808,6 +199169,8 @@ class UnifiedApp(tk.Tk):
                 f"CO₂ {target_g:.2f} g" if target_g is not None else "CO₂ unavailable",
                 f"{cycles:.2f} cycles" if cycles is not None else "cycles unavailable",
             ]
+            if forecast.get("verified_reference_id"):
+                details.append("Reference: " + str(forecast["verified_reference_id"]))
             if guard_g is not None:
                 details.append(f"guard/verify at {guard_g:.2f} g")
             if forecast.get("speciation_verified") is True:
@@ -199402,6 +199765,7 @@ class UnifiedApp(tk.Tk):
             Invalid payloads are ignored safely.
         """
         settings_map = self.settings if isinstance(self.settings, dict) else settings
+        _restore_confirmed_ph_references(settings_map)
 
         def _normalize_anchor_row(
             raw: Mapping[str, Any],
@@ -201750,32 +202114,20 @@ class UnifiedApp(tk.Tk):
         form_snapshot: Mapping[str, Any],
         reference_trace: Optional[Mapping[str, Any]],
     ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-        """Apply measured-pH anchored uptake calibration to Analysis timeline rows.
+        """Learn pH response from anchors while preserving measured cycle uptake.
 
-        Purpose:
-            Preserve Cycle Analysis uptake as the raw timeline channel while
-            publishing the independently corrected uptake, pH, and speciation
-            series produced by measured-anchor calibration.
-        Why:
-            Raw and corrected CO2 must remain distinct so operators can compare
-            Cycle Analysis uptake against the uptake basis used by corrected
-            chemistry. Corrected pH is evaluated on the same CO2-aligned reference
-            chemistry as the raw Analysis pH channel so calibration does not
-            switch chemistry contexts at carbonate equivalence. Calculated pH at
-            corrected CO2 remains a reference-curve diagnostic, not a copy of
-            corrected pH.
-        Inputs:
-            timeline_rows: Forensic-augmented Analysis timeline rows.
-            form_snapshot: Analysis form payload captured before worker execution.
-            reference_trace: Planning reference trace used for completion context.
-        Outputs:
-            Tuple of `(timeline_rows, calibration_payload, anchor_payload)`.
-        Side Effects:
-            Persists successful calibration payloads by active profile key.
-        Exceptions:
-            Invalid or unavailable anchors return rows unchanged.
+        Inputs are timeline mappings, the Analysis form and an optional reference
+        trace. Returns copied rows, calibration metadata and the anchor payload.
+        Updates compatible profile learning/settings; invalid anchors or missing
+        model predictions return a diagnostic payload without modifying uptake.
+        Calibrated pH is empirical; calculated chemistry remains separately
+        available. Compatibility uptake fields contain the original inventory.
         """
-        rows = [dict(entry or {}) for entry in (timeline_rows or []) if isinstance(entry, Mapping)]
+        rows = [
+            dict(entry or {})
+            for entry in (timeline_rows or [])
+            if isinstance(entry, Mapping)
+        ]
         if not rows:
             return rows, None, None
         if str(form_snapshot.get("workflow_key") or "") != "Analysis":
@@ -201806,328 +202158,43 @@ class UnifiedApp(tk.Tk):
         if not cycle_uptake_series:
             return rows, None, None
 
-        initial_naoh_mol = None
-        reaction_naoh_mass = _safe_float(form_snapshot.get("reaction_naoh_mass"))
-        if reaction_naoh_mass is not None and reaction_naoh_mass > 0.0:
-            initial_naoh_mol = reaction_naoh_mass / SOL_MW_NAOH
-        solution_volume_l = _safe_float(form_snapshot.get("reaction_solution_volume"))
-        params = form_snapshot.get("params")
-        if solution_volume_l is None and params is not None:
-            solution_volume_l = _safe_float(getattr(params, "solution_volume_l", None))
-        temperature_c = (
-            _safe_float(getattr(params, "temperature_c", None))
-            if params is not None
-            else _safe_float(form_snapshot.get("temperature_c"), 25.0)
+        reference_map = dict(reference_trace or {})
+        calibration_payload = _fixed_uptake_ph_calibration(
+            rows, cycle_uptake_series, anchor_rows, ph_model_key, form_snapshot
         )
-        if temperature_c is None:
-            temperature_c = 25.0
-        reference_map = dict(reference_trace) if isinstance(reference_trace, Mapping) else {}
-        reference_total_mol = None
-        ref_cum_series = reference_map.get("cumulative_co2_mol_series") or []
-        if isinstance(ref_cum_series, Sequence) and ref_cum_series:
-            reference_total_mol = _safe_float(ref_cum_series[-1])
-        if reference_total_mol is None:
-            final_co2_g = _safe_float(reference_map.get("final_co2_g"))
-            if final_co2_g is not None:
-                reference_total_mol = final_co2_g / SOL_MW_CO2
-        equivalence_co2_mol = None
-        equivalence_co2_g = _safe_float(reference_map.get("equivalence_co2_g"))
-        if equivalence_co2_g is not None:
-            equivalence_co2_mol = equivalence_co2_g / SOL_MW_CO2
-        equivalence_cycle_index = _safe_rust_int(
-            reference_map.get("equivalence_index"), -1
+        if calibration_payload.get("solver_status") != "ok":
+            return rows, calibration_payload, anchor_payload
+        # Save the response against physical uptake, never against cycle number:
+        # future plans may use a different charge pressure or partial cycles.
+        calibration_payload["learning_enabled"] = bool(
+            self._analysis_anchor_learning_controls(form_snapshot)["learning_enabled"]
         )
-        if equivalence_cycle_index is not None and equivalence_cycle_index >= 0:
-            equivalence_cycle_index = int(equivalence_cycle_index) + 1
-        else:
-            equivalence_cycle_index = None
-        if equivalence_cycle_index is None:
-            equivalence_cycle_index = next(
-                (
-                    idx
-                    for idx, row in enumerate(rows, start=1)
-                    if _safe_float(row.get("co2_g")) is not None
-                    and equivalence_co2_g is not None
-                    and _safe_float(row.get("co2_g")) >= equivalence_co2_g
-                ),
-                None,
+        if calibration_payload["learning_enabled"]:
+            self.settings["measured_ph_response_calibration"] = dict(
+                calibration_payload["response_record"],
+                profile_key=self._analysis_profile_key(),
             )
-        target_ph = _safe_float(form_snapshot.get("reaction_target_ph"))
-        learning_controls = self._analysis_anchor_learning_controls(form_snapshot)
-        learning_enabled = bool(learning_controls["learning_enabled"])
-        terminal_ph_low = float(learning_controls["terminal_ph_range_low"])
-        terminal_ph_high = float(learning_controls["terminal_ph_range_high"])
-        terminal_ph_weight = float(learning_controls["terminal_ph_weight"])
-        compact_pitzer_params = None
-        if ph_model_key == "naoh_co2_pitzer_hmw":
-            compact_pitzer_params = _compact_pitzer_params_for_rust(_NAOH_PITZER_PARAMS)
-        if learning_enabled:
-            prior_cycle_factor_series, prior_sample_count, prior_diagnostics = (
-                self._analysis_resolve_profile_learning_prior(
-                    row_count=len(rows),
-                    model_key=ph_model_key,
-                    basis_signature=basis_signature,
-                )
+
+        if calibration_payload["learning_enabled"]:
+            from ph_anchor_calibration import completed_reference
+
+            completed = completed_reference(
+                calibration_payload["response_record"],
+                form_snapshot.get("replay_mass_calibration") or {},
+                anchor_rows,
+                form_snapshot.get("reaction_target_ph"),
+                len(rows),
+                self._analysis_profile_key(),
             )
-        else:
-            prior_cycle_factor_series, prior_sample_count, prior_diagnostics = (
-                [],
-                0,
-                {"profile_sample_counts": {}, "points_used": 0},
-            )
-        calibration_payload = None
-        if _current_rust_backend_mode() != "python":
-            calibration_payload = _rust_measured_ph_uptake_calibration_core(
-                model_key=ph_model_key,
-                cycle_uptake_mol_series=cycle_uptake_series,
-                anchor_cycle_index=int(anchor_payload["cycle_index"]),
-                measured_ph=float(anchor_payload["measured_ph"]),
-                equivalence_cycle_index=equivalence_cycle_index,
-                target_ph=target_ph,
-                initial_naoh_mol=initial_naoh_mol,
-                solution_volume_l=solution_volume_l,
-                temperature_c=temperature_c,
-                planning_reference_total_mol=reference_total_mol,
-                equivalence_co2_mol=equivalence_co2_mol,
-                pitzer_params=compact_pitzer_params,
-                anchors=anchor_rows,
-                prior_cycle_factor_series=prior_cycle_factor_series,
-                prior_sample_count=prior_sample_count,
-                learning_enabled=learning_enabled,
-                terminal_ph_range_low=terminal_ph_low,
-                terminal_ph_range_high=terminal_ph_high,
-                terminal_ph_weight=terminal_ph_weight,
-            )
-        rust_status = (
-            str(calibration_payload.get("solver_status") or "").strip().lower()
-            if isinstance(calibration_payload, Mapping)
-            else ""
-        )
-        if not isinstance(calibration_payload, Mapping) or rust_status != "ok":
-            calibration_payload = _python_multi_anchor_measured_ph_uptake_calibration_core(
-                model_key=ph_model_key,
-                cycle_uptake_mol_series=cycle_uptake_series,
-                anchors=anchor_rows,
-                equivalence_cycle_index=equivalence_cycle_index,
-                target_ph=target_ph,
-                initial_naoh_mol=initial_naoh_mol,
-                solution_volume_l=solution_volume_l,
-                temperature_c=temperature_c,
-                planning_reference_total_mol=reference_total_mol,
-                equivalence_co2_mol=equivalence_co2_mol,
-                prior_cycle_factor_series=prior_cycle_factor_series,
-                prior_sample_count=prior_sample_count,
-                learning_enabled=learning_enabled,
-                terminal_ph_range_low=terminal_ph_low,
-                terminal_ph_range_high=terminal_ph_high,
-                terminal_ph_weight=terminal_ph_weight,
-            )
-        if not isinstance(calibration_payload, Mapping):
-            return rows, None, anchor_payload
-        if str(calibration_payload.get("solver_status") or "").lower() != "ok":
-            return rows, dict(calibration_payload), anchor_payload
-        calibration_payload = dict(calibration_payload)
-        calibration_payload["learning_enabled"] = learning_enabled
-        calibration_payload["terminal_ph_range_low"] = terminal_ph_low
-        calibration_payload["terminal_ph_range_high"] = terminal_ph_high
-        calibration_payload["terminal_ph_weight"] = terminal_ph_weight
-        # Keep the solver-corrected uptake series intact; the unmodified Cycle
-        # Analysis uptake remains available on each row's raw CO2 fields.
-        calibration_payload["uptake_correction_mode"] = "measured_ph_uptake_calibration"
-        calibration_payload["uptake_scaling_applied"] = True
-        calibration_payload["alpha_applies_to"] = "corrected uptake and pH"
-        anchor_resolution_meta = dict(
-            getattr(self, "_analysis_last_anchor_resolution_meta", {}) or {}
-        )
-        calibration_payload["global_anchor_learning"] = {
-            "scope": "global_cross_profile",
-            "manual_anchor_count": _safe_rust_int(
-                anchor_resolution_meta.get("manual_anchor_count"), 0
-            ),
-            "compatible_global_anchor_count": _safe_rust_int(
-                anchor_resolution_meta.get("global_compatible_anchor_count"), 0
-            ),
-            "resolved_anchor_source_counts": dict(
-                anchor_resolution_meta.get("resolved_anchor_source_counts") or {}
-            ),
-            "prior_sample_profile_counts": dict(
-                prior_diagnostics.get("profile_sample_counts") or {}
-            )
-            if isinstance(prior_diagnostics, Mapping)
-            else {},
-            "prior_cycle_factor_points_used": _safe_rust_int(
-                (
-                    prior_diagnostics.get("points_used")
-                    if isinstance(prior_diagnostics, Mapping)
-                    else 0
-                ),
-                0,
-            ),
-            "prior_sample_count": int(max(prior_sample_count, 0)),
-        }
-        primary_reference_payload = self._analysis_reference_shaped_corrected_ph_repair(
-            rows=rows,
-            reference_trace=reference_trace,
-            anchor_rows=anchor_rows,
-            terminal_ph_low=terminal_ph_low,
-            terminal_ph_high=terminal_ph_high,
-            initial_naoh_mol=initial_naoh_mol,
-            solution_volume_l=solution_volume_l,
-            temperature_c=temperature_c,
-            corrected_cumulative_co2_mol_series=calibration_payload.get(
-                "corrected_cumulative_co2_mol_series"
-            ),
-            corrected_cumulative_co2_g_series=calibration_payload.get(
-                "corrected_cumulative_co2_g_series"
-            ),
-        )
-        if str(primary_reference_payload.get("status") or "").strip().lower() == "ok":
-            primary_ph = list(
-                primary_reference_payload.get("corrected_ph_series") or []
-            )
-            primary_fractions = list(
-                primary_reference_payload.get("corrected_fraction_series") or []
-            )
-            if len(primary_ph) == len(rows):
-                calibration_payload["baseline_solver_corrected_ph_series"] = list(
-                    calibration_payload.get("corrected_ph_series") or []
-                )
-                calibration_payload["corrected_ph_series"] = primary_ph
-                calibration_payload["corrected_fraction_series"] = primary_fractions
-                calibration_payload["latest_corrected_speciation"] = {
-                    "ph": _safe_float(primary_reference_payload.get("endpoint_ph")),
-                    "fractions": (
-                        dict(primary_fractions[-1])
-                        if primary_fractions
-                        and isinstance(primary_fractions[-1], Mapping)
-                        else {"H2CO3": 0.0, "HCO3-": 0.0, "CO3^2-": 0.0}
-                    ),
-                }
-                calibration_payload["reference_shape_primary"] = dict(
-                    primary_reference_payload
-                )
-                calibration_payload["reference_shape_primary_applied"] = True
-            else:
-                calibration_payload["reference_shape_primary_applied"] = False
-                calibration_payload["reference_shape_primary_reason"] = (
-                    "reference-shaped pH length did not match timeline rows"
-                )
-        else:
-            calibration_payload["reference_shape_primary_applied"] = False
-            calibration_payload["reference_shape_primary_reason"] = str(
-                primary_reference_payload.get("reason") or "reference shape unavailable"
-            )
-        apply_ml_correction = bool(
-            form_snapshot.get(
-                "analysis_apply_ml_correction",
-                self.settings.get(ANALYSIS_APPLY_ML_CORRECTION_DEFAULT_SETTINGS_KEY, True),
-            )
-        )
-        anchor_fit_tolerance_ph = _safe_float(
-            form_snapshot.get("analysis_anchor_fit_tolerance_ph")
-        )
-        if anchor_fit_tolerance_ph is None:
-            anchor_fit_tolerance_ph = self._analysis_anchor_fit_tolerance_ph()
-        action_token = str(form_snapshot.get("analysis_last_action") or "").strip().lower()
-        allow_ml_retraining = action_token == "recompute_calibration"
-        rows, calibration_payload = self._analysis_apply_hybrid_ml_correction(
-            rows=rows,
-            calibration_payload=calibration_payload,
-            anchor_rows=anchor_rows,
-            model_key=ph_model_key,
-            basis_signature=basis_signature,
-            apply_ml_correction=apply_ml_correction,
-            allow_retraining=allow_ml_retraining,
-            anchor_fit_tolerance_ph=float(anchor_fit_tolerance_ph),
-        )
-        if self._analysis_corrected_ph_needs_reference_shape_repair(
-            calibration_payload=calibration_payload,
-            reference_trace=reference_trace,
-            terminal_ph_low=terminal_ph_low,
-            terminal_ph_high=terminal_ph_high,
-            initial_naoh_mol=initial_naoh_mol,
-            solution_volume_l=solution_volume_l,
-            temperature_c=temperature_c,
-        ):
-            repair_payload = self._analysis_reference_shaped_corrected_ph_repair(
-                rows=rows,
-                reference_trace=reference_trace,
-                anchor_rows=anchor_rows,
-                terminal_ph_low=terminal_ph_low,
-                terminal_ph_high=terminal_ph_high,
-                initial_naoh_mol=initial_naoh_mol,
-                solution_volume_l=solution_volume_l,
-                temperature_c=temperature_c,
-                corrected_cumulative_co2_mol_series=calibration_payload.get(
-                    "corrected_cumulative_co2_mol_series"
-                ),
-                corrected_cumulative_co2_g_series=calibration_payload.get(
-                    "corrected_cumulative_co2_g_series"
-                ),
-            )
-            if str(repair_payload.get("status") or "").strip().lower() == "ok":
-                repaired_ph = list(repair_payload.get("corrected_ph_series") or [])
-                repaired_fractions = list(
-                    repair_payload.get("corrected_fraction_series") or []
-                )
-                calibration_payload["corrected_ph_series"] = repaired_ph
-                calibration_payload["corrected_fraction_series"] = repaired_fractions
-                calibration_payload["latest_corrected_speciation"] = {
-                    "ph": _safe_float(repair_payload.get("endpoint_ph")),
-                    "fractions": (
-                        dict(repaired_fractions[-1])
-                    if repaired_fractions
-                    and isinstance(repaired_fractions[-1], Mapping)
-                        else {"H2CO3": 0.0, "HCO3-": 0.0, "CO3^2-": 0.0}
-                    ),
-                }
-                endpoint_ph = _safe_float(repair_payload.get("endpoint_ph"))
-                endpoint_distance = None
-                if endpoint_ph is not None and math.isfinite(float(endpoint_ph)):
-                    if endpoint_ph < terminal_ph_low:
-                        endpoint_distance = terminal_ph_low - endpoint_ph
-                    elif endpoint_ph > terminal_ph_high:
-                        endpoint_distance = endpoint_ph - terminal_ph_high
-                    else:
-                        endpoint_distance = 0.0
-                terminal_penalty_raw = (
-                    float(endpoint_distance) ** 2
-                    if endpoint_distance is not None
-                    else None
-                )
-                terminal_penalty_weighted = (
-                    terminal_penalty_raw * terminal_ph_weight
-                    if terminal_penalty_raw is not None
-                    else None
-                )
-                calibration_payload["endpoint_diagnostics"] = {
-                    "endpoint_ph": endpoint_ph,
-                    "in_terminal_band": bool(
-                        endpoint_ph is not None
-                        and terminal_ph_low <= float(endpoint_ph) <= terminal_ph_high
-                    ),
-                    "distance_to_terminal_band": endpoint_distance,
-                    "terminal_penalty_raw": terminal_penalty_raw,
-                    "terminal_penalty_weighted": terminal_penalty_weighted,
-                }
-                calibration_payload["reference_shape_repair"] = dict(repair_payload)
-                calibration_payload["corrected_ph_repair_applied"] = True
-                calibration_payload["corrected_ph_repair_reason"] = (
-                    "corrected pH endpoint/shape failed chemistry acceptance gate"
-                )
-            else:
-                calibration_payload["corrected_ph_repair_applied"] = False
-                calibration_payload["corrected_ph_repair_reason"] = str(
-                    repair_payload.get("reason") or "reference repair unavailable"
-                )
-        # Reference-shape and ML repairs are useful between observations, but a
-        # current-run pH anchor remains the authoritative calibrated value at
-        # its own cycle and must not be smoothed back onto the model curve.
-        calibration_payload = self._analysis_pin_corrected_ph_to_measured_anchors(
-            calibration_payload,
-            anchor_rows=anchor_rows,
-            row_count=len(rows),
-        )
+            if completed is not None:
+                history = list(self.settings.get("verified_ph_reference_runs") or [])
+                history = [
+                    row
+                    for row in history
+                    if row.get("reference_id") != completed["reference_id"]
+                ]
+                self.settings["verified_ph_reference_runs"] = (history + [completed])[-100:]
+
         corrected_cycle_mol = list(
             calibration_payload.get("corrected_cycle_uptake_mol_series") or []
         )
@@ -202216,6 +202283,8 @@ class UnifiedApp(tk.Tk):
             row["corrected_ph"] = (
                 _safe_float(corrected_ph[idx]) if idx < len(corrected_ph) else None
             )
+            row["corrected_fraction_source"] = "calibrated_ph_estimate"
+            row["calibrated_estimated_ph_source"] = "measured_anchor_response"
             if idx < len(corrected_fractions) and isinstance(
                 corrected_fractions[idx], Mapping
             ):
@@ -205549,11 +205618,11 @@ class UnifiedApp(tk.Tk):
         full_column_pairs = (
             ("cycle", "Cycle"),
             ("co2_cycle_g", "CO2 per cycle (g)"),
-            ("corrected_cycle_co2_g", "Corrected CO2 per cycle (g)"),
+            ("corrected_cycle_co2_g", "Recorded CO2 per cycle (g)"),
             ("co2_g", "CO2 total (g)"),
-            ("corrected_cumulative_co2_g", "Corrected CO2 total (g)"),
+            ("corrected_cumulative_co2_g", "Recorded CO2 total (g)"),
             ("vdw_basis_result", "VDW: consumption / pH / speciation"),
-            ("corrected_basis_result", "Corrected: consumption / pH / speciation"),
+            ("corrected_basis_result", "Model at supplied uptake"),
             ("co2_to_target", "CO2 to target (g)"),
             ("equilibrium_ph", "Equilibrium pH (Guidance)"),
             ("corrected_ph", "Corrected pH"),
@@ -207195,7 +207264,7 @@ class UnifiedApp(tk.Tk):
                         ),
                         label=_timeline_trace_label(
                             "timeline_corrected_cycle_co2",
-                            "Corrected cycle CO2 (g)",
+                            "Recorded cycle CO2 (g)",
                         ),
                         zorder=float(
                             _safe_float(corrected_cycle_cfg.get("zorder"), 4.0)
@@ -213546,8 +213615,24 @@ class UnifiedApp(tk.Tk):
             )
 
     def _sync_solvent_entries(self, *_args) -> None:
-        """Perform sync solvent entries.
-        Used to keep the workflow logic localized and testable."""
+        """Synchronize pure-solvent units while preserving carbonate liquor volume.
+
+        Tk callback arguments are unused. Returns None; updates water/volume
+        variables only outside carbonate mode, where pure-water density applies.
+        A recursion lock prevents trace loops; invalid numeric edits are ignored.
+        """
+        # Carbonate liquor contains dissolved NaOH; its measured volume is not
+        # pure-water volume. Keep solvent mass and liquor volume independent.
+        carbonate_var = getattr(self, "_carbonate_mode_enabled_var", None)
+        carbonate_enabled = (
+            bool(carbonate_var.get())
+            if carbonate_var is not None
+            else bool(
+                settings.get("solubility_inputs", {}).get("carbonate_mode_enabled", False)
+            )
+        )
+        if carbonate_enabled:
+            return
         if self._solvent_sync_lock:
             return
         water_var = self._solubility_vars.get("water_mass_g")
@@ -217016,6 +217101,8 @@ class UnifiedApp(tk.Tk):
             }
         )
 
+        gas_mw = _co2_gas_molar_mass(dict(getattr(self, "settings", {}), **form_data))
+        form_data["gas_molar_mass"] = gas_mw
         manual_cycle_co2_g = canonical_inputs.get("planning_cycle_co2_g")
         delta_psi = canonical_inputs.get("planning_cycle_delta_p_psi")
         vessel_volume_l = canonical_inputs.get("planning_total_vessel_volume_l")
@@ -217076,6 +217163,50 @@ class UnifiedApp(tk.Tk):
             "planning_cycle_co2_g": manual_cycle_co2_g,
         }
 
+        from ph_anchor_calibration import compatible_points, select_verified_run
+
+        planning_context.update(gas_molar_mass=gas_mw, nominal_vessel_volume_l=vessel_volume_l)
+        verified_run = None
+        if (
+            form_data.get("measured_ph_anchor_enabled", True)
+            and _normalize_analysis_anchor_learning_controls(
+                dict(getattr(self, "settings", {}), **form_data)
+            )["learning_enabled"]
+        ):
+            # Profiles identify provenance; the physical recipe/vessel gates
+            # determine reuse across separate runs and workspaces.
+            verified_run = select_verified_run(
+                getattr(self, "settings", {}).get("verified_ph_reference_runs", []),
+                planning_context,
+            )
+
+        planning_context["ph_response_points"] = (
+            compatible_points(
+                getattr(self, "settings", {}).get("measured_ph_response_calibration", {}),
+                planning_ph_key,
+                planning_context,
+            )
+            if (
+                form_data.get("measured_ph_anchor_enabled", True)
+                and _normalize_analysis_anchor_learning_controls(
+                    dict(getattr(self, "settings", {}), **form_data)
+                )["learning_enabled"]
+            )
+            else []
+        )
+        if verified_run is not None:
+            planning_context = _context_with_verified_ph_response(
+                planning_context, ph_model, verified_run
+            )
+            headspace_volume_l = float(verified_run["effective_headspace_volume_l"])
+            planning_context["headspace_volume_l"] = headspace_volume_l
+            form_data["planning_verified_reference"] = dict(verified_run)
+            form_data["planning_headspace_volume_l"] = headspace_volume_l
+            form_data["ph_observation_points"] = list(planning_context["ph_observation_points"])
+        else:
+            form_data.pop("planning_verified_reference", None)
+            form_data.pop("ph_observation_points", None)
+        form_data["ph_response_points"] = list(planning_context["ph_response_points"])
         pressure_schedule = (
             _parse_planning_charge_pressures(
                 form_data.get("planning_charge_pressures_psig", "")
@@ -217103,7 +217234,7 @@ class UnifiedApp(tk.Tk):
             )
         pressure_inventory = None
         if manual_cycle_co2_g is not None and manual_cycle_co2_g > 0:
-            moles_per_cycle = manual_cycle_co2_g / SOL_MW_CO2
+            moles_per_cycle = manual_cycle_co2_g / gas_mw
             moles_basis = "manual_override"
         else:
             if delta_psi is None or not math.isfinite(delta_psi) or delta_psi <= 0:
@@ -217214,6 +217345,14 @@ class UnifiedApp(tk.Tk):
             cycle_high_psig = headspace_pressure_high_psi
             cycle_delta_psi = delta_psi
             cycle_inventory = pressure_inventory
+            cycle_temp_c = float(temp_c if temp_c is not None else 25.0)
+            learned_temperatures = (verified_run or {}).get("cycle_temperatures_c") or []
+            if learned_temperatures:
+                # Reuse the measured thermal progression of the compatible run,
+                # shifted by any change in the requested baseline temperature.
+                cycle_temp_c += float(
+                    learned_temperatures[min(idx - 1, len(learned_temperatures) - 1)]
+                ) - float(verified_run["temperature_c"])
             if pressure_schedule:
                 if idx > len(pressure_schedule):
                     projection_warning = (
@@ -217227,7 +217366,14 @@ class UnifiedApp(tk.Tk):
                     high_psig=cycle_high_psig,
                     delta_psig=cycle_delta_psi,
                     headspace_volume_l=float(headspace_volume_l),
-                    temperature_c=float(temp_c if temp_c is not None else 25.0),
+                    temperature_c=cycle_temp_c,
+                )
+            if learned_temperatures and not pressure_schedule and manual_cycle_co2_g is None:
+                cycle_inventory = _carbonate_pressure_drop_inventory_core(
+                    high_psig=float(cycle_high_psig),
+                    delta_psig=float(cycle_delta_psi),
+                    headspace_volume_l=float(headspace_volume_l),
+                    temperature_c=cycle_temp_c,
                 )
             full_cycle_moles = (
                 float(cycle_inventory["dose_mol"])
@@ -217258,9 +217404,7 @@ class UnifiedApp(tk.Tk):
                         trial_dose = (lower + upper) / 2.0
                         trial = evaluate_dose(trial_dose)
                         if trial[2][2] != source:
-                            raise ValueError(
-                                "Planning: pH model changed during endpoint solving."
-                            )
+                            raise ValueError("Planning: pH model changed during endpoint solving.")
                         if trial[2][0] > carbonate_target:
                             lower = trial_dose
                         else:
@@ -217277,7 +217421,7 @@ class UnifiedApp(tk.Tk):
                             trough_psig=float(pressure_inventory["trough_pressure_psig"]),
                             maximum_charge_psig=float(cycle_high_psig),
                             headspace_volume_l=float(headspace_volume_l),
-                            temperature_c=float(temp_c if temp_c is not None else 25.0),
+                            temperature_c=cycle_temp_c,
                         )
                         cycle_delta_psi = endpoint_charge["charge_delta_psi"]
                         # Feed the actual high-to-trough gas inventory into both
@@ -217286,22 +217430,18 @@ class UnifiedApp(tk.Tk):
                             high_psig=endpoint_charge["charge_pressure_psig"],
                             delta_psig=cycle_delta_psi,
                             headspace_volume_l=float(headspace_volume_l),
-                            temperature_c=float(temp_c if temp_c is not None else 25.0),
+                            temperature_c=cycle_temp_c,
                         )
                         delivered = float(cycle_inventory["dose_mol"])
-                        if not math.isclose(
-                            delivered, cycle_dose, rel_tol=1e-7, abs_tol=1e-9
-                        ):
+                        if not math.isclose(delivered, cycle_dose, rel_tol=1e-7, abs_tol=1e-9):
                             raise ValueError("Planning: endpoint pressure/dose mismatch.")
                         cycle_dose = delivered
                         evaluated = evaluate_dose(cycle_dose)
                         if abs(evaluated[2][0] - carbonate_target) > 1e-5:
-                            raise ValueError(
-                                "Planning: endpoint pressure misses target pH."
-                            )
+                            raise ValueError("Planning: endpoint pressure misses target pH.")
                     carbonate_endpoint_reached = True
             cumulative_moles += cycle_dose
-            cumulative_mass = cumulative_moles * SOL_MW_CO2
+            cumulative_mass = cumulative_moles * gas_mw
             entry: Dict[str, Any] = {
                 "cycle_id": idx,
                 "delta_pressure_psi": cycle_delta_psi,
@@ -217319,10 +217459,10 @@ class UnifiedApp(tk.Tk):
                 "available_charge_pressure_psig": cycle_high_psig,
                 "full_cycle_moles": full_cycle_moles,
                 "cycle_charge_fraction": cycle_dose / full_cycle_moles,
-                "mean_temperature_c": temp_c,
+                "mean_temperature_c": cycle_temp_c,
                 "selected_moles": cycle_dose,
-                "selected_mass_g": cycle_dose * SOL_MW_CO2,
-                "co2_mass_g": cycle_dose * SOL_MW_CO2,
+                "selected_mass_g": cycle_dose * gas_mw,
+                "co2_mass_g": cycle_dose * gas_mw,
                 "cumulative_co2_moles": cumulative_moles,
                 "cumulative_co2_mass_g": cumulative_mass,
                 "moles_basis": moles_basis,
@@ -217412,11 +217552,11 @@ class UnifiedApp(tk.Tk):
                 entry.update(
                     {
                         "co2_added_moles": cycle_dose,
-                        "co2_added_mass_g": cycle_dose * SOL_MW_CO2,
+                        "co2_added_mass_g": cycle_dose * gas_mw,
                         "co2_consumed_moles": consumed_cycle,
-                        "co2_consumed_mass_g": consumed_cycle * SOL_MW_CO2,
+                        "co2_consumed_mass_g": consumed_cycle * gas_mw,
                         "co2_unconsumed_moles": unconsumed_cycle,
-                        "co2_unconsumed_mass_g": unconsumed_cycle * SOL_MW_CO2,
+                        "co2_unconsumed_mass_g": unconsumed_cycle * gas_mw,
                         "co2_consumed_to_carbonate_moles": accounting.get(
                             "co2_consumed_to_carbonate_mol", 0.0
                         ),
@@ -217426,16 +217566,20 @@ class UnifiedApp(tk.Tk):
                         "cumulative_co2_added_moles": cumulative_moles,
                         "cumulative_co2_added_mass_g": cumulative_mass,
                         "cumulative_co2_consumed_moles": cumulative_consumed_moles,
-                        "cumulative_co2_consumed_mass_g": cumulative_consumed_moles
-                        * SOL_MW_CO2,
+                        "cumulative_co2_consumed_mass_g": cumulative_consumed_moles * gas_mw,
                         "cumulative_co2_unconsumed_moles": cumulative_unconsumed_moles,
-                        "cumulative_co2_unconsumed_mass_g": cumulative_unconsumed_moles
-                        * SOL_MW_CO2,
+                        "cumulative_co2_unconsumed_mass_g": cumulative_unconsumed_moles * gas_mw,
                         "naoh_remaining_mol": naoh_remaining,
                         "na2co3_mol": carbonate_remaining,
                         "nahco3_mol": bicarbonate_remaining,
                         "co2_excess_mol": ledger_state["co2_excess_mol"],
                         "ph_after": ph_after,
+                        "ph_response_points": list(planning_context.get("ph_response_points") or []),
+                        "ph_observation_points": list(
+                            planning_context.get("ph_observation_points") or []
+                        ),
+                        "planning_effective_headspace_volume_l": headspace_volume_l,
+                        "gas_molar_mass": gas_mw,
                         "ph_source": ph_source,
                         "regime": regime_label,
                         "ledger_h2co3_fraction": ledger_h2co3_fraction,
@@ -217447,26 +217591,24 @@ class UnifiedApp(tk.Tk):
                 ph_after = None
                 entry_warnings.append(f"Planning ledger update failed: {exc}")
                 entry.setdefault("co2_added_moles", cycle_dose)
-                entry.setdefault("co2_added_mass_g", cycle_dose * SOL_MW_CO2)
+                entry.setdefault("co2_added_mass_g", cycle_dose * gas_mw)
                 entry.setdefault("cumulative_co2_added_moles", cumulative_moles)
                 entry.setdefault("cumulative_co2_added_mass_g", cumulative_mass)
                 entry.setdefault("co2_consumed_moles", 0.0)
                 entry.setdefault("co2_consumed_mass_g", 0.0)
                 entry.setdefault("co2_unconsumed_moles", cumulative_unconsumed_moles)
-                entry.setdefault(
-                    "co2_unconsumed_mass_g", cumulative_unconsumed_moles * SOL_MW_CO2
-                )
+                entry.setdefault("co2_unconsumed_mass_g", cumulative_unconsumed_moles * gas_mw)
                 entry.setdefault("cumulative_co2_consumed_moles", cumulative_consumed_moles)
                 entry.setdefault(
                     "cumulative_co2_consumed_mass_g",
-                    cumulative_consumed_moles * SOL_MW_CO2,
+                    cumulative_consumed_moles * gas_mw,
                 )
                 entry.setdefault(
                     "cumulative_co2_unconsumed_moles", cumulative_unconsumed_moles
                 )
                 entry.setdefault(
                     "cumulative_co2_unconsumed_mass_g",
-                    cumulative_unconsumed_moles * SOL_MW_CO2,
+                    cumulative_unconsumed_moles * gas_mw,
                 )
                 ph_after, model_species, ph_source, model_warning = (
                     _predict_planning_ph_for_model(
@@ -217604,7 +217746,7 @@ class UnifiedApp(tk.Tk):
                         (),
                         current_co2_g=0.0,
                         target_co2_g=target_g,
-                        manual_cycle_size_g=moles_per_cycle * SOL_MW_CO2,
+                        manual_cycle_size_g=moles_per_cycle * gas_mw,
                     )
                     carbonate_forecast.update(endpoint)
                     if carbonate_endpoint_reached:
@@ -217628,7 +217770,7 @@ class UnifiedApp(tk.Tk):
                         {
                             "target_ph": target_ph,
                             "guard_ph": guard_ph,
-                            "equivalence_co2_g": equivalence_moles * SOL_MW_CO2,
+                            "equivalence_co2_g": equivalence_moles * gas_mw,
                             "forecast_basis": (
                                 "per-cycle available charge pressures"
                                 if pressure_schedule
@@ -217704,9 +217846,7 @@ class UnifiedApp(tk.Tk):
                         else None
                     )
                     if guard_cycles is not None:
-                        target_cycles = (
-                            _safe_float(carbonate_forecast.get("estimated_cycles")) or 0.0
-                        )
+                        target_cycles = _safe_float(carbonate_forecast.get("estimated_cycles")) or 0.0
                         # Guard position is a verification checkpoint. The charge
                         # count must describe the complete dose to the target.
                         full_cycles = max(0, int(math.floor(target_cycles + 1e-9)))
@@ -217717,7 +217857,7 @@ class UnifiedApp(tk.Tk):
                             "max_final_partial_co2_g": (
                                 cycle_entries[-1]["selected_mass_g"]
                                 if carbonate_endpoint_reached and partial_fraction > 1e-9
-                                else partial_fraction * moles_per_cycle * SOL_MW_CO2
+                                else partial_fraction * moles_per_cycle * gas_mw
                             ),
                             "full_cycle_schedule": [
                                 {
@@ -217745,21 +217885,12 @@ class UnifiedApp(tk.Tk):
                         ):
                             partial_dose_mol = partial_fraction * moles_per_cycle
                             try:
-                                charge = (
-                                    endpoint_charge
-                                    or _python_carbonate_charge_pressure_setpoint_core(
-                                        target_dose_mol=partial_dose_mol,
-                                        trough_psig=float(
-                                            pressure_inventory["trough_pressure_psig"]
-                                        ),
-                                        maximum_charge_psig=float(
-                                            headspace_pressure_high_psi
-                                        ),
-                                        headspace_volume_l=float(headspace_volume_l),
-                                        temperature_c=float(
-                                            temp_c if temp_c is not None else 25.0
-                                        ),
-                                    )
+                                charge = endpoint_charge or _python_carbonate_charge_pressure_setpoint_core(
+                                    target_dose_mol=partial_dose_mol,
+                                    trough_psig=float(pressure_inventory["trough_pressure_psig"]),
+                                    maximum_charge_psig=float(headspace_pressure_high_psi),
+                                    headspace_volume_l=float(headspace_volume_l),
+                                    temperature_c=float(temp_c if temp_c is not None else 25.0),
                                 )
                                 operator_dosing_plan.update(
                                     {
@@ -217769,18 +217900,12 @@ class UnifiedApp(tk.Tk):
                                         "final_partial_trough_pressure_psig": charge[
                                             "trough_pressure_psig"
                                         ],
-                                        "final_partial_charge_delta_psi": charge[
-                                            "charge_delta_psi"
-                                        ],
-                                        "final_partial_pressure_source": charge[
-                                            "calculation_source"
-                                        ],
+                                        "final_partial_charge_delta_psi": charge["charge_delta_psi"],
+                                        "final_partial_pressure_source": charge["calculation_source"],
                                     }
                                 )
                             except ValueError as exc:
-                                operator_dosing_plan["pressure_instruction_warning"] = str(
-                                    exc
-                                )
+                                operator_dosing_plan["pressure_instruction_warning"] = str(exc)
                         carbonate_forecast["operator_dosing_plan"] = operator_dosing_plan
                     history_sizes: List[float] = []
                     excluded_history = 0
@@ -217818,7 +217943,7 @@ class UnifiedApp(tk.Tk):
                         {
                             "target_ph": target_ph,
                             "guard_ph": guard_ph,
-                            "equivalence_co2_g": equivalence_moles * SOL_MW_CO2,
+                            "equivalence_co2_g": equivalence_moles * gas_mw,
                             "forecast_basis": (
                                 "per-cycle available charge pressures"
                                 if pressure_schedule
@@ -217836,15 +217961,23 @@ class UnifiedApp(tk.Tk):
                         "estimated_cycles"
                     )
                     entry["carbonate_forecast_status"] = carbonate_forecast.get("status")
+        if verified_run is not None and isinstance(carbonate_forecast, dict):
+            carbonate_forecast["verified_reference_id"] = verified_run["reference_id"]
+            carbonate_forecast["forecast_basis"] = (
+                "Verified measured pH/uptake run; calibrated pressure inventory: "
+                + str(verified_run["reference_id"])
+            )
         return {
             "cycle_transfer": cycle_entries,
             "total_moles_vdw": cumulative_moles,
             "total_moles_ideal": cumulative_moles,
-            "gas_molar_mass": SOL_MW_CO2,
+            "gas_molar_mass": gas_mw,
             "timestamp": datetime.now().isoformat(),
             "projection_warning": projection_warning,
             "reference_ledgers": reference_ledgers,
             "carbonate_forecast": carbonate_forecast,
+            "verified_reference": verified_run,
+            "effective_headspace_volume_l": headspace_volume_l,
         }
 
 
@@ -224206,7 +224339,7 @@ class UnifiedApp(tk.Tk):
                             corrected_cycle_cfg, 2.8 if marker_stride is not None else 3.4
                         ),
                         linestyle=_timeline_trace_linestyle(corrected_cycle_cfg, "solid"),
-                        label=_timeline_trace_label("timeline_corrected_cycle_co2", "Corrected cycle CO2 (g)"),
+                        label=_timeline_trace_label("timeline_corrected_cycle_co2", "Recorded cycle CO2 (g)"),
                         zorder=float(_safe_float(corrected_cycle_cfg.get("zorder"), 4.0)),
                     )
                     _tag_timeline_artist(
@@ -226552,9 +226685,7 @@ class UnifiedApp(tk.Tk):
                     data_ctx={
                         "selected_columns": {
                             "x": str(
-                                globals().get("selected_columns", {}).get(
-                                    "x", "Elapsed Time (days)"
-                                )
+                                globals().get("selected_columns", {}).get("x", "Elapsed Time (days)")
                             ),
                             "y1": column,
                         },
@@ -239429,19 +239560,21 @@ class UnifiedApp(tk.Tk):
         if mode_value == "override":
             return _normalize_reaction_basis_payload(
                 {
-                    "reaction_id": settings.get("selected_reaction_id", DEFAULT_SELECTED_REACTION_ID),
-                "starting_mass_g": self._compare_parse_float_entry(
-                    self.compare_override_starting_mass_var.get()
-                ),
-                "starting_material_mw_g_mol": self._compare_parse_float_entry(
-                    self.compare_override_mw_var.get()
-                ),
-                "stoich_mol_gas_per_mol_starting": self._compare_parse_float_entry(
-                    self.compare_override_stoich_var.get()
-                ),
-                "gas_molar_mass": self._compare_parse_float_entry(
-                    self.compare_override_gas_mw_var.get()
-                ),
+                    "reaction_id": settings.get(
+                        "selected_reaction_id", DEFAULT_SELECTED_REACTION_ID
+                    ),
+                    "starting_mass_g": self._compare_parse_float_entry(
+                        self.compare_override_starting_mass_var.get()
+                    ),
+                    "starting_material_mw_g_mol": self._compare_parse_float_entry(
+                        self.compare_override_mw_var.get()
+                    ),
+                    "stoich_mol_gas_per_mol_starting": self._compare_parse_float_entry(
+                        self.compare_override_stoich_var.get()
+                    ),
+                    "gas_molar_mass": self._compare_parse_float_entry(
+                        self.compare_override_gas_mw_var.get()
+                    ),
                     "final_product_name": settings.get("final_product_name"),
                     "final_product_formula": settings.get("final_product_formula"),
                     "final_product_mw_g_mol": settings.get("final_product_mw_g_mol"),
@@ -242023,9 +242156,7 @@ class UnifiedApp(tk.Tk):
                 if (math.isfinite(selected_moles) and math.isfinite(gas_mw))
                 else None
             )
-            cumulative_mass = (
-                cumulative_moles * gas_mw if math.isfinite(gas_mw) else None
-            )
+            cumulative_mass = cumulative_moles * gas_mw if math.isfinite(gas_mw) else None
             synthesized.append(
                 {
                     "cycle_id": int(idx),
@@ -253532,9 +253663,7 @@ class UnifiedApp(tk.Tk):
 
         if self.multi_sheet_enabled:
             if not self.selected_sheets:
-                messagebox.showerror(
-                    "Missing Data", "Select at least one sheet to include."
-                )
+                messagebox.showerror("Missing Data", "Select at least one sheet to include.")
                 return
             dt_col = (self.columns or {}).get("dt")
             if not dt_col or dt_col == "None":
@@ -253546,10 +253675,7 @@ class UnifiedApp(tk.Tk):
             try:
                 self._build_stitched_dataframe(self.selected_sheets, dt_col)
                 self.lbl_status.config(
-                    text=(
-                        f"Sheets loaded: {len(self.selected_sheets)} "
-                        f"({len(self.df)} rows)."
-                    )
+                    text=(f"Sheets loaded: {len(self.selected_sheets)} ({len(self.df)} rows).")
                 )
                 settings["selected_sheets"] = list(self.selected_sheets)
                 settings["multi_sheet_enabled"] = True
@@ -253574,7 +253700,6 @@ class UnifiedApp(tk.Tk):
                 self._update_auto_title_preview()
 
             except Exception as e:
-
                 self.df = None
 
                 self._clear_numeric_cache()
@@ -254066,8 +254191,7 @@ class UnifiedApp(tk.Tk):
                 "selected_columns": selected,
                 "series": series_map,
                 "column_trace_groups": {
-                    role: list(values)
-                    for role, values in trace_groups_snapshot.items()
+                    role: list(values) for role, values in trace_groups_snapshot.items()
                 },
                 "calculation_trace": dict(calculation_trace_snapshot),
                 "trace_groups": trace_group_series,
