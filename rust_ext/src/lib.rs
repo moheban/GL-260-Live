@@ -5,6 +5,8 @@ use pyo3::types::{PyAny, PyDict, PyList, PyString};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod csv_io;
+
 const SOL_KA1: f64 = 4.45e-7;
 const SOL_KA2: f64 = 4.69e-11;
 const SOL_KW: f64 = 1.0e-14;
@@ -38,7 +40,10 @@ const RUST_BACKEND_INTERFACE_ID: &str = "gl260_rust_backend";
 const RUST_BACKEND_INTERFACE_VERSION: &str = "4";
 const RUST_BACKEND_MODULE_NAME: &str = env!("CARGO_PKG_NAME");
 const RUST_BACKEND_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
-const RUST_EXPORTED_KERNELS: [&str; 33] = [
+const RUST_EXPORTED_KERNELS: [&str; 36] = [
+    "validate_csv_worksheet_core",
+    "csv_table_core",
+    "write_csv_workbook_core",
     "ph_anchor_response_core",
     "simulate_reaction_state_with_accounting",
     "analyze_bicarbonate_core",
@@ -6388,7 +6393,7 @@ fn ph_anchor_response_core(
     Ok((baseline_ph + residual).clamp(0.0, 14.0))
 }
 
-/// Register numerical kernels, including fixed-inventory pH response learning.
+/// Register numerical kernels and native CSV parsing, worksheet I/O and validation.
 /// Takes the Python interpreter and module; mutates module exports, returning
 /// unit on success and propagating PyO3 registration errors to the importer.
 #[pymodule(gil_used = false)]
@@ -6440,6 +6445,9 @@ fn gl260_rust_ext(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
     )?)?;
     module.add_function(wrap_pyfunction!(ledger_prefill_metrics_core, module)?)?;
     module.add_function(wrap_pyfunction!(csv_pressure_derivatives_core, module)?)?;
+    module.add_function(wrap_pyfunction!(csv_io::csv_table_core, module)?)?;
+    module.add_function(wrap_pyfunction!(csv_io::write_csv_workbook_core, module)?)?;
+    module.add_function(wrap_pyfunction!(csv_io::validate_csv_worksheet_core, module)?)?;
     module.add_function(wrap_pyfunction!(
         csv_pressure_derivatives_array_core,
         module

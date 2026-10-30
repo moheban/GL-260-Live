@@ -97040,10 +97040,31 @@ def _parse_gl260_csv_table_with_metadata(
     Outputs:
         Tuple containing data headers, data rows, and normalized channel metadata.
     Side Effects:
-        Reads the CSV file.
+        Reads the CSV file; may mark a failed native parser unhealthy.
     Exceptions:
         Raises ValueError when the file cannot be decoded or lacks a data header.
     """
+    # Keep bounded previews streaming; full imports use Rust tokenization and
+    # normalization while sharing the authoritative Python metadata rules.
+    backend = _csv_import_native_backend("csv_table_core") if max_rows is None else None
+    if backend is not None:
+        for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+            try:
+                with open(path, "r", encoding=encoding, newline="") as handle:
+                    text = handle.read()
+                prefix, rows = backend.csv_table_core(text, csv.field_size_limit())
+                columns, _, metadata = _extract_gl260_csv_table_with_metadata(prefix)
+                return columns, rows, metadata
+            except UnicodeDecodeError:
+                continue
+            except OSError:
+                # File access failures are not evidence of an unhealthy kernel.
+                raise
+            except Exception as exc:
+                _mark_rust_kernel_session_unhealthy(
+                    "csv_table_core", reason="invalid_payload", detail=str(exc)
+                )
+                break
     encodings = ("utf-8-sig", "utf-8", "cp1252", "latin-1")
     last_exc: Optional[Exception] = None
     # Try common GL-260 export encodings until one can decode the whole file.
@@ -97883,11 +97904,57 @@ def _build_gl260_output_dataframe(
     return output[output_columns]
 
 
+def _csv_import_native_backend(kernel_name: str) -> Any:
+    """Return a healthy backend exposing the requested optional CSV kernel.
+
+    Input is a kernel name; output is the backend or None. Honors Python-only
+    mode and session health, allowing older extensions to retain fallback.
+    May load the backend and update its diagnostic cache; load errors fail closed.
+    """
+    if _current_rust_backend_mode() == "python":
+        return None
+    if _is_rust_kernel_session_unhealthy(kernel_name):
+        return None
+    backend = _load_rust_backend()
+    return backend if callable(getattr(backend, kernel_name, None)) else None
+
+
 def _write_gl260_output_sheet(
     workbook_path: str, sheet_name: str, output: pd.DataFrame, exists_mode: str
 ) -> str:
-    """Perform write gl260 output sheet.
-    Used to keep the workflow logic localized and testable."""
+    """Write imported data transactionally with optional native serialization.
+
+    Inputs are destination workbook path, requested title, output DataFrame and
+    collision mode. Returns the resolved title. Writes and validates a temporary
+    sibling before atomic replacement; native failures use the Python writer.
+    I/O or validation failures propagate without committing temporary output.
+    """
+    from gl260_csv_io import write_import_workbook
+
+    mode = (exists_mode or CSV_IMPORT_DEFAULT_SHEET_EXISTS_MODE).strip().lower()
+    if mode not in CSV_IMPORT_SHEET_EXISTS_MODES:
+        mode = CSV_IMPORT_DEFAULT_SHEET_EXISTS_MODE
+    return write_import_workbook(
+        workbook_path,
+        _sanitize_excel_sheet_name(sheet_name or "GL260 Import"),
+        output,
+        mode,
+        _csv_import_native_backend("write_csv_workbook_core"),
+        _write_gl260_output_sheet_python,
+        on_native_error=_mark_rust_kernel_session_unhealthy,
+    )
+
+
+def _write_gl260_output_sheet_python(
+    workbook_path: str, sheet_name: str, output: pd.DataFrame, exists_mode: str
+) -> str:
+    """Serialize imported rows using the established openpyxl fallback.
+
+    Inputs are a temporary workbook path, sheet title, output DataFrame and
+    collision mode; returns the resolved sheet title. Mutates only the supplied
+    temporary file. Import, collision and I/O errors propagate to the transaction
+    owner, which prevents replacing the original on failure.
+    """
     try:
         import openpyxl  # type: ignore
         from openpyxl.utils.dataframe import dataframe_to_rows  # type: ignore
@@ -97904,9 +97971,7 @@ def _write_gl260_output_sheet(
 
     if resolved_name in existing:
         if mode == "error":
-            raise ValueError(
-                f"Sheet '{resolved_name}' already exists in the workbook."
-            )
+            raise ValueError(f"Sheet '{resolved_name}' already exists in the workbook.")
         if mode == "overwrite":
             workbook.remove(workbook[resolved_name])
             existing.discard(resolved_name)

@@ -204,6 +204,15 @@ Load source datasets and establish the active sheet/data context for downstream 
 6. Click **Rescan File** when file content changes externally.
 7. Confirm imported/selected sheet now contains expected headers and row counts.
 
+CSV imports automatically use the available Rust parser and worksheet writer in
+Auto/Rust backend mode. The native writer preserves unrelated workbook package
+contents. Unsupported workbook features or unavailable native kernels use the
+Python fallback; selecting Python-only mode also retains that path. Both writers
+save to a temporary sibling file and validate it before replacing the destination.
+An unsuccessful write or validation leaves the destination unchanged. Close the
+workbook in Excel if replacement fails because the file is locked. Restart the
+application after updating the Rust extension so the new kernels can load.
+
 ### Expected outputs
 - Active file path and sheet context are set.
 - Data tab status confirms loaded dataset.
